@@ -40,7 +40,6 @@ pub struct ChatView {
     emote_loader: EmoteLoader,
     _client: ChatClient,
     _pump: Task<()>,
-    _cache_pump: Task<()>,
     _emote_pump: Task<()>,
 }
 
@@ -48,7 +47,6 @@ impl ChatView {
     pub fn new(
         channel: String,
         cache: Arc<ImageCache>,
-        cache_ready: futures::channel::mpsc::UnboundedReceiver<()>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -64,18 +62,6 @@ impl ChatView {
                     })
                     .is_err()
                 {
-                    break;
-                }
-            }
-        });
-
-        // An emote that finishes downloading has to trigger a repaint, or it
-        // stays a placeholder until the next message happens to arrive.
-        let mut cache_ready = cache_ready;
-        let cache_pump = cx.spawn_in(window, async move |this, cx| {
-            use futures::StreamExt as _;
-            while cache_ready.next().await.is_some() {
-                if this.update(cx, |_, cx| cx.notify()).is_err() {
                     break;
                 }
             }
@@ -103,7 +89,6 @@ impl ChatView {
             emote_loader,
             _client: client,
             _pump: pump,
-            _cache_pump: cache_pump,
             _emote_pump: emote_pump,
         };
         view.push(Row::Notice(format!("connecting to #{channel}…").into()));

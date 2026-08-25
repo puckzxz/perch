@@ -4,7 +4,9 @@ members = [
     "crates/emotes",
     "crates/mpv-frames",
     "crates/nativetwitch",
+    "crates/settings",
     "crates/streamlink",
+    "crates/twitch-api",
     "crates/twitch-chat",
 ]
 

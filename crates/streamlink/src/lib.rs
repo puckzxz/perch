@@ -86,8 +86,29 @@ fn free_port() -> std::io::Result<u16> {
     Ok(port)
 }
 
+/// How to open one channel.
+#[derive(Debug, Clone, Default)]
+pub struct StreamOptions {
+    /// Explicit streamlink quality name. `None` picks one from the pane size,
+    /// which is usually cheaper - see [`quality`].
+    pub quality: Option<String>,
+    /// The twitch.tv `auth-token` cookie. Unlocks subscriber-only qualities and
+    /// suppresses ads. Comes from settings; `TWITCH_AUTH_TOKEN` is a fallback so
+    /// it can be supplied without writing it to disk.
+    pub auth_token: Option<String>,
+}
+
+impl StreamOptions {
+    fn token(&self) -> Option<String> {
+        self.auth_token
+            .clone()
+            .or_else(|| std::env::var("TWITCH_AUTH_TOKEN").ok())
+            .filter(|token| !token.is_empty())
+    }
+}
+
 /// Shared arguments for both the quality probe and the serving run.
-fn twitch_args(channel: &str) -> Vec<String> {
+fn twitch_args(channel: &str, options: &StreamOptions) -> Vec<String> {
     let mut args = vec![
         // Twitch's higher tiers are HEVC/AV1 via Enhanced Broadcasting, and
         // streamlink filters to h264 unless told otherwise, which silently hides
@@ -96,10 +117,8 @@ fn twitch_args(channel: &str) -> Vec<String> {
         "h264,h265,av1".into(),
     ];
 
-    // Read-only account credential, taken from the environment so it never
-    // lands in a command line or shell history. Also suppresses ads for
-    // Turbo and subscribed accounts.
-    if let Some(token) = std::env::var("TWITCH_AUTH_TOKEN").ok().filter(|t| !t.is_empty()) {
+    // A full account credential, so it is never logged and never echoed.
+    if let Some(token) = options.token() {
         args.push("--twitch-api-header".into());
         args.push(format!("Authorization=OAuth {token}"));
     }
@@ -109,9 +128,13 @@ fn twitch_args(channel: &str) -> Vec<String> {
 }
 
 /// Which qualities the channel currently offers, newest info from Twitch.
-fn list_qualities(binary: &PathBuf, channel: &str) -> Result<Vec<String>, String> {
+fn list_qualities(
+    binary: &PathBuf,
+    channel: &str,
+    options: &StreamOptions,
+) -> Result<Vec<String>, String> {
     let mut args = vec!["--json".to_string()];
-    args.extend(twitch_args(channel));
+    args.extend(twitch_args(channel, options));
 
     let output = Command::new(binary)
         .args(&args)
@@ -139,7 +162,11 @@ fn list_qualities(binary: &PathBuf, channel: &str) -> Result<Vec<String>, String
 impl StreamSupervisor {
     /// Resolve `channel`, pick a quality suited to a pane `pane_height` tall,
     /// and serve it on loopback.
-    pub fn start(channel: String, pane_height: u32) -> (Self, mpsc::UnboundedReceiver<StreamEvent>) {
+    pub fn start(
+        channel: String,
+        pane_height: u32,
+        options: StreamOptions,
+    ) -> (Self, mpsc::UnboundedReceiver<StreamEvent>) {
         let (tx, rx) = mpsc::unbounded();
         let stop = Arc::new(AtomicBool::new(false));
         let child: Arc<Mutex<Option<Child>>> = Arc::new(Mutex::new(None));
@@ -149,7 +176,7 @@ impl StreamSupervisor {
             .spawn({
                 let stop = stop.clone();
                 let child = child.clone();
-                move || run(channel, pane_height, tx, stop, child)
+                move || run(channel, pane_height, options, tx, stop, child)
             })
             .expect("failed to spawn streamlink supervisor");
 
@@ -181,6 +208,7 @@ impl Drop for StreamSupervisor {
 fn run(
     channel: String,
     pane_height: u32,
+    options: StreamOptions,
     tx: mpsc::UnboundedSender<StreamEvent>,
     stop: Arc<AtomicBool>,
     child_slot: Arc<Mutex<Option<Child>>>,
@@ -194,7 +222,7 @@ fn run(
 
     let _ = tx.unbounded_send(StreamEvent::Resolving);
 
-    let available = match list_qualities(&binary, &channel) {
+    let available = match list_qualities(&binary, &channel, &options) {
         Ok(list) => list,
         Err(reason) => {
             let _ = tx.unbounded_send(StreamEvent::Failed { reason });
@@ -206,11 +234,23 @@ fn run(
         return;
     }
 
-    let Some(chosen) = quality::select(&available, pane_height) else {
-        let _ = tx.unbounded_send(StreamEvent::Failed {
-            reason: format!("no video qualities offered (got {available:?})"),
-        });
-        return;
+    // An explicit preference wins, but only if the channel actually offers it;
+    // falling back beats failing because one stream lacks 1080p today.
+    let chosen = match &options.quality {
+        Some(wanted) if available.iter().any(|name| name == wanted) => quality::Quality {
+            name: wanted.clone(),
+            height: 0,
+            fps: 0,
+        },
+        _ => match quality::select(&available, pane_height) {
+            Some(chosen) => chosen,
+            None => {
+                let _ = tx.unbounded_send(StreamEvent::Failed {
+                    reason: format!("no video qualities offered (got {available:?})"),
+                });
+                return;
+            }
+        },
     };
 
     let port = match free_port() {
@@ -233,7 +273,7 @@ fn run(
         "127.0.0.1".to_string(),
         "--twitch-low-latency".to_string(),
     ];
-    args.extend(twitch_args(&channel));
+    args.extend(twitch_args(&channel, &options));
     args.push(chosen.name.clone());
 
     let spawned = Command::new(&binary)
