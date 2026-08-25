@@ -118,6 +118,9 @@ pub struct ChatMessage {
     pub text: String,
     /// True for `/me` messages, which arrive wrapped in ACTION control codes.
     pub is_action: bool,
+    /// Raw `emotes` tag. Kept unparsed so this crate stays about IRC and the
+    /// emote crate owns what the ranges mean.
+    pub emotes: Option<String>,
 }
 
 /// Twitch's default colour set, used when a user has not chosen one.
@@ -175,6 +178,7 @@ impl ChatMessage {
             color,
             text,
             is_action,
+            emotes: message.tag("emotes").map(str::to_string),
         })
     }
 }

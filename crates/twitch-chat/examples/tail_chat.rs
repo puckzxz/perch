@@ -44,6 +44,10 @@ fn main() {
                         messages += 1;
                         println!("<{}> {}", m.display_name, m.text);
                     }
+                    ChatEvent::RoomState { room_id } => {
+                        others += 1;
+                        println!("[room] id={room_id}");
+                    }
                     ChatEvent::Cleared { login } => {
                         others += 1;
                         println!("[cleared] {login:?}");

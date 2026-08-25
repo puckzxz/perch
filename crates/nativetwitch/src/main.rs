@@ -9,6 +9,7 @@
 mod chat;
 mod video;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use gpui::{
@@ -17,6 +18,7 @@ use gpui::{
 };
 
 use chat::ChatView;
+use emotes::ImageCache;
 use video::VideoStream;
 
 /// Frames are rendered at this size regardless of window size, then scaled to
@@ -29,6 +31,16 @@ const RENDER_HEIGHT: u32 = 720;
 /// mpv opens at 100% otherwise, which is jarring for a window that starts
 /// playing the moment it appears.
 const DEFAULT_VOLUME: u8 = 10;
+
+/// Emotes are immutable and endlessly repeated, so the cache is worth keeping
+/// between runs rather than in a temp dir.
+fn image_cache_dir() -> PathBuf {
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("nativetwitch")
+        .join("images")
+}
 
 struct VideoView {
     stream: VideoStream,
@@ -183,9 +195,12 @@ fn main() {
             let video = cx.new(|cx| {
                 VideoView::new(url.clone(), volume, window, cx).expect("failed to start video")
             });
-            let chat = channel
-                .clone()
-                .map(|name| cx.new(|cx| ChatView::new(name, window, cx)));
+            let chat = channel.clone().map(|name| {
+                let (cache, ready) =
+                    ImageCache::new(image_cache_dir()).expect("failed to open image cache");
+                let cache = Arc::new(cache);
+                cx.new(|cx| ChatView::new(name, cache, ready, window, cx))
+            });
             cx.new(|_| RootView { video, chat })
         })
         .expect("failed to open window");

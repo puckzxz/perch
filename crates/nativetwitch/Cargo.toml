@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 mpv-frames = { path = "../mpv-frames" }
 twitch-chat = { path = "../twitch-chat" }
+emotes = { path = "../emotes" }
 gpui = "0.2.2"
 gpui-component = "0.5.1"
 anyhow = "1"

@@ -30,6 +30,9 @@ const MAX_BACKOFF: Duration = Duration::from_secs(30);
 #[derive(Debug, Clone)]
 pub enum ChatEvent {
     Connected { channel: String },
+    /// The channel's numeric Twitch id, which third-party emote providers key
+    /// their per-channel sets on. Arrives once, just after joining.
+    RoomState { room_id: String },
     Message(Box<ChatMessage>),
     /// A moderator cleared chat, or a user was banned/timed out.
     Cleared { login: Option<String> },
@@ -265,6 +268,13 @@ fn session(
                 let _ = tx.unbounded_send(ChatEvent::Connected {
                     channel: channel.to_string(),
                 });
+            }
+            "ROOMSTATE" => {
+                if let Some(room_id) = irc.tag("room-id") {
+                    let _ = tx.unbounded_send(ChatEvent::RoomState {
+                        room_id: room_id.to_string(),
+                    });
+                }
             }
             "RECONNECT" => return Err("server asked us to reconnect".into()),
             _ => {}
