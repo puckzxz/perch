@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/mpv-frames"]
+members = ["crates/mpv-frames", "crates/nativetwitch"]
 
 [workspace.package]
 edition = "2021"

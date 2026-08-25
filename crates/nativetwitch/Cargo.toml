@@ -1,0 +1,16 @@
+[package]
+name = "nativetwitch"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+mpv-frames = { path = "../mpv-frames" }
+gpui = "0.2.2"
+gpui-component = "0.5.1"
+anyhow = "1"
+futures = "0.3"
+# Must match gpui's own versions so RenderImage accepts our Frame.
+image = { version = "0.25", default-features = false }
+smallvec = "1"
