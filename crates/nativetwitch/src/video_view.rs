@@ -45,6 +45,13 @@ pub struct VideoView {
     /// When the broadcast started, for the uptime readout. Absent when the
     /// channel was opened by name rather than picked from the follows list.
     started_at: Option<String>,
+    /// Whether the pointer is over this player.
+    ///
+    /// Tracked explicitly rather than derived from `group_hover` at paint time.
+    /// Pressing the volume slider takes a mouse capture, which stops the group's
+    /// hover state evaluating, so a hover-derived opacity made the whole control
+    /// bar vanish mid-drag.
+    hovered: bool,
     /// True while the player is a thumbnail on the browse page. Backgrounded
     /// players are muted and draw no controls.
     background: bool,
@@ -100,6 +107,7 @@ impl VideoView {
             available,
             quality_menu_open: false,
             started_at,
+            hovered: false,
             background: false,
             volume_before_background: volume,
             _pump: pump,
@@ -338,7 +346,11 @@ impl Render for VideoView {
             .relative()
             .size_full()
             .bg(backdrop)
-            .group("video")
+            .id("video-pane")
+            .on_hover(cx.listener(|this, hovered: &bool, _window, cx| {
+                this.hovered = *hovered;
+                cx.notify();
+            }))
             .child(probe)
             // Fade the first frames in rather than cutting from black, which
             // makes a channel switch read as deliberate instead of a glitch.
@@ -359,8 +371,14 @@ impl Render for VideoView {
                     div()
                         .absolute()
                         .inset_0()
-                        .opacity(if self.quality_menu_open { 1.0 } else { 0.0 })
-                        .group_hover("video", |style| style.opacity(1.0))
+                        // Stays up while the quality menu is open too, or
+                        // picking an option would dismiss the menu the moment
+                        // the pointer left the video.
+                        .opacity(if self.hovered || self.quality_menu_open {
+                            1.0
+                        } else {
+                            0.0
+                        })
                         .child(self.controls(cx)),
                 )
             })

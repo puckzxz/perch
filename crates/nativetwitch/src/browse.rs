@@ -76,14 +76,23 @@ pub fn format_viewers(count: u64) -> String {
 }
 
 /// One live channel.
+///
+/// Clicking the card watches it alone; the small "+" adds it beside whatever is
+/// already playing. Two separate affordances because replacing what you are
+/// watching and adding to it are different intentions, and guessing between
+/// them from a single click gets it wrong half the time.
+#[allow(clippy::too_many_arguments)]
 fn card<V: 'static>(
     index: usize,
     stream: &LiveStream,
     cache: &ImageCache,
+    can_add: bool,
     on_click: impl Fn(&mut V, String, &mut gpui::Window, &mut Context<V>) + 'static,
+    on_add: impl Fn(&mut V, String, &mut gpui::Window, &mut Context<V>) + 'static,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
     let login = stream.user_login.clone();
+    let add_login = stream.user_login.clone();
     let thumbnail = cache.get_or_request(&twitch_api::thumbnail(
         &stream.thumbnail_url,
         THUMBNAIL_WIDTH,
@@ -125,6 +134,7 @@ fn card<V: 'static>(
         .child(
             div()
                 .relative()
+                .group("card")
                 .child(preview)
                 .child(
                     // Live badge, bottom-left of the thumbnail where broadcast
@@ -140,7 +150,33 @@ fn card<V: 'static>(
                         .text_xs()
                         .text_color(rgb(0xffffff))
                         .child("LIVE"),
-                ),
+                )
+                .when(can_add, |thumb| {
+                    thumb.child(
+                        div()
+                            .id(("add-stream", index))
+                            .absolute()
+                            .top_2()
+                            .right_2()
+                            .px_2()
+                            .py_0p5()
+                            .rounded_sm()
+                            .bg(theme::surface_raised())
+                            .text_xs()
+                            .text_color(theme::text())
+                            .cursor_pointer()
+                            .opacity(0.0)
+                            .group_hover("card", |style| style.opacity(1.0))
+                            .hover(|style| style.bg(theme::accent_dim()))
+                            .child("+ add")
+                            .on_click(cx.listener(move |view, _event, window, cx| {
+                                // Without this the card underneath also fires
+                                // and replaces every open pane.
+                                cx.stop_propagation();
+                                on_add(view, add_login.clone(), window, cx)
+                            })),
+                    )
+                }),
         )
         .child(
             div()
@@ -223,11 +259,14 @@ fn empty_state(sign_in: &SignIn) -> impl IntoElement {
 }
 
 /// The whole page.
+#[allow(clippy::too_many_arguments)]
 pub fn page<V: 'static>(
     follows: &[LiveStream],
     sign_in: &SignIn,
     cache: &Arc<ImageCache>,
+    can_add: bool,
     on_open: impl Fn(&mut V, String, &mut gpui::Window, &mut Context<V>) + Clone + 'static,
+    on_add: impl Fn(&mut V, String, &mut gpui::Window, &mut Context<V>) + Clone + 'static,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
     let mut grid = div()
@@ -243,7 +282,15 @@ pub fn page<V: 'static>(
         .content_start();
 
     for (index, stream) in follows.iter().enumerate() {
-        grid = grid.child(card(index, stream, cache, on_open.clone(), cx));
+        grid = grid.child(card(
+            index,
+            stream,
+            cache,
+            can_add,
+            on_open.clone(),
+            on_add.clone(),
+            cx,
+        ));
     }
 
     div()
