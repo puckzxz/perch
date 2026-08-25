@@ -15,6 +15,25 @@ use gpui::{
     div, img, list, prelude::*, px, rgb, AnyElement, Context, ListAlignment, ListState,
     SharedString, Task, Window,
 };
+
+/// Emote names are worth showing on hover: half of chat is emotes, and knowing
+/// what one is called is the difference between reading a message and guessing.
+struct EmoteTooltip {
+    name: SharedString,
+}
+
+impl Render for EmoteTooltip {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .px_2()
+            .py_1()
+            .rounded_sm()
+            .bg(rgb(0x241d38))
+            .text_xs()
+            .text_color(rgb(0xf2eff7))
+            .child(self.name.clone())
+    }
+}
 use twitch_chat::{ChatClient, ChatEvent, ChatMessage};
 
 /// Messages kept in memory. Old ones drop off the top: chat runs forever, and
@@ -222,10 +241,16 @@ impl ChatView {
                         // on position alone, a 40-frame GIF in one row and a
                         // 1-frame PNG in another share state, and GPUI indexes
                         // the PNG with the GIF's frame number and panics.
-                        Some(path) => img(path)
-                            .id((SharedString::from(emote.url.clone()), emote_index))
-                            .h(px(EMOTE_HEIGHT))
-                            .into_any_element(),
+                        Some(path) => {
+                            let name = SharedString::from(emote.name.clone());
+                            img(path)
+                                .id((SharedString::from(emote.url.clone()), emote_index))
+                                .h(px(EMOTE_HEIGHT))
+                                .tooltip(move |_window, cx| {
+                                    cx.new(|_| EmoteTooltip { name: name.clone() }).into()
+                                })
+                                .into_any_element()
+                        }
                     });
                     emote_index += 1;
                 }

@@ -8,21 +8,26 @@
 mod chat;
 mod follows;
 mod video;
+mod video_view;
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use chat::ChatView;
 use emotes::ImageCache;
 use follows::{FollowsEvent, FollowsService};
 use gpui::{
-    div, img, prelude::*, px, rgb, size, App, Application, Bounds, Context, Entity, RenderImage,
-    SharedString, Task, Window, WindowBounds, WindowOptions,
+    div, img, prelude::*, px, rgb, rgba, size, App, Application, Bounds, Context, Entity, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, SharedString, Task, Window,
+    WindowBackgroundAppearance, WindowBounds, WindowOptions,
 };
 use settings::{QualityPreference, Settings};
 use streamlink::{StreamEvent, StreamOptions, StreamSupervisor};
 use twitch_api::LiveStream;
 use video::VideoStream;
+use video_view::{VideoEvent, VideoView};
 
 /// Frames are rendered at this size and scaled to fit by the element.
 ///
@@ -33,8 +38,14 @@ const RENDER_WIDTH: u32 = 1280;
 const RENDER_HEIGHT: u32 = 720;
 
 const SIDEBAR_WIDTH: f32 = 260.0;
+/// Keeps the chat pane usable at both extremes: narrower than this and emotes
+/// wrap every other word, wider and the video gets squeezed for no gain.
+const CHAT_WIDTH_RANGE: std::ops::RangeInclusive<f32> = 220.0..=640.0;
 const THUMBNAIL_WIDTH: u32 = 320;
 const THUMBNAIL_HEIGHT: u32 = 180;
+
+/// How long a "went live" toast stays up.
+const TOAST_LIFETIME: Duration = Duration::from_secs(8);
 
 /// Emotes and thumbnails are reproducible, so they live in local app data
 /// rather than roaming with settings.
@@ -44,68 +55,6 @@ fn image_cache_dir() -> PathBuf {
         .unwrap_or_else(std::env::temp_dir)
         .join("nativetwitch")
         .join("images")
-}
-
-// ── Video ────────────────────────────────────────────────────────────
-
-struct VideoView {
-    stream: VideoStream,
-    /// The frame currently painted, and the one before it. GPUI uploads every
-    /// distinct `RenderImage` into its sprite atlas and `RenderImage::new` mints
-    /// a fresh id per frame, so without evicting the frame before last the atlas
-    /// grows by one frame every frame until VRAM runs out.
-    current: Option<Arc<RenderImage>>,
-    previous: Option<Arc<RenderImage>>,
-    _pump: Task<()>,
-}
-
-impl VideoView {
-    /// Takes an already-started stream so a failure to open can be shown in the
-    /// window rather than panicking inside entity construction.
-    fn from_stream(
-        stream: VideoStream,
-        mut frames: futures::channel::mpsc::Receiver<()>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let pump = cx.spawn_in(window, async move |this, cx| {
-            use futures::StreamExt as _;
-            while frames.next().await.is_some() {
-                if this.update(cx, |_, cx| cx.notify()).is_err() {
-                    break;
-                }
-            }
-        });
-
-        Self {
-            stream,
-            current: None,
-            previous: None,
-            _pump: pump,
-        }
-    }
-}
-
-impl Render for VideoView {
-    fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(frame) = self.stream.latest_frame() else {
-            return placeholder("buffering…").into_any_element();
-        };
-
-        // Retire the frame before last: it is no longer on screen, so its atlas
-        // entry can go. Never drop `current` itself - that one is still painted.
-        if let Some(current) = self.current.take() {
-            if let Some(previous) = self.previous.take() {
-                if previous.id != current.id {
-                    let _ = window.drop_image(previous);
-                }
-            }
-            self.previous = Some(current);
-        }
-        self.current = Some(frame.clone());
-
-        img(frame).size_full().into_any_element()
-    }
 }
 
 fn placeholder(message: impl Into<SharedString>) -> impl IntoElement {
@@ -153,7 +102,17 @@ struct RootView {
     supervisor: Option<StreamSupervisor>,
     _stream_pump: Option<Task<()>>,
 
+    /// Chat-pane width at the moment a drag started, plus where it started.
+    /// `None` when not dragging.
+    resize: Option<(f32, f32)>,
+
     follows: Vec<LiveStream>,
+    /// Who was live at the last poll, so newly-live channels can be told apart
+    /// from ones that were already streaming. Without this every poll would
+    /// re-announce everybody.
+    known_live: HashSet<String>,
+    toasts: Vec<(u64, SharedString)>,
+    next_toast: u64,
     sign_in: SignIn,
     _follows: FollowsService,
     _follows_pump: Task<()>,
@@ -210,7 +169,7 @@ impl RootView {
                         FollowsEvent::SignedIn { login } => {
                             this.sign_in = SignIn::SignedIn(login.into())
                         }
-                        FollowsEvent::Streams(streams) => this.follows = streams,
+                        FollowsEvent::Streams(streams) => this.on_streams(streams, cx),
                         FollowsEvent::Error(reason) => this.sign_in = SignIn::Error(reason.into()),
                     }
                     cx.notify();
@@ -226,12 +185,16 @@ impl RootView {
             settings_path,
             cache,
             channel: None,
+            resize: None,
             state: StreamState::Idle,
             quality: None,
             chat: None,
             supervisor: None,
             _stream_pump: None,
             follows: Vec::new(),
+            known_live: HashSet::new(),
+            toasts: Vec::new(),
+            next_toast: 0,
             sign_in: SignIn::Connecting,
             _follows: service,
             _follows_pump: follows_pump,
@@ -281,12 +244,24 @@ impl RootView {
                     match event {
                         StreamEvent::Resolving => this.state = StreamState::Starting,
                         StreamEvent::Ready { url, quality } => {
-                            this.quality = Some(quality.into());
+                            this.quality = Some(SharedString::from(quality.clone()));
                             match VideoStream::start(url, RENDER_WIDTH, RENDER_HEIGHT, volume) {
                                 Ok((stream, frames)) => {
+                                    let label = SharedString::from(quality);
                                     let view = cx.new(|cx| {
-                                        VideoView::from_stream(stream, frames, window, cx)
+                                        VideoView::from_stream(stream, frames, label, window, cx)
                                     });
+                                    // Volume changed from the overlay controls
+                                    // should outlive this stream.
+                                    cx.subscribe(&view, |this: &mut RootView, _, event, cx| {
+                                        let VideoEvent::VolumeChanged(volume) = event;
+                                        this.settings.volume = *volume;
+                                        if let Err(e) = this.settings.save(&this.settings_path) {
+                                            eprintln!("settings: could not save: {e}");
+                                        }
+                                        cx.notify();
+                                    })
+                                    .detach();
                                     this.state = StreamState::Playing(view);
                                 }
                                 Err(e) => {
@@ -426,9 +401,18 @@ impl RootView {
             if selected {
                 entry = entry.bg(rgb(0x2a2140));
             }
-            if let Some(path) = thumb {
-                entry = entry.child(img(path).w_full().rounded_sm());
-            }
+            entry = match thumb {
+                Some(path) => entry.child(img(path).w_full().rounded_sm()),
+                // A sized placeholder rather than nothing, so entries do not
+                // jump as thumbnails arrive.
+                None => entry.child(
+                    div()
+                        .w_full()
+                        .h(px(SIDEBAR_WIDTH * 9.0 / 16.0 - 16.0))
+                        .rounded_sm()
+                        .bg(rgb(0x231e30)),
+                ),
+            };
 
             entry = entry
                 .child(
@@ -458,7 +442,7 @@ impl RootView {
             .flex_none()
             .flex()
             .flex_col()
-            .bg(rgb(0x17141e))
+            .bg(rgba(0x17141ee6))
             .border_r_1()
             .border_color(rgb(0x2e2939))
             .child(header)
@@ -486,7 +470,7 @@ impl RootView {
             .gap_2()
             .px_3()
             .py_2()
-            .bg(rgb(0x1b1822))
+            .bg(rgba(0x1b1822e6))
             .border_b_1()
             .border_color(rgb(0x2e2939))
             .child(
@@ -496,6 +480,132 @@ impl RootView {
                     .child(name),
             )
             .child(div().text_xs().text_color(rgb(0x948ca5)).child(subtitle))
+    }
+}
+
+impl RootView {
+    /// Take a fresh follows list and announce anyone who just came online.
+    ///
+    /// The first poll seeds the known set silently: on launch everyone is
+    /// "newly" live, and eight toasts at once would be worse than none.
+    fn on_streams(&mut self, streams: Vec<LiveStream>, cx: &mut Context<Self>) {
+        let now_live: HashSet<String> =
+            streams.iter().map(|s| s.user_login.clone()).collect();
+
+        if !self.known_live.is_empty() {
+            let mut newly: Vec<&LiveStream> = streams
+                .iter()
+                .filter(|s| !self.known_live.contains(&s.user_login))
+                .collect();
+            newly.sort_by(|a, b| b.viewer_count.cmp(&a.viewer_count));
+            for stream in newly {
+                self.toast(
+                    format!("{} went live · {}", stream.display_name, stream.game_name),
+                    cx,
+                );
+            }
+        }
+
+        self.known_live = now_live;
+        self.follows = streams;
+        cx.notify();
+    }
+
+    fn toast(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
+        let id = self.next_toast;
+        self.next_toast += 1;
+        self.toasts.push((id, text.into()));
+
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(TOAST_LIFETIME).await;
+            let _ = this.update(cx, |this: &mut RootView, cx| {
+                this.toasts.retain(|(existing, _)| *existing != id);
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn toast_stack(&self) -> impl IntoElement {
+        let mut stack = div()
+            .absolute()
+            .top_4()
+            .right_4()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .items_end();
+
+        for (_, text) in &self.toasts {
+            stack = stack.child(
+                div()
+                    .px_4()
+                    .py_3()
+                    .rounded_md()
+                    .bg(rgb(0x241d38))
+                    .border_l_2()
+                    .border_color(rgb(0xb392ff))
+                    .shadow_lg()
+                    .text_xs()
+                    .text_color(rgb(0xf2eff7))
+                    .child(text.clone()),
+            );
+        }
+        stack
+    }
+
+    /// A drag handle between video and chat.
+    ///
+    /// Deliberately wider than it looks: a 1px visual line with an 8px hit area,
+    /// because a hairline target is miserable to grab.
+    fn chat_divider(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("chat-resize")
+            .w(px(8.))
+            .h_full()
+            .flex_none()
+            .flex()
+            .justify_center()
+            .cursor_col_resize()
+            .group("divider")
+            .child(
+                div()
+                    .w(px(1.))
+                    .h_full()
+                    .bg(rgb(0x2e2939))
+                    .group_hover("divider", |style| style.bg(rgb(0xb392ff))),
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseDownEvent, _window, cx| {
+                    this.resize = Some((f32::from(event.position.x), this.settings.chat_width));
+                    cx.notify();
+                }),
+            )
+    }
+
+    fn on_mouse_move(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
+        let Some((start_x, start_width)) = self.resize else {
+            return;
+        };
+        // Chat is on the right, so dragging left widens it.
+        let delta = start_x - f32::from(event.position.x);
+        let width = (start_width + delta).clamp(*CHAT_WIDTH_RANGE.start(), *CHAT_WIDTH_RANGE.end());
+        if width != self.settings.chat_width {
+            self.settings.chat_width = width;
+            cx.notify();
+        }
+    }
+
+    fn on_mouse_up(&mut self, _event: &MouseUpEvent, cx: &mut Context<Self>) {
+        if self.resize.take().is_some() {
+            // Persist only when the drag ends, not on every pixel.
+            if let Err(e) = self.settings.save(&self.settings_path) {
+                eprintln!("settings: could not save: {e}");
+            }
+            cx.notify();
+        }
     }
 }
 
@@ -527,10 +637,16 @@ impl Render for RootView {
         };
 
         div()
+            .relative()
             .flex()
             .flex_row()
             .size_full()
             .bg(rgb(0x131118))
+            .on_mouse_move(cx.listener(|this, event, _window, cx| this.on_mouse_move(event, cx)))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, event, _window, cx| this.on_mouse_up(event, cx)),
+            )
             .child(self.sidebar(cx))
             .child(
                 div()
@@ -557,19 +673,19 @@ impl Render for RootView {
                                     .overflow_hidden()
                                     .child(video),
                             )
+                            .child(self.chat_divider(cx))
                             .child(
                                 div()
                                     .w(px(self.settings.chat_width))
                                     .h_full()
                                     .flex_none()
-                                    .bg(rgb(0x1b1822))
-                                    .border_l_1()
-                                    .border_color(rgb(0x2e2939))
+                                    .bg(rgba(0x1b1822e6))
                                     .py_2()
                                     .child(chat),
                             ),
                     ),
             )
+            .child(self.toast_stack())
     }
 }
 
@@ -598,6 +714,10 @@ fn main() {
         let bounds = Bounds::centered(None, size(px(1700.), px(900.)), cx);
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
+            // Panels are painted with alpha below, so the compositor's blur
+            // shows through them. Where the platform ignores this, the panels
+            // simply composite over the opaque window and nothing looks wrong.
+            window_background: WindowBackgroundAppearance::Blurred,
             ..Default::default()
         };
 

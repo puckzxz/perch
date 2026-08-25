@@ -12,7 +12,7 @@
 //! worth showing, and an unbounded queue of 3.5 MB frames is a memory leak with
 //! extra steps.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -26,6 +26,12 @@ use smallvec::smallvec;
 pub struct VideoStream {
     latest: Arc<Mutex<Option<Arc<RenderImage>>>>,
     stop: Arc<AtomicBool>,
+    /// Written by the UI, read by the render thread between frames.
+    ///
+    /// An atomic rather than a channel because volume is a *level*, not an
+    /// event: if the user drags a slider, only the final value matters and
+    /// intermediate ones can be dropped without anyone noticing.
+    volume: Arc<AtomicU8>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -43,6 +49,7 @@ impl VideoStream {
     ) -> anyhow::Result<(Self, mpsc::Receiver<()>)> {
         let latest: Arc<Mutex<Option<Arc<RenderImage>>>> = Arc::new(Mutex::new(None));
         let stop = Arc::new(AtomicBool::new(false));
+        let volume_level = Arc::new(AtomicU8::new(volume));
         let (mut tx, rx) = mpsc::channel::<()>(1);
 
         let thread = std::thread::Builder::new()
@@ -50,6 +57,7 @@ impl VideoStream {
             .spawn({
                 let latest = latest.clone();
                 let stop = stop.clone();
+                let volume_level = volume_level.clone();
                 move || {
                     let config = Config {
                         audio: true,
@@ -65,8 +73,19 @@ impl VideoStream {
                     };
 
                     let mut buf = vec![0u8; width as usize * height as usize * 4];
+                    let mut applied_volume = volume;
 
                     while !stop.load(Ordering::Relaxed) {
+                        // Apply between frames rather than mid-render, and only
+                        // when it actually changed.
+                        let wanted = volume_level.load(Ordering::Relaxed);
+                        if wanted != applied_volume {
+                            if let Err(e) = player.set_volume(wanted) {
+                                eprintln!("video: could not set volume: {e}");
+                            }
+                            applied_volume = wanted;
+                        }
+
                         if !player.wait_for_frame(Duration::from_millis(200)) {
                             continue;
                         }
@@ -97,10 +116,20 @@ impl VideoStream {
             Self {
                 latest,
                 stop,
+                volume: volume_level,
                 thread: Some(thread),
             },
             rx,
         ))
+    }
+
+    /// Change playback volume (0-100). Takes effect on the next frame.
+    pub fn set_volume(&self, percent: u8) {
+        self.volume.store(percent.min(100), Ordering::Relaxed);
+    }
+
+    pub fn volume(&self) -> u8 {
+        self.volume.load(Ordering::Relaxed)
     }
 
     /// The newest frame, if one has arrived.
