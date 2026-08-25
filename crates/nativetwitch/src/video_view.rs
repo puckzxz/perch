@@ -169,8 +169,8 @@ impl VideoView {
     fn pill(id: &'static str, label: SharedString) -> gpui::Stateful<gpui::Div> {
         div()
             .id(ElementId::from(id))
-            .px_2()
-            .py_1()
+            .px(px(theme::CONTROL_PAD_X))
+            .py(px(theme::CONTROL_PAD_Y))
             .rounded_sm()
             .text_xs()
             .text_color(theme::text())
@@ -200,8 +200,8 @@ impl VideoView {
             menu = menu.child(
                 div()
                     .id(("quality-option", index))
-                    .px_3()
-                    .py_1()
+                    .px(px(theme::PANEL_PAD))
+                    .py(px(theme::CONTROL_PAD_Y))
                     .text_xs()
                     .cursor_pointer()
                     .text_color(if selected {
@@ -239,9 +239,9 @@ impl VideoView {
             .flex()
             .flex_row()
             .items_center()
-            .gap_2()
-            .px_3()
-            .py_2()
+            .gap(px(theme::GAP_TIGHT))
+            .px(px(theme::PANEL_PAD))
+            .py(px(theme::GAP_TIGHT))
             // Sits over live video, so it carries its own contrast rather than
             // relying on whatever happens to be on screen behind it.
             .bg(rgba(0x000000b3))
@@ -261,8 +261,9 @@ impl VideoView {
             )
             .child(
                 div()
-                    .w(px(34.))
+                    .w(px(38.))
                     .text_xs()
+                    .text_right()
                     .text_color(theme::text_muted())
                     .child(SharedString::from(format!("{volume}%"))),
             )
@@ -272,7 +273,7 @@ impl VideoView {
                     .flex()
                     .flex_row()
                     .items_center()
-                    .gap_1()
+                    .gap(px(theme::GAP_TIGHT))
                     .child(
                         // A live dot, so uptime reads as "on air for" rather
                         // than as a playback position.

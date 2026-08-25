@@ -25,8 +25,8 @@ struct EmoteTooltip {
 impl Render for EmoteTooltip {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
-            .px_2()
-            .py_1()
+            .px(px(theme::CONTROL_PAD_X))
+            .py(px(theme::CONTROL_PAD_Y))
             .rounded_sm()
             .bg(theme::surface_raised())
             .text_xs()
@@ -163,8 +163,8 @@ impl ChatView {
         match row {
             Row::Notice(text) => div()
                 .w_full()
-                .px_3()
-                .py_1()
+                .px(px(theme::ROW_PAD_X))
+                .py(px(theme::ROW_PAD_Y))
                 .border_b_1()
                 .border_color(theme::divider())
                 .text_xs()
@@ -190,9 +190,9 @@ impl ChatView {
             .flex_row()
             .flex_wrap()
             .items_center()
-            .gap_x_1()
-            .px_3()
-            .py_1()
+            .gap_x(px(theme::GAP_TIGHT))
+            .px(px(theme::ROW_PAD_X))
+            .py(px(theme::ROW_PAD_Y))
             .border_b_1()
             .border_color(theme::divider())
             .when(striped, |row| row.bg(theme::stripe()));

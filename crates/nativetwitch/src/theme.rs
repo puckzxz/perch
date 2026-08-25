@@ -101,6 +101,33 @@ pub fn danger() -> Hsla {
     rgb(0xf08a80).into()
 }
 
+// ── Spacing ──────────────────────────────────────────────────────────
+//
+// Named by role rather than by size. The point is not the numbers but that
+// two things playing the same role get the same value: the app previously
+// mixed px_2/px_3/px_4 for the same kind of padding in different files, which
+// is what made it read as unconsidered rather than any single gap being wrong.
+
+/// Outer margin of a page.
+pub const PAGE_PAD: f32 = 20.0;
+/// Inside a card, panel or sheet.
+pub const PANEL_PAD: f32 = 12.0;
+/// Inside a pill or button.
+pub const CONTROL_PAD_X: f32 = 10.0;
+pub const CONTROL_PAD_Y: f32 = 5.0;
+/// Between a label and the thing it labels.
+pub const GAP_TIGHT: f32 = 6.0;
+/// Between peers in a row or column.
+pub const GAP: f32 = 10.0;
+/// Between distinct sections.
+pub const GAP_SECTION: f32 = 18.0;
+/// Seam between panes in the watch grid. Deliberately thin: it separates
+/// pictures, and anything wider reads as a border around each one.
+pub const PANE_GAP: f32 = 3.0;
+/// Vertical rhythm inside a chat row.
+pub const ROW_PAD_X: f32 = 12.0;
+pub const ROW_PAD_Y: f32 = 5.0;
+
 // ── Metrics ──────────────────────────────────────────────────────────
 
 /// Chat pane default, and the bounds a drag is clamped to.

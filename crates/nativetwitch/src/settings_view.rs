@@ -129,7 +129,7 @@ impl SettingsPanel {
         div()
             .flex()
             .flex_col()
-            .gap_1()
+            .gap(px(theme::GAP_TIGHT))
             .child(
                 div()
                     .text_xs()
@@ -158,8 +158,8 @@ impl Render for SettingsPanel {
                     .w(px(480.))
                     .flex()
                     .flex_col()
-                    .gap_4()
-                    .p_5()
+                    .gap(px(theme::GAP_SECTION))
+                    .p(px(theme::PAGE_PAD))
                     .rounded_lg()
                     .bg(theme::surface_raised())
                     .border_1()
@@ -198,7 +198,7 @@ impl Render for SettingsPanel {
                             .flex()
                             .flex_row()
                             .justify_end()
-                            .gap_2()
+                            .gap(px(theme::GAP_TIGHT))
                             .child(Button::new("cancel").ghost().label("Close").on_click(
                                 cx.listener(|_, _, _, cx| cx.emit(SettingsEvent::Dismissed)),
                             ))

@@ -6,9 +6,7 @@
 //! [`crate::layout`], which derives a grid from the window rather than looking
 //! one up per stream count.
 
-use gpui::{
-    div, prelude::*, px, Context, Entity, IntoElement, SharedString, Task, Window,
-};
+use gpui::{div, prelude::*, px, Context, Entity, IntoElement, SharedString, Task, Window};
 use streamlink::StreamSupervisor;
 
 use crate::chat::ChatView;
@@ -102,6 +100,7 @@ fn pane<V: 'static>(
 
     let chat_pane = div()
         .flex_none()
+        .py(px(theme::GAP_TIGHT))
         .bg(theme::surface())
         .map(|pane| {
             if layout.portrait {
@@ -132,16 +131,15 @@ fn pane<V: 'static>(
                 .right_0()
                 .flex()
                 .flex_row()
-                .items_center()
-                .gap_2()
-                .px_2()
-                .py_1()
+                .items_start()
+                .gap(px(theme::GAP_TIGHT))
+                .p(px(theme::GAP_TIGHT))
                 .opacity(0.0)
                 .group_hover("pane", |style| style.opacity(1.0))
                 .child(
                     div()
-                        .px_2()
-                        .py_0p5()
+                        .px(px(theme::CONTROL_PAD_X))
+                        .py(px(theme::CONTROL_PAD_Y))
                         .rounded_sm()
                         .bg(theme::surface_raised())
                         .text_xs()
@@ -153,8 +151,8 @@ fn pane<V: 'static>(
                     header.child(
                         div()
                             .id(("close-pane", index))
-                            .px_2()
-                            .py_0p5()
+                            .px(px(theme::CONTROL_PAD_X))
+                            .py(px(theme::CONTROL_PAD_Y))
                             .rounded_sm()
                             .bg(theme::surface_raised())
                             .text_xs()
@@ -181,8 +179,6 @@ fn pane<V: 'static>(
                 cell.flex_row()
             }
         })
-        .border_1()
-        .border_color(theme::bg())
         .child(video_pane)
         .child(chat_pane)
 }
@@ -204,10 +200,20 @@ pub fn page<V: 'static>(
         closable: slots.len() > 1,
     };
 
-    let mut grid = div().size_full().flex().flex_col().bg(theme::bg());
+    let mut grid = div()
+        .size_full()
+        .flex()
+        .flex_col()
+        .gap(px(theme::PANE_GAP))
+        .bg(theme::bg());
 
     for row in 0..rows {
-        let mut line = div().flex_1().min_h_0().flex().flex_row();
+        let mut line = div()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_row()
+            .gap(px(theme::PANE_GAP));
         for col in 0..cols {
             let index = row * cols + col;
             let Some(slot) = slots.get(index) else {

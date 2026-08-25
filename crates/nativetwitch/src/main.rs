@@ -575,8 +575,8 @@ impl RootView {
     ) -> impl IntoElement {
         div()
             .id(ElementId::from(id))
-            .px_3()
-            .py_1()
+            .px(px(theme::CONTROL_PAD_X))
+            .py(px(theme::CONTROL_PAD_Y))
             .rounded_sm()
             .bg(theme::surface_raised())
             .text_xs()
@@ -594,14 +594,14 @@ impl RootView {
             .right_4()
             .flex()
             .flex_col()
-            .gap_2()
+            .gap(px(theme::GAP_TIGHT))
             .items_end();
 
         for (_, text) in &self.toasts {
             stack = stack.child(
                 div()
-                    .px_4()
-                    .py_3()
+                    .px(px(theme::PANEL_PAD))
+                    .py(px(theme::GAP))
                     .rounded_md()
                     .bg(theme::surface_raised())
                     .border_l_2()
@@ -628,7 +628,7 @@ impl RootView {
             .flex()
             .flex_row()
             .items_end()
-            .gap_2();
+            .gap(px(theme::GAP_TIGHT));
 
         for slot in &self.slots {
             let Some(video) = slot.video() else {
@@ -655,8 +655,8 @@ impl RootView {
                     )
                     .child(
                         div()
-                            .px_2()
-                            .py_1()
+                            .px(px(theme::ROW_PAD_X))
+                            .py(px(theme::CONTROL_PAD_Y))
                             .bg(theme::surface())
                             .text_xs()
                             .text_color(theme::text_muted())
@@ -686,9 +686,9 @@ impl RootView {
             .flex()
             .flex_row()
             .items_center()
-            .gap_3()
-            .px_5()
-            .py_3()
+            .gap(px(theme::GAP))
+            .px(px(theme::PAGE_PAD))
+            .py(px(theme::PANEL_PAD))
             .border_b_1()
             .border_color(theme::border())
             .child(
@@ -757,14 +757,18 @@ impl RootView {
             ))
             .child(
                 // Page-level navigation, over the grid rather than inside any
-                // one pane.
+                // one pane. Centred at the top because every grid shape has
+                // video there; the bottom-left corner belongs to a pane's chat
+                // as soon as there is more than one pane.
                 div()
                     .absolute()
-                    .bottom_2()
-                    .left_2()
+                    .top(px(theme::GAP_TIGHT))
+                    .left_0()
+                    .right_0()
                     .flex()
                     .flex_row()
-                    .gap_1()
+                    .justify_center()
+                    .gap(px(theme::GAP_TIGHT))
                     .child(self.pill("back", "follows".into(), cx, |this, _window, cx| {
                         this.go_browse(cx)
                     }))
