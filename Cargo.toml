@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = ["crates/mpv-frames"]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+
+[workspace.dependencies]
+libloading = "0.8"
+thiserror = "2"

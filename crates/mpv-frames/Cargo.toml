@@ -1,0 +1,17 @@
+[package]
+name = "mpv-frames"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Pull decoded video frames out of libmpv as CPU-side BGRA buffers."
+
+[dependencies]
+libloading.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+# PNG output for the dump_frames example only. Deliberately NOT a normal
+# dependency: this crate's public API is raw BGRA bytes, so the UI layer can
+# convert using whatever `image` version it already links.
+image = { version = "0.25", default-features = false, features = ["png"] }
