@@ -39,6 +39,7 @@ impl VideoStream {
         url: String,
         width: u32,
         height: u32,
+        volume: u8,
     ) -> anyhow::Result<(Self, mpsc::Receiver<()>)> {
         let latest: Arc<Mutex<Option<Arc<RenderImage>>>> = Arc::new(Mutex::new(None));
         let stop = Arc::new(AtomicBool::new(false));
@@ -52,6 +53,7 @@ impl VideoStream {
                 move || {
                     let config = Config {
                         audio: true,
+                        volume,
                         ..Config::default()
                     };
                     let player = match Player::open_with(&url, config) {

@@ -66,6 +66,7 @@ type FnCommand = unsafe extern "C" fn(MpvHandle, *mut *const c_char) -> c_int;
 type FnErrorString = unsafe extern "C" fn(c_int) -> *const c_char;
 type FnWaitEvent = unsafe extern "C" fn(MpvHandle, c_double) -> *mut MpvEvent;
 type FnGetPropertyString = unsafe extern "C" fn(MpvHandle, *const c_char) -> *mut c_char;
+type FnSetPropertyString = unsafe extern "C" fn(MpvHandle, *const c_char, *const c_char) -> c_int;
 type FnFree = unsafe extern "C" fn(*mut c_void);
 
 type FnRenderCreate = unsafe extern "C" fn(*mut MpvRenderCtx, MpvHandle, *mut MpvRenderParam) -> c_int;
@@ -90,6 +91,7 @@ pub struct Lib {
     pub error_string: FnErrorString,
     pub wait_event: FnWaitEvent,
     pub get_property_string: FnGetPropertyString,
+    pub set_property_string: FnSetPropertyString,
     pub free: FnFree,
 
     pub render_create: FnRenderCreate,
@@ -131,6 +133,7 @@ impl Lib {
                 error_string: sym(&library, "mpv_error_string")?,
                 wait_event: sym(&library, "mpv_wait_event")?,
                 get_property_string: sym(&library, "mpv_get_property_string")?,
+                set_property_string: sym(&library, "mpv_set_property_string")?,
                 free: sym(&library, "mpv_free")?,
 
                 render_create: sym(&library, "mpv_render_context_create")?,

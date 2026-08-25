@@ -1,0 +1,18 @@
+[package]
+name = "twitch-chat"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Read-only Twitch chat over anonymous IRC."
+
+[dependencies]
+futures = "0.3"
+# Pin our own provider choice. The app also links rustls via gpui's tree, and
+# Cargo unifies features across the graph - with both ring and aws_lc_rs on,
+# rustls refuses to pick one and panics at ClientConfig::builder().
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+webpki-roots = "0.26"
+
+[dev-dependencies]
+futures-timer = "3"

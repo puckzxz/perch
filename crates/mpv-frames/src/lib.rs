@@ -42,15 +42,29 @@ pub enum Error {
 }
 
 /// Startup options applied before `mpv_initialize`.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Config {
     /// Play the audio track. Off for frame-dumping, on for a real player.
     pub audio: bool,
     /// Allow hardware decoding. The software render path needs frames in system
     /// memory, so enabling this makes mpv copy them back - usually a net loss.
     pub hwdec: bool,
+    /// Playback volume, 0-100. mpv's own default is 100, which is startlingly
+    /// loud for a stream that opens on its own.
+    pub volume: u8,
     /// Extra `mpv_set_option_string` pairs, applied last so they win.
     pub extra: Vec<(String, String)>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            audio: false,
+            hwdec: false,
+            volume: 100,
+            extra: Vec::new(),
+        }
+    }
 }
 
 /// Something that happened inside mpv since the last poll.
@@ -112,7 +126,9 @@ impl Player {
         // own window, will present the video.
         player.set_option("vo", "libmpv")?;
         player.set_option("hwdec", if config.hwdec { "auto-copy" } else { "no" })?;
-        if !config.audio {
+        if config.audio {
+            player.set_option("volume", &config.volume.min(100).to_string())?;
+        } else {
             player.set_option("ao", "null")?;
         }
         for (key, value) in &config.extra {
@@ -274,6 +290,19 @@ impl Player {
             events.push(event);
         }
         events
+    }
+
+    /// Change playback volume (0-100) while playing.
+    pub fn set_volume(&self, percent: u8) -> Result<(), Error> {
+        self.set_property("volume", &percent.min(100).to_string())
+    }
+
+    fn set_property(&self, name: &str, value: &str) -> Result<(), Error> {
+        let c_name = CString::new(name).map_err(|_| Error::InteriorNul)?;
+        let c_value = CString::new(value).map_err(|_| Error::InteriorNul)?;
+        let rc =
+            unsafe { (self.lib.set_property_string)(self.mpv, c_name.as_ptr(), c_value.as_ptr()) };
+        self.check(rc, "mpv_set_property_string")
     }
 
     /// Read an mpv property as a string, e.g. `"width"`, `"video-codec"`.

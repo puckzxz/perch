@@ -6,6 +6,7 @@
 //!
 //!     cargo run -p nativetwitch -- <url-or-path>
 
+mod chat;
 mod video;
 
 use std::sync::Arc;
@@ -15,6 +16,7 @@ use gpui::{
     Window, WindowBounds, WindowOptions,
 };
 
+use chat::ChatView;
 use video::VideoStream;
 
 /// Frames are rendered at this size regardless of window size, then scaled to
@@ -23,6 +25,10 @@ use video::VideoStream;
 /// and upscaling costs several times more again.
 const RENDER_WIDTH: u32 = 1280;
 const RENDER_HEIGHT: u32 = 720;
+
+/// mpv opens at 100% otherwise, which is jarring for a window that starts
+/// playing the moment it appears.
+const DEFAULT_VOLUME: u8 = 10;
 
 struct VideoView {
     stream: VideoStream,
@@ -36,8 +42,14 @@ struct VideoView {
 }
 
 impl VideoView {
-    fn new(url: String, window: &mut Window, cx: &mut Context<Self>) -> anyhow::Result<Self> {
-        let (stream, mut frames) = VideoStream::start(url, RENDER_WIDTH, RENDER_HEIGHT)?;
+    fn new(
+        url: String,
+        volume: u8,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<Self> {
+        let (stream, mut frames) =
+            VideoStream::start(url, RENDER_WIDTH, RENDER_HEIGHT, volume)?;
 
         // The render thread wakes us; we only ever ask GPUI to repaint.
         let pump = cx.spawn_in(window, async move |this, cx| {
@@ -90,6 +102,7 @@ impl Render for VideoView {
 
 struct RootView {
     video: gpui::Entity<VideoView>,
+    chat: Option<gpui::Entity<ChatView>>,
 }
 
 impl Render for RootView {
@@ -114,28 +127,50 @@ impl Render for RootView {
             )
             .child(
                 div()
-                    .w(px(320.))
+                    .w(px(340.))
                     .h_full()
+                    .flex_none()
                     .bg(rgb(0x1b1822))
                     .border_l_1()
                     .border_color(rgb(0x2e2939))
-                    .p_3()
-                    .text_color(rgb(0x948ca5))
-                    .child("chat goes here"),
+                    .py_2()
+                    .map(|pane| match self.chat.clone() {
+                        Some(chat) => pane.child(chat),
+                        None => pane.px_3().text_color(rgb(0x6b6478)).child(
+                            "no channel given - pass one as the second argument for chat",
+                        ),
+                    }),
             )
     }
 }
 
 fn main() {
-    let Some(url) = std::env::args().nth(1) else {
-        eprintln!("usage: nativetwitch <url-or-path>");
+    let mut args = std::env::args().skip(1);
+    let Some(url) = args.next() else {
+        eprintln!("usage: nativetwitch <url-or-path> [twitch-channel] [--volume 0-100]");
         eprintln!();
         eprintln!("For a Twitch channel, run streamlink as a byte source first:");
         eprintln!("  streamlink --player-external-http --player-external-http-port 18080 \\");
         eprintln!("      --player-external-http-interface 127.0.0.1 twitch.tv/<channel> best");
-        eprintln!("then pass http://127.0.0.1:18080/");
+        eprintln!("then pass http://127.0.0.1:18080/ <channel>");
         std::process::exit(2);
     };
+
+    // Positional channel, then an optional --volume N.
+    let mut channel = None;
+    let mut volume = DEFAULT_VOLUME;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--volume" => {
+                volume = args
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(DEFAULT_VOLUME)
+                    .min(100);
+            }
+            other => channel = Some(other.to_string()),
+        }
+    }
 
     Application::new().run(move |cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(1600.), px(900.)), cx);
@@ -146,9 +181,12 @@ fn main() {
 
         cx.open_window(options, |window, cx| {
             let video = cx.new(|cx| {
-                VideoView::new(url.clone(), window, cx).expect("failed to start video")
+                VideoView::new(url.clone(), volume, window, cx).expect("failed to start video")
             });
-            cx.new(|_| RootView { video })
+            let chat = channel
+                .clone()
+                .map(|name| cx.new(|cx| ChatView::new(name, window, cx)));
+            cx.new(|_| RootView { video, chat })
         })
         .expect("failed to open window");
 

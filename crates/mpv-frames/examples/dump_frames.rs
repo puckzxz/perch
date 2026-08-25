@@ -160,6 +160,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         audio: args.audio,
         hwdec: args.hwdec,
         extra: args.opts.clone(),
+        ..Config::default()
     };
 
     let started = Instant::now();
