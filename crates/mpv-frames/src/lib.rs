@@ -292,6 +292,22 @@ impl Player {
         events
     }
 
+    /// Pause or resume.
+    ///
+    /// On a live stream, pausing means falling behind: mpv stops consuming
+    /// while the source keeps producing. Callers should seek back to the live
+    /// edge on resume rather than leaving the viewer silently in the past.
+    pub fn set_paused(&self, paused: bool) -> Result<(), Error> {
+        self.set_property("pause", if paused { "yes" } else { "no" })
+    }
+
+    /// Jump to the newest available point in a live stream.
+    pub fn seek_to_live(&self) -> Result<(), Error> {
+        // Equivalent to mpv's "seek 100 absolute-percent"; on a live stream the
+        // end of the cache is the live edge.
+        self.command(&["seek", "100", "absolute-percent"])
+    }
+
     /// Change playback volume (0-100) while playing.
     pub fn set_volume(&self, percent: u8) -> Result<(), Error> {
         self.set_property("volume", &percent.min(100).to_string())

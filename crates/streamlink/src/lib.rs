@@ -28,7 +28,13 @@ pub enum StreamEvent {
     /// Asking Twitch which qualities exist.
     Resolving,
     /// Serving on loopback and ready to play.
-    Ready { url: String, quality: String },
+    Ready {
+        url: String,
+        quality: String,
+        /// Everything this channel offers right now, so the UI can present a
+        /// switcher without asking Twitch again.
+        available: Vec<String>,
+    },
     /// The channel is not broadcasting.
     Offline,
     Failed { reason: String },
@@ -234,6 +240,17 @@ fn run(
         return;
     }
 
+    // Only real resolutions; "best"/"worst"/"audio_only" are aliases and
+    // would just be duplicates in a menu.
+    let playable: Vec<String> = {
+        let mut list: Vec<(u32, String)> = available
+            .iter()
+            .filter_map(|name| quality::parse_quality(name).map(|q| (q.height, name.clone())))
+            .collect();
+        list.sort_by(|a, b| b.0.cmp(&a.0));
+        list.into_iter().map(|(_, name)| name).collect()
+    };
+
     let resolved = match &options.quality {
         Some(preference) => quality::select_named(&available, preference, pane_height),
         None => quality::select(&available, pane_height),
@@ -301,6 +318,7 @@ fn run(
                 let _ = tx.unbounded_send(StreamEvent::Ready {
                     url: url.clone(),
                     quality: chosen.name.clone(),
+                    available: playable.clone(),
                 });
             }
         }

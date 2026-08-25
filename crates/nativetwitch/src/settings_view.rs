@@ -4,9 +4,7 @@
 //! two Twitch tokens do different jobs and are easy to confuse, so the panel
 //! says which is which rather than assuming anyone remembers.
 
-use gpui::{
-    div, prelude::*, px, rgb, rgba, Context, Entity, EventEmitter, SharedString, Window,
-};
+use gpui::{div, prelude::*, px, Context, Entity, EventEmitter, SharedString, Window};
 use gpui_component::{
     button::{Button, ButtonVariants},
     input::{Input, InputState},
@@ -14,6 +12,8 @@ use gpui_component::{
     IndexPath,
 };
 use settings::{QualityPreference, Settings};
+
+use crate::theme;
 
 /// Offered in the quality dropdown. "Auto" first because it is usually the
 /// right answer: it picks a stream that lands on a clean scale ratio, which
@@ -59,12 +59,14 @@ impl SettingsPanel {
         let client_id = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("Client ID from dev.twitch.tv")
+                .masked(true)
                 .default_value(settings.credentials.client_id.clone().unwrap_or_default())
         });
 
         let auth_token = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("auth-token cookie (optional)")
+                .masked(true)
                 .default_value(settings.credentials.auth_token.clone().unwrap_or_default())
         });
 
@@ -132,11 +134,11 @@ impl SettingsPanel {
                 div()
                     .text_xs()
                     .font_weight(gpui::FontWeight::BOLD)
-                    .text_color(rgb(0xf2eff7))
+                    .text_color(theme::text())
                     .child(label),
             )
             .child(control)
-            .child(div().text_xs().text_color(rgb(0x6b6478)).child(help))
+            .child(div().text_xs().text_color(theme::text_dim()).child(help))
     }
 }
 
@@ -150,7 +152,7 @@ impl Render for SettingsPanel {
             .justify_center()
             // A scrim, so the panel reads as modal rather than as a floating
             // rectangle over live video.
-            .bg(rgba(0x0a0810cc))
+            .bg(theme::scrim())
             .child(
                 div()
                     .w(px(480.))
@@ -159,21 +161,21 @@ impl Render for SettingsPanel {
                     .gap_4()
                     .p_5()
                     .rounded_lg()
-                    .bg(rgb(0x1b1822))
+                    .bg(theme::surface_raised())
                     .border_1()
-                    .border_color(rgb(0x2e2939))
+                    .border_color(theme::border())
                     .shadow_lg()
                     .child(
                         div()
                             .text_lg()
                             .font_weight(gpui::FontWeight::BOLD)
-                            .text_color(rgb(0xf2eff7))
+                            .text_color(theme::text())
                             .child("Settings"),
                     )
                     .child(Self::field(
                         "Twitch Client ID",
                         "From an application you register at dev.twitch.tv. Set Client Type to Public; no secret is needed. Required to list your follows.",
-                        Input::new(&self.client_id).cleanable(true),
+                        Input::new(&self.client_id).mask_toggle().cleanable(true),
                     ))
                     .child(Self::field(
                         "auth-token cookie",
@@ -188,7 +190,7 @@ impl Render for SettingsPanel {
                     .child(
                         div()
                             .text_xs()
-                            .text_color(rgb(0x948ca5))
+                            .text_color(theme::text_muted())
                             .child(self.sign_in_status.clone()),
                     )
                     .child(

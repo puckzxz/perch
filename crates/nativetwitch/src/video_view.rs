@@ -10,20 +10,21 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{
-    canvas, div, img, prelude::*, px, rgb, rgba, Animation, AnimationExt, Context, ElementId,
-    EventEmitter, RenderImage, SharedString, Task, Window,
+    canvas, div, img, prelude::*, px, rgba, Animation, AnimationExt, Context, ElementId, Entity,
+    EventEmitter, Hsla, RenderImage, SharedString, Task, Window,
 };
+use gpui_component::slider::{Slider, SliderEvent, SliderState};
 
+use crate::browse;
+use crate::theme;
 use crate::video::VideoStream;
-
-/// Volume is set by clicking one of these segments rather than dragging a
-/// slider: it needs no element-bounds arithmetic, and it reads as a deliberate
-/// design rather than a thin approximation of a native control.
-const VOLUME_STEPS: u8 = 10;
 
 pub enum VideoEvent {
     /// The user changed volume; worth persisting to settings.
     VolumeChanged(u8),
+    /// The user picked a different quality. Switching means restarting
+    /// streamlink, so the root handles it rather than the player.
+    QualityRequested(String),
 }
 
 pub struct VideoView {
@@ -36,7 +37,14 @@ pub struct VideoView {
     previous: Option<Arc<RenderImage>>,
     /// Volume before muting, so unmute restores rather than guessing.
     volume_before_mute: u8,
+    volume_slider: Entity<SliderState>,
     quality: SharedString,
+    /// Other qualities this channel offers, highest first.
+    available: Vec<String>,
+    quality_menu_open: bool,
+    /// When the broadcast started, for the uptime readout. Absent when the
+    /// channel was opened by name rather than picked from the follows list.
+    started_at: Option<String>,
     _pump: Task<()>,
 }
 
@@ -49,6 +57,8 @@ impl VideoView {
         stream: VideoStream,
         mut frames: futures::channel::mpsc::Receiver<()>,
         quality: SharedString,
+        available: Vec<String>,
+        started_at: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -61,18 +71,37 @@ impl VideoView {
             }
         });
 
-        let volume_before_mute = stream.volume().max(1);
+        let volume = stream.volume();
+        let volume_slider = cx.new(|_| {
+            SliderState::new()
+                .min(0.0)
+                .max(100.0)
+                .step(1.0)
+                .default_value(volume as f32)
+        });
+        cx.subscribe(&volume_slider, |this: &mut Self, _, event, cx| {
+            let SliderEvent::Change(value) = event;
+            this.apply_volume(value.start().round() as u8, cx);
+        })
+        .detach();
+
         Self {
             stream,
             current: None,
             previous: None,
-            volume_before_mute,
+            volume_before_mute: volume.max(1),
+            volume_slider,
             quality,
+            available,
+            quality_menu_open: false,
+            started_at,
             _pump: pump,
         }
     }
 
-    fn set_volume(&mut self, volume: u8, cx: &mut Context<Self>) {
+    /// Set volume without writing back to the slider, which is already where
+    /// the user put it. Writing back would fight an in-progress drag.
+    fn apply_volume(&mut self, volume: u8, cx: &mut Context<Self>) {
         if volume > 0 {
             self.volume_before_mute = volume;
         }
@@ -81,41 +110,91 @@ impl VideoView {
         cx.notify();
     }
 
-    fn toggle_mute(&mut self, cx: &mut Context<Self>) {
+    fn set_volume(&mut self, volume: u8, window: &mut Window, cx: &mut Context<Self>) {
+        self.volume_slider.update(cx, |state, cx| {
+            state.set_value(volume as f32, window, cx);
+        });
+        self.apply_volume(volume, cx);
+    }
+
+    fn toggle_mute(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let next = if self.stream.volume() == 0 {
             self.volume_before_mute
         } else {
             0
         };
-        self.set_volume(next, cx);
+        self.set_volume(next, window, cx);
+    }
+
+    fn toggle_pause(&mut self, cx: &mut Context<Self>) {
+        self.stream.set_paused(!self.stream.is_paused());
+        cx.notify();
+    }
+
+    fn pill(id: &'static str, label: SharedString) -> gpui::Stateful<gpui::Div> {
+        div()
+            .id(ElementId::from(id))
+            .px_2()
+            .py_1()
+            .rounded_sm()
+            .text_xs()
+            .text_color(theme::text())
+            .cursor_pointer()
+            .hover(|style| style.bg(theme::hover()))
+            .child(label)
+    }
+
+    fn quality_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut menu = div()
+            .absolute()
+            .bottom_8()
+            .right_0()
+            .flex()
+            .flex_col()
+            .min_w(px(120.))
+            .rounded_md()
+            .overflow_hidden()
+            .bg(theme::surface_raised())
+            .border_1()
+            .border_color(theme::border());
+
+        let current = self.quality.to_string();
+        for (index, name) in self.available.iter().enumerate() {
+            let selected = *name == current;
+            let chosen = name.clone();
+            menu = menu.child(
+                div()
+                    .id(("quality-option", index))
+                    .px_3()
+                    .py_1()
+                    .text_xs()
+                    .cursor_pointer()
+                    .text_color(if selected {
+                        theme::accent()
+                    } else {
+                        theme::text()
+                    })
+                    .hover(|style| style.bg(theme::hover()))
+                    .child(SharedString::from(name.clone()))
+                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                        this.quality_menu_open = false;
+                        cx.emit(VideoEvent::QualityRequested(chosen.clone()));
+                        cx.notify();
+                    })),
+            );
+        }
+        menu
     }
 
     fn controls(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let volume = self.stream.volume();
-        let filled = (volume as f32 / 100.0 * VOLUME_STEPS as f32).round() as u8;
+        let paused = self.stream.is_paused();
 
-        let mut bar = div().flex().flex_row().items_center().gap(px(2.));
-        for step in 1..=VOLUME_STEPS {
-            let target = step * (100 / VOLUME_STEPS);
-            let lit = step <= filled;
-            bar = bar.child(
-                div()
-                    .id(("volume-step", step as usize))
-                    .w(px(6.))
-                    .h(px(14.))
-                    .rounded_xs()
-                    .bg(if lit {
-                        rgb(0xb392ff)
-                    } else {
-                        rgb(0x4a4358)
-                    })
-                    .cursor_pointer()
-                    .hover(|style| style.bg(rgb(0xcdb6ff)))
-                    .on_click(cx.listener(move |this, _event, _window, cx| {
-                        this.set_volume(target, cx);
-                    })),
-            );
-        }
+        let uptime = self
+            .started_at
+            .as_deref()
+            .and_then(browse::uptime)
+            .map(SharedString::from);
 
         div()
             .absolute()
@@ -125,49 +204,77 @@ impl VideoView {
             .flex()
             .flex_row()
             .items_center()
-            .gap_3()
-            .px_4()
-            .py_3()
-            // Sits over live video, so it needs its own contrast rather than
-            // relying on whatever happens to be on screen.
-            .bg(rgba(0x0e0e12cc))
+            .gap_2()
+            .px_3()
+            .py_2()
+            // Sits over live video, so it carries its own contrast rather than
+            // relying on whatever happens to be on screen behind it.
+            .bg(rgba(0x000000b3))
+            .child(
+                Self::pill("pause", if paused { "play" } else { "pause" }.into())
+                    .on_click(cx.listener(|this, _event, _window, cx| this.toggle_pause(cx))),
+            )
+            .child(
+                Self::pill("mute", if volume == 0 { "unmute" } else { "mute" }.into()).on_click(
+                    cx.listener(|this, _event, window, cx| this.toggle_mute(window, cx)),
+                ),
+            )
             .child(
                 div()
-                    .id("mute")
-                    .w(px(20.))
-                    .text_color(rgb(0xf2eff7))
-                    .cursor_pointer()
-                    .child(if volume == 0 { "🔇" } else { "🔊" })
-                    .on_click(cx.listener(|this, _event, _window, cx| this.toggle_mute(cx))),
+                    .w(px(120.))
+                    .child(Slider::new(&self.volume_slider).horizontal()),
             )
-            .child(bar)
             .child(
                 div()
                     .w(px(34.))
                     .text_xs()
-                    .text_color(rgb(0x948ca5))
+                    .text_color(theme::text_muted())
                     .child(SharedString::from(format!("{volume}%"))),
             )
             .child(div().flex_1())
+            .children(uptime.map(|text| {
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        // A live dot, so uptime reads as "on air for" rather
+                        // than as a playback position.
+                        div().w(px(6.)).h(px(6.)).rounded_full().bg(theme::live()),
+                    )
+                    .child(div().text_xs().text_color(theme::text_muted()).child(text))
+            }))
             .child(
                 div()
-                    .text_xs()
-                    .text_color(rgb(0x948ca5))
-                    .child(self.quality.clone()),
+                    .relative()
+                    .child(
+                        Self::pill("quality", self.quality.clone()).on_click(cx.listener(
+                            |this, _event, _window, cx| {
+                                this.quality_menu_open = !this.quality_menu_open;
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .when(self.quality_menu_open, |anchor| {
+                        anchor.child(self.quality_menu(cx))
+                    }),
             )
     }
 }
 
 impl Render for VideoView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let backdrop: Hsla = theme::player_bg();
+
         let Some(frame) = self.stream.latest_frame() else {
             return div()
                 .size_full()
-                .bg(rgb(0x0e0e12))
+                .bg(backdrop)
                 .flex()
                 .items_center()
                 .justify_center()
-                .text_color(rgb(0x6b6478))
+                .text_color(theme::text_dim())
                 .child("buffering…")
                 .into_any_element();
         };
@@ -184,11 +291,9 @@ impl Render for VideoView {
         }
         self.current = Some(frame.clone());
 
-        // Fade the first frames in rather than cutting from black, which makes
-        // a channel switch feel deliberate instead of like a glitch.
         // Measure the pane every frame and let the render thread follow it.
         // Without this the buffer stays at its initial size and a 1440p stream
-        // is downscaled to 720p before it ever reaches the window.
+        // is downscaled before it ever reaches the window.
         let stream_size = self.stream.size_handle();
         let probe = canvas(
             move |bounds, window, _cx| {
@@ -205,8 +310,11 @@ impl Render for VideoView {
         div()
             .relative()
             .size_full()
+            .bg(backdrop)
             .group("video")
             .child(probe)
+            // Fade the first frames in rather than cutting from black, which
+            // makes a channel switch read as deliberate instead of a glitch.
             .child(
                 img(frame).size_full().with_animation(
                     ElementId::from("video-fade-in"),
@@ -216,11 +324,13 @@ impl Render for VideoView {
             )
             .child(
                 // Hidden until the pointer is over the video, so nothing covers
-                // the picture while you are just watching.
+                // the picture while you are just watching. Kept mounted while
+                // the quality menu is open, or picking an option would dismiss
+                // the menu the moment the pointer left the video.
                 div()
                     .absolute()
                     .inset_0()
-                    .opacity(0.0)
+                    .opacity(if self.quality_menu_open { 1.0 } else { 0.0 })
                     .group_hover("video", |style| style.opacity(1.0))
                     .child(self.controls(cx)),
             )

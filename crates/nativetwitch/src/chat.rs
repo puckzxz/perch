@@ -28,13 +28,15 @@ impl Render for EmoteTooltip {
             .px_2()
             .py_1()
             .rounded_sm()
-            .bg(rgb(0x241d38))
+            .bg(theme::surface_raised())
             .text_xs()
-            .text_color(rgb(0xf2eff7))
+            .text_color(theme::text())
             .child(self.name.clone())
     }
 }
 use twitch_chat::{ChatClient, ChatEvent, ChatMessage};
+
+use crate::theme;
 
 /// Messages kept in memory. Old ones drop off the top: chat runs forever, and
 /// nobody scrolls back a thousand lines in a live stream.
@@ -151,28 +153,34 @@ impl ChatView {
     }
 
     fn render_row(&self, index: usize) -> AnyElement {
+        // Alternating rows plus a hairline, for the same reason ledgers are
+        // ruled: dense repeated lines are hard to track across without one.
+        let striped = index % 2 == 1;
         let Some(row) = self.rows.get(index) else {
             return div().into_any_element();
         };
 
         match row {
             Row::Notice(text) => div()
+                .w_full()
                 .px_3()
                 .py_1()
+                .border_b_1()
+                .border_color(theme::divider())
                 .text_xs()
-                .text_color(rgb(0x6b6478))
+                .text_color(theme::text_dim())
                 .child(text.clone())
                 .into_any_element(),
 
-            Row::Message(message) => self.render_message(message),
+            Row::Message(message) => self.render_message(message, striped),
         }
     }
 
-    fn render_message(&self, message: &ChatMessage) -> AnyElement {
-        let text_color = if message.is_action {
-            rgb(message.color)
+    fn render_message(&self, message: &ChatMessage, striped: bool) -> AnyElement {
+        let text_color: gpui::Hsla = if message.is_action {
+            rgb(message.color).into()
         } else {
-            rgb(0xd8d3e0)
+            theme::text()
         };
 
         // Wrapping happens between children, so every word is its own child.
@@ -184,7 +192,10 @@ impl ChatView {
             .items_center()
             .gap_x_1()
             .px_3()
-            .py_0p5();
+            .py_1()
+            .border_b_1()
+            .border_color(theme::divider())
+            .when(striped, |row| row.bg(theme::stripe()));
 
         // An action puts the name inside the sentence, so it is not repeated.
         if !message.is_action {
@@ -229,7 +240,7 @@ impl ChatView {
                         // Until the image lands, show the emote's name so the
                         // message still reads correctly.
                         None => div()
-                            .text_color(rgb(0x8a8298))
+                            .text_color(theme::text_dim())
                             .child(SharedString::from(emote.name))
                             .into_any_element(),
                         // The id is what makes animated emotes animate: GPUI

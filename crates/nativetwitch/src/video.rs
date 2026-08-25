@@ -65,6 +65,8 @@ pub struct VideoStream {
     /// One atomic rather than two so width and height can never be read from
     /// different frames, which would allocate a buffer that matches neither.
     target: Arc<AtomicU64>,
+    /// Paused state, applied between frames like volume.
+    paused: Arc<AtomicBool>,
     /// Written by the UI, read by the render thread between frames.
     ///
     /// An atomic rather than a channel because volume is a *level*, not an
@@ -90,6 +92,7 @@ impl VideoStream {
         let stop = Arc::new(AtomicBool::new(false));
         let volume_level = Arc::new(AtomicU8::new(volume));
         let target = Arc::new(AtomicU64::new(pack_size(width, height)));
+        let paused = Arc::new(AtomicBool::new(false));
         let (mut tx, rx) = mpsc::channel::<()>(1);
 
         let thread = std::thread::Builder::new()
@@ -99,6 +102,7 @@ impl VideoStream {
                 let stop = stop.clone();
                 let volume_level = volume_level.clone();
                 let target = target.clone();
+                let paused = paused.clone();
                 move || {
                     let config = Config {
                         audio: true,
@@ -123,6 +127,7 @@ impl VideoStream {
                     let (mut current_w, mut current_h) = (width, height);
                     let mut buf = vec![0u8; current_w as usize * current_h as usize * 4];
                     let mut applied_volume = volume;
+                    let mut applied_pause = false;
 
                     while !stop.load(Ordering::Relaxed) {
                         // Apply between frames rather than mid-render, and only
@@ -152,6 +157,20 @@ impl VideoStream {
                             current_w = want_w;
                             current_h = want_h;
                             buf = vec![0u8; current_w as usize * current_h as usize * 4];
+                        }
+
+                        let want_pause = paused.load(Ordering::Relaxed);
+                        if want_pause != applied_pause {
+                            if !want_pause {
+                                // Resuming from a pause on a live stream would
+                                // otherwise continue from where it stopped,
+                                // leaving the viewer permanently behind.
+                                let _ = player.seek_to_live();
+                            }
+                            if let Err(e) = player.set_paused(want_pause) {
+                                eprintln!("video: could not pause: {e}");
+                            }
+                            applied_pause = want_pause;
                         }
 
                         let wanted = volume_level.load(Ordering::Relaxed);
@@ -194,6 +213,7 @@ impl VideoStream {
                 latest,
                 stop,
                 target,
+                paused,
                 volume: volume_level,
                 thread: Some(thread),
             },
@@ -204,6 +224,15 @@ impl VideoStream {
     /// A handle the UI can use to report the pane size each layout pass.
     pub fn size_handle(&self) -> SizeHandle {
         SizeHandle(self.target.clone())
+    }
+
+    /// Pause or resume. Resuming jumps back to the live edge.
+    pub fn set_paused(&self, paused: bool) {
+        self.paused.store(paused, Ordering::Relaxed);
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::Relaxed)
     }
 
     /// Change playback volume (0-100). Takes effect on the next frame.

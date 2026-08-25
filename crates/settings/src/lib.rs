@@ -73,8 +73,11 @@ pub struct Settings {
     pub credentials: Credentials,
     /// Reopened on launch when no channel is given on the command line.
     pub last_channel: Option<String>,
-    /// Width of the chat pane in pixels.
+    /// Width of the chat pane when it sits beside the video.
     pub chat_width: f32,
+    /// Height of the chat pane when it sits below the video, which is what a
+    /// portrait window gets.
+    pub chat_height: f32,
 }
 
 impl Default for Settings {
@@ -85,6 +88,7 @@ impl Default for Settings {
             credentials: Credentials::default(),
             last_channel: None,
             chat_width: 340.0,
+            chat_height: 360.0,
         }
     }
 }
@@ -217,6 +221,7 @@ mod tests {
         assert_eq!(settings.volume, 55);
         assert_eq!(settings.quality, QualityPreference::Auto);
         assert_eq!(settings.chat_width, 340.0);
+        assert_eq!(settings.chat_height, 360.0);
     }
 
     /// A file from a newer build must not fail to load here.
