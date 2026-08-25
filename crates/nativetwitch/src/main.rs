@@ -579,7 +579,9 @@ impl RootView {
             .py(px(theme::CONTROL_PAD_Y))
             .rounded_sm()
             .bg(theme::surface_raised())
-            .text_xs()
+            .text_size(px(theme::TEXT_LABEL))
+            .font_weight(theme::weight_label())
+            .line_height(px(theme::LINE_TIGHT))
             .text_color(theme::text_muted())
             .cursor_pointer()
             .hover(|style| style.bg(theme::hover()).text_color(theme::text()))
@@ -607,7 +609,8 @@ impl RootView {
                     .border_l_2()
                     .border_color(theme::accent())
                     .shadow_lg()
-                    .text_xs()
+                    .text_size(px(theme::TEXT_META))
+                    .line_height(px(theme::LINE_BODY))
                     .text_color(theme::text())
                     .child(text.clone()),
             );
@@ -658,7 +661,7 @@ impl RootView {
                             .px(px(theme::ROW_PAD_X))
                             .py(px(theme::CONTROL_PAD_Y))
                             .bg(theme::surface())
-                            .text_xs()
+                            .text_size(px(theme::TEXT_META))
                             .text_color(theme::text_muted())
                             .child(SharedString::from(format!("{} · muted", slot.channel))),
                     ),
@@ -693,13 +696,14 @@ impl RootView {
             .border_color(theme::border())
             .child(
                 div()
-                    .font_weight(gpui::FontWeight::BOLD)
+                    .text_size(px(theme::TEXT_TITLE))
+                    .font_weight(theme::weight_title())
                     .text_color(theme::text())
                     .child(APP_NAME),
             )
             .child(
                 div()
-                    .text_xs()
+                    .text_size(px(theme::TEXT_META))
                     .text_color(theme::text_dim())
                     .child(self.sign_in.summary()),
             )

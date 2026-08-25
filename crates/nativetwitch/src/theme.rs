@@ -8,7 +8,7 @@
 //! hours, so the chrome should recede and the video should be the only bright
 //! thing on screen.
 
-use gpui::{rgb, rgba, Hsla};
+use gpui::{rgb, rgba, FontWeight, Hsla};
 
 /// Behind the video, and nothing else. Pure black rather than near-black: any
 /// lift here shows as a grey halo around letterboxed content, which is exactly
@@ -99,6 +99,49 @@ pub fn live() -> Hsla {
 
 pub fn danger() -> Hsla {
     rgb(0xf08a80).into()
+}
+
+// ── Type ─────────────────────────────────────────────────────────────
+//
+// Five roles rather than five sizes. The app previously used one size,
+// text_xs, for nineteen different jobs - button labels, chat notices, stream
+// metadata, settings labels - so nothing had rank. Weight was the same story:
+// BOLD was the only weight in the codebase, which means emphasis had no
+// degrees, only on and off.
+
+/// Page and panel titles.
+pub const TEXT_TITLE: f32 = 15.0;
+/// Chat messages and card names: the content you actually read.
+pub const TEXT_BODY: f32 = 13.0;
+/// Interactive control labels. Same size as meta but a heavier weight, so a
+/// thing you can click never looks like a thing you can only read.
+pub const TEXT_LABEL: f32 = 11.5;
+/// Supporting information: viewers, uptime, status, help text.
+pub const TEXT_META: f32 = 11.5;
+/// Badges only.
+pub const TEXT_MICRO: f32 = 9.5;
+
+/// Leading for running text. Chat is dense and repetitive; default leading
+/// makes consecutive lines hard to separate.
+pub const LINE_BODY: f32 = 19.0;
+/// Leading for single-line labels, where extra space just inflates the row.
+pub const LINE_TIGHT: f32 = 15.0;
+
+/// Titles and names. Semibold rather than bold, leaving bold for the one
+/// element that genuinely has to shout.
+pub fn weight_title() -> FontWeight {
+    FontWeight::SEMIBOLD
+}
+
+/// Control labels: enough weight to read as interactive, not enough to compete
+/// with a title.
+pub fn weight_label() -> FontWeight {
+    FontWeight::MEDIUM
+}
+
+/// Reserved for the live badge.
+pub fn weight_shout() -> FontWeight {
+    FontWeight::BOLD
 }
 
 // ── Spacing ──────────────────────────────────────────────────────────

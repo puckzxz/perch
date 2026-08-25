@@ -16,6 +16,10 @@ use gpui::{
     SharedString, Task, Window,
 };
 
+use twitch_chat::{ChatClient, ChatEvent, ChatMessage};
+
+use crate::theme;
+
 /// Emote names are worth showing on hover: half of chat is emotes, and knowing
 /// what one is called is the difference between reading a message and guessing.
 struct EmoteTooltip {
@@ -29,14 +33,11 @@ impl Render for EmoteTooltip {
             .py(px(theme::CONTROL_PAD_Y))
             .rounded_sm()
             .bg(theme::surface_raised())
-            .text_xs()
+            .text_size(px(theme::TEXT_LABEL))
             .text_color(theme::text())
             .child(self.name.clone())
     }
 }
-use twitch_chat::{ChatClient, ChatEvent, ChatMessage};
-
-use crate::theme;
 
 /// Messages kept in memory. Old ones drop off the top: chat runs forever, and
 /// nobody scrolls back a thousand lines in a live stream.
@@ -167,7 +168,7 @@ impl ChatView {
                 .py(px(theme::ROW_PAD_Y))
                 .border_b_1()
                 .border_color(theme::divider())
-                .text_xs()
+                .text_size(px(theme::TEXT_META))
                 .text_color(theme::text_dim())
                 .child(text.clone())
                 .into_any_element(),
@@ -202,7 +203,7 @@ impl ChatView {
             line = line.child(
                 div()
                     .flex_none()
-                    .font_weight(gpui::FontWeight::BOLD)
+                    .font_weight(theme::weight_title())
                     .text_color(rgb(message.color))
                     .child(SharedString::from(format!("{}:", message.display_name))),
             );
@@ -210,7 +211,7 @@ impl ChatView {
             line = line.child(
                 div()
                     .flex_none()
-                    .font_weight(gpui::FontWeight::BOLD)
+                    .font_weight(theme::weight_title())
                     .text_color(rgb(message.color))
                     .child(SharedString::from(message.display_name.clone())),
             );
@@ -276,7 +277,11 @@ impl Render for ChatView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let this = cx.entity().downgrade();
 
-        div().size_full().text_sm().child(
+        div()
+            .size_full()
+            .text_size(px(theme::TEXT_BODY))
+            .line_height(px(theme::LINE_BODY))
+            .child(
             list(self.list.clone(), move |index, _window, cx| {
                 this.update(cx, |this: &mut ChatView, _cx| this.render_row(index))
                     .unwrap_or_else(|_| div().into_any_element())

@@ -172,7 +172,9 @@ impl VideoView {
             .px(px(theme::CONTROL_PAD_X))
             .py(px(theme::CONTROL_PAD_Y))
             .rounded_sm()
-            .text_xs()
+            .text_size(px(theme::TEXT_LABEL))
+            .font_weight(theme::weight_label())
+            .line_height(px(theme::LINE_TIGHT))
             .text_color(theme::text())
             .cursor_pointer()
             .hover(|style| style.bg(theme::hover()))
@@ -202,7 +204,8 @@ impl VideoView {
                     .id(("quality-option", index))
                     .px(px(theme::PANEL_PAD))
                     .py(px(theme::CONTROL_PAD_Y))
-                    .text_xs()
+                    .text_size(px(theme::TEXT_LABEL))
+                    .font_weight(theme::weight_label())
                     .cursor_pointer()
                     .text_color(if selected {
                         theme::accent()
@@ -262,7 +265,7 @@ impl VideoView {
             .child(
                 div()
                     .w(px(38.))
-                    .text_xs()
+                    .text_size(px(theme::TEXT_META))
                     .text_right()
                     .text_color(theme::text_muted())
                     .child(SharedString::from(format!("{volume}%"))),
@@ -279,7 +282,12 @@ impl VideoView {
                         // than as a playback position.
                         div().w(px(6.)).h(px(6.)).rounded_full().bg(theme::live()),
                     )
-                    .child(div().text_xs().text_color(theme::text_muted()).child(text))
+                    .child(
+                        div()
+                            .text_size(px(theme::TEXT_META))
+                            .text_color(theme::text_muted())
+                            .child(text),
+                    )
             }))
             .child(
                 div()

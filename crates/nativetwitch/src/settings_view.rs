@@ -132,13 +132,19 @@ impl SettingsPanel {
             .gap(px(theme::GAP_TIGHT))
             .child(
                 div()
-                    .text_xs()
-                    .font_weight(gpui::FontWeight::BOLD)
+                    .text_size(px(theme::TEXT_LABEL))
+                    .font_weight(theme::weight_label())
                     .text_color(theme::text())
                     .child(label),
             )
             .child(control)
-            .child(div().text_xs().text_color(theme::text_dim()).child(help))
+            .child(
+                div()
+                    .text_size(px(theme::TEXT_META))
+                    .line_height(px(theme::LINE_BODY))
+                    .text_color(theme::text_dim())
+                    .child(help),
+            )
     }
 }
 
@@ -167,8 +173,8 @@ impl Render for SettingsPanel {
                     .shadow_lg()
                     .child(
                         div()
-                            .text_lg()
-                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_size(px(theme::TEXT_TITLE))
+                            .font_weight(theme::weight_title())
                             .text_color(theme::text())
                             .child("Settings"),
                     )
@@ -189,7 +195,7 @@ impl Render for SettingsPanel {
                     ))
                     .child(
                         div()
-                            .text_xs()
+                            .text_size(px(theme::TEXT_META))
                             .text_color(theme::text_muted())
                             .child(self.sign_in_status.clone()),
                     )

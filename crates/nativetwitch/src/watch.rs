@@ -88,6 +88,7 @@ fn pane<V: 'static>(
             .flex()
             .items_center()
             .justify_center()
+            .text_size(px(theme::TEXT_BODY))
             .text_color(if is_error {
                 theme::danger()
             } else {
@@ -142,7 +143,8 @@ fn pane<V: 'static>(
                         .py(px(theme::CONTROL_PAD_Y))
                         .rounded_sm()
                         .bg(theme::surface_raised())
-                        .text_xs()
+                        .text_size(px(theme::TEXT_LABEL))
+                        .font_weight(theme::weight_label())
                         .text_color(theme::text())
                         .child(SharedString::from(slot.channel.clone())),
                 )
@@ -155,7 +157,8 @@ fn pane<V: 'static>(
                             .py(px(theme::CONTROL_PAD_Y))
                             .rounded_sm()
                             .bg(theme::surface_raised())
-                            .text_xs()
+                            .text_size(px(theme::TEXT_LABEL))
+                            .font_weight(theme::weight_label())
                             .text_color(theme::text_muted())
                             .cursor_pointer()
                             .hover(|style| style.text_color(theme::danger()))

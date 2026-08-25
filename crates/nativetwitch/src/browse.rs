@@ -147,7 +147,8 @@ fn card<V: 'static>(
                         .py(px(theme::CONTROL_PAD_Y))
                         .rounded_sm()
                         .bg(theme::live())
-                        .text_xs()
+                        .text_size(px(theme::TEXT_MICRO))
+                        .font_weight(theme::weight_shout())
                         .text_color(rgb(0xffffff))
                         .child("LIVE"),
                 )
@@ -162,7 +163,8 @@ fn card<V: 'static>(
                             .py(px(theme::CONTROL_PAD_Y))
                             .rounded_sm()
                             .bg(theme::surface_raised())
-                            .text_xs()
+                            .text_size(px(theme::TEXT_LABEL))
+                            .font_weight(theme::weight_label())
                             .text_color(theme::text())
                             .cursor_pointer()
                             .opacity(0.0)
@@ -186,20 +188,23 @@ fn card<V: 'static>(
                 .p(px(theme::PANEL_PAD))
                 .child(
                     div()
-                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_size(px(theme::TEXT_BODY))
+                        .font_weight(theme::weight_title())
                         .text_color(theme::text())
                         .child(SharedString::from(stream.display_name.clone())),
                 )
                 .child(
                     div()
-                        .text_xs()
+                        .text_size(px(theme::TEXT_META))
+                        .line_height(px(theme::LINE_TIGHT))
                         .text_color(theme::text_muted())
                         .truncate()
                         .child(SharedString::from(stream.title.clone())),
                 )
                 .child(
                     div()
-                        .text_xs()
+                        .text_size(px(theme::TEXT_META))
+                        .line_height(px(theme::LINE_TIGHT))
                         .text_color(theme::text_dim())
                         .child(SharedString::from(if stream.game_name.is_empty() {
                             meta.clone()
@@ -241,14 +246,16 @@ fn empty_state(sign_in: &SignIn) -> impl IntoElement {
         .gap(px(theme::GAP))
         .child(
             div()
-                .text_lg()
-                .font_weight(gpui::FontWeight::BOLD)
+                .text_size(px(theme::TEXT_TITLE))
+                .font_weight(theme::weight_title())
                 .text_color(theme::text())
                 .child(title),
         )
         .child(
             div()
                 .max_w(px(420.))
+                .text_size(px(theme::TEXT_BODY))
+                .line_height(px(theme::LINE_BODY))
                 .text_center()
                 .text_color(match sign_in {
                     SignIn::Error(_) => theme::danger(),
