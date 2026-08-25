@@ -234,23 +234,15 @@ fn run(
         return;
     }
 
-    // An explicit preference wins, but only if the channel actually offers it;
-    // falling back beats failing because one stream lacks 1080p today.
-    let chosen = match &options.quality {
-        Some(wanted) if available.iter().any(|name| name == wanted) => quality::Quality {
-            name: wanted.clone(),
-            height: 0,
-            fps: 0,
-        },
-        _ => match quality::select(&available, pane_height) {
-            Some(chosen) => chosen,
-            None => {
-                let _ = tx.unbounded_send(StreamEvent::Failed {
-                    reason: format!("no video qualities offered (got {available:?})"),
-                });
-                return;
-            }
-        },
+    let resolved = match &options.quality {
+        Some(preference) => quality::select_named(&available, preference, pane_height),
+        None => quality::select(&available, pane_height),
+    };
+    let Some(chosen) = resolved else {
+        let _ = tx.unbounded_send(StreamEvent::Failed {
+            reason: format!("no video qualities offered (got {available:?})"),
+        });
+        return;
     };
 
     let port = match free_port() {

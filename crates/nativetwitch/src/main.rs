@@ -7,6 +7,7 @@
 
 mod chat;
 mod follows;
+mod settings_view;
 mod video;
 mod video_view;
 
@@ -19,23 +20,27 @@ use chat::ChatView;
 use emotes::ImageCache;
 use follows::{FollowsEvent, FollowsService};
 use gpui::{
-    div, img, prelude::*, px, rgb, rgba, size, App, Application, Bounds, Context, Entity, MouseButton,
+    div, img, prelude::*, px, rgb, rgba, size, AnyView, App, Application, Bounds, Context, Entity, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, SharedString, Task, Window,
     WindowBackgroundAppearance, WindowBounds, WindowOptions,
 };
 use settings::{QualityPreference, Settings};
+use settings_view::{SettingsEvent, SettingsPanel};
 use streamlink::{StreamEvent, StreamOptions, StreamSupervisor};
 use twitch_api::LiveStream;
 use video::VideoStream;
 use video_view::{VideoEvent, VideoView};
 
-/// Frames are rendered at this size and scaled to fit by the element.
-///
-/// This is also what quality selection targets: measurements showed the ratio
-/// between source and pane matters more than the pixel count, so the stream is
-/// chosen to land on a clean ratio rather than simply "best".
+/// Starting render size. The video pane measures itself on the first layout
+/// pass and the render thread follows it from then on, so this only decides
+/// what the first frame or two look like.
 const RENDER_WIDTH: u32 = 1280;
 const RENDER_HEIGHT: u32 = 720;
+
+/// Chrome above the video pane, subtracted when estimating its height for
+/// quality selection. Approximate on purpose: quality buckets by resolution, so
+/// being a few pixels out never changes the answer.
+const CHROME_HEIGHT: f32 = 44.0;
 
 const SIDEBAR_WIDTH: f32 = 260.0;
 /// Keeps the chat pane usable at both extremes: narrower than this and emotes
@@ -102,6 +107,9 @@ struct RootView {
     supervisor: Option<StreamSupervisor>,
     _stream_pump: Option<Task<()>>,
 
+    /// The settings panel, present only while open.
+    settings_panel: Option<Entity<SettingsPanel>>,
+
     /// Chat-pane width at the moment a drag started, plus where it started.
     /// `None` when not dragging.
     resize: Option<(f32, f32)>,
@@ -155,24 +163,7 @@ impl RootView {
             use futures::StreamExt as _;
             while let Some(event) = events.next().await {
                 let ok = this.update(cx, |this: &mut RootView, cx| {
-                    match event {
-                        FollowsEvent::NeedsClientId => this.sign_in = SignIn::NeedsClientId,
-                        FollowsEvent::AwaitingCode {
-                            user_code,
-                            verification_uri,
-                        } => {
-                            this.sign_in = SignIn::AwaitingCode {
-                                user_code: user_code.into(),
-                                verification_uri: verification_uri.into(),
-                            }
-                        }
-                        FollowsEvent::SignedIn { login } => {
-                            this.sign_in = SignIn::SignedIn(login.into())
-                        }
-                        FollowsEvent::Streams(streams) => this.on_streams(streams, cx),
-                        FollowsEvent::Error(reason) => this.sign_in = SignIn::Error(reason.into()),
-                    }
-                    cx.notify();
+                    this.apply_follows_event(event, cx);
                 });
                 if ok.is_err() {
                     break;
@@ -185,6 +176,7 @@ impl RootView {
             settings_path,
             cache,
             channel: None,
+            settings_panel: None,
             resize: None,
             state: StreamState::Idle,
             quality: None,
@@ -233,8 +225,16 @@ impl RootView {
             auth_token: self.settings.credentials.auth_token.clone(),
         };
 
+        // Pick quality for the pane we will actually render into, in physical
+        // pixels. Using a constant here was what capped everyone at 720p
+        // regardless of window size or display.
+        let scale = window.scale_factor();
+        let pane_height = ((f32::from(window.viewport_size().height) - CHROME_HEIGHT) * scale)
+            .round()
+            .clamp(180.0, video::MAX_RENDER_HEIGHT as f32) as u32;
+
         let (supervisor, mut events) =
-            StreamSupervisor::start(channel.clone(), RENDER_HEIGHT, options);
+            StreamSupervisor::start(channel.clone(), pane_height, options);
         let volume = self.settings.volume;
 
         self._stream_pump = Some(cx.spawn_in(window, async move |this, cx| {
@@ -449,7 +449,7 @@ impl RootView {
             .child(list)
     }
 
-    fn title_bar(&self) -> impl IntoElement {
+    fn title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let (name, subtitle): (SharedString, SharedString) = match (&self.channel, &self.state) {
             (Some(channel), StreamState::Playing(_)) => (
                 channel.clone().into(),
@@ -480,10 +480,127 @@ impl RootView {
                     .child(name),
             )
             .child(div().text_xs().text_color(rgb(0x948ca5)).child(subtitle))
+            .child(div().flex_1())
+            .child(
+                div()
+                    .id("open-settings")
+                    .px_2()
+                    .py_1()
+                    .rounded_sm()
+                    .cursor_pointer()
+                    .text_color(rgb(0x948ca5))
+                    .hover(|style| style.bg(rgb(0x2e2939)).text_color(rgb(0xf2eff7)))
+                    .child("settings")
+                    .on_click(
+                        cx.listener(|this, _event, window, cx| this.toggle_settings(window, cx)),
+                    ),
+            )
     }
 }
 
 impl RootView {
+    fn sign_in_status(&self) -> SharedString {
+        match &self.sign_in {
+            SignIn::SignedIn(login) => format!("Signed in as {login}").into(),
+            SignIn::Connecting => "Connecting...".into(),
+            SignIn::NeedsClientId => "Not signed in - add a Client ID above.".into(),
+            SignIn::AwaitingCode { user_code, .. } => {
+                format!("Enter {user_code} at twitch.tv/activate").into()
+            }
+            SignIn::Error(reason) => reason.clone(),
+        }
+    }
+
+    fn toggle_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.settings_panel.take().is_some() {
+            cx.notify();
+            return;
+        }
+
+        let panel = cx.new(|cx| {
+            SettingsPanel::new(self.settings.clone(), self.sign_in_status(), window, cx)
+        });
+        cx.subscribe_in(
+            &panel,
+            window,
+            |this: &mut RootView, _, event, window, cx| {
+                match event {
+                    SettingsEvent::Dismissed => this.settings_panel = None,
+                    SettingsEvent::Saved(updated) => {
+                        let client_id_changed =
+                            this.settings.credentials.client_id != updated.credentials.client_id;
+                        let stream_changed = this.settings.quality != updated.quality
+                            || this.settings.credentials.auth_token
+                                != updated.credentials.auth_token;
+
+                        this.settings = (**updated).clone();
+                        if let Err(e) = this.settings.save(&this.settings_path) {
+                            eprintln!("settings: could not save: {e}");
+                        }
+                        this.settings_panel = None;
+
+                        // Apply immediately rather than asking for a restart,
+                        // which is the entire reason this panel exists.
+                        if client_id_changed {
+                            this.restart_follows(window, cx);
+                        }
+                        if stream_changed {
+                            if let Some(channel) = this.channel.clone() {
+                                this.channel = None;
+                                this.open_channel(channel, window, cx);
+                            }
+                        }
+                    }
+                }
+                cx.notify();
+            },
+        )
+        .detach();
+
+        self.settings_panel = Some(panel);
+        cx.notify();
+    }
+
+    /// Restart sign-in after the client id changes.
+    fn restart_follows(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sign_in = SignIn::Connecting;
+        self.follows.clear();
+        self.known_live.clear();
+
+        let (service, mut events) = FollowsService::start(self.settings_path.clone());
+        self._follows_pump = cx.spawn_in(window, async move |this, cx| {
+            use futures::StreamExt as _;
+            while let Some(event) = events.next().await {
+                let ok = this.update(cx, |this: &mut RootView, cx| {
+                    this.apply_follows_event(event, cx);
+                });
+                if ok.is_err() {
+                    break;
+                }
+            }
+        });
+        self._follows = service;
+    }
+
+    fn apply_follows_event(&mut self, event: FollowsEvent, cx: &mut Context<Self>) {
+        match event {
+            FollowsEvent::NeedsClientId => self.sign_in = SignIn::NeedsClientId,
+            FollowsEvent::AwaitingCode {
+                user_code,
+                verification_uri,
+            } => {
+                self.sign_in = SignIn::AwaitingCode {
+                    user_code: user_code.into(),
+                    verification_uri: verification_uri.into(),
+                }
+            }
+            FollowsEvent::SignedIn { login } => self.sign_in = SignIn::SignedIn(login.into()),
+            FollowsEvent::Streams(streams) => self.on_streams(streams, cx),
+            FollowsEvent::Error(reason) => self.sign_in = SignIn::Error(reason.into()),
+        }
+        cx.notify();
+    }
+
     /// Take a fresh follows list and announce anyone who just came online.
     ///
     /// The first poll seeds the known set silently: on launch everyone is
@@ -654,7 +771,7 @@ impl Render for RootView {
                     .min_w_0()
                     .flex()
                     .flex_col()
-                    .child(self.title_bar())
+                    .child(self.title_bar(cx))
                     .child(
                         div()
                             .flex_1()
@@ -686,6 +803,7 @@ impl Render for RootView {
                     ),
             )
             .child(self.toast_stack())
+            .children(self.settings_panel.clone())
     }
 }
 
@@ -711,6 +829,9 @@ fn main() {
     }
 
     Application::new().run(move |cx: &mut App| {
+        // Must come before any gpui-component widget is constructed.
+        gpui_component::init(cx);
+
         let bounds = Bounds::centered(None, size(px(1700.), px(900.)), cx);
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -722,7 +843,10 @@ fn main() {
         };
 
         cx.open_window(options, |window, cx| {
-            cx.new(|cx| RootView::new(channel.clone(), volume, window, cx))
+            let root = cx.new(|cx| RootView::new(channel.clone(), volume, window, cx));
+            // Root is required as the window's first child so overlay
+            // layers have somewhere to render.
+            cx.new(|cx| gpui_component::Root::new(AnyView::from(root), window, cx))
         })
         .expect("failed to open window");
 

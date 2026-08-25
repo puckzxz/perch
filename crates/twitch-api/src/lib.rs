@@ -79,24 +79,32 @@ fn now_secs() -> u64 {
 fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(20)))
+        // Twitch puts the meaningful part of a failure in the body, not the
+        // status line: while the user has not typed the code yet, the device
+        // flow answers HTTP 400 with `authorization_pending`. Letting the
+        // status short-circuit the read turns that normal, expected state into
+        // a fatal error and sign-in gives up on the very first poll.
+        .http_status_as_error(false)
         .build()
         .into()
 }
 
-/// Read a JSON body even when the status is an error, since Twitch puts the
-/// useful part (`authorization_pending` and friends) in the body.
-fn read_body(result: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> Result<Value, Error> {
-    let mut response = match result {
-        Ok(response) => response,
-        Err(ureq::Error::StatusCode(_)) => {
-            return Err(Error::Api("request failed with an error status".into()))
-        }
-        Err(e) => return Err(Error::Network(e.to_string())),
-    };
-    response
+/// Read a JSON body regardless of status, plus the status itself.
+fn read_body(
+    result: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
+) -> Result<(u16, Value), Error> {
+    let mut response = result.map_err(|e| Error::Network(e.to_string()))?;
+    let status = response.status().as_u16();
+    let json = response
         .body_mut()
         .read_json::<Value>()
-        .map_err(|e| Error::Shape(e.to_string()))
+        .map_err(|e| Error::Shape(e.to_string()))?;
+    Ok((status, json))
+}
+
+/// Twitch's error bodies carry the reason under `message`.
+fn body_message(json: &Value) -> Option<&str> {
+    json.get("message").and_then(Value::as_str)
 }
 
 /// Begin sign-in. Show the returned code and URL, then poll [`poll_token`].
@@ -104,15 +112,19 @@ pub fn start_device_flow(client_id: &str) -> Result<DeviceCode, Error> {
     if client_id.is_empty() {
         return Err(Error::NoClientId);
     }
-    let mut response = agent()
-        .post(DEVICE_URL)
-        .send_form([("client_id", client_id), ("scopes", SCOPES)])
-        .map_err(|e| Error::Network(e.to_string()))?;
+    let (status, json) = read_body(
+        agent()
+            .post(DEVICE_URL)
+            .send_form([("client_id", client_id), ("scopes", SCOPES)]),
+    )?;
 
-    let json: Value = response
-        .body_mut()
-        .read_json()
-        .map_err(|e| Error::Shape(e.to_string()))?;
+    if status >= 400 {
+        return Err(Error::Api(
+            body_message(&json)
+                .unwrap_or("the device endpoint rejected this client id")
+                .to_string(),
+        ));
+    }
 
     serde_json::from_value(json.clone())
         .map_err(|_| Error::Shape(format!("device response was {json}")))
@@ -123,20 +135,31 @@ pub fn start_device_flow(client_id: &str) -> Result<DeviceCode, Error> {
 /// Returns [`Error::Pending`] while the user has not authorised yet, which is
 /// the normal case for the first several calls.
 pub fn poll_token(client_id: &str, device_code: &str) -> Result<Session, Error> {
-    let json = read_body(agent().post(TOKEN_URL).send_form([
+    let (status, json) = read_body(agent().post(TOKEN_URL).send_form([
         ("client_id", client_id),
         ("device_code", device_code),
         ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
     ]))?;
 
-    if let Some(message) = json.get("message").and_then(Value::as_str) {
-        return Err(match message {
-            m if m.contains("authorization_pending") => Error::Pending,
-            m if m.contains("expired") => Error::Expired,
-            other => Error::Api(other.to_string()),
-        });
+    if status >= 400 {
+        return Err(classify_token_error(body_message(&json).unwrap_or("sign-in failed")));
     }
     session_from_token_response(client_id, &json)
+}
+
+/// Map a device-flow error body to an outcome.
+///
+/// `authorization_pending` is the normal state for every poll before the user
+/// finishes typing the code, and `slow_down` just means poll less often. Both
+/// are progress, not failure; treating them as errors aborts sign-in on the
+/// first attempt, which is exactly what used to happen.
+fn classify_token_error(message: &str) -> Error {
+    match message {
+        m if m.contains("authorization_pending") => Error::Pending,
+        m if m.contains("slow_down") => Error::Pending,
+        m if m.contains("expired") => Error::Expired,
+        other => Error::Api(other.to_string()),
+    }
 }
 
 /// Exchange a refresh token for a new pair.
@@ -144,11 +167,16 @@ pub fn poll_token(client_id: &str, device_code: &str) -> Result<Session, Error> 
 /// Twitch refresh tokens are single use: the old one dies the moment this
 /// succeeds, so the caller must persist the result immediately.
 pub fn refresh(client_id: &str, refresh_token: &str) -> Result<Session, Error> {
-    let json = read_body(agent().post(TOKEN_URL).send_form([
+    let (status, json) = read_body(agent().post(TOKEN_URL).send_form([
         ("client_id", client_id),
         ("refresh_token", refresh_token),
         ("grant_type", "refresh_token"),
     ]))?;
+    if status >= 400 {
+        return Err(Error::Api(
+            body_message(&json).unwrap_or("refresh failed").to_string(),
+        ));
+    }
     session_from_token_response(client_id, &json)
 }
 
@@ -183,21 +211,25 @@ pub fn needs_refresh(expires_at: u64) -> bool {
 // ── Helix ────────────────────────────────────────────────────────────
 
 fn helix_get(client_id: &str, token: &str, path: &str) -> Result<Value, Error> {
-    let mut response = agent()
-        .get(&format!("{HELIX}{path}"))
-        .header("Client-Id", client_id)
-        .header("Authorization", &format!("Bearer {token}"))
-        .call()
-        .map_err(|e| match e {
-            ureq::Error::StatusCode(401) => Error::NotSignedIn,
-            ureq::Error::StatusCode(code) => Error::Api(format!("HTTP {code}")),
-            other => Error::Network(other.to_string()),
-        })?;
+    let (status, json) = read_body(
+        agent()
+            .get(&format!("{HELIX}{path}"))
+            .header("Client-Id", client_id)
+            .header("Authorization", &format!("Bearer {token}"))
+            .call(),
+    )?;
 
-    response
-        .body_mut()
-        .read_json::<Value>()
-        .map_err(|e| Error::Shape(e.to_string()))
+    match status {
+        200..=299 => Ok(json),
+        401 => Err(Error::NotSignedIn),
+        // Surface Twitch's own wording; "HTTP 403" alone tells nobody whether
+        // the scope, the client id or the token is at fault.
+        other => Err(Error::Api(
+            body_message(&json)
+                .map(|m| format!("{m} (HTTP {other})"))
+                .unwrap_or_else(|| format!("HTTP {other}")),
+        )),
+    }
 }
 
 /// `(user_id, login)` for the token's owner.
@@ -366,6 +398,29 @@ mod tests {
         assert!(parse_streams(&json).is_empty());
         let missing: Value = serde_json::from_str("{}").unwrap();
         assert!(parse_streams(&missing).is_empty());
+    }
+
+    /// These strings come straight off the wire; classifying them wrongly is
+    /// invisible in a type system and breaks sign-in entirely.
+    #[test]
+    fn pending_states_are_not_failures() {
+        assert!(matches!(
+            classify_token_error("authorization_pending"),
+            Error::Pending
+        ));
+        assert!(matches!(classify_token_error("slow_down"), Error::Pending));
+    }
+
+    #[test]
+    fn expiry_is_distinguished_from_other_failures() {
+        assert!(matches!(
+            classify_token_error("device code has expired"),
+            Error::Expired
+        ));
+        assert!(matches!(
+            classify_token_error("invalid client"),
+            Error::Api(_)
+        ));
     }
 
     #[test]

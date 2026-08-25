@@ -12,7 +12,7 @@
 //! worth showing, and an unbounded queue of 3.5 MB frames is a memory leak with
 //! extra steps.
 
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -22,10 +22,49 @@ use image::{Frame, RgbaImage};
 use mpv_frames::{Config, Player};
 use smallvec::smallvec;
 
+/// Upper bound on render size. 1440p is the highest Twitch tier, so anything
+/// beyond this is scaling up, which measured as the single most expensive thing
+/// this pipeline can do.
+pub const MAX_RENDER_WIDTH: u32 = 2560;
+pub const MAX_RENDER_HEIGHT: u32 = 1440;
+
+fn pack_size(width: u32, height: u32) -> u64 {
+    ((width as u64) << 32) | height as u64
+}
+
+fn unpack_size(packed: u64) -> (u32, u32) {
+    ((packed >> 32) as u32, packed as u32)
+}
+
+/// A cloneable way to ask a running stream to render at a different size.
+///
+/// Handed to the UI so a layout pass can report the pane's real size without
+/// holding a borrow on the stream itself.
+#[derive(Clone)]
+pub struct SizeHandle(Arc<AtomicU64>);
+
+impl SizeHandle {
+    /// Ask for a new render size in physical pixels.
+    ///
+    /// Capped so that maximising onto a 4K display does not quietly start
+    /// pushing 33 MB per frame through the CPU; the element scales the last
+    /// stretch, which is far cheaper than rendering it.
+    pub fn request(&self, width: u32, height: u32) {
+        let width = width.clamp(160, MAX_RENDER_WIDTH);
+        let height = height.clamp(90, MAX_RENDER_HEIGHT);
+        self.0.store(pack_size(width, height), Ordering::Relaxed);
+    }
+}
+
 /// A running stream. Dropping this stops the render thread and tears down mpv.
 pub struct VideoStream {
     latest: Arc<Mutex<Option<Arc<RenderImage>>>>,
     stop: Arc<AtomicBool>,
+    /// Render size in physical pixels, packed as `(width << 32) | height`.
+    ///
+    /// One atomic rather than two so width and height can never be read from
+    /// different frames, which would allocate a buffer that matches neither.
+    target: Arc<AtomicU64>,
     /// Written by the UI, read by the render thread between frames.
     ///
     /// An atomic rather than a channel because volume is a *level*, not an
@@ -50,6 +89,7 @@ impl VideoStream {
         let latest: Arc<Mutex<Option<Arc<RenderImage>>>> = Arc::new(Mutex::new(None));
         let stop = Arc::new(AtomicBool::new(false));
         let volume_level = Arc::new(AtomicU8::new(volume));
+        let target = Arc::new(AtomicU64::new(pack_size(width, height)));
         let (mut tx, rx) = mpsc::channel::<()>(1);
 
         let thread = std::thread::Builder::new()
@@ -58,6 +98,7 @@ impl VideoStream {
                 let latest = latest.clone();
                 let stop = stop.clone();
                 let volume_level = volume_level.clone();
+                let target = target.clone();
                 move || {
                     let config = Config {
                         audio: true,
@@ -72,12 +113,47 @@ impl VideoStream {
                         }
                     };
 
-                    let mut buf = vec![0u8; width as usize * height as usize * 4];
+                    // Source resolution, learned from mpv once the first frame
+                    // decodes. Rendering above it means mpv upscales on the CPU,
+                    // which measured at 117-196% of a core - far and away the
+                    // most expensive thing this pipeline can do. Staying at or
+                    // below source and letting the GPU stretch the last bit is
+                    // effectively free.
+                    let mut source: Option<(u32, u32)> = None;
+                    let (mut current_w, mut current_h) = (width, height);
+                    let mut buf = vec![0u8; current_w as usize * current_h as usize * 4];
                     let mut applied_volume = volume;
 
                     while !stop.load(Ordering::Relaxed) {
                         // Apply between frames rather than mid-render, and only
                         // when it actually changed.
+                        // Resize between frames. mpv scales to whatever size
+                        // it is asked for, so following the pane means never
+                        // paying to render pixels that get thrown away - and
+                        // never capping a 1440p stream at 720p either.
+                        if source.is_none() {
+                            let dimension = |key| {
+                                player.property(key).and_then(|v| v.parse::<u32>().ok())
+                            };
+                            if let (Some(w), Some(h)) = (dimension("width"), dimension("height")) {
+                                if w > 0 && h > 0 {
+                                    source = Some((w, h));
+                                }
+                            }
+                        }
+
+                        let (mut want_w, mut want_h) =
+                            unpack_size(target.load(Ordering::Relaxed));
+                        if let Some((source_w, source_h)) = source {
+                            want_w = want_w.min(source_w);
+                            want_h = want_h.min(source_h);
+                        }
+                        if (want_w, want_h) != (current_w, current_h) && want_w > 0 && want_h > 0 {
+                            current_w = want_w;
+                            current_h = want_h;
+                            buf = vec![0u8; current_w as usize * current_h as usize * 4];
+                        }
+
                         let wanted = volume_level.load(Ordering::Relaxed);
                         if wanted != applied_volume {
                             if let Err(e) = player.set_volume(wanted) {
@@ -89,7 +165,7 @@ impl VideoStream {
                         if !player.wait_for_frame(Duration::from_millis(200)) {
                             continue;
                         }
-                        if let Err(e) = player.render_bgra(width, height, &mut buf) {
+                        if let Err(e) = player.render_bgra(current_w, current_h, &mut buf) {
                             eprintln!("video: render failed: {e}");
                             break;
                         }
@@ -97,8 +173,9 @@ impl VideoStream {
                         // GPUI reads RenderImage as BGRA even though the buffer
                         // type is named Rgba, so the bytes go in unswapped. This
                         // looks like a bug and is not one.
-                        let Some(image) = RgbaImage::from_raw(width, height, buf.clone()) else {
-                            eprintln!("video: frame buffer did not match {width}x{height}");
+                        let Some(image) = RgbaImage::from_raw(current_w, current_h, buf.clone())
+                        else {
+                            eprintln!("video: buffer did not match {current_w}x{current_h}");
                             break;
                         };
                         let frame = Arc::new(RenderImage::new(smallvec![Frame::new(image)]));
@@ -116,11 +193,17 @@ impl VideoStream {
             Self {
                 latest,
                 stop,
+                target,
                 volume: volume_level,
                 thread: Some(thread),
             },
             rx,
         ))
+    }
+
+    /// A handle the UI can use to report the pane size each layout pass.
+    pub fn size_handle(&self) -> SizeHandle {
+        SizeHandle(self.target.clone())
     }
 
     /// Change playback volume (0-100). Takes effect on the next frame.

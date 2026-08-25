@@ -10,8 +10,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{
-    div, img, prelude::*, px, rgb, rgba, Animation, AnimationExt, Context, ElementId, EventEmitter,
-    RenderImage, SharedString, Task, Window,
+    canvas, div, img, prelude::*, px, rgb, rgba, Animation, AnimationExt, Context, ElementId,
+    EventEmitter, RenderImage, SharedString, Task, Window,
 };
 
 use crate::video::VideoStream;
@@ -186,10 +186,27 @@ impl Render for VideoView {
 
         // Fade the first frames in rather than cutting from black, which makes
         // a channel switch feel deliberate instead of like a glitch.
+        // Measure the pane every frame and let the render thread follow it.
+        // Without this the buffer stays at its initial size and a 1440p stream
+        // is downscaled to 720p before it ever reaches the window.
+        let stream_size = self.stream.size_handle();
+        let probe = canvas(
+            move |bounds, window, _cx| {
+                let scale = window.scale_factor();
+                let width = (f32::from(bounds.size.width) * scale).round() as u32;
+                let height = (f32::from(bounds.size.height) * scale).round() as u32;
+                stream_size.request(width, height);
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_full();
+
         div()
             .relative()
             .size_full()
             .group("video")
+            .child(probe)
             .child(
                 img(frame).size_full().with_animation(
                     ElementId::from("video-fade-in"),

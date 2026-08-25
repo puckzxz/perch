@@ -78,6 +78,58 @@ pub fn select(available: &[String], pane_height: u32) -> Option<Quality> {
     candidates.into_iter().next()
 }
 
+/// A saved quality preference, resolved against what a channel actually offers.
+///
+/// Preferences are stored by height (`"1080p"`) rather than by exact streamlink
+/// name, because names vary per channel and per encoder: one stream offers
+/// `480p30`, another `480p`, a third `936p60`. Matching on the exact string
+/// means a preference silently stops applying the moment a channel names its
+/// renditions differently.
+pub fn select_named(available: &[String], preference: &str, pane_height: u32) -> Option<Quality> {
+    let preference = preference.trim();
+
+    if preference.eq_ignore_ascii_case("auto") || preference.is_empty() {
+        return select(available, pane_height);
+    }
+
+    let mut candidates: Vec<Quality> = available
+        .iter()
+        .filter_map(|name| parse_quality(name))
+        .collect();
+    if candidates.is_empty() {
+        return None;
+    }
+
+    if preference.eq_ignore_ascii_case("best") || preference.eq_ignore_ascii_case("source") {
+        candidates.sort_by_key(|q| (q.height, q.fps));
+        return candidates.pop();
+    }
+
+    // A preference naming an exact rendition ("720p60") is taken literally, but
+    // a bare height ("720p") means "that height, best frame rate" - otherwise it
+    // would match a 30fps rendition and silently ignore the 60fps one.
+    let bare_height = preference.ends_with('p');
+    if !bare_height {
+        if let Some(exact) = candidates.iter().find(|q| q.name == preference) {
+            return Some(exact.clone());
+        }
+    }
+
+    // Match on height, preferring the higher frame rate.
+    if let Some(wanted) = parse_quality(preference).map(|q| q.height) {
+        let mut same_height: Vec<Quality> =
+            candidates.iter().filter(|q| q.height == wanted).cloned().collect();
+        same_height.sort_by_key(|q| q.fps);
+        if let Some(best) = same_height.pop() {
+            return Some(best);
+        }
+    }
+
+    // The channel does not offer anything like it today; fall back rather than
+    // fail, because refusing to play is worse than playing a nearby quality.
+    select(available, pane_height)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -140,6 +192,45 @@ mod tests {
     fn prefers_higher_fps_at_equal_cost() {
         let picked = select(&names(&["720p", "720p60"]), 720).unwrap();
         assert_eq!(picked.name, "720p60");
+    }
+
+    #[test]
+    fn named_preference_matches_by_height_across_naming_styles() {
+        // Preference says "480p"; this channel calls it "480p30".
+        let picked = select_named(&names(&TWITCH), "480p", 720).unwrap();
+        assert_eq!(picked.name, "480p30");
+    }
+
+    #[test]
+    fn named_preference_prefers_higher_fps_at_the_same_height() {
+        let list = names(&["720p", "720p60", "1080p60"]);
+        assert_eq!(select_named(&list, "720p", 720).unwrap().name, "720p60");
+    }
+
+    #[test]
+    fn best_takes_the_highest_available() {
+        let list = names(&["audio_only", "160p30", "720p60", "1440p60", "1080p60"]);
+        assert_eq!(select_named(&list, "best", 720).unwrap().name, "1440p60");
+    }
+
+    #[test]
+    fn auto_defers_to_pane_based_selection() {
+        // 720 pane with 720p60 present: exact 1:1 beats halving 1440p60.
+        let list = names(&["720p60", "1440p60"]);
+        assert_eq!(select_named(&list, "auto", 720).unwrap().name, "720p60");
+    }
+
+    #[test]
+    fn unavailable_preference_falls_back_instead_of_failing() {
+        // No 1440p on this channel today.
+        let picked = select_named(&names(&TWITCH), "1440p", 720).unwrap();
+        assert_eq!(picked.name, "720p60");
+    }
+
+    #[test]
+    fn exact_name_still_wins_when_offered() {
+        let picked = select_named(&names(&TWITCH), "360p30", 720).unwrap();
+        assert_eq!(picked.name, "360p30");
     }
 
     #[test]
