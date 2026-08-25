@@ -158,7 +158,10 @@ impl RootView {
             _cache_pump: cache_pump,
         };
 
-        if let Some(channel) = channel.or_else(|| view.settings.last_channel.clone()) {
+        // Only a channel named on the command line opens a stream. Launching
+        // straight into whatever was on last time means the app starts costing
+        // CPU and bandwidth before anyone has asked it to.
+        if let Some(channel) = channel {
             view.open_channel(channel, window, cx);
         }
         view
@@ -253,11 +256,13 @@ impl RootView {
     /// switching channels never leaves a process behind.
     fn open_channel(&mut self, channel: String, window: &mut Window, cx: &mut Context<Self>) {
         let same = self.channel.as_deref() == Some(channel.as_str());
-        self.page = Page::Watch;
         if same {
-            cx.notify();
+            // Already playing it; just come back to the watch page, which also
+            // takes the player out of its muted background mode.
+            self.go_watch(cx);
             return;
         }
+        self.page = Page::Watch;
 
         self.supervisor = None;
         self._stream_pump = None;
@@ -375,9 +380,105 @@ impl RootView {
         cx.notify();
     }
 
+    /// Leave the watch page, keeping the stream as a muted thumbnail.
+    ///
+    /// The thumbnail is genuinely cheaper, not just visually smaller: render
+    /// size follows the element, so a 280px miniplayer decodes into a 280px
+    /// buffer rather than a full-pane one.
     fn go_browse(&mut self, cx: &mut Context<Self>) {
         self.page = Page::Browse;
+        if let StreamState::Playing(view) = &self.state {
+            view.update(cx, |video, cx| video.set_background(true, cx));
+        }
         cx.notify();
+    }
+
+    fn go_watch(&mut self, cx: &mut Context<Self>) {
+        self.page = Page::Watch;
+        if let StreamState::Playing(view) = &self.state {
+            view.update(cx, |video, cx| video.set_background(false, cx));
+        }
+        cx.notify();
+    }
+
+    /// Stop the stream entirely and forget the channel.
+    fn close_stream(&mut self, cx: &mut Context<Self>) {
+        // Dropping the supervisor is what stops streamlink; dropping the view
+        // stops mpv.
+        self.supervisor = None;
+        self._stream_pump = None;
+        self.state = StreamState::Starting;
+        self.chat = None;
+        self.channel = None;
+        self.quality_override = None;
+        self.page = Page::Browse;
+        cx.notify();
+    }
+
+    /// A muted thumbnail of whatever is playing, shown while browsing.
+    fn miniplayer(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let StreamState::Playing(video) = &self.state else {
+            return None;
+        };
+        let channel = self.channel.clone()?;
+
+        Some(
+            div()
+                .absolute()
+                .bottom_4()
+                .right_4()
+                .w(px(280.))
+                .rounded_md()
+                .overflow_hidden()
+                .bg(theme::player_bg())
+                .border_1()
+                .border_color(theme::border())
+                .shadow_lg()
+                .group("mini")
+                .child(
+                    div()
+                        .id("mini-video")
+                        .h(px(158.))
+                        .w_full()
+                        .cursor_pointer()
+                        .child(video.clone())
+                        .on_click(cx.listener(|this, _event, _window, cx| this.go_watch(cx))),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .px_3()
+                        .py_2()
+                        .bg(theme::surface())
+                        .child(
+                            div()
+                                .flex_1()
+                                .text_xs()
+                                .text_color(theme::text_muted())
+                                .child(SharedString::from(format!("{channel} · muted"))),
+                        )
+                        .child(
+                            div()
+                                .id("mini-close")
+                                .px_2()
+                                .rounded_sm()
+                                .text_xs()
+                                .text_color(theme::text_dim())
+                                .cursor_pointer()
+                                .hover(|style| {
+                                    style.bg(theme::hover()).text_color(theme::danger())
+                                })
+                                .child("stop")
+                                .on_click(
+                                    cx.listener(|this, _event, _window, cx| this.close_stream(cx)),
+                                ),
+                        ),
+                )
+                .into_any_element(),
+        )
     }
 
     fn toggle_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -570,10 +671,7 @@ impl RootView {
                     .cursor_pointer()
                     .hover(|style| style.bg(theme::hover()).text_color(theme::text()))
                     .child(SharedString::from(format!("back to {channel}")))
-                    .on_click(cx.listener(|this, _event, _window, cx| {
-                        this.page = Page::Watch;
-                        cx.notify();
-                    }))
+                    .on_click(cx.listener(|this, _event, _window, cx| this.go_watch(cx)))
             }))
             .child(self.settings_button(cx));
 
@@ -582,6 +680,7 @@ impl RootView {
             .flex()
             .flex_col()
             .bg(theme::bg())
+            .relative()
             .child(header)
             .child(browse::page(
                 &self.follows,
@@ -590,6 +689,7 @@ impl RootView {
                 |this: &mut RootView, channel, window, cx| this.open_channel(channel, window, cx),
                 cx,
             ))
+            .children(self.miniplayer(cx))
     }
 
     fn watch_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

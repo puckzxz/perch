@@ -45,6 +45,11 @@ pub struct VideoView {
     /// When the broadcast started, for the uptime readout. Absent when the
     /// channel was opened by name rather than picked from the follows list.
     started_at: Option<String>,
+    /// True while the player is a thumbnail on the browse page. Backgrounded
+    /// players are muted and draw no controls.
+    background: bool,
+    /// Volume to restore when coming back to the foreground.
+    volume_before_background: u8,
     _pump: Task<()>,
 }
 
@@ -95,6 +100,8 @@ impl VideoView {
             available,
             quality_menu_open: false,
             started_at,
+            background: false,
+            volume_before_background: volume,
             _pump: pump,
         }
     }
@@ -124,6 +131,26 @@ impl VideoView {
             0
         };
         self.set_volume(next, window, cx);
+    }
+
+    /// Move the player between the watch page and the browse thumbnail.
+    ///
+    /// Muting here deliberately bypasses `apply_volume`: that emits an event
+    /// the root persists, and navigating to the follows page should not save
+    /// "volume: 0" as the user's preference.
+    pub fn set_background(&mut self, background: bool, cx: &mut Context<Self>) {
+        if self.background == background {
+            return;
+        }
+        self.background = background;
+        if background {
+            self.volume_before_background = self.stream.volume();
+            self.stream.set_volume(0);
+        } else {
+            self.stream.set_volume(self.volume_before_background);
+        }
+        self.quality_menu_open = false;
+        cx.notify();
     }
 
     fn toggle_pause(&mut self, cx: &mut Context<Self>) {
@@ -322,18 +349,21 @@ impl Render for VideoView {
                     |element, delta| element.opacity(delta),
                 ),
             )
-            .child(
-                // Hidden until the pointer is over the video, so nothing covers
-                // the picture while you are just watching. Kept mounted while
-                // the quality menu is open, or picking an option would dismiss
-                // the menu the moment the pointer left the video.
-                div()
-                    .absolute()
-                    .inset_0()
-                    .opacity(if self.quality_menu_open { 1.0 } else { 0.0 })
-                    .group_hover("video", |style| style.opacity(1.0))
-                    .child(self.controls(cx)),
-            )
+            .when(!self.background, |pane| {
+                pane.child(
+                    // Hidden until the pointer is over the video, so nothing
+                    // covers the picture while you are just watching. Kept
+                    // mounted while the quality menu is open, or picking an
+                    // option would dismiss the menu the moment the pointer left
+                    // the video.
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .opacity(if self.quality_menu_open { 1.0 } else { 0.0 })
+                        .group_hover("video", |style| style.opacity(1.0))
+                        .child(self.controls(cx)),
+                )
+            })
             .into_any_element()
     }
 }
