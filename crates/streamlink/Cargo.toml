@@ -1,0 +1,11 @@
+[package]
+name = "streamlink"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Supervise streamlink as a headless Twitch byte source."
+
+[dependencies]
+futures = "0.3"
+serde_json = "1"

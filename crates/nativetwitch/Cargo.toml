@@ -9,6 +9,7 @@ license.workspace = true
 mpv-frames = { path = "../mpv-frames" }
 twitch-chat = { path = "../twitch-chat" }
 emotes = { path = "../emotes" }
+streamlink = { path = "../streamlink" }
 gpui = "0.2.2"
 gpui-component = "0.5.1"
 anyhow = "1"

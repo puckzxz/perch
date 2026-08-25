@@ -220,7 +220,8 @@ impl ChatView {
                     }
                 }
                 Token::Emote(emote) => {
-                    line = line.child(match self.cache.get_or_request(&emote.url) {
+                    let resolved = self.cache.get_or_request(&emote.url);
+                    line = line.child(match resolved {
                         // Until the image lands, show the emote's name so the
                         // message still reads correctly.
                         None => div()
@@ -231,8 +232,13 @@ impl ChatView {
                         // keys per-frame state on an element's global id, and
                         // only requests an animation frame when one exists. An
                         // img without an id is pinned to frame 0 forever.
+                        //
+                        // The id must identify the *image*, not the slot. Keyed
+                        // on position alone, a 40-frame GIF in one row and a
+                        // 1-frame PNG in another share state, and GPUI indexes
+                        // the PNG with the GIF's frame number and panics.
                         Some(path) => img(path)
-                            .id(("emote", emote_index))
+                            .id((SharedString::from(emote.url.clone()), emote_index))
                             .h(px(EMOTE_HEIGHT))
                             .into_any_element(),
                     });
