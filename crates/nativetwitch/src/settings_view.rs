@@ -157,6 +157,12 @@ impl Render for SettingsPanel {
         div()
             .absolute()
             .inset_0()
+            // A modal has to swallow input, not merely cover it. GPUI hit-tests
+            // every overlapping element rather than only the topmost, so
+            // without this a click inside the panel also reaches whatever it is
+            // drawn over. `occlude` rather than the scroll-permitting variant:
+            // the page behind a modal should not scroll either.
+            .occlude()
             .flex()
             .items_center()
             .justify_center()

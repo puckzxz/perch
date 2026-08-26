@@ -27,7 +27,10 @@ impl IrcMessage {
     }
 
     pub fn tag(&self, key: &str) -> Option<&str> {
-        self.tags.get(key).map(String::as_str).filter(|v| !v.is_empty())
+        self.tags
+            .get(key)
+            .map(String::as_str)
+            .filter(|v| !v.is_empty())
     }
 
     /// The nickname portion of the prefix, e.g. `foo` from `foo!foo@foo.tmi...`.
@@ -121,10 +124,16 @@ pub struct ChatMessage {
     /// Raw `emotes` tag. Kept unparsed so this crate stays about IRC and the
     /// emote crate owns what the ranges mean.
     pub emotes: Option<String>,
+    /// Unix milliseconds, from the `tmi-sent-ts` tag. Twitch sends this on
+    /// every message under the tags capability we already request.
+    pub sent_at: Option<u64>,
 }
 
 /// Twitch's default colour set, used when a user has not chosen one.
-const DEFAULT_COLORS: [u32; 15] = [
+///
+/// Public so a renderer can prove it handles them: several are darker than a
+/// dark background, which is a display problem rather than an IRC one.
+pub const DEFAULT_COLORS: [u32; 15] = [
     0xFF0000, 0x0000FF, 0x00FF00, 0xB22222, 0xFF7F50, 0x9ACD32, 0xFF4500, 0x2E8B57, 0xDAA520,
     0xD2691E, 0x5F9EA0, 0x1E90FF, 0xFF69B4, 0x8A2BE2, 0x00FF7F,
 ];
@@ -179,6 +188,7 @@ impl ChatMessage {
             text,
             is_action,
             emotes: message.tag("emotes").map(str::to_string),
+            sent_at: message.tag("tmi-sent-ts").and_then(|ts| ts.parse().ok()),
         })
     }
 }
@@ -247,7 +257,8 @@ mod tests {
 
     #[test]
     fn extracts_action_messages() {
-        let m = parse_line(":foo!foo@foo.tmi.twitch.tv PRIVMSG #bar :\u{1}ACTION waves\u{1}").unwrap();
+        let m =
+            parse_line(":foo!foo@foo.tmi.twitch.tv PRIVMSG #bar :\u{1}ACTION waves\u{1}").unwrap();
         let chat = ChatMessage::from_irc(&m).unwrap();
         assert!(chat.is_action);
         assert_eq!(chat.text, "waves");

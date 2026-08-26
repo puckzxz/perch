@@ -13,6 +13,7 @@
 
 mod browse;
 mod chat;
+mod chat_text;
 mod diagnostics;
 mod layout;
 mod motion;
@@ -790,6 +791,10 @@ impl RootView {
                     ("toast", toast.id),
                     theme::MOTION_ENTER,
                     div()
+                        // Per card rather than on the stack: the stack is
+                        // `items_end`, so its box is as wide as the widest
+                        // toast and would blanket the search box beside it.
+                        .block_mouse_except_scroll()
                         .px(px(theme::PANEL_PAD))
                         .py(px(theme::GAP))
                         .rounded_md()
@@ -829,6 +834,7 @@ impl RootView {
             let id = ElementId::from(SharedString::from(format!("mini-{}", slot.channel)));
             strip = strip.child(
                 div()
+                    .id(id)
                     .w(px(220.))
                     .rounded_md()
                     .overflow_hidden()
@@ -839,15 +845,14 @@ impl RootView {
                     // nothing about a bordered thumbnail says on its own.
                     .hover(|style| style.border_color(theme::accent()))
                     .shadow_lg()
-                    .child(
-                        div()
-                            .id(id)
-                            .h(px(124.))
-                            .w_full()
-                            .cursor_pointer()
-                            .child(video.clone())
-                            .on_click(cx.listener(|this, _event, _window, cx| this.go_watch(cx))),
-                    )
+                    .cursor_pointer()
+                    // Per tile rather than on the strip. The strip is
+                    // `items_end`, so its box is as tall as a tile even where
+                    // it only holds the short "stop all" pill — occluding that
+                    // would leave an invisible dead patch over the card grid.
+                    .block_mouse_except_scroll()
+                    .on_click(cx.listener(|this, _event, _window, cx| this.go_watch(cx)))
+                    .child(div().h(px(124.)).w_full().child(video.clone()))
                     .child(
                         div()
                             .px(px(theme::ROW_PAD_X))
@@ -863,9 +868,15 @@ impl RootView {
         Some(
             strip
                 .child(
-                    self.pill("mini-stop", "stop all".into(), cx, |this, _window, cx| {
-                        this.stop_all(cx)
-                    }),
+                    // Wrapped so the blocking area is exactly the pill. Clicking
+                    // this used to stop every stream *and* open whichever card
+                    // happened to be behind it.
+                    div().block_mouse_except_scroll().child(self.pill(
+                        "mini-stop",
+                        "stop all".into(),
+                        cx,
+                        |this, _window, cx| this.stop_all(cx),
+                    )),
                 )
                 .into_any_element(),
         )

@@ -48,6 +48,25 @@ pub fn pressed() -> Hsla {
     rgba(0xffffff1a).into()
 }
 
+/// How dark a username is allowed to be.
+///
+/// Twitch lets people pick any colour, and its own default palette contains
+/// pure blue, firebrick and seagreen — all of which sit at or below the
+/// lightness of `surface()` and effectively vanish against it.
+const NAME_MIN_LIGHTNESS: f32 = 0.6;
+
+/// A username colour that can be read on this background.
+///
+/// Hue and saturation are kept and only lightness is lifted, so people stay
+/// recognisable by colour rather than being flattened to one. This is not
+/// perceptual — blue reads darker than yellow at equal lightness — but a flat
+/// floor is predictable, and the alternative is a name nobody can see.
+pub fn readable(color: u32) -> Hsla {
+    let mut color: Hsla = rgb(color).into();
+    color.l = color.l.max(NAME_MIN_LIGHTNESS);
+    color
+}
+
 /// Every other chat row, for the same reason ledgers have ruled lines.
 pub fn stripe() -> Hsla {
     rgba(0xffffff05).into()
@@ -166,6 +185,9 @@ pub const PANEL_PAD: f32 = 12.0;
 /// Inside a pill or button.
 pub const CONTROL_PAD_X: f32 = 10.0;
 pub const CONTROL_PAD_Y: f32 = 5.0;
+/// Between words in a sentence. Narrower than `GAP_TIGHT`, which was doing
+/// this job and is wider than a real word space at `TEXT_BODY`.
+pub const GAP_WORD: f32 = 4.0;
 /// Between a label and the thing it labels.
 pub const GAP_TIGHT: f32 = 6.0;
 /// Between peers in a row or column.
@@ -178,6 +200,12 @@ pub const PANE_GAP: f32 = 3.0;
 /// Vertical rhythm inside a chat row.
 pub const ROW_PAD_X: f32 = 12.0;
 pub const ROW_PAD_Y: f32 = 5.0;
+/// The timestamp column. Fixed, so the stamps line up as a ruler down the
+/// side rather than shifting with each message.
+pub const STAMP_WIDTH: f32 = 34.0;
+/// Breathing room either side of an emote. Emotes need more air than words
+/// do, and `GAP_WORD` alone crowds them.
+pub const EMOTE_PAD_X: f32 = 2.0;
 
 // ── Motion ────────────────────────────────────────────────────────────
 //
@@ -225,3 +253,43 @@ pub const CHAT_WIDTH_MAX: f32 = 640.0;
 /// Below this window aspect ratio the window is treated as portrait and chat
 /// moves under the video instead of beside it.
 pub const PORTRAIT_ASPECT: f32 = 1.1;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The palette Twitch itself hands out is the worst case: it contains pure
+    /// blue, firebrick and seagreen, all darker than the surface they land on.
+    /// Tested against the real array rather than a copy, so the two cannot
+    /// drift apart.
+    #[test]
+    fn every_default_username_colour_clears_the_background() {
+        for color in twitch_chat::message::DEFAULT_COLORS {
+            let lifted = readable(color);
+            assert!(
+                lifted.l >= NAME_MIN_LIGHTNESS,
+                "{color:#08x} came out at lightness {}",
+                lifted.l
+            );
+        }
+    }
+
+    /// A colour that is already legible must be left alone. Lifting everything
+    /// to the same brightness would stop the colour identifying anyone.
+    #[test]
+    fn colours_that_are_already_light_enough_are_untouched() {
+        let raw: Hsla = rgb(0xff7f50).into();
+        assert!(raw.l > NAME_MIN_LIGHTNESS, "coral should not need lifting");
+        assert_eq!(readable(0xff7f50), raw);
+    }
+
+    /// Hue has to survive the lift, or people stop being recognisable by their
+    /// colour — which is the only reason to keep it at all.
+    #[test]
+    fn lifting_a_dark_colour_keeps_its_hue() {
+        let raw: Hsla = rgb(0x0000ff).into();
+        let lifted = readable(0x0000ff);
+        assert_eq!(lifted.h, raw.h);
+        assert!(lifted.l > raw.l);
+    }
+}

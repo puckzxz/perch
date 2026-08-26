@@ -228,6 +228,40 @@ guide. Known differences: masking is `InputState::masked(bool)` not
 `Input::content_type`; `Button` variants need `ButtonVariants` in scope;
 `selected_index(cx)` takes the app context.
 
+**An overlay does not block input just by covering something.** GPUI hit-tests
+into a *flat, z-ordered list* and every overlapping element is collected, not
+just the topmost — `Frame::hit_test` pushes every hitbox containing the pointer
+and only stops early on `HitboxBehavior::BlockMouse` (window.rs:775-796). Click
+handling is synthesised from a down/up pair and never calls `stop_propagation`
+on success (div.rs:2136-2245), so two stacked elements that both have `on_click`
+both fire. That is why clicking "stop all" also opened whichever browse card was
+behind it, and why a click inside the settings panel reached the grid.
+
+The fix is one flag, not a handler: `.occlude()` (`HitboxBehavior::BlockMouse`)
+or `.block_mouse_except_scroll()`, both on `InteractiveElement` (div.rs:998-1012),
+so they work on a bare `Div` with no `.id()`. Because hit testing is flat and
+knows nothing about the element tree, an occluder blocks its own *ancestors*
+too — which is exactly what makes the modal pattern work.
+
+Two things worth keeping in mind:
+
+- **Occlude the smallest thing that is actually opaque.** Put it on a container
+  and you block its whole bounding box, including empty space: the miniplayer
+  strip is `items_end`, so occluding the strip would have left an invisible dead
+  patch over the card grid above the short "stop all" pill. Toast cards and
+  miniplayer tiles are occluded individually for the same reason.
+- **`block_mouse_except_scroll` for overlays on the browse page**, so the wheel
+  still reaches the grid underneath; plain `occlude` for the modal, where the
+  page behind should not scroll either.
+
+`browse.rs`'s `cx.stop_propagation()` on "+ add" is *not* the same pattern and
+must stay as it is: that button is a descendant of the card, not an overlay, and
+occluding it would kill the card's own hover and the group-hover that reveals it.
+
+Hover probes are immune to all of this: `gpui::canvas` inserts no hitbox and
+reads `window.mouse_position()` directly, so the video and pane probes keep
+working through any occluder.
+
 **`gpui_component::init(cx)` must run before any widget**, and `Root::new` must
 wrap the window's first view or overlays have nowhere to render.
 
