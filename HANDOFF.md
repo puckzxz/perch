@@ -4,15 +4,15 @@ For whoever picks this up next. `README.md` covers *using* it; this covers
 *working on* it — the architecture, the traps, and the things that cost real
 time to discover and would cost the same again.
 
-State as of the motion pass: 15 commits, 74 tests, clippy clean, ~7300 lines.
+State: 18 commits, 81 tests, clippy clean, ~8600 lines.
 Nothing pushed; there is no remote.
 
 ---
 
 ## What it is
 
-A native Twitch client in one window: browse who you follow, watch up to four of
-them at once, each with its own chat. Rust + [GPUI](https://github.com/zed-industries/zed)
+A native Twitch client in one window: browse who you follow or what is popular,
+watch up to four of them at once, each with its own chat. Rust + [GPUI](https://github.com/zed-industries/zed)
 (Zed's UI framework), with streamlink as the byte source and libmpv doing decode
 and A/V sync.
 
@@ -49,7 +49,7 @@ crates/
   mpv-frames    libmpv loaded at runtime, software render to BGRA
   streamlink    supervises streamlink as a headless Twitch byte source
   twitch-chat   read-only chat over anonymous IRC
-  twitch-api    device-code sign-in and followed streams
+  twitch-api    device-code sign-in, follows, top streams, categories, search
   emotes        Twitch/FFZ/BTTV/7TV resolution + disk image cache
   settings      persisted user settings
   nativetwitch  the app
@@ -64,21 +64,31 @@ App modules:
 | file | role |
 |---|---|
 | `main.rs` | shell: `RootView`, pages, stream slots, navigation |
-| `browse.rs` | the follows page |
+| `browse.rs` | the picker page: following, popular, categories |
 | `watch.rs` | the grid of panes; `Slot` lives here |
 | `layout.rs` | derives grid shape from window aspect (pure, tested) |
 | `video_view.rs` | player element + overlay controls |
 | `video.rs` | render thread; owns the mpv `Player` |
 | `chat.rs` | chat pane, emote rendering |
 | `settings_view.rs` | settings sheet |
-| `follows.rs` | sign-in + follows polling worker |
+| `twitch.rs` | the worker: sign-in, follows polling, browse requests |
 | `theme.rs` | **all** colour, spacing, type and motion tokens |
 | `motion.rs` | the four animation shapes, and the state one of them needs |
+| `diagnostics.rs` | where stderr goes when there is no console |
 
 **Threading model, used consistently:** anything blocking runs on a plain
 `std::thread` and reports through a `futures::channel::mpsc`, which the UI drains
 in a `cx.spawn_in` pump that calls `cx.notify()`. There is no async runtime. If
 you add a network feature, follow that shape rather than introducing tokio.
+
+**One thread owns the Twitch session, and it has to.** Refresh tokens are
+single-use, so two things refreshing at once would spend the same token twice
+and lock the user out. Every Helix read therefore goes through `twitch.rs`, not
+merely for tidiness. It takes requests on a `std::sync::mpsc` channel and waits
+on `recv_timeout` against the next follows-poll deadline — the wait and the
+mailbox are the same thing, so browsing never queues behind the timer. Dropping
+the service drops the sender, which wakes the worker immediately rather than
+after the poll interval.
 
 ---
 
@@ -247,6 +257,38 @@ sends no frames, so without them nothing would ask the probe to run again. Their
 — reproducible from `Cargo.lock`. An earlier plan called for pinning a git rev;
 that turned out to be unnecessary.
 
+### Windows packaging
+
+**The release build has no console**, so `eprintln!` and panic messages go to a
+handle that leads nowhere. `diagnostics::capture_stderr` points the process's
+stderr at `%LOCALAPPDATA%
+ativetwitch
+ativetwitch.log` before anything can
+write, and keeps the previous run as `.log.old`. It works by `SetStdHandle`
+rather than by a logging facade because Windows resolves that handle on *every
+write* — so it catches the library crates and panic output too, with no change
+anywhere else. That was verified with a throwaway before the code was written;
+if you ever doubt it, verify it again rather than assuming.
+
+Debug builds keep their console on purpose (`#![cfg_attr(not(debug_assertions),
+windows_subsystem = "windows")]`), which is also the only place `--help` is
+readable.
+
+**A windowed app still gets console windows from its children.** streamlink is a
+console-subsystem program, so every one we spawn came with its own console — and
+since the app itself no longer has one, those were the only console windows a
+user ever saw. `streamlink::command` sets `CREATE_NO_WINDOW`. Windows still
+pairs a `conhost.exe` with each child; check for *visible windows*, not for the
+absence of conhost, or you will conclude the fix did not work.
+
+**The icon is an embedded resource**, stamped on by `build.rs` via
+`winresource`, because gpui 0.2.2 has no window-icon API and Windows takes the
+taskbar and titlebar icons from the executable anyway. It needs `rc.exe` from
+the Windows SDK; a build without one warns and produces an icon-less binary
+rather than failing. `assets/make-icon.ps1` regenerates the `.ico` — entries up
+to 128px are DIBs and 256 is a PNG, because GDI+ cannot read a PNG-payload entry
+back, so a PNG-only file is one you cannot open to check.
+
 ### Motion
 
 **GPUI has no transitions.** `.hover()` swaps styles instantly and there is no
@@ -362,6 +404,50 @@ click closed a pane *and* navigated away. Top-right is the only anchor that
 clears the corner for every grid shape `layout.rs` can derive — with four
 columns, the third pane's *left* edge also lands under a centred nav.
 
+### Browsing
+
+Three lists on one page — following, popular, categories — because they are the
+same question asked three ways, so they share one grid and one card. Only
+categories look different, and only because box art is 3:4 rather than 16:9.
+Opening a category *replaces* the page rather than nesting inside the tab, so
+there is only ever one thing to scroll.
+
+Everything the user does there arrives as one `browse::Action` rather than one
+callback per control: the page is generic over its owner, so each extra closure
+would be another type parameter threaded through every helper.
+
+Two things worth keeping:
+
+- A category's streams are dropped if the reply arrives after the user has left
+  it. Without that check a slow response repopulates the page behind them.
+- `RootView::fetch` refuses to set `loading` when there is nobody to answer —
+  before sign-in, or after the worker has stopped. A request made while signed
+  out would otherwise sit in the queue behind the device-code poll and pulse
+  "Loading…" indefinitely. `fill_tab` picks it up once sign-in lands.
+
+Lists are fetched once per tab and kept. There is no pagination: Helix caps a
+page at 100, which is the top 100 streams or categories on Twitch, and that is
+plenty to pick from. Adding "load more" means threading the `pagination.cursor`
+Twitch already returns through `top_streams`/`top_categories`.
+
+**Search** is three requests behind one result, and both halves have a reason:
+
+- `/search/channels` answers with a **profile picture and no viewer count** — a
+  different shape from every other list in the app. So only its logins are kept,
+  and they go back through `/streams` to become ordinary stream records. One
+  extra round trip buys cards identical to every other list. Helix takes up to
+  100 `user_login` parameters, so it stays one request.
+- Categories are searched in the same breath, because a name like "zomboid" is
+  as likely to mean the game as a channel.
+
+Results show **channels first**, and categories are capped at
+`SEARCH_CATEGORY_LIMIT`. Twitch matches category names loosely — "moonmoon"
+returns twenty-odd games with "moon" in them — and with categories first the
+channel you actually searched for was below the fold. A live channel is directly
+watchable; a category is another click.
+
+Search runs on Enter, not per keystroke, since each one is three requests.
+
 ### What deliberately does not move
 
 Both of these were considered and rejected, so they read as decisions rather
@@ -448,10 +534,8 @@ Roughly in the order I would take them.
 4. **Animated WebP** (7TV, some BTTV) may render as stills. Twitch's animated
    emotes are GIF and animate correctly.
 5. **Follows poll every 60 s** with no manual refresh.
-6. **Console window** opens alongside the app. Deliberate while iterating —
-   `#![windows_subsystem = "windows"]` removes it but also hides stderr.
-7. **Orphaned streamlink on a hard crash.** A Windows job object would close it.
-8. **Never tested on a vertical monitor.** The layout derives portrait grids and
+6. **Orphaned streamlink on a hard crash.** A Windows job object would close it.
+7. **Never tested on a vertical monitor.** The layout derives portrait grids and
    stacks chat below video, and the logic is unit-tested, but nobody has seen it.
 
 ## Things not to redo

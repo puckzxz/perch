@@ -1,15 +1,19 @@
-//! The browse page: everyone you follow who is live.
+//! The browse page: what you follow, what is popular, and what is on.
 //!
 //! A page rather than a sidebar. Picking what to watch and watching it are
 //! different activities, and giving the picker the whole window means
 //! thumbnails big enough to actually choose by.
+//!
+//! All three lists are the same grid of the same card, because they are the
+//! same question asked three ways. Only categories look different, and only
+//! because box art is a different shape from a thumbnail.
 
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use emotes::ImageCache;
 use gpui::{div, img, prelude::*, px, rgb, AnyElement, Context, SharedString};
-use twitch_api::LiveStream;
+use twitch_api::{Category, LiveStream};
 
 use crate::motion;
 use crate::theme;
@@ -19,6 +23,95 @@ use crate::theme;
 const CARD_WIDTH: f32 = 300.0;
 const THUMBNAIL_WIDTH: u32 = 440;
 const THUMBNAIL_HEIGHT: u32 = 248;
+
+/// Category cards are narrower, because box art is portrait and a row of tall
+/// cards at stream width would be a wall.
+const CATEGORY_WIDTH: f32 = 160.0;
+/// Twitch box art is 3:4.
+const BOX_ART_WIDTH: u32 = 285;
+const BOX_ART_HEIGHT: u32 = 380;
+
+/// How many category matches a search shows.
+///
+/// Twitch matches category names loosely — "moonmoon" returns twenty-odd games
+/// with "moon" in them — and an uncapped list buries the channel you were
+/// actually looking for. They are relevance-ordered, so a dozen is a hint
+/// rather than a list.
+const SEARCH_CATEGORY_LIMIT: usize = 12;
+
+/// Which of the browse page's lists is showing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Tab {
+    #[default]
+    Following,
+    Popular,
+    Categories,
+}
+
+impl Tab {
+    pub const ALL: [Tab; 3] = [Tab::Following, Tab::Popular, Tab::Categories];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Tab::Following => "following",
+            Tab::Popular => "popular",
+            Tab::Categories => "categories",
+        }
+    }
+}
+
+/// Everything the browse page shows that is not your follows list.
+///
+/// Held rather than fetched per render: these are network round trips, so they
+/// are asked for when a tab is opened and kept until the app closes.
+#[derive(Default)]
+pub struct Discovery {
+    pub tab: Tab,
+    pub popular: Vec<LiveStream>,
+    pub categories: Vec<Category>,
+    /// Set while looking inside one category, which takes over the page.
+    pub open: Option<Category>,
+    /// Set while showing search results, which also take over the page.
+    pub search: Option<SearchResults>,
+    /// Streams within [`open`](Self::open).
+    pub streams: Vec<LiveStream>,
+    /// A request is in flight. One at a time, so one flag is enough.
+    pub loading: bool,
+    /// A browse request failed. Deliberately separate from `SignIn::Error`:
+    /// the session is fine, and blanking the whole page would say otherwise.
+    pub error: Option<SharedString>,
+}
+
+/// What a search turned up. Both kinds at once, because a name like "zomboid"
+/// is as likely to mean the game as a channel.
+#[derive(Default)]
+pub struct SearchResults {
+    pub query: SharedString,
+    pub categories: Vec<Category>,
+    pub streams: Vec<LiveStream>,
+}
+
+impl SearchResults {
+    pub fn is_empty(&self) -> bool {
+        self.categories.is_empty() && self.streams.is_empty()
+    }
+}
+
+/// Something the user did on the browse page.
+///
+/// One callback carrying an enum rather than one callback per control: the page
+/// is generic over its owner, so every extra closure is another type parameter
+/// threaded through every helper.
+#[derive(Debug, Clone)]
+pub enum Action {
+    /// Watch this channel alone.
+    Watch(String),
+    /// Add it beside whatever is already playing.
+    Add(String),
+    OpenCategory(Category),
+    CloseCategory,
+    CloseSearch,
+}
 
 /// How far sign-in has got.
 #[derive(Clone)]
@@ -82,16 +175,16 @@ pub fn format_viewers(count: u64) -> String {
 /// already playing. Two separate affordances because replacing what you are
 /// watching and adding to it are different intentions, and guessing between
 /// them from a single click gets it wrong half the time.
-#[allow(clippy::too_many_arguments)]
 fn card<V: 'static>(
     index: usize,
     stream: &LiveStream,
     cache: &ImageCache,
     can_add: bool,
-    on_click: impl Fn(&mut V, String, &mut gpui::Window, &mut Context<V>) + 'static,
-    on_add: impl Fn(&mut V, String, &mut gpui::Window, &mut Context<V>) + 'static,
+    on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + Clone + 'static,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
+    let on_click = on_action.clone();
+    let on_add = on_action;
     let login = stream.user_login.clone();
     let add_login = stream.user_login.clone();
     let thumbnail = cache.get_or_request(&twitch_api::thumbnail(
@@ -133,9 +226,9 @@ fn card<V: 'static>(
         .cursor_pointer()
         .hover(|style| style.bg(theme::surface_raised()))
         .active(|style| style.bg(theme::pressed()))
-        .on_click(
-            cx.listener(move |view, _event, window, cx| on_click(view, login.clone(), window, cx)),
-        )
+        .on_click(cx.listener(move |view, _event, window, cx| {
+            on_click(view, Action::Watch(login.clone()), window, cx)
+        }))
         .child(
             div()
                 .relative()
@@ -181,7 +274,7 @@ fn card<V: 'static>(
                                 // Without this the card underneath also fires
                                 // and replaces every open pane.
                                 cx.stop_propagation();
-                                on_add(view, add_login.clone(), window, cx)
+                                on_add(view, Action::Add(add_login.clone()), window, cx)
                             })),
                     )
                 }),
@@ -218,6 +311,236 @@ fn card<V: 'static>(
                             format!("{} · {meta}", stream.game_name)
                         })),
                 ),
+        )
+}
+
+/// The scrolling body of a list. Separate from the rows inside it, so a search
+/// can stack two kinds of result in one scroll rather than two.
+fn scroller(id: &'static str) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .flex_1()
+        .min_h_0()
+        .overflow_y_scroll()
+        .flex()
+        .flex_col()
+        .gap(px(theme::GAP_SECTION))
+        .p(px(theme::PAGE_PAD))
+}
+
+/// A wrapping row of cards.
+fn wrap_row(gap: f32) -> gpui::Div {
+    div()
+        .flex()
+        .flex_row()
+        .flex_wrap()
+        .gap(px(gap))
+        .content_start()
+}
+
+fn heading(text: &'static str) -> impl IntoElement {
+    div()
+        .text_size(px(theme::TEXT_LABEL))
+        .font_weight(theme::weight_label())
+        .text_color(theme::text_dim())
+        .child(text)
+}
+
+fn stream_row<V: 'static>(
+    streams: &[LiveStream],
+    cache: &ImageCache,
+    can_add: bool,
+    on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + Clone + 'static,
+    cx: &mut Context<V>,
+) -> gpui::Div {
+    let mut row = wrap_row(theme::GAP_SECTION);
+    for (index, stream) in streams.iter().enumerate() {
+        row = row.child(card(index, stream, cache, can_add, on_action.clone(), cx));
+    }
+    row
+}
+
+fn category_row<V: 'static>(
+    categories: &[Category],
+    cache: &ImageCache,
+    on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + Clone + 'static,
+    cx: &mut Context<V>,
+) -> gpui::Div {
+    let mut row = wrap_row(theme::GAP);
+    for (index, category) in categories.iter().enumerate() {
+        row = row.child(category_card(index, category, cache, on_action.clone(), cx));
+    }
+    row
+}
+
+fn stream_grid<V: 'static>(
+    id: &'static str,
+    streams: &[LiveStream],
+    cache: &ImageCache,
+    can_add: bool,
+    on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + Clone + 'static,
+    cx: &mut Context<V>,
+) -> AnyElement {
+    scroller(id)
+        .child(stream_row(streams, cache, can_add, on_action, cx))
+        .into_any_element()
+}
+
+/// Everything a search turned up, channels first.
+///
+/// A live channel is directly watchable; a category is another click. Searching
+/// a streamer's name and having to scroll past twenty games to reach them is
+/// the wrong way round.
+fn search_view<V: 'static>(
+    results: &SearchResults,
+    discovery: &Discovery,
+    cache: &ImageCache,
+    can_add: bool,
+    on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + Clone + 'static,
+    cx: &mut Context<V>,
+) -> AnyElement {
+    let body = if results.is_empty() {
+        browse_placeholder(
+            discovery,
+            format!("Nothing live matches “{}”.", results.query).into(),
+        )
+    } else {
+        let shown = SEARCH_CATEGORY_LIMIT.min(results.categories.len());
+        scroller("search-results")
+            .when(!results.streams.is_empty(), |list| {
+                list.child(heading("Live channels")).child(stream_row(
+                    &results.streams,
+                    cache,
+                    can_add,
+                    on_action.clone(),
+                    cx,
+                ))
+            })
+            .when(shown > 0, |list| {
+                list.child(heading("Categories")).child(category_row(
+                    &results.categories[..shown],
+                    cache,
+                    on_action.clone(),
+                    cx,
+                ))
+            })
+            .into_any_element()
+    };
+
+    div()
+        .flex_1()
+        .min_h_0()
+        .flex()
+        .flex_col()
+        .child(context_bar(
+            "leave-search",
+            "← back",
+            results.query.clone(),
+            Action::CloseSearch,
+            on_action,
+            cx,
+        ))
+        .child(body)
+        .into_any_element()
+}
+
+/// One category: its box art, and its name underneath.
+fn category_card<V: 'static>(
+    index: usize,
+    category: &Category,
+    cache: &ImageCache,
+    on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + 'static,
+    cx: &mut Context<V>,
+) -> impl IntoElement {
+    let chosen = category.clone();
+    let art = cache.get_or_request(&twitch_api::thumbnail(
+        &category.box_art_url,
+        BOX_ART_WIDTH,
+        BOX_ART_HEIGHT,
+    ));
+    let art_height = CATEGORY_WIDTH * BOX_ART_HEIGHT as f32 / BOX_ART_WIDTH as f32;
+
+    let cover = match art {
+        Some(path) => img(path).w_full().h(px(art_height)).into_any_element(),
+        // Sized placeholder, so the grid does not reflow as images arrive.
+        None => div()
+            .w_full()
+            .h(px(art_height))
+            .bg(theme::surface_raised())
+            .into_any_element(),
+    };
+
+    div()
+        .id(("category-card", index))
+        .w(px(CATEGORY_WIDTH))
+        .flex()
+        .flex_col()
+        .rounded_md()
+        .overflow_hidden()
+        .bg(theme::surface())
+        .cursor_pointer()
+        .hover(|style| style.bg(theme::surface_raised()))
+        .active(|style| style.bg(theme::pressed()))
+        .child(cover)
+        .child(
+            div()
+                .p(px(theme::PANEL_PAD))
+                .text_size(px(theme::TEXT_BODY))
+                .font_weight(theme::weight_title())
+                .text_color(theme::text())
+                .truncate()
+                .child(SharedString::from(category.name.clone())),
+        )
+        .on_click(cx.listener(move |view, _event, window, cx| {
+            on_action(view, Action::OpenCategory(chosen.clone()), window, cx)
+        }))
+}
+
+/// A line above a list that has taken over the page, saying where you are and
+/// how to leave.
+fn context_bar<V: 'static>(
+    id: &'static str,
+    back: &'static str,
+    title: SharedString,
+    action: Action,
+    on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + 'static,
+    cx: &mut Context<V>,
+) -> impl IntoElement {
+    div()
+        .flex_none()
+        .w_full()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(theme::GAP))
+        .px(px(theme::PAGE_PAD))
+        .py(px(theme::GAP_TIGHT))
+        .child(
+            div()
+                .id(id)
+                .px(px(theme::CONTROL_PAD_X))
+                .py(px(theme::CONTROL_PAD_Y))
+                .rounded_sm()
+                .bg(theme::surface_raised())
+                .text_size(px(theme::TEXT_LABEL))
+                .font_weight(theme::weight_label())
+                .text_color(theme::text_muted())
+                .cursor_pointer()
+                .hover(|style| style.bg(theme::hover()).text_color(theme::text()))
+                .active(|style| style.bg(theme::pressed()))
+                .child(back)
+                .on_click(cx.listener(move |view, _event, window, cx| {
+                    on_action(view, action.clone(), window, cx)
+                })),
+        )
+        .child(
+            div()
+                .min_w_0()
+                .truncate()
+                .text_size(px(theme::TEXT_TITLE))
+                .font_weight(theme::weight_title())
+                .text_color(theme::text())
+                .child(title),
         )
 }
 
@@ -279,6 +602,37 @@ fn awaiting_code<V: 'static>(
         .into_any_element()
 }
 
+/// A centred title and explanation, for a list with nothing in it.
+fn notice(title: SharedString, detail: SharedString, error: bool) -> gpui::Div {
+    div()
+        .flex_1()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap(px(theme::GAP))
+        .child(
+            div()
+                .text_size(px(theme::TEXT_TITLE))
+                .font_weight(theme::weight_title())
+                .text_color(theme::text())
+                .child(title),
+        )
+        .child(
+            div()
+                .max_w(px(420.))
+                .text_size(px(theme::TEXT_BODY))
+                .line_height(px(theme::LINE_BODY))
+                .text_center()
+                .text_color(if error {
+                    theme::danger()
+                } else {
+                    theme::text_dim()
+                })
+                .child(detail),
+        )
+}
+
 /// A message filling the page when there is nothing to show.
 fn empty_state<V: 'static>(sign_in: &SignIn, cx: &mut Context<V>) -> AnyElement {
     if let SignIn::AwaitingCode {
@@ -304,32 +658,7 @@ fn empty_state<V: 'static>(sign_in: &SignIn, cx: &mut Context<V>) -> AnyElement 
         ),
     };
 
-    let body = div()
-        .flex_1()
-        .flex()
-        .flex_col()
-        .items_center()
-        .justify_center()
-        .gap(px(theme::GAP))
-        .child(
-            div()
-                .text_size(px(theme::TEXT_TITLE))
-                .font_weight(theme::weight_title())
-                .text_color(theme::text())
-                .child(title),
-        )
-        .child(
-            div()
-                .max_w(px(420.))
-                .text_size(px(theme::TEXT_BODY))
-                .line_height(px(theme::LINE_BODY))
-                .text_center()
-                .text_color(match sign_in {
-                    SignIn::Error(_) => theme::danger(),
-                    _ => theme::text_dim(),
-                })
-                .child(detail),
-        );
+    let body = notice(title, detail, matches!(sign_in, SignIn::Error(_)));
 
     // Only the state that is actually still going breathes. "Nobody is live"
     // and "Not signed in" are answers, not progress, and a pulsing answer both
@@ -340,51 +669,103 @@ fn empty_state<V: 'static>(sign_in: &SignIn, cx: &mut Context<V>) -> AnyElement 
     }
 }
 
+/// What a browse list shows when it has nothing in it yet.
+fn browse_placeholder(discovery: &Discovery, empty: SharedString) -> AnyElement {
+    if let Some(reason) = &discovery.error {
+        return notice("Could not reach Twitch".into(), reason.clone(), true).into_any_element();
+    }
+    if discovery.loading {
+        // Ends as soon as the request does, which is what makes a repeating
+        // animation safe here.
+        return motion::waiting(
+            "browse-loading",
+            notice("Loading…".into(), "Asking Twitch what is on.".into(), false),
+        )
+        .into_any_element();
+    }
+    notice("Nothing here".into(), empty, false).into_any_element()
+}
+
 /// The whole page.
 #[allow(clippy::too_many_arguments)]
 pub fn page<V: 'static>(
     follows: &[LiveStream],
+    discovery: &Discovery,
     sign_in: &SignIn,
     cache: &Arc<ImageCache>,
     can_add: bool,
-    on_open: impl Fn(&mut V, String, &mut gpui::Window, &mut Context<V>) + Clone + 'static,
-    on_add: impl Fn(&mut V, String, &mut gpui::Window, &mut Context<V>) + Clone + 'static,
+    on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + Clone + 'static,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
-    let mut grid = div()
-        .id("browse-grid")
-        .flex_1()
-        .min_h_0()
-        .overflow_y_scroll()
-        .flex()
-        .flex_row()
-        .flex_wrap()
-        .gap(px(theme::GAP_SECTION))
-        .p(px(theme::PAGE_PAD))
-        .content_start();
+    // Search and categories both take over the page rather than nesting inside
+    // a tab, so there is only ever one thing to scroll.
+    let body = if let Some(results) = &discovery.search {
+        search_view(results, discovery, cache, can_add, on_action, cx)
+    } else if let Some(category) = &discovery.open {
+        let list = if discovery.streams.is_empty() {
+            browse_placeholder(
+                discovery,
+                format!("Nobody is streaming {} right now.", category.name).into(),
+            )
+        } else {
+            stream_grid(
+                "category-streams",
+                &discovery.streams,
+                cache,
+                can_add,
+                on_action.clone(),
+                cx,
+            )
+        };
 
-    for (index, stream) in follows.iter().enumerate() {
-        grid = grid.child(card(
-            index,
-            stream,
-            cache,
-            can_add,
-            on_open.clone(),
-            on_add.clone(),
-            cx,
-        ));
-    }
+        div()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .child(context_bar(
+                "leave-category",
+                "← categories",
+                SharedString::from(category.name.clone()),
+                Action::CloseCategory,
+                on_action,
+                cx,
+            ))
+            .child(list)
+            .into_any_element()
+    } else {
+        match discovery.tab {
+            // Sign-in lives on this tab, so an empty follows list has more to
+            // say than "nothing here".
+            Tab::Following if follows.is_empty() => empty_state(sign_in, cx),
+            Tab::Following => stream_grid("browse-grid", follows, cache, can_add, on_action, cx),
+            Tab::Popular if discovery.popular.is_empty() => browse_placeholder(
+                discovery,
+                "Twitch reported nothing live, which would be a first.".into(),
+            ),
+            Tab::Popular => stream_grid(
+                "popular-grid",
+                &discovery.popular,
+                cache,
+                can_add,
+                on_action,
+                cx,
+            ),
+            Tab::Categories if discovery.categories.is_empty() => {
+                browse_placeholder(discovery, "No categories came back.".into())
+            }
+            Tab::Categories => scroller("categories-grid")
+                .child(category_row(&discovery.categories, cache, on_action, cx))
+                .into_any_element(),
+        }
+    };
 
     div()
         .size_full()
         .flex()
         .flex_col()
         .bg(theme::bg())
-        .child(if follows.is_empty() {
-            empty_state(sign_in, cx)
-        } else {
-            grid.into_any_element()
-        })
+        .child(body)
 }
 
 #[cfg(test)]

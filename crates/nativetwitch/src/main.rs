@@ -6,13 +6,19 @@
 //! The watch page is deliberately bare — players and their chats, nothing else
 //! — because chrome you stare past for three hours should not be there.
 
+// No console window in a real build. Debug builds keep one, because that is
+// where `--help` and a live stderr are worth more than the tidiness. See
+// `diagnostics` for where the output goes instead.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod browse;
 mod chat;
-mod follows;
+mod diagnostics;
 mod layout;
 mod motion;
 mod settings_view;
 mod theme;
+mod twitch;
 mod video;
 mod video_view;
 mod watch;
@@ -22,17 +28,18 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use browse::SignIn;
+use browse::{Action, Discovery, SearchResults, SignIn, Tab};
 use chat::ChatView;
 use emotes::ImageCache;
-use follows::{FollowsEvent, FollowsService};
 use gpui::{
     div, prelude::*, px, size, AnyView, App, Application, Bounds, Context, ElementId, Entity,
     SharedString, Task, TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
+use gpui_component::input::{Input, InputEvent, InputState};
 use settings::{QualityPreference, Settings};
 use settings_view::{SettingsEvent, SettingsPanel};
 use streamlink::{StreamEvent, StreamOptions, StreamSupervisor};
+use twitch::{Request, TwitchEvent, TwitchService};
 use twitch_api::LiveStream;
 use video::VideoStream;
 use video_view::{VideoEvent, VideoView};
@@ -87,8 +94,11 @@ struct RootView {
     /// re-announce everybody.
     known_live: HashSet<String>,
     sign_in: SignIn,
-    _follows: FollowsService,
-    _follows_pump: Task<()>,
+    /// Everything the browse page shows besides your follows.
+    discovery: Discovery,
+    search: Entity<InputState>,
+    twitch: TwitchService,
+    _twitch_pump: Task<()>,
 
     settings_panel: Option<Entity<SettingsPanel>>,
     /// Whether the page navigation is up. It follows the video chrome rather
@@ -131,7 +141,18 @@ impl RootView {
             }
         });
 
-        let (service, follows_pump) = Self::spawn_follows(settings_path.clone(), window, cx);
+        let (service, twitch_pump) = Self::spawn_twitch(settings_path.clone(), window, cx);
+
+        let search =
+            cx.new(|cx| InputState::new(window, cx).placeholder("search channels and categories"));
+        // Searching on every keystroke would be three requests per letter.
+        cx.subscribe(&search, |this: &mut RootView, state, event, cx| {
+            if matches!(event, InputEvent::PressEnter { .. }) {
+                let query = state.read(cx).value().trim().to_string();
+                this.run_search(query, cx);
+            }
+        })
+        .detach();
 
         let mut view = Self {
             settings,
@@ -142,8 +163,10 @@ impl RootView {
             follows: Vec::new(),
             known_live: HashSet::new(),
             sign_in: SignIn::Connecting,
-            _follows: service,
-            _follows_pump: follows_pump,
+            discovery: Discovery::default(),
+            search,
+            twitch: service,
+            _twitch_pump: twitch_pump,
             settings_panel: None,
             nav: motion::Fade::hidden(),
             toasts: Vec::new(),
@@ -160,20 +183,20 @@ impl RootView {
         view
     }
 
-    // ── Follows ──────────────────────────────────────────────────────
+    // ── Twitch ───────────────────────────────────────────────────────
 
-    fn spawn_follows(
+    fn spawn_twitch(
         settings_path: PathBuf,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> (FollowsService, Task<()>) {
-        let (service, mut events) = FollowsService::start(settings_path);
+    ) -> (TwitchService, Task<()>) {
+        let (service, mut events) = TwitchService::start(settings_path);
         let pump = cx.spawn_in(window, async move |this, cx| {
             use futures::StreamExt as _;
             while let Some(event) = events.next().await {
                 if this
                     .update(cx, |this: &mut RootView, cx| {
-                        this.apply_follows_event(event, cx)
+                        this.apply_twitch_event(event, cx)
                     })
                     .is_err()
                 {
@@ -184,10 +207,10 @@ impl RootView {
         (service, pump)
     }
 
-    fn apply_follows_event(&mut self, event: FollowsEvent, cx: &mut Context<Self>) {
+    fn apply_twitch_event(&mut self, event: TwitchEvent, cx: &mut Context<Self>) {
         match event {
-            FollowsEvent::NeedsClientId => self.sign_in = SignIn::NeedsClientId,
-            FollowsEvent::AwaitingCode {
+            TwitchEvent::NeedsClientId => self.sign_in = SignIn::NeedsClientId,
+            TwitchEvent::AwaitingCode {
                 user_code,
                 verification_uri,
             } => {
@@ -196,11 +219,155 @@ impl RootView {
                     verification_uri: verification_uri.into(),
                 }
             }
-            FollowsEvent::SignedIn { login } => self.sign_in = SignIn::SignedIn(login.into()),
-            FollowsEvent::Streams(streams) => self.on_streams(streams, cx),
-            FollowsEvent::Error(reason) => self.sign_in = SignIn::Error(reason.into()),
+            TwitchEvent::SignedIn { login } => {
+                self.sign_in = SignIn::SignedIn(login.into());
+                // Whatever the user opened while signed out can be fetched now.
+                self.fill_tab();
+            }
+            TwitchEvent::Streams(streams) => self.on_streams(streams, cx),
+            TwitchEvent::Error(reason) => self.sign_in = SignIn::Error(reason.into()),
+
+            TwitchEvent::Popular(streams) => {
+                self.discovery.popular = streams;
+                self.discovery.loading = false;
+            }
+            TwitchEvent::Categories(categories) => {
+                self.discovery.categories = categories;
+                self.discovery.loading = false;
+            }
+            TwitchEvent::CategoryStreams { category, streams } => {
+                // A reply for a category the user has already left must not
+                // repopulate the page behind them.
+                let still_open = self
+                    .discovery
+                    .open
+                    .as_ref()
+                    .is_some_and(|open| open.id == category.id);
+                if still_open {
+                    self.discovery.streams = streams;
+                }
+                self.discovery.loading = false;
+            }
+            TwitchEvent::SearchResults {
+                query,
+                categories,
+                streams,
+            } => {
+                // Same guard as a category: an answer to a question the user
+                // has moved on from must not replace what they are reading now.
+                let current = self
+                    .discovery
+                    .search
+                    .as_ref()
+                    .is_some_and(|open| open.query.as_ref() == query);
+                if current {
+                    self.discovery.search = Some(SearchResults {
+                        query: query.into(),
+                        categories,
+                        streams,
+                    });
+                }
+                self.discovery.loading = false;
+            }
+            TwitchEvent::BrowseError(reason) => {
+                self.discovery.error = Some(reason.into());
+                self.discovery.loading = false;
+            }
         }
         cx.notify();
+    }
+
+    // ── Browsing ─────────────────────────────────────────────────────
+
+    /// Only claim to be loading if something is going to answer.
+    ///
+    /// Browsing needs a token like everything else. Before sign-in the worker
+    /// is still parked on the device-code poll, so a request would sit in the
+    /// queue behind it and the page would pulse "Loading…" until the user
+    /// noticed the code on another tab. Say what is actually wrong instead, and
+    /// come back to it in [`fill_tab`](Self::fill_tab) once signed in.
+    fn fetch(&mut self, request: Request) {
+        self.discovery.error = None;
+        self.discovery.loading = false;
+
+        if !matches!(self.sign_in, SignIn::SignedIn(_)) {
+            self.discovery.error = Some("Sign in to Twitch to browse.".into());
+            return;
+        }
+        // Fails once the worker has returned, which it does when sign-in fails.
+        if self.twitch.request(request) {
+            self.discovery.loading = true;
+        } else {
+            self.discovery.error = Some("Not connected to Twitch.".into());
+        }
+    }
+
+    /// Fetch whatever the open tab needs and does not already have.
+    ///
+    /// Asked for once and kept: these are network round trips, and the top of
+    /// Twitch does not move in the time it takes to look at another tab.
+    fn fill_tab(&mut self) {
+        match self.discovery.tab {
+            Tab::Popular if self.discovery.popular.is_empty() => self.fetch(Request::Popular),
+            Tab::Categories if self.discovery.categories.is_empty() => {
+                self.fetch(Request::Categories)
+            }
+            _ => {}
+        }
+    }
+
+    fn show_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
+        self.discovery.tab = tab;
+        self.discovery.open = None;
+        self.discovery.search = None;
+        self.discovery.error = None;
+        self.fill_tab();
+        cx.notify();
+    }
+
+    /// Run a search, or clear the results if the box is empty.
+    fn run_search(&mut self, query: String, cx: &mut Context<Self>) {
+        if query.is_empty() {
+            self.discovery.search = None;
+            self.discovery.error = None;
+            cx.notify();
+            return;
+        }
+
+        // Seeded with the query before the answer arrives, so the page can say
+        // what it is waiting for and can recognise a stale reply when it lands.
+        self.discovery.open = None;
+        self.discovery.search = Some(SearchResults {
+            query: query.clone().into(),
+            ..Default::default()
+        });
+        self.fetch(Request::Search(query));
+        cx.notify();
+    }
+
+    fn on_browse_action(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        match action {
+            Action::Watch(channel) => self.open_channel(channel, true, window, cx),
+            Action::Add(channel) => self.open_channel(channel, false, window, cx),
+            Action::OpenCategory(category) => {
+                self.discovery.search = None;
+                self.discovery.streams.clear();
+                self.discovery.open = Some(category.clone());
+                self.fetch(Request::Category(category));
+                cx.notify();
+            }
+            Action::CloseCategory => {
+                self.discovery.open = None;
+                self.discovery.streams.clear();
+                self.discovery.error = None;
+                cx.notify();
+            }
+            Action::CloseSearch => {
+                self.discovery.search = None;
+                self.discovery.error = None;
+                cx.notify();
+            }
+        }
     }
 
     /// Take a fresh follows list and announce anyone who just came online.
@@ -523,10 +690,13 @@ impl RootView {
                             this.sign_in = SignIn::Connecting;
                             this.follows.clear();
                             this.known_live.clear();
+                            // Browsing was fetched with the old app's token, so
+                            // it goes with it.
+                            this.discovery = Discovery::default();
                             let (service, pump) =
-                                Self::spawn_follows(this.settings_path.clone(), window, cx);
-                            this._follows = service;
-                            this._follows_pump = pump;
+                                Self::spawn_twitch(this.settings_path.clone(), window, cx);
+                            this.twitch = service;
+                            this._twitch_pump = pump;
                         }
                         if stream_changed {
                             let channels: Vec<String> =
@@ -574,6 +744,34 @@ impl RootView {
             .active(|style| style.bg(theme::pressed()))
             .child(label)
             .on_click(cx.listener(move |this, _event, window, cx| on_click(this, window, cx)))
+    }
+
+    /// A pill that says whether it is the list you are looking at.
+    fn tab_pill(&self, tab: Tab, cx: &mut Context<Self>) -> impl IntoElement {
+        let selected = self.discovery.tab == tab;
+        div()
+            .id(ElementId::from(tab.label()))
+            .px(px(theme::CONTROL_PAD_X))
+            .py(px(theme::CONTROL_PAD_Y))
+            .rounded_sm()
+            .bg(if selected {
+                theme::accent_dim()
+            } else {
+                theme::surface_raised()
+            })
+            .text_size(px(theme::TEXT_LABEL))
+            .font_weight(theme::weight_label())
+            .line_height(px(theme::LINE_TIGHT))
+            .text_color(if selected {
+                theme::text()
+            } else {
+                theme::text_muted()
+            })
+            .cursor_pointer()
+            .hover(|style| style.bg(theme::hover()).text_color(theme::text()))
+            .active(|style| style.bg(theme::pressed()))
+            .child(tab.label())
+            .on_click(cx.listener(move |this, _event, _window, cx| this.show_tab(tab, cx)))
     }
 
     fn toast_stack(&self) -> impl IntoElement {
@@ -697,11 +895,27 @@ impl RootView {
             )
             .child(
                 div()
+                    .min_w_0()
+                    .truncate()
                     .text_size(px(theme::TEXT_META))
                     .text_color(theme::text_dim())
                     .child(self.sign_in.summary()),
             )
+            .child(
+                div()
+                    .flex_none()
+                    .flex()
+                    .flex_row()
+                    .gap(px(theme::GAP_TIGHT))
+                    .children(Tab::ALL.map(|tab| self.tab_pill(tab, cx))),
+            )
             .child(div().flex_1())
+            .child(
+                div()
+                    .flex_none()
+                    .w(px(260.))
+                    .child(Input::new(&self.search).cleanable(true)),
+            )
             .when(watching > 0, |header| {
                 header.child(self.pill(
                     "resume",
@@ -726,15 +940,11 @@ impl RootView {
             .child(header)
             .child(browse::page(
                 &self.follows,
+                &self.discovery,
                 &self.sign_in,
                 &self.cache,
                 self.slots.len() < MAX_PANES,
-                |this: &mut RootView, channel, window, cx| {
-                    this.open_channel(channel, true, window, cx)
-                },
-                |this: &mut RootView, channel, window, cx| {
-                    this.open_channel(channel, false, window, cx)
-                },
+                |this: &mut RootView, action, window, cx| this.on_browse_action(action, window, cx),
                 cx,
             ))
             .children(self.miniplayers(cx))
@@ -823,6 +1033,13 @@ impl Render for RootView {
 }
 
 fn main() {
+    // Before anything that could go wrong: a windowed build has no console, so
+    // stderr must be pointed somewhere first or the first failure is silent.
+    // If this fails there is, by construction, nowhere to say so.
+    if !cfg!(debug_assertions) {
+        let _ = diagnostics::capture_stderr();
+    }
+
     let mut args = std::env::args().skip(1);
     let mut channels: Vec<String> = Vec::new();
     let mut volume = None;
@@ -837,6 +1054,9 @@ fn main() {
             }
             "--help" | "-h" => {
                 eprintln!("usage: {APP_NAME} [channel...] [--volume 0-100]");
+                eprintln!();
+                eprintln!("A release build is windowed, so this text goes to");
+                eprintln!("{}", diagnostics::log_path().display());
                 eprintln!();
                 eprintln!("Name up to {MAX_PANES} channels to open them side by side.");
                 eprintln!("With no channel, opens on the follows page.");

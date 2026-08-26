@@ -70,9 +70,28 @@ pub fn find_binary() -> Option<PathBuf> {
     candidates.into_iter().find(runs)
 }
 
+/// Build a command that does not open a console window.
+///
+/// streamlink is a console-subsystem program, so Windows hands every one we
+/// spawn its own console — and the app itself is windowed, so those are the
+/// only console windows a user ever sees. One of them sticks around for as long
+/// as the stream plays. `CREATE_NO_WINDOW` suppresses them without touching the
+/// pipes: stdout is still captured exactly as before.
+fn command(binary: impl AsRef<std::ffi::OsStr>) -> Command {
+    let mut command = Command::new(binary);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NO_WINDOW, from processthreadsapi.h.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    command
+}
+
 /// A bare name relies on PATH lookup, which is exactly what we want to test.
 fn runs(path: &PathBuf) -> bool {
-    Command::new(path)
+    command(path)
         .arg("--version")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -142,7 +161,7 @@ fn list_qualities(
     let mut args = vec!["--json".to_string()];
     args.extend(twitch_args(channel, options));
 
-    let output = Command::new(binary)
+    let output = command(binary)
         .args(&args)
         .output()
         .map_err(|e| format!("could not run streamlink: {e}"))?;
@@ -285,7 +304,7 @@ fn run(
     args.extend(twitch_args(&channel, &options));
     args.push(chosen.name.clone());
 
-    let spawned = Command::new(&binary)
+    let spawned = command(&binary)
         .args(&args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

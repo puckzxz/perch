@@ -20,3 +20,7 @@ futures = "0.3"
 # Must match gpui's own versions so RenderImage accepts our Frame.
 image = { version = "0.25", default-features = false }
 smallvec = "1"
+
+# Only to stamp the icon onto the .exe; see build.rs.
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"

@@ -1,5 +1,5 @@
-//! The slice of the Twitch Helix API this app needs: signing in, and finding
-//! out who you follow that is live.
+//! The slice of the Twitch Helix API this app needs: signing in, finding out
+//! who you follow that is live, and browsing what else is on.
 //!
 //! Sign-in uses the **device code flow**, which is the right one for a desktop
 //! app: it needs no redirect URI, no local web server, and no client secret —
@@ -18,8 +18,17 @@ const DEVICE_URL: &str = "https://id.twitch.tv/oauth2/device";
 const TOKEN_URL: &str = "https://id.twitch.tv/oauth2/token";
 const HELIX: &str = "https://api.twitch.tv/helix";
 
-/// Reading your follows is all this app asks for.
+/// Reading your follows is all this app asks for. Browsing — top streams and
+/// categories — needs no scope at all, only a valid token.
 pub const SCOPES: &str = "user:read:follows";
+
+/// One request's worth of results. Twitch caps this at 100.
+const PAGE_SIZE: &str = "100";
+/// Search returns matches in relevance order, and nobody reads past the first
+/// screen of a search. A smaller page also keeps the follow-up lookup cheap.
+const SEARCH_PAGE_SIZE: &str = "40";
+/// How many `user_login` parameters Helix accepts in one `/streams` request.
+const MAX_LOGINS_PER_REQUEST: usize = 100;
 
 /// Refresh this long before expiry rather than waiting for a 401.
 const REFRESH_MARGIN: Duration = Duration::from_secs(300);
@@ -142,7 +151,9 @@ pub fn poll_token(client_id: &str, device_code: &str) -> Result<Session, Error> 
     ]))?;
 
     if status >= 400 {
-        return Err(classify_token_error(body_message(&json).unwrap_or("sign-in failed")));
+        return Err(classify_token_error(
+            body_message(&json).unwrap_or("sign-in failed"),
+        ));
     }
     session_from_token_response(client_id, &json)
 }
@@ -191,7 +202,10 @@ fn session_from_token_response(client_id: &str, json: &Value) -> Result<Session,
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
-    let expires_in = json.get("expires_in").and_then(Value::as_u64).unwrap_or(3600);
+    let expires_in = json
+        .get("expires_in")
+        .and_then(Value::as_u64)
+        .unwrap_or(3600);
 
     let user = current_user(client_id, &access_token)?;
     Ok(Session {
@@ -210,14 +224,24 @@ pub fn needs_refresh(expires_at: u64) -> bool {
 
 // ── Helix ────────────────────────────────────────────────────────────
 
-fn helix_get(client_id: &str, token: &str, path: &str) -> Result<Value, Error> {
-    let (status, json) = read_body(
-        agent()
-            .get(&format!("{HELIX}{path}"))
-            .header("Client-Id", client_id)
-            .header("Authorization", &format!("Bearer {token}"))
-            .call(),
-    )?;
+fn helix_get(
+    client_id: &str,
+    token: &str,
+    path: &str,
+    query: &[(&str, &str)],
+) -> Result<Value, Error> {
+    let mut request = agent()
+        .get(&format!("{HELIX}{path}"))
+        .header("Client-Id", client_id)
+        .header("Authorization", &format!("Bearer {token}"));
+    // Built as pairs rather than formatted into the path so ureq escapes them:
+    // category names reach us from Twitch and go back as ids, but a hand-typed
+    // one would otherwise break the URL.
+    for (key, value) in query {
+        request = request.query(*key, *value);
+    }
+
+    let (status, json) = read_body(request.call())?;
 
     match status {
         200..=299 => Ok(json),
@@ -234,7 +258,7 @@ fn helix_get(client_id: &str, token: &str, path: &str) -> Result<Value, Error> {
 
 /// `(user_id, login)` for the token's owner.
 fn current_user(client_id: &str, token: &str) -> Result<(String, String), Error> {
-    let json = helix_get(client_id, token, "/users")?;
+    let json = helix_get(client_id, token, "/users", &[])?;
     let user = json
         .get("data")
         .and_then(Value::as_array)
@@ -330,16 +354,227 @@ pub fn followed_streams(
     let json = helix_get(
         client_id,
         token,
-        &format!("/streams/followed?user_id={user_id}&first=100"),
+        "/streams/followed",
+        &[("user_id", user_id), ("first", PAGE_SIZE)],
     )?;
     let mut streams = parse_streams(&json);
     streams.sort_by(|a, b| b.viewer_count.cmp(&a.viewer_count));
     Ok(streams)
 }
 
+// ── Browsing ─────────────────────────────────────────────────────────
+
+/// A Twitch category: usually a game, sometimes not ("Just Chatting").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Category {
+    pub id: String,
+    pub name: String,
+    /// Template with `{width}`/`{height}` placeholders; use [`thumbnail`].
+    /// Box art is 3:4, unlike stream thumbnails.
+    pub box_art_url: String,
+}
+
+/// The most-watched live streams right now, or the most-watched within one
+/// category.
+///
+/// Helix returns these in descending viewer order already; the sort is here so
+/// the guarantee is ours rather than borrowed.
+pub fn top_streams(
+    client_id: &str,
+    token: &str,
+    category_id: Option<&str>,
+) -> Result<Vec<LiveStream>, Error> {
+    let mut query = vec![("first", PAGE_SIZE)];
+    if let Some(id) = category_id {
+        query.push(("game_id", id));
+    }
+    let json = helix_get(client_id, token, "/streams", &query)?;
+    let mut streams = parse_streams(&json);
+    streams.sort_by(|a, b| b.viewer_count.cmp(&a.viewer_count));
+    Ok(streams)
+}
+
+/// The categories with the most viewers right now, in Twitch's own order.
+///
+/// Twitch does not report a viewer count per category here, only the ranking,
+/// so there is no number to show beside the name.
+pub fn top_categories(client_id: &str, token: &str) -> Result<Vec<Category>, Error> {
+    let json = helix_get(client_id, token, "/games/top", &[("first", PAGE_SIZE)])?;
+    Ok(parse_categories(&json))
+}
+
+/// Categories whose name matches `query`.
+///
+/// Twitch matches on substrings here, unlike the exact-name `/games` lookup, so
+/// this is what a search box wants.
+pub fn search_categories(
+    client_id: &str,
+    token: &str,
+    query: &str,
+) -> Result<Vec<Category>, Error> {
+    let json = helix_get(
+        client_id,
+        token,
+        "/search/categories",
+        &[("query", query), ("first", SEARCH_PAGE_SIZE)],
+    )?;
+    Ok(parse_categories(&json))
+}
+
+/// Logins of live channels whose name matches `query`.
+///
+/// Only logins, because `/search/channels` answers with a *profile* picture and
+/// no viewer count — a different shape from every other list in the app. The
+/// caller feeds these to [`streams_by_login`] so the results are ordinary
+/// streams like everything else.
+pub fn search_channels(client_id: &str, token: &str, query: &str) -> Result<Vec<String>, Error> {
+    let json = helix_get(
+        client_id,
+        token,
+        "/search/channels",
+        &[
+            ("query", query),
+            ("live_only", "true"),
+            ("first", SEARCH_PAGE_SIZE),
+        ],
+    )?;
+    Ok(parse_logins(&json))
+}
+
+/// Full stream records for named channels, skipping any that are offline.
+///
+/// Helix takes up to 100 `user_login` parameters in one request, so a page of
+/// search results costs exactly one more round trip.
+pub fn streams_by_login(
+    client_id: &str,
+    token: &str,
+    logins: &[String],
+) -> Result<Vec<LiveStream>, Error> {
+    if logins.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut query: Vec<(&str, &str)> = vec![("first", PAGE_SIZE)];
+    query.extend(
+        logins
+            .iter()
+            .take(MAX_LOGINS_PER_REQUEST)
+            .map(|login| ("user_login", login.as_str())),
+    );
+
+    let json = helix_get(client_id, token, "/streams", &query)?;
+    let mut streams = parse_streams(&json);
+    streams.sort_by(|a, b| b.viewer_count.cmp(&a.viewer_count));
+    Ok(streams)
+}
+
+fn parse_logins(json: &Value) -> Vec<String> {
+    json.get("data")
+        .and_then(Value::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(|entry| {
+                    entry
+                        .get("broadcaster_login")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn parse_categories(json: &Value) -> Vec<Category> {
+    json.get("data")
+        .and_then(Value::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(|entry| {
+                    // A category with no id cannot be opened, so it is not worth
+                    // showing.
+                    let id = entry.get("id").and_then(Value::as_str)?;
+                    Some(Category {
+                        id: id.to_string(),
+                        name: entry
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .unwrap_or(id)
+                            .to_string(),
+                        box_art_url: entry
+                            .get("box_art_url")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_logins_from_a_channel_search() {
+        let json: Value = serde_json::from_str(
+            r#"{"data":[
+                 {"broadcaster_login":"moonmoon","display_name":"MOONMOON","is_live":true},
+                 {"display_name":"No Login Here","is_live":true},
+                 {"broadcaster_login":"ben_","display_name":"Ben_","is_live":true}
+               ]}"#,
+        )
+        .unwrap();
+
+        assert_eq!(parse_logins(&json), vec!["moonmoon", "ben_"]);
+    }
+
+    #[test]
+    fn parses_a_top_categories_payload() {
+        let json: Value = serde_json::from_str(
+            r#"{"data":[
+                 {"id":"509658","name":"Just Chatting",
+                  "box_art_url":"https://cdn.test/jc-{width}x{height}.jpg"},
+                 {"id":"32982","name":"Grand Theft Auto V",
+                  "box_art_url":"https://cdn.test/gta-{width}x{height}.jpg"}
+               ],"pagination":{"cursor":"abc"}}"#,
+        )
+        .unwrap();
+
+        let categories = parse_categories(&json);
+        assert_eq!(categories.len(), 2);
+        assert_eq!(categories[0].name, "Just Chatting");
+        assert_eq!(categories[1].id, "32982");
+        assert_eq!(
+            thumbnail(&categories[0].box_art_url, 285, 380),
+            "https://cdn.test/jc-285x380.jpg"
+        );
+    }
+
+    /// Twitch is free to add fields and to send entries we cannot use. Neither
+    /// should cost us the rest of the page.
+    #[test]
+    fn categories_without_an_id_are_skipped() {
+        let json: Value = serde_json::from_str(
+            r#"{"data":[
+                 {"name":"No Id Here","box_art_url":"https://cdn.test/x.jpg"},
+                 {"id":"1","name":"Usable","box_art_url":"","some_new_field":7}
+               ]}"#,
+        )
+        .unwrap();
+
+        let categories = parse_categories(&json);
+        assert_eq!(categories.len(), 1);
+        assert_eq!(categories[0].name, "Usable");
+    }
+
+    #[test]
+    fn a_payload_with_no_data_is_empty_not_an_error() {
+        let json: Value = serde_json::from_str(r#"{"pagination":{}}"#).unwrap();
+        assert!(parse_categories(&json).is_empty());
+        assert!(parse_streams(&json).is_empty());
+    }
 
     #[test]
     fn fills_in_thumbnail_placeholders() {
@@ -354,7 +589,10 @@ mod tests {
     #[test]
     fn handles_the_percent_prefixed_placeholder_variant() {
         let template = "https://cdn.test/x-%{width}x%{height}.jpg";
-        assert_eq!(thumbnail(template, 100, 50), "https://cdn.test/x-100x50.jpg");
+        assert_eq!(
+            thumbnail(template, 100, 50),
+            "https://cdn.test/x-100x50.jpg"
+        );
     }
 
     #[test]
