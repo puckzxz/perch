@@ -24,6 +24,14 @@ const CARD_WIDTH: f32 = 300.0;
 const THUMBNAIL_WIDTH: u32 = 440;
 const THUMBNAIL_HEIGHT: u32 = 248;
 
+/// How long a stream preview is worth keeping.
+///
+/// A channel's preview lives at a fixed URL and Twitch replaces the picture
+/// behind it every few minutes, so caching by URL alone shows whatever was
+/// there the first time you looked. Roughly matches Twitch's own cadence:
+/// shorter just refetches identical bytes.
+const THUMBNAIL_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(300);
+
 /// Category cards are narrower, because box art is portrait and a row of tall
 /// cards at stream width would be a wall.
 const CATEGORY_WIDTH: f32 = 160.0;
@@ -187,11 +195,10 @@ fn card<V: 'static>(
     let on_add = on_action;
     let login = stream.user_login.clone();
     let add_login = stream.user_login.clone();
-    let thumbnail = cache.get_or_request(&twitch_api::thumbnail(
-        &stream.thumbnail_url,
-        THUMBNAIL_WIDTH,
-        THUMBNAIL_HEIGHT,
-    ));
+    let thumbnail = cache.get_or_request_fresh(
+        &twitch_api::thumbnail(&stream.thumbnail_url, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT),
+        THUMBNAIL_MAX_AGE,
+    );
 
     let preview = match thumbnail {
         Some(path) => img(path)

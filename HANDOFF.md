@@ -325,6 +325,26 @@ back, so a PNG-only file is one you cannot open to check.
 
 ### Motion
 
+**Not every cached image is immutable, and GPUI decodes one per path.** A
+channel's preview lives at a *fixed* URL whose picture Twitch replaces every few
+minutes, so caching it by URL forever pins whatever was there the first time you
+looked — the browse page showed day-old thumbnails for exactly this reason.
+
+Two things had to be true to fix it, and the second is the non-obvious one:
+
+- Previews go through `ImageCache::get_or_request_fresh`, refetching past a
+  `max_age` and living in an `images/live/` subdirectory that is emptied at
+  startup, so nothing survives into the next run. That lookup deliberately does
+  *not* consult the on-disk index the permanent path uses — promoting a file
+  from a previous session is the bug, not the cure.
+- Each refresh writes a **new filename**. GPUI caches a decoded image against
+  its path, so replacing the bytes underneath leaves the stale picture on
+  screen. The old file is deleted once the replacement is indexed, so a
+  refreshing image costs one file rather than one per refresh.
+
+Emotes and box art still use `get_or_request` and are still kept forever, which
+is right: they never change at their address.
+
 **A `list`'s scrollbar extent comes from *measured* items only.** gpui measures
 rows as it draws them, so in a live-appending list the ones you have not looked
 at contribute nothing to `items.summary().height` — which is what
