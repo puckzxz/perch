@@ -802,30 +802,23 @@ impl RootView {
                 cx,
             ))
             .child(
-                // Page-level navigation, over the grid rather than inside any
-                // one pane. Centred at the top because every grid shape has
-                // video there; the bottom-left corner belongs to a pane's chat
-                // as soon as there is more than one pane.
+                // The only page-level control on the watch page, in the corner
+                // a back control belongs in. Everything else here is a pane's
+                // own business, and panes keep their controls on their right so
+                // nothing else ever reaches this corner.
+                //
+                // Settings is not here on purpose: it is set once and forgotten,
+                // and per-stream quality already lives in the control bar. It is
+                // on the follows page, one click away.
                 div()
                     .absolute()
                     .top(px(theme::GAP_TIGHT))
-                    .left_0()
-                    .right_0()
-                    .flex()
-                    .flex_row()
-                    .justify_center()
-                    .gap(px(theme::GAP_TIGHT))
+                    .left(px(theme::GAP_TIGHT))
                     .child(
-                        self.pill("back", "follows".into(), cx, |this, _window, cx| {
+                        self.pill("back", "← follows".into(), cx, |this, _window, cx| {
                             this.go_browse(cx)
                         }),
-                    )
-                    .child(self.pill(
-                        "watch-settings",
-                        "settings".into(),
-                        cx,
-                        |this, window, cx| this.toggle_settings(window, cx),
-                    )),
+                    ),
             )
     }
 }

@@ -238,6 +238,14 @@ only ever attached to a state that ends. "Offline" and "failed" deliberately sit
 still: a pulsing error is a permanent 60 fps repaint, and it reads as progress
 when there is none.
 
+**`on_hover` fires on `MouseMoveEvent` only, when the value *changes*.** Two
+consequences. A layout change under a stationary pointer fires nothing, so
+explicit hover state can be one mouse-move stale — unavoidable, and invisible in
+practice. Worse, it means GPUI's idea of hovered and ours must not drift: pane
+element ids are keyed on the **channel**, never the index, because closing a
+pane reindexes the rest and a position-keyed survivor inherits the closed pane's
+`hover_state = true`. Its header then never reappears until the pointer leaves
+the pane entirely, since no *change* ever occurs. See `watch::pane_id`.
 
 ---
 
@@ -272,6 +280,22 @@ grep -nE "Duration::from_(millis|secs)" crates/nativetwitch/src/*.rs
 The first two should return nothing outside `theme.rs`. The third will show
 genuine timings — the follows poll, the toast lifetime, an mpv frame wait — but
 no *animation* duration should appear outside `theme.rs`.
+
+### Where controls live
+
+The watch page has exactly two layers of chrome and they must not meet:
+
+- **Page level** — one "← follows" pill, window top-**left**. Settings is not
+  here: it is set once and forgotten, per-stream quality already lives in the
+  control bar, and the follows page is one click away.
+- **Pane level** — channel name and close, anchored to each pane's top-**right**;
+  playback controls along its bottom. Both hover-revealed.
+
+Left-anchoring the pane controls put the first pane's close button underneath
+the page navigation, and since neither called `cx.stop_propagation()` a single
+click closed a pane *and* navigated away. Top-right is the only anchor that
+clears the corner for every grid shape `layout.rs` can derive — with four
+columns, the third pane's *left* edge also lands under a centred nav.
 
 ### What deliberately does not move
 
@@ -345,30 +369,24 @@ graceful close, but a hard kill orphans it. `taskkill //F //IM streamlink.exe`.
 
 Roughly in the order I would take them.
 
-1. **The page navigation sits on top of a pane's close button.** Page nav is
-   centred at the window top; a pane header puts its close control at the right
-   edge of its own video pane. In a 1×2 grid on a 1600px window those are the
-   same 50 pixels, and neither calls `cx.stop_propagation()`, so one click
-   *both* closes the left pane and navigates to follows. Demonstrated, not
-   theorised. Any fix has to hold for every grid shape the layout can derive.
-2. **Line endings are mixed across the repo**, and `cargo fmt --all` normalises
+1. **Line endings are mixed across the repo**, and `cargo fmt --all` normalises
    the CRLF files to LF — which rewrites twelve whole files that have nothing to
    do with your change. Until a `.gitattributes` settles it, format the crate
    you are working on (`cargo fmt -p nativetwitch`) rather than the workspace,
    and check `git diff --stat` before committing. `cargo fmt --check` also
    reports pre-existing deviations in `chat.rs` and several other crates; the
    repo has never been fully fmt-clean.
-3. **Quality does not re-pick on resize.** It is chosen when a channel opens,
+2. **Quality does not re-pick on resize.** It is chosen when a channel opens,
    using the pane size at that moment. Maximising afterwards grows the render
    buffer but not the stream quality.
-4. **No sign-out**, and no way to clear a bad token except editing the field.
-5. **Animated WebP** (7TV, some BTTV) may render as stills. Twitch's animated
+3. **No sign-out**, and no way to clear a bad token except editing the field.
+4. **Animated WebP** (7TV, some BTTV) may render as stills. Twitch's animated
    emotes are GIF and animate correctly.
-6. **Follows poll every 60 s** with no manual refresh.
-7. **Console window** opens alongside the app. Deliberate while iterating —
+5. **Follows poll every 60 s** with no manual refresh.
+6. **Console window** opens alongside the app. Deliberate while iterating —
    `#![windows_subsystem = "windows"]` removes it but also hides stderr.
-8. **Orphaned streamlink on a hard crash.** A Windows job object would close it.
-9. **Never tested on a vertical monitor.** The layout derives portrait grids and
+7. **Orphaned streamlink on a hard crash.** A Windows job object would close it.
+8. **Never tested on a vertical monitor.** The layout derives portrait grids and
    stacks chat below video, and the logic is unit-tested, but nobody has seen it.
 
 ## Things not to redo

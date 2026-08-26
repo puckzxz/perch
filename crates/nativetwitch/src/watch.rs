@@ -6,7 +6,9 @@
 //! [`crate::layout`], which derives a grid from the window rather than looking
 //! one up per stream count.
 
-use gpui::{div, prelude::*, px, Context, Entity, IntoElement, SharedString, Task, Window};
+use gpui::{
+    div, prelude::*, px, Context, ElementId, Entity, IntoElement, SharedString, Task, Window,
+};
 use streamlink::StreamSupervisor;
 
 use crate::chat::ChatView;
@@ -18,6 +20,18 @@ use crate::video_view::VideoView;
 /// Beyond this, panes are too small to read chat in and the CPU cost stops
 /// being worth it.
 pub const MAX_PANES: usize = 4;
+
+/// Element ids inside a pane identify its **channel**, never its position.
+///
+/// Closing a pane reindexes every pane after it. Position-keyed ids make the
+/// survivor inherit the closed pane's element state - including whether GPUI
+/// thinks it is hovered - and since `on_hover` only fires when that value
+/// *changes*, a stale `true` means the header never returns until the pointer
+/// leaves the pane and comes back. Same lesson as the animated-emote ids: the
+/// id has to name the thing, not the slot it happens to be in.
+fn pane_id(channel: &str, role: &str) -> ElementId {
+    ElementId::Name(SharedString::from(format!("pane-{role}-{channel}")))
+}
 
 pub enum StreamState {
     Starting,
@@ -125,7 +139,7 @@ fn pane<V: 'static>(
                 // error would be both irritating and a repaint that never
                 // stops.
                 .child(if status.working {
-                    motion::waiting(("pane-status", index), label).into_any_element()
+                    motion::waiting(pane_id(&slot.channel, "status"), label).into_any_element()
                 } else {
                     label.into_any_element()
                 })
@@ -149,7 +163,7 @@ fn pane<V: 'static>(
 
     let video_pane =
         div()
-            .id(("pane-video", index))
+            .id(pane_id(&slot.channel, "video"))
             .flex_1()
             .min_w_0()
             .min_h_0()
@@ -165,8 +179,14 @@ fn pane<V: 'static>(
                 // appear on hover, so a grid of four panes shows four pictures
                 // rather than four title bars.
                 //
+                // Anchored to the pane's *right*, and deliberately so. Page
+                // navigation lives in the window's top-left corner, which is
+                // also the top-left of the first pane; every other corner of
+                // every grid shape is far from it. Left-anchoring these put the
+                // first pane's controls underneath the page navigation, where
+                // one click ran both.
                 slot.header.apply(
-                    ("pane-header", index),
+                    pane_id(&slot.channel, "header"),
                     theme::MOTION_HOVER,
                     div()
                         .absolute()
@@ -178,6 +198,7 @@ fn pane<V: 'static>(
                         .items_start()
                         .gap(px(theme::GAP_TIGHT))
                         .p(px(theme::GAP_TIGHT))
+                        .child(div().flex_1())
                         .child(
                             div()
                                 .px(px(theme::CONTROL_PAD_X))
@@ -189,11 +210,10 @@ fn pane<V: 'static>(
                                 .text_color(theme::text())
                                 .child(SharedString::from(slot.channel.clone())),
                         )
-                        .child(div().flex_1())
                         .when(layout.closable, |header| {
                             header.child(
                                 div()
-                                    .id(("close-pane", index))
+                                    .id(pane_id(&slot.channel, "close"))
                                     .px(px(theme::CONTROL_PAD_X))
                                     .py(px(theme::CONTROL_PAD_Y))
                                     .rounded_sm()
