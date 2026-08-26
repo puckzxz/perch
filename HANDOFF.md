@@ -4,15 +4,16 @@ For whoever picks this up next. `README.md` covers *using* it; this covers
 *working on* it — the architecture, the traps, and the things that cost real
 time to discover and would cost the same again.
 
-State: 18 commits, 81 tests, clippy clean, ~8600 lines.
+State: 22 commits, 95 tests, clippy clean, ~9500 lines.
 Nothing pushed; there is no remote.
 
 ---
 
 ## What it is
 
-A native Twitch client in one window: browse who you follow or what is popular,
-watch up to four of them at once, each with its own chat. Rust + [GPUI](https://github.com/zed-industries/zed)
+A native Twitch client in one window: browse who you follow, what is popular, or
+what is on; search for a channel; and watch up to four at once, each with its own
+chat. Rust + [GPUI](https://github.com/zed-industries/zed)
 (Zed's UI framework), with streamlink as the byte source and libmpv doing decode
 and A/V sync.
 
@@ -64,12 +65,13 @@ App modules:
 | file | role |
 |---|---|
 | `main.rs` | shell: `RootView`, pages, stream slots, navigation |
-| `browse.rs` | the picker page: following, popular, categories |
+| `browse.rs` | the picker page: following, popular, categories, search |
 | `watch.rs` | the grid of panes; `Slot` lives here |
 | `layout.rs` | derives grid shape from window aspect (pure, tested) |
 | `video_view.rs` | player element + overlay controls |
 | `video.rs` | render thread; owns the mpv `Player` |
-| `chat.rs` | chat pane, emote rendering |
+| `chat.rs` | chat pane: rows, emotes, scrollback |
+| `chat_text.rs` | what a word in a message is — link, mention or plain (pure, tested) |
 | `settings_view.rs` | settings sheet |
 | `twitch.rs` | the worker: sign-in, follows polling, browse requests |
 | `theme.rs` | **all** colour, spacing, type and motion tokens |
@@ -522,6 +524,52 @@ watchable; a category is another click.
 
 Search runs on Enter, not per keystroke, since each one is three requests.
 
+### Chat
+
+The pane reads a live log for hours, so nearly every decision in it is about
+scanning rather than features.
+
+**A row is two columns**: a fixed timestamp gutter, then the content. Not one
+wrapping row — a stamp added as the first child of a `flex_wrap` row re-flows
+with the text and gives no column at all. The structure pays twice: a wrapped
+message indents under the gutter instead of running back beneath its own
+timestamp.
+
+**Usernames go through `theme::readable`.** Twitch lets people pick any colour
+and its own fallback palette ships pure blue, firebrick and seagreen — all
+darker than the surface they land on. Lightness is lifted and hue kept, so
+people stay recognisable by colour rather than being flattened to one. The test
+runs against `twitch_chat::message::DEFAULT_COLORS` itself so the two cannot
+drift.
+
+**Anything per-row belongs to the row, never to its index.** The backlog drains
+from the front once full, which shifts every surviving index. That inverted the
+whole pane's stripe on every message past the cap, and would have cost links
+their hover state too — rows carry a stable `seq` for exactly that.
+
+**Words are classified in `chat_text`,** and the hard part is not matching URLs
+but *not* matching them. Chat is full of `lol.`, `1.5` and `wtf.jpg`, so a bare
+host only counts when what follows its last dot is a real TLD, and the list
+deliberately omits `.so`, `.is`, `.at` and `.it` — real TLDs and common English
+words both. Punctuation is split off the ends so a trailing comma is neither
+underlined nor sent to the browser.
+
+**Mentions take the colour of whoever is being addressed,** from a login→colour
+map that fills itself as people talk. A miss renders plainly rather than
+guessing. This only works *because* of the readability clamp — without it you
+would be scattering unreadable blues through body text, which is worse than
+leaving mentions alone.
+
+**Emotes overhang their line rather than growing it,** so a row with emotes is
+no taller than one without. At 28px in a 19px line they come within about half a
+pixel of the hairline; that is a deliberate trade, checked with a human and left
+alone.
+
+**Scrollback holds where you put it** and resumes only when the wheel reaches
+the very bottom, which in a fast channel is a long way down. The scrollbar and
+the jump-to-live pill exist because nothing on screen said so otherwise — see
+the `list` trap for why the thumb's *size* is not to be trusted.
+
 ### What deliberately does not move
 
 Both of these were considered and rejected, so they read as decisions rather
@@ -590,27 +638,85 @@ graceful close, but a hard kill orphans it. `taskkill //F //IM streamlink.exe`.
 
 ---
 
-## Open items
+## What to build next
 
-Roughly in the order I would take them.
+Agreed with the user and not yet built, in the order we settled on:
+
+1. **USERNOTICE rows** — subs, resubs, gifts, raids, announcements. These are
+   the events the streamer reacts to on camera, and dropping them means watching
+   someone thank a person you never saw. Nearly free: `twitch.tv/commands` is
+   already requested, so the lines are arriving and falling into a `_ => {}`,
+   and the `system-msg` tag is finished English that needs no formatting. Do not
+   switch exhaustively on `msg-id` — render `system-msg` for anything
+   unrecognised and special-case only the two or three worth colouring.
+2. **Keyboard shortcuts.** There is not one in the codebase: no `actions!`, no
+   `bind_keys`, no `on_key_down`. For an app left open for hours whose mute,
+   pause and back are all hover-revealed overlays, this is the largest gap and
+   one of the cheapest. GPUI has the whole stack.
+3. **Per-channel volume.** It is one global number today, written back on every
+   slider move, so the last channel you adjusted sets the level for every stream
+   afterwards — and streamers are wildly inconsistent. `Settings` is a plain
+   serde struct with `#[serde(default)]`, so a `HashMap<String, ChannelPrefs>`
+   is backward-compatible by construction.
+4. **Follows that include offline channels, plus a manual refresh.** The list is
+   live-only, so a channel you follow that is offline does not exist to the app.
+   `GET /helix/channels/followed` needs `user:read:follows`, the scope already
+   granted — same worker, same token, one more request.
+
+Researched and ranked but not agreed, roughly in value order: stream metadata
+for channels you *do not* follow (the chat header's viewer count and uptime come
+from the follows poll, so they are blank for anything opened from popular or
+search); filtering and sorting a list in memory; window size and position
+persistence; badges in the chat gutter; recent-message backfill on join so four
+panes do not open blank; reply context lines; and highlight rules that wash the
+row background rather than colouring a word.
+
+**Known to be out of reach**, so nobody re-derives it:
+
+- **Chatter counts.** The old `tmi.twitch.tv/.../chatters` endpoint was shut
+  down on 3 April 2023 and returns 404. Helix `GET /chat/chatters` needs
+  `moderator:read:chatters` *and* that the token's user moderates the channel.
+  IRC `NAMES` still responds but stops listing above ~1000 users, so it returns
+  nothing on exactly the channels worth asking about. `viewer_count` from Get
+  Streams is the only public number.
+- **Moderation, whispers, the emote picker, sending messages.** All need an
+  authenticated connection. Sending is genuinely feasible — add `chat:edit` to
+  the scopes and authenticate the IRC session — but the user has ruled it out:
+  this is a viewer, not a chat client.
+- **Text selection across a message.** Every word is its own element and GPUI
+  has no cross-element text selection, so there is no contiguous run to select.
+  Links being clickable is currently the only way to get a URL out of the pane.
+- **Link previews.** Chatterino ships this off by default on privacy grounds,
+  which is a strong enough hint not to build it.
+
+## Known limits
+
+None of these is being worked on; all of them are real.
 
 1. **Line endings are mixed across the repo**, and `cargo fmt --all` normalises
-   the CRLF files to LF — which rewrites twelve whole files that have nothing to
-   do with your change. Until a `.gitattributes` settles it, format the crate
-   you are working on (`cargo fmt -p nativetwitch`) rather than the workspace,
-   and check `git diff --stat` before committing. `cargo fmt --check` also
-   reports pre-existing deviations in `chat.rs` and several other crates; the
-   repo has never been fully fmt-clean.
-2. **Quality does not re-pick on resize.** It is chosen when a channel opens,
-   using the pane size at that moment. Maximising afterwards grows the render
-   buffer but not the stream quality.
-3. **No sign-out**, and no way to clear a bad token except editing the field.
-4. **Animated WebP** (7TV, some BTTV) may render as stills. Twitch's animated
-   emotes are GIF and animate correctly.
-5. **Follows poll every 60 s** with no manual refresh.
-6. **Orphaned streamlink on a hard crash.** A Windows job object would close it.
-7. **Never tested on a vertical monitor.** The layout derives portrait grids and
-   stacks chat below video, and the logic is unit-tested, but nobody has seen it.
+   the CRLF files to LF — rewriting whole files that have nothing to do with
+   your change. Until a `.gitattributes` settles it, format the crate you are
+   working on (`cargo fmt -p nativetwitch`) and check `git diff --stat` before
+   committing. `cargo fmt --check` also reports pre-existing deviations in
+   `chat.rs`, `video.rs`, `layout.rs` and `streamlink`; the repo has never been
+   fully fmt-clean.
+2. **The chat scrollbar's thumb size drifts.** Its position is right. See the
+   `list` trap — a real fix means not using gpui's scrollbar geometry.
+3. **Chat keeps 500 messages** and drains from the front even while you are
+   scrolled back reading them. That cap was chosen when scrolling back was not
+   really possible; now that it is, raising it is nearly free and makes the
+   scrollback worth having.
+4. **Quality does not re-pick on resize.** It is chosen when a channel opens,
+   using the pane size at that moment.
+5. **No sign-out**, and no way to clear a bad token except editing the field.
+6. **Animated WebP** (7TV, some BTTV) may render as stills. Twitch's own
+   animated emotes are GIF and animate correctly.
+7. **The image cache never prunes.** Permanent entries accumulate forever;
+   previews are bounded because their directory is emptied at startup. Deleting
+   `%LOCALAPPDATA%/nativetwitch/images` is always safe.
+8. **Orphaned streamlink on a hard crash.** A Windows job object would close it.
+9. **Never tested on a vertical monitor.** The layout derives portrait grids and
+   stacks chat below video, the logic is unit-tested, but nobody has seen it.
 
 ## Things not to redo
 
@@ -622,3 +728,10 @@ Roughly in the order I would take them.
 - Do not add tokio; use a thread plus an mpsc pump.
 - Do not put a repeating animation on a state that can persist.
 - Do not run `cargo fmt --all` here until the line endings are settled.
+- Do not assume an overlay blocks input because it covers something; use
+  `occlude` / `block_mouse_except_scroll`, and put it on the smallest thing that
+  is actually opaque.
+- Do not cache an image whose URL is stable but whose content is not, and do not
+  refresh one in place — GPUI decodes per path.
+- Do not derive anything per-row from a row's index; the backlog drains from the
+  front.
