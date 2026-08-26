@@ -72,6 +72,23 @@ pub fn stripe() -> Hsla {
     rgba(0xffffff05).into()
 }
 
+/// Behind a chat row that is an event rather than a message — a sub, a raid,
+/// an announcement.
+///
+/// A wash rather than a rule or a left bar: the row still has to sit inside the
+/// ruler of timestamps you scan down, and anything that changes its geometry
+/// puts a jog in that column for the sake of one row.
+pub fn event_wash() -> Hsla {
+    rgba(0x9d7bff14).into()
+}
+
+/// The louder wash, for the two events worth interrupting a read: a raid
+/// changes who is in the room, and an announcement is the broadcaster rather
+/// than the chat. Everything else Twitch invents gets the quiet one.
+pub fn event_wash_loud() -> Hsla {
+    rgba(0x9d7bff33).into()
+}
+
 /// Scrim behind a modal.
 pub fn scrim() -> Hsla {
     rgba(0x00000099).into()

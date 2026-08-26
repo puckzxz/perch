@@ -1,6 +1,9 @@
 //! Print chat events for a channel, with no UI in the way.
 //!
-//!     cargo run -p twitch-chat --example tail_chat -- <channel> [seconds]
+//!     cargo run -p twitch-chat --example tail_chat -- <channel> [seconds] [history]
+//!
+//! `history` is the scrollback to request before joining, so the backfill and
+//! the live feed can be told apart by where `[connected]` falls.
 
 use std::time::{Duration, Instant};
 
@@ -16,9 +19,13 @@ fn main() {
         .nth(2)
         .and_then(|s| s.parse().ok())
         .unwrap_or(20);
+    let history: usize = std::env::args()
+        .nth(3)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(25);
 
-    let (_client, mut events) = ChatClient::connect(&channel);
-    println!("listening to #{channel} for {secs}s…\n");
+    let (_client, mut events) = ChatClient::connect(&channel, history);
+    println!("listening to #{channel} for {secs}s, after {history} of backlog…\n");
 
     let deadline = Instant::now() + Duration::from_secs(secs);
     let mut messages = 0usize;
@@ -43,6 +50,13 @@ fn main() {
                     ChatEvent::Message(m) => {
                         messages += 1;
                         println!("<{}> {}", m.display_name, m.text);
+                    }
+                    ChatEvent::Notice(n) => {
+                        others += 1;
+                        println!("[{:?}] {}", n.kind, n.system);
+                        if let Some(body) = n.body {
+                            println!("        <{}> {}", body.display_name, body.text);
+                        }
                     }
                     ChatEvent::RoomState { room_id } => {
                         others += 1;

@@ -145,7 +145,17 @@ impl VideoView {
         self.apply_volume(volume, cx);
     }
 
-    fn toggle_mute(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Step the volume, clamped to the ends.
+    ///
+    /// Goes through `set_volume` rather than `apply_volume` so the slider
+    /// thumb follows: `apply_volume` deliberately does not write back, because
+    /// it is what an in-progress drag calls.
+    pub fn nudge_volume(&mut self, delta: i16, window: &mut Window, cx: &mut Context<Self>) {
+        let next = (self.stream.volume() as i16 + delta).clamp(0, 100) as u8;
+        self.set_volume(next, window, cx);
+    }
+
+    pub fn toggle_mute(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let next = if self.stream.volume() == 0 {
             self.volume_before_mute
         } else {
@@ -196,7 +206,7 @@ impl VideoView {
         self.sync_controls()
     }
 
-    fn toggle_pause(&mut self, cx: &mut Context<Self>) {
+    pub fn toggle_playback(&mut self, cx: &mut Context<Self>) {
         self.stream.set_paused(!self.stream.is_paused());
         cx.notify();
     }
@@ -295,7 +305,7 @@ impl VideoView {
             .bg(rgba(0x000000b3))
             .child(
                 Self::pill("pause", if paused { "play" } else { "pause" }.into())
-                    .on_click(cx.listener(|this, _event, _window, cx| this.toggle_pause(cx))),
+                    .on_click(cx.listener(|this, _event, _window, cx| this.toggle_playback(cx))),
             )
             .child(
                 Self::pill("mute", if volume == 0 { "unmute" } else { "mute" }.into())

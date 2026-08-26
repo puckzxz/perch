@@ -17,9 +17,10 @@ use gpui::{
 };
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 
-use twitch_chat::{ChatClient, ChatEvent, ChatMessage};
+use twitch_chat::{ChatClient, ChatEvent, ChatMessage, ChatNotice, NoticeKind};
 
 use crate::chat_text::{self, Kind};
+use crate::motion;
 use crate::theme;
 
 /// Emote names are worth showing on hover: half of chat is emotes, and knowing
@@ -42,14 +43,20 @@ impl Render for EmoteTooltip {
 }
 
 /// Messages kept in memory. Old ones drop off the top: chat runs forever, and
-/// nobody scrolls back a thousand lines in a live stream.
-const MAX_MESSAGES: usize = 500;
+/// a pane holding everything it ever saw is a leak with a nicer name.
+///
+/// Set when scrolling back was not really possible. Now that the pane opens
+/// with a backlog and holds its position when you scroll, the cap is what says
+/// how far back you can actually read, so it is worth more than it costs: a row
+/// is a `ChatMessage` and a few `SharedString`s, and only the visible ones are
+/// ever laid out.
+const MAX_MESSAGES: usize = 1_000;
 
 /// Rendered emote height. Twitch's 2.0 assets are around 56px, so this halves
 /// them and keeps them crisp on a HiDPI display.
 ///
 /// An emote overhangs its line rather than growing it — see the wrapper in
-/// `render_message` — so at this height it comes within about half a pixel of
+/// `message_line` — so at this height it comes within about half a pixel of
 /// the hairline above and below. That is deliberate: shrinking the emote to
 /// buy clearance costs more than the crowding does.
 const EMOTE_HEIGHT: f32 = 28.0;
@@ -73,7 +80,30 @@ fn clock(sent_at: Option<u64>) -> SharedString {
 #[derive(Clone)]
 enum RowKind {
     Message(Box<ChatMessage>),
+    /// A sub, a gift, a raid, an announcement — the moments the streamer reacts
+    /// to on camera, which a chat without them makes you watch them thank
+    /// somebody you never saw.
+    Event(Box<ChatNotice>),
+    /// Something the app itself has to say: joined, disconnected, cleared.
     Notice(SharedString),
+}
+
+impl RowKind {
+    /// The wash behind this row, if it needs one.
+    ///
+    /// Events are washed rather than outlined or barred, because the row has to
+    /// keep its place in the ruler of timestamps down the side. Two intensities
+    /// and no more: enumerating Twitch's `msg-id` values is a losing game, and
+    /// the sentence in the row already says which event it was.
+    fn wash(&self) -> Option<gpui::Hsla> {
+        match self {
+            RowKind::Event(notice) => Some(match notice.kind {
+                NoticeKind::Raid | NoticeKind::Announcement => theme::event_wash_loud(),
+                _ => theme::event_wash(),
+            }),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -98,6 +128,8 @@ struct Row {
 
 pub struct ChatView {
     rows: Vec<Row>,
+    /// What to say while the pane is still empty. Formatted once.
+    channel: SharedString,
     /// Login to chat colour, filled in as people talk.
     ///
     /// Lets an `@mention` be drawn in the colour of the person it refers to,
@@ -120,13 +152,17 @@ pub struct ChatView {
 }
 
 impl ChatView {
+    /// `history` is how many messages from before now to open with; zero joins
+    /// an empty pane. See [`twitch_chat::history`] for where they come from and
+    /// what asking costs.
     pub fn new(
         channel: String,
+        history: usize,
         cache: Arc<ImageCache>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let (client, mut events) = ChatClient::connect(&channel);
+        let (client, mut events) = ChatClient::connect(&channel, history);
 
         let pump = cx.spawn_in(window, async move |this, cx| {
             use futures::StreamExt as _;
@@ -172,8 +208,14 @@ impl ChatView {
             watcher.update(cx, |_, cx| cx.notify()).ok();
         });
 
-        let mut view = Self {
+        // Deliberately not a row. A backfill arrives stamped with the times
+        // those messages were really sent, all of them older than now, so a
+        // "connecting…" row would sit above an hour of history wearing a later
+        // timestamp than everything beneath it. It is a state of the pane, not
+        // an event in the log, and it belongs in the empty space it explains.
+        Self {
             rows: Vec::new(),
+            channel: SharedString::from(format!("connecting to #{channel}…")),
             colors: std::collections::HashMap::new(),
             striped: false,
             next_seq: 0,
@@ -184,12 +226,7 @@ impl ChatView {
             _client: client,
             _pump: pump,
             _emote_pump: emote_pump,
-        };
-        view.push(
-            RowKind::Notice(format!("connecting to #{channel}…").into()),
-            None,
-        );
-        view
+        }
     }
 
     fn apply(&mut self, event: ChatEvent) {
@@ -202,6 +239,15 @@ impl ChatView {
                 let sent_at = message.sent_at;
                 self.colors.insert(message.login.clone(), message.color);
                 self.push(RowKind::Message(message), sent_at)
+            }
+            ChatEvent::Notice(notice) => {
+                let sent_at = notice.sent_at;
+                // A resub note counts as having spoken, so an `@them` later in
+                // the conversation still finds their colour.
+                if let Some(body) = &notice.body {
+                    self.colors.insert(body.login.clone(), body.color);
+                }
+                self.push(RowKind::Event(notice), sent_at)
             }
             ChatEvent::Cleared { login } => {
                 let text = match login {
@@ -270,6 +316,7 @@ impl ChatView {
     /// ruler. Added as the first child of a `flex_wrap` row they would re-flow
     /// with the text and give no column at all.
     fn row_frame(row: &Row) -> gpui::Div {
+        let wash = row.kind.wash();
         div()
             .w_full()
             .flex()
@@ -280,7 +327,12 @@ impl ChatView {
             .py(px(theme::ROW_PAD_Y))
             .border_b_1()
             .border_color(theme::divider())
-            .when(row.striped, |line| line.bg(theme::stripe()))
+            // The stripe is a reading aid for a run of like rows; an event is
+            // not one of those, and two washes on one row is mud.
+            .when(wash.is_none() && row.striped, |line| {
+                line.bg(theme::stripe())
+            })
+            .when_some(wash, |line, color| line.bg(color))
             .child(
                 div()
                     .flex_none()
@@ -309,8 +361,43 @@ impl ChatView {
                 )
                 .into_any_element(),
 
-            RowKind::Message(message) => self.render_message(row, message, cx),
+            RowKind::Message(message) => Self::row_frame(row)
+                .child(self.message_line(row, message, cx))
+                .into_any_element(),
+
+            RowKind::Event(notice) => self.render_event(row, notice, cx),
         }
+    }
+
+    /// A Twitch event: the sentence Twitch wrote, and whatever the user
+    /// attached to it.
+    ///
+    /// `system-msg` is finished English — "Foo subscribed with Prime.", "10
+    /// raiders from Bar" — already assembled and already localised, so there is
+    /// nothing to format and no `msg-id` to switch on. An announcement has no
+    /// sentence at all and is nothing but body, which is why both halves are
+    /// optional here.
+    fn render_event(&self, row: &Row, notice: &ChatNotice, cx: &mut Context<Self>) -> AnyElement {
+        let mut column = div()
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .gap_y(px(theme::GAP_TIGHT));
+
+        if !notice.system.is_empty() {
+            column = column.child(
+                div()
+                    .font_weight(theme::weight_label())
+                    .text_color(theme::accent())
+                    .child(SharedString::from(notice.system.clone())),
+            );
+        }
+        if let Some(body) = &notice.body {
+            column = column.child(self.message_line(row, body, cx));
+        }
+
+        Self::row_frame(row).child(column).into_any_element()
     }
 
     /// One word of message text, styled for whatever it turned out to be.
@@ -387,12 +474,14 @@ impl ChatView {
             .into_any_element()
     }
 
-    fn render_message(
-        &self,
-        row: &Row,
-        message: &ChatMessage,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    /// One message as a wrapping line of name, words and emotes — without the
+    /// row frame around it.
+    ///
+    /// Split from the frame because a USERNOTICE renders one of these beneath
+    /// Twitch's own sentence: a resub note is a message like any other and has
+    /// to get the same emotes, links and mention colouring as anything else
+    /// that person says.
+    fn message_line(&self, row: &Row, message: &ChatMessage, cx: &mut Context<Self>) -> gpui::Div {
         let name_color = theme::readable(message.color);
         // An action is written in the speaker's colour; a normal message is
         // not, or a chat of many voices becomes a chat of many colours.
@@ -489,7 +578,7 @@ impl ChatView {
             }
         }
 
-        Self::row_frame(row).child(line).into_any_element()
+        line
     }
 }
 
@@ -526,6 +615,25 @@ impl Render for ChatView {
                         ScrollbarShow::Always
                     })),
             )
+            .when(self.rows.is_empty(), |pane| {
+                pane.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_size(px(theme::TEXT_META))
+                        .text_color(theme::text_dim())
+                        // Safe to pulse: this state always ends, either at the
+                        // join or at the first disconnect notice, and both put
+                        // a row in the list.
+                        .child(motion::waiting(
+                            "chat-connecting",
+                            div().child(self.channel.clone()),
+                        )),
+                )
+            })
             .when(!at_live, |pane| {
                 pane.child(
                     div()

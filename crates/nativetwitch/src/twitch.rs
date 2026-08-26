@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 
 use futures::channel::mpsc;
 use settings::{OAuthTokens, Settings};
-use twitch_api::{Category, LiveStream, Session};
+use twitch_api::{Category, FollowedChannel, LiveStream, Session};
 
 /// How often to re-ask Twitch who is live.
 const POLL_INTERVAL: Duration = Duration::from_secs(60);
@@ -26,6 +26,11 @@ const POLL_INTERVAL: Duration = Duration::from_secs(60);
 /// Something the browse page wants fetched.
 #[derive(Debug, Clone)]
 pub enum Request {
+    /// Who is live and who is followed, now rather than at the next poll.
+    ///
+    /// Answered in [`run`] rather than in [`serve`], because it is the one
+    /// request that has to move the timer — see the call site.
+    Follows,
     /// The most-watched streams overall.
     Popular,
     /// The categories with the most viewers.
@@ -49,6 +54,16 @@ pub enum TwitchEvent {
         login: String,
     },
     Streams(Vec<LiveStream>),
+    /// Everyone the user follows, live or not. A separate list from
+    /// [`Streams`](TwitchEvent::Streams) all the way to the screen — see
+    /// [`FollowedChannel`] for why merging them would be wrong three times
+    /// over.
+    FollowedChannels(Vec<FollowedChannel>),
+    /// A follows poll failed with a session that is otherwise fine — a network
+    /// blip, or Twitch having a moment. Deliberately not
+    /// [`Error`](TwitchEvent::Error), which the UI reads as "signed out" and
+    /// which would blank the whole page over one dropped request.
+    FollowsError(String),
     Popular(Vec<LiveStream>),
     Categories(Vec<Category>),
     CategoryStreams {
@@ -263,6 +278,8 @@ fn serve(
 ) {
     let token = &session.access_token;
     let result = match request {
+        // Intercepted by the caller, which owns the poll timer.
+        Request::Follows => return,
         Request::Popular => {
             twitch_api::top_streams(client_id, token, None).map(TwitchEvent::Popular)
         }
@@ -295,6 +312,34 @@ fn search(client_id: &str, token: &str, query: String) -> Result<TwitchEvent, tw
         categories,
         streams,
     })
+}
+
+/// Ask who is live, then who is followed at all.
+///
+/// Two calls because Helix has no endpoint that answers both, and at most one
+/// complaint: on a real outage they fail together, and saying so twice is twice
+/// as much noise for the same fact.
+fn poll_follows(client_id: &str, session: &Session, tx: &mpsc::UnboundedSender<TwitchEvent>) {
+    let token = &session.access_token;
+    let mut failure = None;
+
+    match twitch_api::followed_streams(client_id, token, &session.user_id) {
+        Ok(streams) => {
+            let _ = tx.unbounded_send(TwitchEvent::Streams(streams));
+        }
+        Err(e) => failure = Some(e.to_string()),
+    }
+
+    match twitch_api::followed_channels(client_id, token, &session.user_id) {
+        Ok(channels) => {
+            let _ = tx.unbounded_send(TwitchEvent::FollowedChannels(channels));
+        }
+        Err(e) => failure = failure.or_else(|| Some(e.to_string())),
+    }
+
+    if let Some(reason) = failure {
+        let _ = tx.unbounded_send(TwitchEvent::FollowsError(reason));
+    }
 }
 
 fn run(
@@ -331,15 +376,7 @@ fn run(
             if !keep_session_fresh(&mut session, &client_id, &settings_path, &tx) {
                 return;
             }
-            match twitch_api::followed_streams(&client_id, &session.access_token, &session.user_id)
-            {
-                Ok(streams) => {
-                    let _ = tx.unbounded_send(TwitchEvent::Streams(streams));
-                }
-                Err(e) => {
-                    let _ = tx.unbounded_send(TwitchEvent::Error(e.to_string()));
-                }
-            }
+            poll_follows(&client_id, &session, &tx);
             next_poll = Instant::now() + POLL_INTERVAL;
         }
 
@@ -351,7 +388,16 @@ fn run(
                 if !keep_session_fresh(&mut session, &client_id, &settings_path, &tx) {
                     return;
                 }
-                serve(request, &client_id, &session, &tx);
+                match request {
+                    // Not left to `serve`, which cannot see the timer: a poll
+                    // done by hand there would be repeated automatically a few
+                    // seconds later, for two of everything.
+                    Request::Follows => {
+                        poll_follows(&client_id, &session, &tx);
+                        next_poll = Instant::now() + POLL_INTERVAL;
+                    }
+                    other => serve(other, &client_id, &session, &tx),
+                }
             }
             Err(RecvTimeoutError::Timeout) => {}
             // The service was dropped, which is how shutdown reaches us.

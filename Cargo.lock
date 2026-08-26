@@ -6334,6 +6334,8 @@ dependencies = [
  "futures",
  "futures-timer",
  "rustls",
+ "serde_json",
+ "ureq",
  "webpki-roots 0.26.11",
 ]
 

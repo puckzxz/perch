@@ -29,6 +29,13 @@ const PAGE_SIZE: &str = "100";
 const SEARCH_PAGE_SIZE: &str = "40";
 /// How many `user_login` parameters Helix accepts in one `/streams` request.
 const MAX_LOGINS_PER_REQUEST: usize = 100;
+/// How many pages of follows to walk before giving up.
+///
+/// `/channels/followed` is the only endpoint here that genuinely paginates —
+/// and the only one whose `first` defaults to 20 rather than 100, so forgetting
+/// the parameter shows a fifth of the list with no sign anything is missing.
+/// Ten pages is a thousand channels, well past what anyone browses.
+const MAX_FOLLOW_PAGES: usize = 10;
 
 /// Refresh this long before expiry rather than waiting for a 401.
 const REFRESH_MARGIN: Duration = Duration::from_secs(300);
@@ -362,6 +369,81 @@ pub fn followed_streams(
     Ok(streams)
 }
 
+/// A channel you follow, live or not.
+///
+/// Deliberately not a [`LiveStream`] with the fields left blank. Three things
+/// read that list as *who is live* — the went-live toasts, the LIVE badge, and
+/// the chat header's viewer count — and an offline channel sitting in it would
+/// be wrong in all three at once.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FollowedChannel {
+    pub login: String,
+    pub display_name: String,
+}
+
+fn parse_followed_channels(json: &Value) -> Vec<FollowedChannel> {
+    json.get("data")
+        .and_then(Value::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(|entry| {
+                    let login = entry.get("broadcaster_login").and_then(Value::as_str)?;
+                    Some(FollowedChannel {
+                        login: login.to_string(),
+                        display_name: entry
+                            .get("broadcaster_name")
+                            .and_then(Value::as_str)
+                            .filter(|name| !name.is_empty())
+                            .unwrap_or(login)
+                            .to_string(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Every channel the signed-in user follows, in name order.
+///
+/// Needs `user:read:follows`, the same scope the live list already uses, so
+/// this costs a request rather than another sign-in.
+///
+/// Sorted by name because Twitch returns them by when you followed, which is an
+/// order nobody remembers.
+pub fn followed_channels(
+    client_id: &str,
+    token: &str,
+    user_id: &str,
+) -> Result<Vec<FollowedChannel>, Error> {
+    let mut all: Vec<FollowedChannel> = Vec::new();
+    let mut cursor: Option<String> = None;
+
+    for _ in 0..MAX_FOLLOW_PAGES {
+        // Scoped so the borrow of `cursor` ends before it is reassigned.
+        let json = {
+            let mut query = vec![("user_id", user_id), ("first", PAGE_SIZE)];
+            if let Some(after) = &cursor {
+                query.push(("after", after.as_str()));
+            }
+            helix_get(client_id, token, "/channels/followed", &query)?
+        };
+        all.extend(parse_followed_channels(&json));
+
+        cursor = json
+            .get("pagination")
+            .and_then(|page| page.get("cursor"))
+            .and_then(Value::as_str)
+            .filter(|cursor| !cursor.is_empty())
+            .map(str::to_string);
+        if cursor.is_none() {
+            break;
+        }
+    }
+
+    all.sort_by_key(|channel| channel.display_name.to_lowercase());
+    Ok(all)
+}
+
 // ── Browsing ─────────────────────────────────────────────────────────
 
 /// A Twitch category: usually a game, sometimes not ("Just Chatting").
@@ -515,6 +597,51 @@ fn parse_categories(json: &Value) -> Vec<Category> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_a_followed_channels_payload() {
+        let json: Value = serde_json::from_str(
+            r#"{"data":[
+                 {"broadcaster_id":"1","broadcaster_login":"forsen",
+                  "broadcaster_name":"Forsen","followed_at":"2019-01-01T00:00:00Z"},
+                 {"broadcaster_id":"2","broadcaster_login":"theburntpeanut",
+                  "broadcaster_name":"TheBurntPeanut","followed_at":"2024-01-01T00:00:00Z"}
+               ],"pagination":{"cursor":"abc"}}"#,
+        )
+        .unwrap();
+
+        let channels = parse_followed_channels(&json);
+        assert_eq!(channels.len(), 2);
+        assert_eq!(channels[0].login, "forsen");
+        assert_eq!(channels[1].display_name, "TheBurntPeanut");
+    }
+
+    /// A display name is optional in practice — some accounts have none, and
+    /// Twitch sends the key empty rather than omitting it — but a login is
+    /// what makes the entry usable at all.
+    #[test]
+    fn a_followed_channel_without_a_name_falls_back_to_its_login() {
+        let json: Value = serde_json::from_str(
+            r#"{"data":[
+                 {"broadcaster_login":"someone","broadcaster_name":""},
+                 {"broadcaster_name":"No Login Here"},
+                 {"broadcaster_login":"other","broadcaster_name":"Other","new_field":1}
+               ]}"#,
+        )
+        .unwrap();
+
+        let channels = parse_followed_channels(&json);
+        assert_eq!(channels.len(), 2, "the entry with no login should be gone");
+        assert_eq!(channels[0].display_name, "someone");
+        assert_eq!(channels[1].display_name, "Other");
+    }
+
+    #[test]
+    fn an_empty_follows_payload_is_not_an_error() {
+        let json: Value = serde_json::from_str(r#"{"data":[],"pagination":{}}"#).unwrap();
+        assert!(parse_followed_channels(&json).is_empty());
+        assert!(parse_followed_channels(&Value::Null).is_empty());
+    }
 
     #[test]
     fn reads_logins_from_a_channel_search() {

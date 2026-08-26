@@ -13,7 +13,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use emotes::ImageCache;
 use gpui::{div, img, prelude::*, px, rgb, AnyElement, Context, SharedString};
-use twitch_api::{Category, LiveStream};
+use twitch_api::{Category, FollowedChannel, LiveStream};
 
 use crate::motion;
 use crate::theme;
@@ -343,6 +343,74 @@ fn wrap_row(gap: f32) -> gpui::Div {
         .flex_wrap()
         .gap(px(gap))
         .content_start()
+}
+
+/// One offline follow: a name, and nothing else there is to say.
+///
+/// A name rather than a card on purpose. A card is mostly a picture, and an
+/// offline channel has none — a thumbnail URL that is stale by hours at best,
+/// or a profile picture that costs another request per refresh and says nothing
+/// about the channel. Names also pack: a hundred follows is five rows here and
+/// a wall of identical grey rectangles as cards.
+///
+/// Clicking one still opens it. The video pane says "offline", but the *chat*
+/// connects either way, which is the reason to go there.
+fn offline_pill<V: 'static>(
+    index: usize,
+    channel: &FollowedChannel,
+    on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + 'static,
+    cx: &mut Context<V>,
+) -> impl IntoElement {
+    let login = channel.login.clone();
+    div()
+        .id(("offline-follow", index))
+        .px(px(theme::CONTROL_PAD_X))
+        .py(px(theme::CONTROL_PAD_Y))
+        .rounded_sm()
+        .bg(theme::surface())
+        .text_size(px(theme::TEXT_LABEL))
+        .line_height(px(theme::LINE_TIGHT))
+        .text_color(theme::text_dim())
+        .cursor_pointer()
+        .hover(|style| style.bg(theme::hover()).text_color(theme::text_muted()))
+        .active(|style| style.bg(theme::pressed()))
+        .child(SharedString::from(channel.display_name.clone()))
+        .on_click(cx.listener(move |view, _event, window, cx| {
+            on_action(view, Action::Watch(login.clone()), window, cx)
+        }))
+}
+
+/// The Following tab: who is live, then who is not.
+///
+/// Both under one scroller rather than two, so there is still only ever one
+/// thing to scroll. Each heading disappears with its list, which is what keeps
+/// a fully-live follows list looking exactly as it did before offline channels
+/// existed.
+fn following_view<V: 'static>(
+    follows: &[LiveStream],
+    offline: &[FollowedChannel],
+    cache: &ImageCache,
+    can_add: bool,
+    on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + Clone + 'static,
+    cx: &mut Context<V>,
+) -> AnyElement {
+    let mut page = scroller("browse-grid");
+
+    if !follows.is_empty() {
+        page = page
+            .when(!offline.is_empty(), |page| page.child(heading("live")))
+            .child(stream_row(follows, cache, can_add, on_action.clone(), cx));
+    }
+
+    if !offline.is_empty() {
+        let mut row = wrap_row(theme::GAP_TIGHT);
+        for (index, channel) in offline.iter().enumerate() {
+            row = row.child(offline_pill(index, channel, on_action.clone(), cx));
+        }
+        page = page.child(heading("offline")).child(row);
+    }
+
+    page.into_any_element()
 }
 
 fn heading(text: &'static str) -> impl IntoElement {
@@ -697,6 +765,7 @@ fn browse_placeholder(discovery: &Discovery, empty: SharedString) -> AnyElement 
 #[allow(clippy::too_many_arguments)]
 pub fn page<V: 'static>(
     follows: &[LiveStream],
+    offline: &[FollowedChannel],
     discovery: &Discovery,
     sign_in: &SignIn,
     cache: &Arc<ImageCache>,
@@ -743,9 +812,12 @@ pub fn page<V: 'static>(
     } else {
         match discovery.tab {
             // Sign-in lives on this tab, so an empty follows list has more to
-            // say than "nothing here".
-            Tab::Following if follows.is_empty() => empty_state(sign_in, cx),
-            Tab::Following => stream_grid("browse-grid", follows, cache, can_add, on_action, cx),
+            // say than "nothing here". Both lists have to be empty: signed in
+            // with everybody offline is not the same as not signed in, and
+            // testing only the live one would hide the sign-in prompt behind a
+            // stale offline list after a client id change.
+            Tab::Following if follows.is_empty() && offline.is_empty() => empty_state(sign_in, cx),
+            Tab::Following => following_view(follows, offline, cache, can_add, on_action, cx),
             Tab::Popular if discovery.popular.is_empty() => browse_placeholder(
                 discovery,
                 "Twitch reported nothing live, which would be a first.".into(),

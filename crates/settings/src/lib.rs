@@ -8,6 +8,7 @@
 //! thing every desktop Twitch client does, but it is a deliberate choice rather
 //! than an oversight — see [`Credentials`].
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -63,13 +64,49 @@ pub struct OAuthTokens {
     pub login: String,
 }
 
+/// What is remembered about one channel.
+///
+/// A struct rather than a bare number because per-channel *quality* is the
+/// obvious next thing to want here, and a map of structs grows a field for free
+/// where a map of numbers would need a migration.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ChannelPrefs {
+    /// 0-100. `None` means nobody has ever set a level here, which has to stay
+    /// distinguishable from `Some(0)` — a channel you deliberately muted should
+    /// reopen muted, and one you have never opened should not.
+    pub volume: Option<u8>,
+}
+
+/// How a channel is identified in [`Settings::channel_prefs`].
+///
+/// Twitch logins are case-insensitive and the app does not agree with itself
+/// about case: the browse page hands over Helix's lowercase `user_login`, while
+/// the command line hands over whatever was typed. Normalising in one place is
+/// what stops `Forsen` and `forsen` remembering two different levels.
+pub fn channel_key(channel: &str) -> String {
+    channel.trim_start_matches('#').to_ascii_lowercase()
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub quality: QualityPreference,
-    /// 0-100. mpv's own default is 100, which is startling for a window that
-    /// starts playing as soon as it opens.
+    /// 0-100. What a channel with no remembered level of its own opens at.
+    ///
+    /// mpv's own default is 100, which is startling for a window that starts
+    /// playing as soon as it opens. It follows the last level you *chose*, so
+    /// an unfamiliar channel opens near where you have been listening rather
+    /// than back at the factory setting — but see [`Settings::set_volume_for`]
+    /// for the one change that deliberately does not move it.
     pub volume: u8,
+    /// Per-channel overrides, keyed by [`channel_key`].
+    ///
+    /// One global level meant the last channel you adjusted set the volume for
+    /// every stream after it, and streamers are wildly inconsistent about how
+    /// loud they run.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub channel_prefs: BTreeMap<String, ChannelPrefs>,
     pub credentials: Credentials,
     /// Reopened on launch when no channel is given on the command line.
     pub last_channel: Option<String>,
@@ -77,6 +114,14 @@ pub struct Settings {
     /// height counterpart: when chat sits below the video it takes whatever the
     /// video leaves, which on a tall window is the point.
     pub chat_width: f32,
+    /// How many messages from before you joined to load into a new chat pane.
+    /// Zero turns the request off.
+    ///
+    /// Twitch has no endpoint for this, so it comes from the same community
+    /// service Chatterino uses — which means the request tells a third party
+    /// which channels are being watched. That is the reason it is a setting
+    /// rather than a constant.
+    pub chat_history: usize,
 }
 
 impl Default for Settings {
@@ -85,8 +130,13 @@ impl Default for Settings {
             quality: QualityPreference::Auto,
             volume: 10,
             credentials: Credentials::default(),
+            channel_prefs: BTreeMap::new(),
             last_channel: None,
             chat_width: 340.0,
+            // Enough that a busy channel opens mid-conversation and a quiet one
+            // opens with something, without the pane starting scrolled through
+            // an hour of backlog nobody asked for.
+            chat_history: 100,
         }
     }
 }
@@ -125,6 +175,44 @@ pub fn default_path() -> PathBuf {
 }
 
 impl Settings {
+    /// The level `channel` should start at.
+    ///
+    /// Clamped on the way out as well as in: this file is hand-editable, and a
+    /// volume of 400 should be loud rather than a panic.
+    pub fn volume_for(&self, channel: &str) -> u8 {
+        self.channel_prefs
+            .get(&channel_key(channel))
+            .and_then(|prefs| prefs.volume)
+            .unwrap_or(self.volume)
+            .min(100)
+    }
+
+    /// Remember `volume` for `channel`, and carry it forward as the default.
+    ///
+    /// Returns whether anything actually changed, so a caller driven by a
+    /// slider does not rewrite the file for a value it already holds.
+    ///
+    /// Muting is the one level that does *not* become the default. Mute is
+    /// something you do to one stream — usually so you can hear another one —
+    /// and a channel that opens silent reads as broken rather than as
+    /// remembered.
+    pub fn set_volume_for(&mut self, channel: &str, volume: u8) -> bool {
+        let volume = volume.min(100);
+        let mut changed = false;
+
+        if volume > 0 && self.volume != volume {
+            self.volume = volume;
+            changed = true;
+        }
+
+        let entry = self.channel_prefs.entry(channel_key(channel)).or_default();
+        if entry.volume != Some(volume) {
+            entry.volume = Some(volume);
+            changed = true;
+        }
+        changed
+    }
+
     /// Load from `path`, returning defaults if the file does not exist yet.
     ///
     /// A missing file is normal on first run and is not an error. A corrupt
@@ -228,6 +316,10 @@ mod tests {
             volume: 42,
             quality: QualityPreference::Fixed("720p60".into()),
             last_channel: Some("forsen".into()),
+            channel_prefs: BTreeMap::from([(
+                "forsen".to_string(),
+                ChannelPrefs { volume: Some(35) },
+            )]),
             credentials: Credentials {
                 client_id: Some("abc123".into()),
                 ..Credentials::default()
@@ -312,6 +404,86 @@ mod tests {
         assert_eq!(settings.volume, 55);
         assert_eq!(settings.quality, QualityPreference::Auto);
         assert_eq!(settings.chat_width, 340.0);
+        assert_eq!(settings.chat_history, 100);
+        assert!(settings.channel_prefs.is_empty());
+    }
+
+    #[test]
+    fn a_channel_with_no_level_of_its_own_uses_the_default() {
+        let settings = Settings::default();
+        assert_eq!(settings.volume_for("forsen"), settings.volume);
+    }
+
+    /// The whole point: coming back to a channel finds it where you left it,
+    /// and does not drag every other channel along with it.
+    #[test]
+    fn a_remembered_channel_keeps_its_own_level() {
+        let mut settings = Settings::default();
+        assert!(settings.set_volume_for("forsen", 42));
+        assert_eq!(settings.volume_for("forsen"), 42);
+        // Setting the same value again is not a reason to rewrite the file.
+        assert!(!settings.set_volume_for("forsen", 42));
+    }
+
+    /// The app does not agree with itself about case — Helix says `forsen`,
+    /// the command line says whatever was typed — so without one key rule the
+    /// same streamer accumulates an entry per spelling.
+    #[test]
+    fn channel_keys_ignore_case_and_a_leading_hash() {
+        let mut settings = Settings::default();
+        settings.set_volume_for("Forsen", 42);
+        assert_eq!(settings.volume_for("forsen"), 42);
+        assert_eq!(settings.volume_for("#FORSEN"), 42);
+        assert_eq!(settings.channel_prefs.len(), 1);
+    }
+
+    /// Muting one stream to hear another must not make silence the default,
+    /// and must still be remembered for the stream it was done to.
+    #[test]
+    fn muting_is_remembered_but_never_becomes_the_default() {
+        let mut settings = Settings::default();
+        settings.set_volume_for("forsen", 60);
+        settings.set_volume_for("forsen", 0);
+
+        assert_eq!(settings.volume_for("forsen"), 0, "the mute was forgotten");
+        assert_eq!(settings.volume, 60, "muting one channel muted the default");
+        assert_eq!(
+            settings.volume_for("never-opened"),
+            60,
+            "a new channel would have opened silent"
+        );
+    }
+
+    /// Hand-editable file, so a nonsense level is clamped rather than trusted.
+    #[test]
+    fn an_impossible_level_is_clamped_on_the_way_out() {
+        let settings: Settings =
+            serde_json::from_str(r#"{"channel_prefs": {"forsen": {"volume": 250}}}"#).unwrap();
+        assert_eq!(settings.volume_for("forsen"), 100);
+    }
+
+    /// Same class of bug as the sign-in erasure above: the UI's snapshot is
+    /// stale by the time it saves, and only the sign-in is somebody else's.
+    #[test]
+    fn saving_preferences_keeps_channel_levels() {
+        let path = temp_file("preferences-keep-volumes");
+        let _ = std::fs::remove_file(&path);
+
+        let at_launch = Settings::default();
+        at_launch.save(&path).unwrap();
+
+        let mut signed_in = Settings::load(&path).unwrap();
+        signed_in.credentials.oauth = Some(a_sign_in());
+        signed_in.save(&path).unwrap();
+
+        let mut ui = at_launch.clone();
+        ui.set_volume_for("forsen", 42);
+        ui.save_preferences(&path).unwrap();
+
+        let stored = Settings::load(&path).unwrap();
+        assert_eq!(stored.volume_for("forsen"), 42);
+        assert!(stored.credentials.oauth.is_some());
+        let _ = std::fs::remove_file(&path);
     }
 
     /// A file from a newer build must not fail to load here.

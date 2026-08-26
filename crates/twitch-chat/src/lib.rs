@@ -11,6 +11,7 @@
 //!
 //! No UI types appear in this crate's API.
 
+pub mod history;
 pub mod message;
 
 use std::io::{BufRead, BufReader, Write};
@@ -20,7 +21,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use futures::channel::mpsc;
-pub use message::{ChatMessage, IrcMessage};
+pub use message::{ChatMessage, ChatNotice, IrcMessage, NoticeKind};
 
 const HOST: &str = "irc.chat.twitch.tv";
 const PORT: u16 = 6697;
@@ -29,14 +30,25 @@ const MAX_BACKOFF: Duration = Duration::from_secs(30);
 /// Something worth showing in the chat pane.
 #[derive(Debug, Clone)]
 pub enum ChatEvent {
-    Connected { channel: String },
+    Connected {
+        channel: String,
+    },
     /// The channel's numeric Twitch id, which third-party emote providers key
     /// their per-channel sets on. Arrives once, just after joining.
-    RoomState { room_id: String },
+    RoomState {
+        room_id: String,
+    },
     Message(Box<ChatMessage>),
+    /// A sub, a gift, a raid, an announcement — the things a streamer reacts
+    /// to on camera.
+    Notice(Box<ChatNotice>),
     /// A moderator cleared chat, or a user was banned/timed out.
-    Cleared { login: Option<String> },
-    Disconnected { reason: String },
+    Cleared {
+        login: Option<String>,
+    },
+    Disconnected {
+        reason: String,
+    },
 }
 
 /// A live connection to one channel's chat. Dropping it disconnects.
@@ -51,7 +63,11 @@ pub struct ChatClient {
 
 impl ChatClient {
     /// Join `channel` (with or without a leading `#`) and stream its messages.
-    pub fn connect(channel: &str) -> (Self, mpsc::UnboundedReceiver<ChatEvent>) {
+    ///
+    /// `history` is how many lines of scrollback to ask for before joining, so
+    /// the pane opens with what was already being said instead of blank. Zero
+    /// skips the request entirely — see [`history`] for what it costs.
+    pub fn connect(channel: &str, history: usize) -> (Self, mpsc::UnboundedReceiver<ChatEvent>) {
         let channel = channel.trim_start_matches('#').to_lowercase();
         let (tx, rx) = mpsc::unbounded();
         let stop = Arc::new(AtomicBool::new(false));
@@ -62,7 +78,7 @@ impl ChatClient {
             .spawn({
                 let stop = stop.clone();
                 let socket = socket.clone();
-                move || run(channel, tx, stop, socket)
+                move || run(channel, history, tx, stop, socket)
             })
             .expect("failed to spawn chat thread");
 
@@ -92,10 +108,22 @@ impl Drop for ChatClient {
 /// Reconnect loop. Each pass is one full connection attempt.
 fn run(
     channel: String,
+    history: usize,
     tx: mpsc::UnboundedSender<ChatEvent>,
     stop: Arc<AtomicBool>,
     socket: Arc<Mutex<Option<TcpStream>>>,
 ) {
+    // Before the socket, not beside it: history has to land before the first
+    // live message or the pane shows older lines below newer ones. It costs a
+    // round trip on the way to a join that already takes one.
+    //
+    // Only on the first attempt. Refetching after a reconnect would re-deliver
+    // everything we already showed, and the overlap is exactly the messages
+    // still on screen.
+    if history > 0 && !stop.load(Ordering::Relaxed) {
+        backfill(&channel, history, &tx);
+    }
+
     let mut backoff = Duration::from_secs(1);
 
     while !stop.load(Ordering::Relaxed) {
@@ -126,6 +154,46 @@ fn run(
             std::thread::sleep(Duration::from_millis(100));
         }
         backoff = (backoff * 2).min(MAX_BACKOFF);
+    }
+}
+
+/// Fetch and deliver the scrollback, if there is any to be had.
+///
+/// Deliberately silent about failure. The service is somebody else's, chat
+/// works without it, and a red line in the pane saying a third party did not
+/// answer is noise about a feature the user did not ask for by name.
+fn backfill(channel: &str, limit: usize, tx: &mpsc::UnboundedSender<ChatEvent>) {
+    let lines = match history::recent(channel, limit) {
+        Ok(lines) => lines,
+        Err(reason) => {
+            eprintln!("chat history for #{channel}: {reason}");
+            return;
+        }
+    };
+    for irc in lines {
+        if let Some(event) = event_for(&irc) {
+            if tx.unbounded_send(event).is_err() {
+                return; // receiver gone
+            }
+        }
+    }
+}
+
+/// What one line means, if it means anything worth showing.
+///
+/// Shared by the live session and the backfill on purpose: a message from
+/// before we joined has to render identically to one that arrived a second ago,
+/// and the only way to guarantee that is for both to come through here.
+/// Connection-level lines — PING, the join acknowledgement, ROOMSTATE — are not
+/// here, because they only mean something to a socket.
+fn event_for(irc: &IrcMessage) -> Option<ChatEvent> {
+    match irc.command.as_str() {
+        "PRIVMSG" => ChatMessage::from_irc(irc).map(|m| ChatEvent::Message(Box::new(m))),
+        "USERNOTICE" => ChatNotice::from_irc(irc).map(|n| ChatEvent::Notice(Box::new(n))),
+        "CLEARCHAT" => Some(ChatEvent::Cleared {
+            login: irc.param(1).map(str::to_string),
+        }),
+        _ => None,
     }
 }
 
@@ -277,7 +345,13 @@ fn session(
                 }
             }
             "RECONNECT" => return Err("server asked us to reconnect".into()),
-            _ => {}
+            _ => {
+                if let Some(event) = event_for(&irc) {
+                    if tx.unbounded_send(event).is_err() {
+                        return Ok(()); // receiver gone; nobody is listening
+                    }
+                }
+            }
         }
     }
 }

@@ -15,6 +15,7 @@ mod browse;
 mod chat;
 mod chat_text;
 mod diagnostics;
+mod keys;
 mod layout;
 mod motion;
 mod settings_view;
@@ -34,14 +35,15 @@ use chat::ChatView;
 use emotes::ImageCache;
 use gpui::{
     div, prelude::*, px, size, AnyView, App, Application, Bounds, Context, ElementId, Entity,
-    SharedString, Task, TitlebarOptions, Window, WindowBounds, WindowOptions,
+    FocusHandle, SharedString, Subscription, Task, TitlebarOptions, Window, WindowBounds,
+    WindowOptions,
 };
 use gpui_component::input::{Input, InputEvent, InputState};
 use settings::{QualityPreference, Settings};
 use settings_view::{SettingsEvent, SettingsPanel};
 use streamlink::{StreamEvent, StreamOptions, StreamSupervisor};
 use twitch::{Request, TwitchEvent, TwitchService};
-use twitch_api::LiveStream;
+use twitch_api::{FollowedChannel, LiveStream};
 use video::VideoStream;
 use video_view::{VideoEvent, VideoView};
 use watch::{Slot, StreamState, MAX_PANES};
@@ -90,6 +92,13 @@ struct RootView {
     slots: Vec<Slot>,
 
     follows: Vec<LiveStream>,
+    /// Everyone followed, live or not. Kept apart from `follows` all the way to
+    /// the screen; see `twitch_api::FollowedChannel`.
+    offline: Vec<FollowedChannel>,
+    /// A follows request the user asked for by hand is outstanding. Only their
+    /// requests set this, so the minute-by-minute poll does not blink the
+    /// control every time it runs.
+    refreshing: bool,
     /// Who was live at the last poll, so newly-live channels can be told apart
     /// from ones that were already streaming. Without this every poll would
     /// re-announce everybody.
@@ -100,6 +109,29 @@ struct RootView {
     search: Entity<InputState>,
     twitch: TwitchService,
     _twitch_pump: Task<()>,
+
+    /// Which pane the player shortcuts act on, held as a channel rather than
+    /// an index: closing a pane reindexes every pane after it, and a stored
+    /// index would quietly start acting on somebody else — the same trap that
+    /// keys pane element ids on the channel.
+    active: Option<String>,
+    /// Focus lives on the root and stays there. GPUI derives the whole key
+    /// dispatch path from what is focused, and with nothing focused the context
+    /// stack is empty — which fails every predicate, so no shortcut fires at
+    /// all. Nothing else in the app wants focus except the text inputs, which
+    /// take it on click and hand it back the same way.
+    focus: FocusHandle,
+    /// Focus is never reassigned when the focused element simply disappears —
+    /// which is what happens when the settings sheet closes and takes its
+    /// buttons with it. Without this, every shortcut stops working from then
+    /// on, silently and for the rest of the session.
+    _focus_lost: Subscription,
+
+    /// `--volume`, if it was given. A session-wide override rather than a
+    /// stored preference: someone starting the app quiet this once should not
+    /// have that silently overwrite the level every channel remembers, and
+    /// should not be ignored on the channels that remember one.
+    volume_override: Option<u8>,
 
     settings_panel: Option<Entity<SettingsPanel>>,
     /// Whether the page navigation is up. It follows the video chrome rather
@@ -119,13 +151,10 @@ impl RootView {
         cx: &mut Context<Self>,
     ) -> Self {
         let settings_path = settings::default_path();
-        let mut settings = Settings::load(&settings_path).unwrap_or_else(|e| {
+        let settings = Settings::load(&settings_path).unwrap_or_else(|e| {
             eprintln!("settings: {e}; using defaults");
             Settings::default()
         });
-        if let Some(volume) = volume_override {
-            settings.volume = volume;
-        }
 
         let (cache, mut cache_ready) =
             ImageCache::new(image_cache_dir()).expect("failed to open image cache");
@@ -140,6 +169,11 @@ impl RootView {
                     break;
                 }
             }
+        });
+
+        let focus = cx.focus_handle();
+        let _focus_lost = cx.on_focus_lost(window, |this: &mut Self, window, _cx| {
+            this.focus.focus(window);
         });
 
         let (service, twitch_pump) = Self::spawn_twitch(settings_path.clone(), window, cx);
@@ -162,18 +196,28 @@ impl RootView {
             page: Page::Browse,
             slots: Vec::new(),
             follows: Vec::new(),
+            offline: Vec::new(),
+            refreshing: false,
             known_live: HashSet::new(),
             sign_in: SignIn::Connecting,
             discovery: Discovery::default(),
             search,
             twitch: service,
             _twitch_pump: twitch_pump,
+            active: None,
+            focus,
+            _focus_lost,
+            volume_override,
             settings_panel: None,
             nav: motion::Fade::hidden(),
             toasts: Vec::new(),
             next_toast: 0,
             _cache_pump: cache_pump,
         };
+
+        // Nothing else ever asks for focus, so this is what makes every
+        // shortcut work — see the field.
+        window.focus(&view.focus);
 
         // Only channels named on the command line open a stream. Launching
         // straight into whatever was on last time means the app starts costing
@@ -182,6 +226,108 @@ impl RootView {
             view.open_channel(channel, index == 0, window, cx);
         }
         view
+    }
+
+    // ── Keyboard ─────────────────────────────────────────────────────
+
+    /// What the keymap tests its predicates against.
+    ///
+    /// The sheet *replaces* the page name rather than adding to it, so a
+    /// shortcut scoped to a page cannot fire through a modal without every
+    /// binding having to remember to say so.
+    fn key_context(&self) -> &'static str {
+        if self.settings_panel.is_some() {
+            return keys::CONTEXT_MODAL;
+        }
+        match self.page {
+            Page::Watch => keys::CONTEXT_WATCH,
+            Page::Browse => keys::CONTEXT_BROWSE,
+        }
+    }
+
+    /// The pane a player shortcut acts on: the last one pointed at, or the
+    /// first if the pointer has not been in one yet.
+    ///
+    /// A stale channel simply does not resolve, which is the whole reason for
+    /// storing one rather than an index.
+    fn active_slot(&self) -> Option<usize> {
+        self.active
+            .as_deref()
+            .and_then(|channel| self.slot_index(channel))
+            .or_else(|| (!self.slots.is_empty()).then_some(0))
+    }
+
+    fn active_video(&self) -> Option<Entity<VideoView>> {
+        self.slots.get(self.active_slot()?)?.video().cloned()
+    }
+
+    fn on_toggle_playback(
+        &mut self,
+        _: &keys::TogglePlayback,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(view) = self.active_video() {
+            view.update(cx, |video, cx| video.toggle_playback(cx));
+        }
+    }
+
+    fn on_toggle_mute(
+        &mut self,
+        _: &keys::ToggleMute,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(view) = self.active_video() {
+            view.update(cx, |video, cx| video.toggle_mute(window, cx));
+        }
+    }
+
+    fn on_volume_up(&mut self, _: &keys::VolumeUp, window: &mut Window, cx: &mut Context<Self>) {
+        self.nudge_volume(keys::VOLUME_STEP, window, cx);
+    }
+
+    fn on_volume_down(
+        &mut self,
+        _: &keys::VolumeDown,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.nudge_volume(-keys::VOLUME_STEP, window, cx);
+    }
+
+    fn nudge_volume(&mut self, delta: i16, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(view) = self.active_video() {
+            view.update(cx, |video, cx| video.nudge_volume(delta, window, cx));
+        }
+    }
+
+    fn on_close_pane(&mut self, _: &keys::ClosePane, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(index) = self.active_slot() {
+            self.close_slot(index, cx);
+        }
+    }
+
+    fn on_go_browse(&mut self, _: &keys::GoBrowse, _window: &mut Window, cx: &mut Context<Self>) {
+        self.go_browse(cx);
+    }
+
+    fn on_toggle_settings(
+        &mut self,
+        _: &keys::ToggleSettings,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_settings(window, cx);
+    }
+
+    fn on_focus_search(
+        &mut self,
+        _: &keys::FocusSearch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.search.update(cx, |state, cx| state.focus(window, cx));
     }
 
     // ── Twitch ───────────────────────────────────────────────────────
@@ -226,7 +372,35 @@ impl RootView {
                 self.fill_tab();
             }
             TwitchEvent::Streams(streams) => self.on_streams(streams, cx),
-            TwitchEvent::Error(reason) => self.sign_in = SignIn::Error(reason.into()),
+            TwitchEvent::FollowedChannels(channels) => {
+                // Filtered against the live list rather than trusted: the two
+                // requests are seconds apart, so somebody can go live between
+                // them and would otherwise appear in both places at once.
+                self.offline = channels
+                    .into_iter()
+                    .filter(|channel| !self.known_live.contains(&channel.login))
+                    .collect();
+                self.refreshing = false;
+                cx.notify();
+            }
+            TwitchEvent::FollowsError(reason) => {
+                // Only worth saying when somebody asked. The poll runs every
+                // minute, and an outage that lasts an hour should not be sixty
+                // toasts about a list that is still on screen.
+                if self.refreshing {
+                    self.toast(format!("could not refresh: {reason}"), cx);
+                } else {
+                    eprintln!("follows: {reason}");
+                }
+                self.refreshing = false;
+                cx.notify();
+            }
+            TwitchEvent::Error(reason) => {
+                // Terminal: the worker has returned, so no refresh it was
+                // holding is ever going to be answered.
+                self.refreshing = false;
+                self.sign_in = SignIn::Error(reason.into());
+            }
 
             TwitchEvent::Popular(streams) => {
                 self.discovery.popular = streams;
@@ -317,6 +491,46 @@ impl RootView {
         }
     }
 
+    /// Ask again for whatever is on screen.
+    ///
+    /// One control, whichever list is up, because "refresh" means the thing you
+    /// are looking at. The discovery lists are otherwise fetched once per tab
+    /// and kept forever, which is right for a page you glance at and wrong for
+    /// one you have had open all evening.
+    fn refresh(&mut self, cx: &mut Context<Self>) {
+        if let Some(results) = &self.discovery.search {
+            let query = results.query.to_string();
+            self.run_search(query, cx);
+            return;
+        }
+        if let Some(category) = self.discovery.open.clone() {
+            self.fetch(Request::Category(category));
+        } else {
+            match self.discovery.tab {
+                Tab::Following => self.refresh_follows(),
+                Tab::Popular => self.fetch(Request::Popular),
+                Tab::Categories => self.fetch(Request::Categories),
+            }
+        }
+        cx.notify();
+    }
+
+    /// Poll the follows lists now instead of at the next minute.
+    ///
+    /// Deliberately not routed through `fetch`, which owns the browse page's
+    /// loading and error state: a follows refresh is not a browse request, and
+    /// borrowing that flag would put "Loading…" over the popular tab.
+    fn refresh_follows(&mut self) {
+        if !matches!(self.sign_in, SignIn::SignedIn(_)) {
+            return;
+        }
+        self.refreshing = self.twitch.request(Request::Follows);
+    }
+
+    fn on_refresh(&mut self, _: &keys::Refresh, _window: &mut Window, cx: &mut Context<Self>) {
+        self.refresh(cx);
+    }
+
     fn show_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
         self.discovery.tab = tab;
         self.discovery.open = None;
@@ -392,6 +606,12 @@ impl RootView {
             }
         }
 
+        // Anyone who just went live is no longer offline. The offline list
+        // arrives from its own request moments later and will agree, but not
+        // before a repaint that would show them in both lists.
+        self.offline
+            .retain(|channel| !now_live.contains(&channel.login));
+
         self.known_live = now_live;
         self.follows = streams;
         cx.notify();
@@ -462,7 +682,15 @@ impl RootView {
             return;
         }
 
-        let chat = cx.new(|cx| ChatView::new(channel.clone(), self.cache.clone(), window, cx));
+        let chat = cx.new(|cx| {
+            ChatView::new(
+                channel.clone(),
+                self.settings.chat_history,
+                self.cache.clone(),
+                window,
+                cx,
+            )
+        });
         self.slots.push(Slot {
             channel: channel.clone(),
             quality_override: None,
@@ -473,6 +701,7 @@ impl RootView {
             hovered: false,
         });
 
+        self.active = Some(channel.clone());
         self.start_stream(channel, window, cx);
         self.set_background(false, cx);
 
@@ -516,7 +745,12 @@ impl RootView {
 
         let (supervisor, mut events) =
             StreamSupervisor::start(channel.clone(), pane_height, options);
-        let volume = self.settings.volume;
+        // Read once, here, and frozen into the pump: the pane it belongs to
+        // may not start for several seconds, and adjusting a *different* pane
+        // in the meantime must not follow it in.
+        let volume = self
+            .volume_override
+            .unwrap_or_else(|| self.settings.volume_for(&channel));
 
         let pump = cx.spawn_in(window, async move |this, cx| {
             use futures::StreamExt as _;
@@ -568,14 +802,18 @@ impl RootView {
                             window,
                             move |this: &mut RootView, _, event, window, cx| match event {
                                 VideoEvent::VolumeChanged(volume) => {
-                                    // Panes keep independent volume; the most
-                                    // recent choice is only a default for the
-                                    // next stream opened.
-                                    this.settings.volume = *volume;
-                                    if let Err(e) =
-                                        this.settings.save_preferences(&this.settings_path)
-                                    {
-                                        eprintln!("settings: could not save: {e}");
+                                    // Remembered against the channel rather
+                                    // than globally, so coming back to a
+                                    // streamer finds them where you left them.
+                                    // The guard matters: a slider drag emits a
+                                    // change per pixel, and each one of these
+                                    // is a full read-modify-write of the file.
+                                    if this.settings.set_volume_for(&owner, *volume) {
+                                        if let Err(e) =
+                                            this.settings.save_preferences(&this.settings_path)
+                                        {
+                                            eprintln!("settings: could not save: {e}");
+                                        }
                                     }
                                     cx.notify();
                                 }
@@ -690,6 +928,7 @@ impl RootView {
                         if client_id_changed {
                             this.sign_in = SignIn::Connecting;
                             this.follows.clear();
+                            this.offline.clear();
                             this.known_live.clear();
                             // Browsing was fetched with the old app's token, so
                             // it goes with it.
@@ -936,6 +1175,16 @@ impl RootView {
                 ))
             })
             .child(self.pill(
+                "refresh",
+                if self.refreshing {
+                    "refreshing…".into()
+                } else {
+                    "refresh".into()
+                },
+                cx,
+                |this, _window, cx| this.refresh(cx),
+            ))
+            .child(self.pill(
                 "open-settings",
                 "settings".into(),
                 cx,
@@ -951,6 +1200,7 @@ impl RootView {
             .child(header)
             .child(browse::page(
                 &self.follows,
+                &self.offline,
                 &self.discovery,
                 &self.sign_in,
                 &self.cache,
@@ -977,6 +1227,13 @@ impl RootView {
                     match this.slots.get_mut(index) {
                         Some(slot) if slot.hovered != hovered => slot.hovered = hovered,
                         _ => return,
+                    }
+                    // Sticky, unlike `hovered`: a keyboard shortcut has to keep
+                    // working once the pointer has moved into chat or off the
+                    // window entirely, and the pane you last looked at is the
+                    // one you meant.
+                    if hovered {
+                        this.active = this.slots.get(index).map(|slot| slot.channel.clone());
                     }
                     let over_video = this.slots.iter().any(|slot| slot.hovered);
                     this.nav.set(over_video);
@@ -1025,6 +1282,22 @@ impl Render for RootView {
         };
 
         div()
+            // Focus and context are what make the keymap reachable at all; see
+            // `keys`. `track_focus` rather than `id().focusable()` on purpose —
+            // giving the root div an id would re-namespace every descendant
+            // element id in the app, including the ones animated images depend
+            // on.
+            .track_focus(&self.focus)
+            .key_context(self.key_context())
+            .on_action(cx.listener(Self::on_toggle_playback))
+            .on_action(cx.listener(Self::on_toggle_mute))
+            .on_action(cx.listener(Self::on_volume_up))
+            .on_action(cx.listener(Self::on_volume_down))
+            .on_action(cx.listener(Self::on_close_pane))
+            .on_action(cx.listener(Self::on_go_browse))
+            .on_action(cx.listener(Self::on_toggle_settings))
+            .on_action(cx.listener(Self::on_focus_search))
+            .on_action(cx.listener(Self::on_refresh))
             .relative()
             .size_full()
             .bg(theme::bg())
@@ -1081,6 +1354,9 @@ fn main() {
     Application::new().run(move |cx: &mut App| {
         // Must come before any gpui-component widget is constructed.
         gpui_component::init(cx);
+        // After it, not before: same-depth ties are won by whoever registered
+        // last, and these bindings are the ones that must stand aside.
+        keys::init(cx);
 
         let bounds = Bounds::centered(None, size(px(1600.), px(920.)), cx);
         let options = WindowOptions {

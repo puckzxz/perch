@@ -13,12 +13,19 @@ use gpui_component::{
 };
 use settings::{QualityPreference, Settings};
 
+use crate::keys;
 use crate::motion;
 use crate::theme;
 
 /// How far the panel travels as it opens. Enough to read as arriving from
 /// somewhere, not enough to watch.
 const PANEL_RISE: f32 = 12.0;
+
+/// Half the panel's content width, so the shortcut listing reads as two
+/// columns rather than as one long list nobody scans to the end of.
+const SHORTCUT_COLUMN: f32 = 210.0;
+/// Wide enough for the longest key name in the listing.
+const SHORTCUT_KEY: f32 = 56.0;
 
 /// Offered in the quality dropdown. "Auto" first because it is usually the
 /// right answer: it picks a stream that lands on a clean scale ratio, which
@@ -39,6 +46,19 @@ const QUALITY_OPTIONS: [(&str, &str); 8] = [
     ("160p", "160p"),
 ];
 
+/// How much of a channel's chat a new pane opens with.
+///
+/// Off is on the list rather than being a value nobody can reach, because this
+/// is the only thing in the app that asks a **third party** for content: Twitch
+/// publishes no scrollback, so the messages come from the community service
+/// Chatterino uses, and asking tells it which channels are being watched.
+const HISTORY_OPTIONS: [(&str, usize); 4] = [
+    ("100 messages", 100),
+    ("250 messages", 250),
+    ("500 messages", 500),
+    ("Off — join with an empty pane", 0),
+];
+
 pub enum SettingsEvent {
     Saved(Box<Settings>),
     Dismissed,
@@ -49,6 +69,7 @@ pub struct SettingsPanel {
     client_id: Entity<InputState>,
     auth_token: Entity<InputState>,
     quality: Entity<SelectState<Vec<SharedString>>>,
+    history: Entity<SelectState<Vec<SharedString>>>,
     sign_in_status: SharedString,
 }
 
@@ -89,11 +110,26 @@ impl SettingsPanel {
         let quality =
             cx.new(|cx| SelectState::new(options, Some(IndexPath::new(selected)), window, cx));
 
+        // A hand-edited value that is not on the list falls back to the first
+        // option rather than being silently kept and then silently overwritten
+        // on the next save.
+        let selected = HISTORY_OPTIONS
+            .iter()
+            .position(|(_, value)| *value == settings.chat_history)
+            .unwrap_or(0);
+        let options: Vec<SharedString> = HISTORY_OPTIONS
+            .iter()
+            .map(|(label, _)| SharedString::from(*label))
+            .collect();
+        let history =
+            cx.new(|cx| SelectState::new(options, Some(IndexPath::new(selected)), window, cx));
+
         Self {
             settings,
             client_id,
             auth_token,
             quality,
+            history,
             sign_in_status,
         }
     }
@@ -121,8 +157,46 @@ impl SettingsPanel {
             QualityPreference::Fixed(QUALITY_OPTIONS[index].1.to_string())
         };
 
+        let index = self
+            .history
+            .read(cx)
+            .selected_index(cx)
+            .map(|path| path.row)
+            .unwrap_or(0);
+        settings.chat_history = HISTORY_OPTIONS[index].1;
+
         self.settings = settings.clone();
         cx.emit(SettingsEvent::Saved(Box::new(settings)));
+    }
+
+    /// The keymap, as a reference rather than a control.
+    ///
+    /// It reads from `keys::SHORTCUTS`, beside the bindings themselves, so a
+    /// key that is documented here is one that is actually bound.
+    fn shortcuts() -> impl IntoElement {
+        div()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .gap_y(px(theme::GAP_TIGHT))
+            .children(keys::SHORTCUTS.iter().map(|(key, description)| {
+                div()
+                    .w(px(SHORTCUT_COLUMN))
+                    .flex()
+                    .flex_row()
+                    .items_baseline()
+                    .gap(px(theme::GAP_TIGHT))
+                    .text_size(px(theme::TEXT_META))
+                    .child(
+                        div()
+                            .flex_none()
+                            .w(px(SHORTCUT_KEY))
+                            .font_weight(theme::weight_label())
+                            .text_color(theme::text())
+                            .child(*key),
+                    )
+                    .child(div().text_color(theme::text_muted()).child(*description))
+            }))
     }
 
     fn field(
@@ -204,6 +278,16 @@ impl Render for SettingsPanel {
                         "Stream quality",
                         "Auto picks a stream that scales cleanly to the video pane. Best is usually the wrong choice: a 1440p stream in a 720px pane decodes four times the pixels and then throws them away.",
                         Select::new(&self.quality),
+                    ))
+                    .child(Self::field(
+                        "Chat history on join",
+                        "Opens a new chat pane with what was already being said. Twitch publishes no scrollback, so these come from the community service Chatterino uses — which means the request tells someone other than Twitch which channels you watch.",
+                        Select::new(&self.history),
+                    ))
+                    .child(Self::field(
+                        "Keyboard shortcuts",
+                        "Player keys act on the pane you last pointed at. All of them stand aside while the cursor is in a box like this one.",
+                        Self::shortcuts(),
                     ))
                     .child(
                         div()

@@ -157,9 +157,33 @@ impl ChatMessage {
         if message.command != "PRIVMSG" {
             return None;
         }
-        let login = message.nick()?.to_string();
-        let raw_text = message.param(1)?;
+        Some(Self::assemble(message, message.nick()?, message.param(1)?))
+    }
 
+    /// The message a user attached to a `USERNOTICE` — a resub note, or the
+    /// whole body of an announcement — or `None` when they attached nothing.
+    ///
+    /// The same shape as a PRIVMSG assembled from different places: a
+    /// USERNOTICE is sent by `tmi.twitch.tv`, so the speaker is named by the
+    /// `login` tag rather than by the prefix, and the text is optional rather
+    /// than required.
+    pub fn from_usernotice(message: &IrcMessage) -> Option<Self> {
+        if message.command != "USERNOTICE" {
+            return None;
+        }
+        let text = message.param(1)?;
+        if text.trim().is_empty() {
+            return None;
+        }
+        Some(Self::assemble(message, message.tag("login")?, text))
+    }
+
+    /// Everything a displayable line needs, given who spoke and what they said.
+    ///
+    /// One assembler for both entry points, so a resub note gets the same `/me`
+    /// handling, colour fallback and emote tag as an ordinary message. The two
+    /// differ only in where the speaker and the text are found.
+    fn assemble(message: &IrcMessage, login: &str, raw_text: &str) -> Self {
         // `/me` arrives as \x01ACTION text\x01.
         let (text, is_action) = match raw_text
             .strip_prefix('\u{1}')
@@ -173,21 +197,100 @@ impl ChatMessage {
         let display_name = message
             .tag("display-name")
             .filter(|name| !name.is_empty())
-            .unwrap_or(&login)
+            .unwrap_or(login)
             .to_string();
 
         let color = message
             .tag("color")
             .and_then(parse_hex_color)
-            .unwrap_or_else(|| fallback_color(&login));
+            .unwrap_or_else(|| fallback_color(login));
 
-        Some(Self {
-            login,
+        Self {
+            login: login.to_string(),
             display_name,
             color,
             text,
             is_action,
             emotes: message.tag("emotes").map(str::to_string),
+            sent_at: message.tag("tmi-sent-ts").and_then(|ts| ts.parse().ok()),
+        }
+    }
+}
+
+/// What a `USERNOTICE` was about, coarsely.
+///
+/// Twitch's `msg-id` values are an open set that grows whenever they ship a
+/// feature, so this collapses them into the few groups worth treating
+/// differently on screen rather than trying to enumerate them. Anything
+/// unrecognised is [`NoticeKind::Other`] and still renders in full, because
+/// `system-msg` is finished English written by Twitch — the cost of a missing
+/// arm is a row that is not tinted, not a dropped event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoticeKind {
+    /// Somebody paid: a sub, a resub, a gift, a mystery gift, an upgrade from
+    /// Prime, or a pay-it-forward.
+    Subscription,
+    /// A channel sent its viewers here, or called them back.
+    Raid,
+    /// The broadcaster or a moderator speaking as the channel.
+    Announcement,
+    /// Everything else Twitch has invented or will invent.
+    Other,
+}
+
+impl NoticeKind {
+    fn from_msg_id(id: &str) -> Self {
+        match id {
+            "sub"
+            | "resub"
+            | "subgift"
+            | "submysterygift"
+            | "giftpaidupgrade"
+            | "anongiftpaidupgrade"
+            | "primepaidupgrade"
+            | "standardpayforward"
+            | "communitypayforward" => Self::Subscription,
+            "raid" | "unraid" => Self::Raid,
+            "announcement" => Self::Announcement,
+            _ => Self::Other,
+        }
+    }
+}
+
+/// One `USERNOTICE`: a sub, a gift, a raid, an announcement.
+///
+/// These are the moments a streamer reacts to on camera, so a chat without them
+/// is a chat where someone thanks a person you never saw.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatNotice {
+    pub kind: NoticeKind,
+    /// `system-msg`: Twitch's own sentence for the event, already written and
+    /// already localised, so it needs no formatting from us. Empty for an
+    /// announcement, which is nothing but body.
+    pub system: String,
+    /// What the user attached, if anything — a resub note, the announcement
+    /// itself. A [`ChatMessage`] so it renders with the same emotes, colours
+    /// and word handling as everything else they say.
+    pub body: Option<ChatMessage>,
+    pub sent_at: Option<u64>,
+}
+
+impl ChatNotice {
+    /// Build from a USERNOTICE line, or `None` if it is not one — or if it
+    /// carries neither a sentence nor a body, which is nothing to show.
+    pub fn from_irc(message: &IrcMessage) -> Option<Self> {
+        if message.command != "USERNOTICE" {
+            return None;
+        }
+        let system = message.tag("system-msg").unwrap_or_default().to_string();
+        let body = ChatMessage::from_usernotice(message);
+        if system.is_empty() && body.is_none() {
+            return None;
+        }
+        Some(Self {
+            kind: NoticeKind::from_msg_id(message.tag("msg-id").unwrap_or_default()),
+            system,
+            body,
             sent_at: message.tag("tmi-sent-ts").and_then(|ts| ts.parse().ok()),
         })
     }
@@ -275,5 +378,67 @@ mod tests {
     fn non_privmsg_is_not_a_chat_message() {
         let m = parse_line(":tmi.twitch.tv ROOMSTATE #bar").unwrap();
         assert!(ChatMessage::from_irc(&m).is_none());
+    }
+
+    /// Verbatim from the wire, trimmed of the tags that play no part here.
+    const SUB: &str = r"@msg-id=sub;login=misstess89;display-name=MissTess89;color=#00FF7F;system-msg=MissTess89\ssubscribed\swith\sPrime.;tmi-sent-ts=1787734134163 :tmi.twitch.tv USERNOTICE #theburntpeanut";
+
+    #[test]
+    fn a_sub_carries_twitchs_own_finished_sentence() {
+        let notice = ChatNotice::from_irc(&parse_line(SUB).unwrap()).unwrap();
+        assert_eq!(notice.kind, NoticeKind::Subscription);
+        assert_eq!(notice.system, "MissTess89 subscribed with Prime.");
+        assert!(notice.body.is_none(), "no message was attached");
+        assert_eq!(notice.sent_at, Some(1787734134163));
+    }
+
+    #[test]
+    fn a_resub_note_is_an_ordinary_message() {
+        let line = r"@msg-id=resub;login=someone;display-name=Someone;color=#FF0000;emotes=25:0-4;system-msg=Someone\ssubscribed\sfor\s5\smonths!;tmi-sent-ts=1 :tmi.twitch.tv USERNOTICE #bar :Kappa still here";
+        let notice = ChatNotice::from_irc(&parse_line(line).unwrap()).unwrap();
+        assert_eq!(notice.kind, NoticeKind::Subscription);
+        let body = notice.body.unwrap();
+        assert_eq!(body.login, "someone");
+        assert_eq!(body.display_name, "Someone");
+        assert_eq!(body.text, "Kappa still here");
+        // The emote tag rides on the body, not on the system message.
+        assert_eq!(body.emotes.as_deref(), Some("25:0-4"));
+    }
+
+    #[test]
+    fn an_announcement_is_body_with_no_sentence() {
+        let line = r"@msg-id=announcement;login=mod;display-name=Mod;msg-param-color=PURPLE :tmi.twitch.tv USERNOTICE #bar :stream ends at six";
+        let notice = ChatNotice::from_irc(&parse_line(line).unwrap()).unwrap();
+        assert_eq!(notice.kind, NoticeKind::Announcement);
+        assert!(notice.system.is_empty());
+        assert_eq!(notice.body.unwrap().text, "stream ends at six");
+    }
+
+    #[test]
+    fn a_raid_is_recognised_and_an_unknown_event_still_renders() {
+        let raid = r"@msg-id=raid;login=other;system-msg=10\sraiders\sfrom\sOther :tmi.twitch.tv USERNOTICE #bar";
+        assert_eq!(
+            ChatNotice::from_irc(&parse_line(raid).unwrap())
+                .unwrap()
+                .kind,
+            NoticeKind::Raid
+        );
+
+        // Twitch invents these faster than anyone adds match arms. The point of
+        // the fallback is that the sentence survives even when the id does not.
+        let invented = r"@msg-id=somethingtwitchshipsnextyear;system-msg=Somebody\sdid\ssomething :tmi.twitch.tv USERNOTICE #bar";
+        let notice = ChatNotice::from_irc(&parse_line(invented).unwrap()).unwrap();
+        assert_eq!(notice.kind, NoticeKind::Other);
+        assert_eq!(notice.system, "Somebody did something");
+    }
+
+    #[test]
+    fn a_notice_with_nothing_to_say_is_dropped() {
+        let line =
+            r"@msg-id=ritual;msg-param-ritual-name=new_chatter :tmi.twitch.tv USERNOTICE #bar";
+        assert!(ChatNotice::from_irc(&parse_line(line).unwrap()).is_none());
+
+        let privmsg = parse_line(":a!a@a PRIVMSG #bar :hi").unwrap();
+        assert!(ChatNotice::from_irc(&privmsg).is_none());
     }
 }
