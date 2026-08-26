@@ -61,6 +61,15 @@ const MAX_MESSAGES: usize = 1_000;
 /// buy clearance costs more than the crowding does.
 const EMOTE_HEIGHT: f32 = 28.0;
 
+/// How far an emote hangs past its line, top and bottom.
+///
+/// At the top and bottom of a row this is absorbed by `ROW_PAD_Y`. *Between*
+/// two wrapped lines of the same message there is no padding at all — the lines
+/// sit exactly `LINE_BODY` apart — so an emote on the second line paints over
+/// the descenders of the first, and an emote on the first is painted over in
+/// turn. This is the gap that gives the overhang somewhere to go.
+const EMOTE_OVERHANG: f32 = (EMOTE_HEIGHT - theme::LINE_BODY) / 2.0;
+
 /// Wall-clock time for a row, formatted once on arrival.
 ///
 /// Twitch's `tmi-sent-ts` is when the *server* saw the message, which is what
@@ -521,6 +530,12 @@ impl ChatView {
         let sets = self.emote_sets.clone();
         let tokens = apply_named_emotes(tokens, &move |name| sets.lookup(name));
 
+        // Only a message that actually has an emote in it pays for the room one
+        // needs. A wrapped wall of plain text keeps its tight leading, which is
+        // most of what wraps.
+        let overhangs = tokens.iter().any(|token| matches!(token, Token::Emote(_)));
+        line = line.when(overhangs, |line| line.gap_y(px(EMOTE_OVERHANG * 2.0)));
+
         let mut emote_index = 0usize;
         let mut word_index = 0usize;
         for token in tokens {
@@ -565,7 +580,7 @@ impl ChatView {
                                     img(path)
                                         .id((SharedString::from(emote.url.clone()), emote_index))
                                         .h(px(EMOTE_HEIGHT))
-                                        .mt(px((theme::LINE_BODY - EMOTE_HEIGHT) / 2.0))
+                                        .mt(px(-EMOTE_OVERHANG))
                                         .tooltip(move |_window, cx| {
                                             cx.new(|_| EmoteTooltip { name: name.clone() }).into()
                                         }),
