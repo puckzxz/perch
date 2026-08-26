@@ -15,6 +15,9 @@ run.cmd forsen             open a channel
 run.cmd forsen --volume 30
 ```
 
+`--volume` applies to this run only. It does not overwrite the level each
+channel remembers, and it wins over one for as long as the app is open.
+
 Or directly, once built:
 
 ```
@@ -24,6 +27,25 @@ cargo run --release -p nativetwitch -- forsen
 Use `--release`. The video path does per-frame format conversion, and a debug
 build is several times slower at it.
 
+### Keyboard
+
+Everything you reach for while watching is a hover-revealed overlay on the
+video, which is no use when you are not holding the mouse.
+
+| | |
+|---|---|
+| `Space` | Pause or resume |
+| `M` | Mute or unmute |
+| `↑` `↓` | Volume |
+| `Ctrl+W` | Close this pane |
+| `Esc` | Back to follows |
+| `Ctrl+F` | Search |
+| `Ctrl+R` | Refresh whichever list is on screen |
+| `Ctrl+,` | Settings |
+
+Player keys act on the pane you last pointed at. All of them stand aside while
+the cursor is in a text box. The same list is in the settings sheet.
+
 ### Requirements
 
 - **streamlink** on `PATH`, or `STREAMLINK_PATH` pointing at it.
@@ -32,10 +54,37 @@ build is several times slower at it.
   mpv.net and Plex, and the app finds those automatically. `MPV_DLL` overrides
   the search.
 
+## Chat
+
+Read-only, over anonymous IRC — no account, no token. Messages carry their
+emotes (Twitch, FFZ, BTTV and 7TV), links are clickable, `@mentions` are drawn
+in the colour of whoever is being addressed, and subs, gifts, raids and
+announcements appear as their own rows rather than being dropped.
+
+A pane also opens with the last hundred messages from *before* you joined, so
+four panes do not open blank. Twitch publishes no scrollback of its own, so
+those come from the same community service
+[Chatterino](https://chatterino.com/) uses — which means the request tells
+someone other than Twitch which channels you watch. Settings has the switch,
+including **Off**.
+
+## Follows
+
+Live channels first, as cards; everyone else you follow below as names. An
+offline channel still opens — the video says so, but its chat connects either
+way.
+
+The list refreshes itself every minute. `Ctrl+R`, or the pill in the header,
+asks again now — for whichever list is on screen, not just follows.
+
 ## Settings
 
 The gear in the title bar. Stored at `%APPDATA%/nativetwitch/settings.json`;
 changes apply immediately rather than needing a restart.
+
+Volume is remembered per channel, because streamers are not consistent about
+how loud they run. Muting one is remembered too, and deliberately never becomes
+the default for a channel you have not opened before.
 
 ### The two Twitch tokens
 
@@ -85,7 +134,7 @@ crates/
   mpv-frames    libmpv loaded at runtime, software render to BGRA
   streamlink    supervises streamlink as a headless byte source
   twitch-chat   read-only chat over anonymous IRC
-  twitch-api    device-code sign-in and followed streams
+  twitch-api    device-code sign-in, follows, browsing and search
   emotes        Twitch/FFZ/BTTV/7TV resolution, disk image cache
   settings      persisted user settings
   nativetwitch  the app

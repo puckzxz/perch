@@ -4,16 +4,16 @@ For whoever picks this up next. `README.md` covers *using* it; this covers
 *working on* it — the architecture, the traps, and the things that cost real
 time to discover and would cost the same again.
 
-State: 22 commits, 95 tests, clippy clean, ~9500 lines.
+State: 23 commits, 114 tests, clippy clean, ~11,000 lines.
 Nothing pushed; there is no remote.
 
 ---
 
 ## What it is
 
-A native Twitch client in one window: browse who you follow, what is popular, or
-what is on; search for a channel; and watch up to four at once, each with its own
-chat. Rust + [GPUI](https://github.com/zed-industries/zed)
+A native Twitch client in one window: browse everyone you follow — live or
+not — plus what is popular and what is on; search for a channel; and watch up to
+four at once, each with its own chat. Rust + [GPUI](https://github.com/zed-industries/zed)
 (Zed's UI framework), with streamlink as the byte source and libmpv doing decode
 and A/V sync.
 
@@ -49,7 +49,7 @@ did not take that path.
 crates/
   mpv-frames    libmpv loaded at runtime, software render to BGRA
   streamlink    supervises streamlink as a headless Twitch byte source
-  twitch-chat   read-only chat over anonymous IRC
+  twitch-chat   read-only chat over anonymous IRC, plus the history backfill
   twitch-api    device-code sign-in, follows, top streams, categories, search
   emotes        Twitch/FFZ/BTTV/7TV resolution + disk image cache
   settings      persisted user settings
@@ -74,6 +74,7 @@ App modules:
 | `chat_text.rs` | what a word in a message is — link, mention or plain (pure, tested) |
 | `settings_view.rs` | settings sheet |
 | `twitch.rs` | the worker: sign-in, follows polling, browse requests |
+| `keys.rs` | the keymap: actions, bindings, contexts, and the listing |
 | `theme.rs` | **all** colour, spacing, type and motion tokens |
 | `motion.rs` | the four animation shapes, and the state one of them needs |
 | `diagnostics.rs` | where stderr goes when there is no console |
@@ -297,9 +298,7 @@ that turned out to be unnecessary.
 
 **The release build has no console**, so `eprintln!` and panic messages go to a
 handle that leads nowhere. `diagnostics::capture_stderr` points the process's
-stderr at `%LOCALAPPDATA%
-ativetwitch
-ativetwitch.log` before anything can
+stderr at `%LOCALAPPDATA%\nativetwitch\nativetwitch.log` before anything can
 write, and keeps the previous run as `.log.old`. It works by `SetStdHandle`
 rather than by a logging facade because Windows resolves that handle on *every
 write* — so it catches the library crates and panic output too, with no change
@@ -409,6 +408,15 @@ unconsidered.
 - **Colour** — quiet, because this is a window left open for hours. Player
   background is pure black; any lift shows as a grey halo around letterboxed
   video.
+- **Volume** — one number per channel plus a global default, and the default
+  follows the last level you *chose*, so an unfamiliar channel opens near where
+  you have been listening. Muting is the exception and never becomes the
+  default: mute is something you do to one stream, usually to hear another, and
+  a channel that opens silent reads as broken. That is also why the stored value
+  is an `Option<u8>` — `Some(0)` (deliberately muted) and `None` (never opened)
+  must not collapse into each other. Keys go through `settings::channel_key`,
+  because the app does not agree with itself about case: Helix says `forsen`,
+  the command line says whatever was typed.
 - **Spacing** — named by role (`PAGE_PAD`, `PANEL_PAD`, `CONTROL_PAD_*`,
   `GAP_TIGHT`, `GAP`, `GAP_SECTION`, `PANE_GAP`, `ROW_PAD_*`), not by size.
 - **Type** — five roles (`TEXT_TITLE/BODY/LABEL/META/MICRO`). Label and meta share
@@ -481,6 +489,33 @@ clears the corner for every grid shape `layout.rs` can derive — with four
 columns, the third pane's *left* edge also lands under a centred nav.
 
 ### Browsing
+
+Follows are **two lists that never merge**. `LiveStream` means *is live*, and
+three things read it that way — the went-live toasts, the LIVE badge, and the
+chat header's viewer count — so an offline channel sitting in that vec would be
+wrong in all three at once. Offline follows are `FollowedChannel`s, and they are
+drawn as names rather than cards: a card is mostly a picture, and an offline
+channel has none worth showing — a thumbnail stale by hours, or a profile
+picture that costs another request per refresh and says nothing. Names also
+pack, so a hundred follows is five rows instead of a wall of grey rectangles.
+Clicking one still opens it: the video says offline, but the *chat* connects
+either way, which is the reason to go there.
+
+`/channels/followed` is the only Helix endpoint here that genuinely paginates,
+and the only one whose `first` defaults to 20 rather than 100 — forget the
+parameter and a long follows list quietly shows a fifth of itself.
+
+**Refresh means "this list", not "follows".** One control, whichever list is up,
+because the discovery tabs are otherwise fetched once and kept forever, which is
+right for a page you glance at and wrong for one left open all evening.
+`Request::Follows` is intercepted in `run` rather than handled in `serve`,
+because `serve` cannot see the poll timer: answered there, the poll just done by
+hand would be repeated automatically seconds later, for two of everything. And a
+failed poll is `FollowsError`, never `Error` — the UI turns `Error` into
+`SignIn::Error` and blanks the page, which is far too much to say about one
+dropped request. It is only surfaced when somebody actually pressed the button;
+the minute-by-minute poll fails to stderr, because an hour-long outage should
+not be sixty toasts about a list that is still on screen.
 
 Three lists on one page — following, popular, categories — because they are the
 same question asked three ways, so they share one grid and one card. Only
@@ -561,14 +596,117 @@ would be scattering unreadable blues through body text, which is worse than
 leaving mentions alone.
 
 **Emotes overhang their line rather than growing it,** so a row with emotes is
-no taller than one without. At 28px in a 19px line they come within about half a
-pixel of the hairline; that is a deliberate trade, checked with a human and left
-alone.
+no taller than one without. `ROW_PAD_Y` is what makes that work: the 4.5px of
+overhang at each end of a row has padding to sit in.
+
+**Between two *wrapped* lines of one message there is no padding at all** — they
+sit exactly `LINE_BODY` apart — so an emote on the second line paints straight
+over the descenders of the first, eating the tail of a `j` or a `g`, and gets
+painted over in turn. That was live for as long as the overhang existed and is
+only visible on a message long enough to wrap *and* carrying an emote, which is
+why it survived a design pass and two rounds of screenshots. The fix is a
+`gap_y` of one full overhang between wrapped lines, applied only to messages
+that actually contain an emote, so a wrapped wall of plain text keeps its tight
+leading. Single-line rows are untouched at 30px.
+
+Worth knowing how this was diagnosed, because the obvious reading was wrong
+twice. It looks like clipping, so the first guess was that something masks to
+the row bounds — it does not: `Style::overflow_mask` returns `None` unless
+overflow is set, and `list` masks to the whole list, not per item. The second
+guess was that `ROW_PAD_Y` was too tight; raising it changed nothing, because
+measuring the rendered pixels showed emotes at a full 28px either way. Measure
+the row pitch and the emote's actual height before believing a screenshot.
 
 **Scrollback holds where you put it** and resumes only when the wheel reaches
 the very bottom, which in a fast channel is a long way down. The scrollbar and
 the jump-to-live pill exist because nothing on screen said so otherwise — see
 the `list` trap for why the thumb's *size* is not to be trusted.
+
+**A pane opens with what was already being said.** Twitch publishes no
+scrollback — IRC gives you what arrives after your JOIN and there is no Helix
+endpoint — so the backfill comes from the community service Chatterino and
+DankChat both use. It answers with **raw IRC**, which is the whole reason it is
+cheap: the lines go through `message::parse_line` and `event_for` exactly as if
+they had come off the socket, so a backfilled message is indistinguishable from
+a live one and there is no second code path to keep in step. `event_for` exists
+for that: it is the single answer to "what does this line mean", shared by the
+session loop and the backfill.
+
+Three consequences worth knowing. It is the only place the app asks a **third
+party** for content, and doing so tells that service which channels are being
+watched, which is why `Settings::chat_history` can turn it off. The fetch runs
+**before** the socket rather than beside it, because history arriving after the
+first live message would put older lines below newer ones — and only on the
+first attempt, since refetching after a reconnect would re-deliver exactly what
+is still on screen. And the service joins a channel the first time anybody asks
+for it, so the very first request for a channel nobody watches comes back empty
+and the one after it does not.
+
+**"Connecting…" is a state of the pane, not a row in it.** It used to be a
+notice row, which stopped working the moment history existed: a backfill arrives
+stamped with the times those messages were really sent, all of them older than
+now, so the row sat above an hour of history wearing a later timestamp than
+everything beneath it. It is drawn in the empty space it explains instead, and
+the pulse is safe there because the state always ends — at the join, or at the
+first disconnect notice, and both put a row in the list.
+
+**Events are washed, never outlined or barred.** A sub, a gift, a raid or an
+announcement gets a tinted row and nothing that changes its geometry, because
+the row still has to sit inside the ruler of timestamps you scan down. Two
+intensities and no more: `msg-id` is an open set that grows whenever Twitch
+ships a feature, and the `system-msg` tag is already finished English that says
+which event it was. Anything unrecognised renders in full with the quiet wash —
+the cost of a missing arm is a row that is not tinted, not a dropped event.
+An announcement has no sentence at all and is nothing but body, which is why
+`ChatNotice` has both halves optional and why a notice with neither is dropped.
+
+### Keyboard
+
+There was no key handling at all until late on, and adding it is mostly about
+two GPUI behaviours that fail *silently*.
+
+**A key reaches nothing unless something is focused.** The dispatch path comes
+entirely from `window.focus`; with nothing focused it is the bare root node,
+whose context stack is empty — and an empty stack fails every predicate. So
+`RootView` holds a `FocusHandle`, takes focus on open, and takes it back through
+`cx.on_focus_lost` whenever the focused element simply *disappears*, which is
+what happens when the settings sheet closes and takes its buttons with it. That
+listener fires only when the path empties, not when focus moves, so it cannot
+loop. Without either half, every binding is dead and nothing says so.
+
+**A key context and a key predicate are different grammars.** A context is
+whitespace-separated identifiers (`NativeTwitch Watch`); a predicate is a
+boolean expression over them (`NativeTwitch && Watch`). Interpolating the first
+into the second parses to the first space and then fails, which
+`KeyBinding::new` reports by panicking at startup. `keys.rs` builds predicates
+from the same identifiers the contexts are made of and has a test pinning that
+they agree, because a rename on one side would otherwise kill a whole page's
+shortcuts quietly.
+
+Three more things worth keeping:
+
+- **Never bind with `context: None`.** It is scored at maximum depth and wins
+  ties by later registration, so a context-free `escape` or bare letter beats
+  gpui-component's own input bindings and eats typing — and on Windows the
+  character is simply lost, because no `WM_CHAR` is generated. Everything here
+  is scoped and carries `!Input && !Select && !PopupMenu`. `!X` scans the whole
+  path rather than the current depth, which is what makes it work: the app's
+  context is an *ancestor* of the focused input.
+- **`track_focus`, never `id().focusable()`.** Giving the root div an id would
+  re-namespace every descendant element id in the app, including the ones
+  animated images depend on. `track_focus` needs no id and installs the
+  mouse-down handler that re-arms shortcuts after a click — while a click on an
+  input still focuses the input, because the inner handler calls
+  `prevent_default` first.
+- **The sheet replaces the page name in the context rather than adding to it**,
+  so a page-scoped shortcut cannot fire through a modal and no binding has to
+  remember to write `!Modal`.
+
+There is deliberately **no visual feedback** for pause, mute or volume. Each one
+announces itself through the thing it controls, so a flash of UI would only be
+saying what you already know. The shortcut list lives in the settings sheet and
+is read from `keys::SHORTCUTS`, beside the bindings, so a documented key is a
+bound one.
 
 ### What deliberately does not move
 
@@ -629,6 +767,13 @@ To reach a state that only exists briefly, drive the app into it rather than
 racing a restart — switching quality puts a pane back into `Starting` with the
 window already open and stable.
 
+**Measure the pixels, do not read the screenshot.** Two separate wrong diagnoses
+of the emote overlap came from looking at a zoomed crop and believing it. What
+settled it was scanning a column of the chat pane for divider lines to get the
+row pitch, then scanning each row band for the tallest run of non-background
+pixels to get the emote's real height. An emote that measures 28 in a 30px row
+is not being clipped, whatever it looks like at 6x.
+
 **Verify pixel correctness by dumping PNGs.** `mpv-frames`'s `dump_frames` example
 writes frames to disk with stats (per-channel means, alpha minimum, non-black
 percentage). A red Superman "S" on a blue suit is how BGRA vs RGBA got confirmed.
@@ -640,36 +785,26 @@ graceful close, but a hard kill orphans it. `taskkill //F //IM streamlink.exe`.
 
 ## What to build next
 
-Agreed with the user and not yet built, in the order we settled on:
+Nothing here is agreed. The four items that were, plus chat backfill, are built.
+Ranked by what would be noticed, roughly:
 
-1. **USERNOTICE rows** — subs, resubs, gifts, raids, announcements. These are
-   the events the streamer reacts to on camera, and dropping them means watching
-   someone thank a person you never saw. Nearly free: `twitch.tv/commands` is
-   already requested, so the lines are arriving and falling into a `_ => {}`,
-   and the `system-msg` tag is finished English that needs no formatting. Do not
-   switch exhaustively on `msg-id` — render `system-msg` for anything
-   unrecognised and special-case only the two or three worth colouring.
-2. **Keyboard shortcuts.** There is not one in the codebase: no `actions!`, no
-   `bind_keys`, no `on_key_down`. For an app left open for hours whose mute,
-   pause and back are all hover-revealed overlays, this is the largest gap and
-   one of the cheapest. GPUI has the whole stack.
-3. **Per-channel volume.** It is one global number today, written back on every
-   slider move, so the last channel you adjusted sets the level for every stream
-   afterwards — and streamers are wildly inconsistent. `Settings` is a plain
-   serde struct with `#[serde(default)]`, so a `HashMap<String, ChannelPrefs>`
-   is backward-compatible by construction.
-4. **Follows that include offline channels, plus a manual refresh.** The list is
-   live-only, so a channel you follow that is offline does not exist to the app.
-   `GET /helix/channels/followed` needs `user:read:follows`, the scope already
-   granted — same worker, same token, one more request.
-
-Researched and ranked but not agreed, roughly in value order: stream metadata
-for channels you *do not* follow (the chat header's viewer count and uptime come
-from the follows poll, so they are blank for anything opened from popular or
-search); filtering and sorting a list in memory; window size and position
-persistence; badges in the chat gutter; recent-message backfill on join so four
-panes do not open blank; reply context lines; and highlight rules that wash the
-row background rather than colouring a word.
+1. **Filtering a list in memory.** The offline follows list is now the longest
+   thing on the page and has no filter, no sort and no way to collapse it. The
+   search box beside it searches *Twitch*, which is a different question. This
+   moved up the list precisely because offline follows landed.
+2. **Stream metadata for channels you do not follow.** The chat header's viewer
+   count and uptime come from the follows poll, so they are blank for anything
+   opened from popular, from search, or by name. `GET /helix/streams?user_login=…`
+   per open channel would fill it.
+3. **Window size and position persistence.** `Settings` already takes new fields
+   for free; gpui reports the bounds.
+4. **Badges in the chat gutter** — sub, mod, VIP. The tags already arrive and
+   are parsed into the map; nothing reads them.
+5. **Reply context lines.** `reply-parent-*` tags arrive too.
+6. **Highlight rules** that wash the row background rather than colouring a
+   word. The wash already exists for events.
+7. **Rebindable keys.** `keys::bindings` is a plain `Vec<KeyBinding>` built from
+   constants; the work is a UI and a settings shape, not a mechanism.
 
 **Known to be out of reach**, so nobody re-derives it:
 
@@ -688,6 +823,9 @@ row background rather than colouring a word.
   Links being clickable is currently the only way to get a URL out of the pane.
 - **Link previews.** Chatterino ships this off by default on privacy grounds,
   which is a strong enough hint not to build it.
+- **Chat scrollback from Twitch itself.** There is none. The website renders its
+  own history server-side and exposes no endpoint; every client that shows it
+  uses the third-party service `twitch_chat::history` talks to.
 
 ## Known limits
 
@@ -702,10 +840,10 @@ None of these is being worked on; all of them are real.
    fully fmt-clean.
 2. **The chat scrollbar's thumb size drifts.** Its position is right. See the
    `list` trap — a real fix means not using gpui's scrollbar geometry.
-3. **Chat keeps 500 messages** and drains from the front even while you are
-   scrolled back reading them. That cap was chosen when scrolling back was not
-   really possible; now that it is, raising it is nearly free and makes the
-   scrollback worth having.
+3. **Chat keeps 1000 messages** and drains from the front even while you are
+   scrolled back reading them. Raised from 500 when the pane started opening
+   with a backlog; a row is a `ChatMessage` and a few `SharedString`s, and only
+   the visible ones are ever laid out, so it can go further if it needs to.
 4. **Quality does not re-pick on resize.** It is chosen when a channel opens,
    using the pane size at that moment.
 5. **No sign-out**, and no way to clear a bad token except editing the field.
@@ -717,6 +855,20 @@ None of these is being worked on; all of them are real.
 8. **Orphaned streamlink on a hard crash.** A Windows job object would close it.
 9. **Never tested on a vertical monitor.** The layout derives portrait grids and
    stacks chat below video, the logic is unit-tested, but nobody has seen it.
+10. **The offline follows list has no filter and no cap.** Someone following
+    several hundred channels gets several hundred names. See "what to build
+    next" — this is the first thing on it for that reason.
+11. **A volume drag writes `settings.json` per pixel.** Pre-existing: every
+    `SliderEvent::Change` is a full read-modify-write of the file, and there are
+    a hundred of them in one drag. `set_volume_for` returns whether anything
+    changed so a repeated value is free, but a real fix is a debounce, and
+    gpui-component's `Slider` gives no drag-end event to hang one on.
+12. **Chat history depends on somebody else's server.** If it is down the pane
+    opens blank, which is what it did before the feature existed. Failures go to
+    the log rather than the pane, on purpose.
+13. **Shortcuts are not rebindable**, and `Esc` does not close the video quality
+    menu — that menu is hand-rolled rather than a gpui-component popup, so it
+    carries no key context of its own.
 
 ## Things not to redo
 
@@ -735,3 +887,16 @@ None of these is being worked on; all of them are real.
   refresh one in place — GPUI decodes per path.
 - Do not derive anything per-row from a row's index; the backlog drains from the
   front.
+- Do not bind a key with `context: None`; it outranks every scoped binding and
+  swallows typing.
+- Do not interpolate a key *context* into a key *predicate*; they are different
+  grammars and the failure is a startup panic.
+- Do not expect a shortcut to fire with nothing focused, and do not skip
+  `on_focus_lost` — focus is never reassigned when the focused element vanishes.
+- Do not merge offline follows into `Vec<LiveStream>`; three separate things
+  read that list as "who is live".
+- Do not answer `Request::Follows` in `serve`, which cannot reset the poll timer.
+- Do not report a failed follows poll as `TwitchEvent::Error`; the UI reads that
+  as "signed out".
+- Do not let anything overhang its line without checking what is directly above
+  and below it — inside a wrapped message that is another line, not padding.
