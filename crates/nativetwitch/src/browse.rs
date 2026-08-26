@@ -221,20 +221,81 @@ fn card<V: 'static>(
         )
 }
 
+/// Waiting for the user to authorise the app.
+///
+/// The only empty state with something to *do*, so it is the only one with a
+/// control. Twitch puts the code in the query string of `verification_uri`, so
+/// opening it fills the code in; typing it by hand is the fallback, not the
+/// instruction.
+fn awaiting_code<V: 'static>(
+    user_code: &SharedString,
+    verification_uri: &SharedString,
+    cx: &mut Context<V>,
+) -> AnyElement {
+    let uri = verification_uri.to_string();
+
+    div()
+        .flex_1()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap(px(theme::GAP))
+        .child(
+            div()
+                .text_size(px(theme::TEXT_TITLE))
+                .font_weight(theme::weight_title())
+                .text_color(theme::text())
+                .child(user_code.clone()),
+        )
+        .child(
+            div()
+                .id("open-activate")
+                .px(px(theme::PANEL_PAD))
+                .py(px(theme::CONTROL_PAD_Y))
+                .rounded_md()
+                .bg(theme::surface_raised())
+                // The one accent on the page, because it is the one thing to do.
+                .border_1()
+                .border_color(theme::accent())
+                .text_size(px(theme::TEXT_LABEL))
+                .font_weight(theme::weight_label())
+                .text_color(theme::text())
+                .cursor_pointer()
+                .hover(|style| style.bg(theme::hover()))
+                .active(|style| style.bg(theme::pressed()))
+                .child("Open twitch.tv/activate")
+                .on_click(cx.listener(move |_, _event, _window, cx| cx.open_url(&uri))),
+        )
+        .child(
+            div()
+                .max_w(px(420.))
+                .text_size(px(theme::TEXT_META))
+                .line_height(px(theme::LINE_BODY))
+                .text_center()
+                .text_color(theme::text_dim())
+                .child("Opens in your browser with the code already filled in."),
+        )
+        .into_any_element()
+}
+
 /// A message filling the page when there is nothing to show.
-fn empty_state(sign_in: &SignIn) -> AnyElement {
+fn empty_state<V: 'static>(sign_in: &SignIn, cx: &mut Context<V>) -> AnyElement {
+    if let SignIn::AwaitingCode {
+        user_code,
+        verification_uri,
+    } = sign_in
+    {
+        return awaiting_code(user_code, verification_uri, cx);
+    }
+
     let (title, detail): (SharedString, SharedString) = match sign_in {
         SignIn::NeedsClientId => (
             "Not signed in".into(),
             "Open settings and paste a Twitch Client ID to see who you follow.".into(),
         ),
-        SignIn::AwaitingCode {
-            user_code,
-            verification_uri,
-        } => (
-            user_code.clone(),
-            format!("Enter that code at {verification_uri}").into(),
-        ),
+        // Handled above, with a control rather than a sentence.
+        SignIn::AwaitingCode { .. } => return div().into_any_element(),
         SignIn::Error(reason) => ("Sign-in problem".into(), reason.clone()),
         SignIn::Connecting => ("Connecting…".into(), "Asking Twitch who is live.".into()),
         SignIn::SignedIn(_) => (
@@ -320,7 +381,7 @@ pub fn page<V: 'static>(
         .flex_col()
         .bg(theme::bg())
         .child(if follows.is_empty() {
-            empty_state(sign_in)
+            empty_state(sign_in, cx)
         } else {
             grid.into_any_element()
         })

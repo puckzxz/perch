@@ -195,6 +195,21 @@ Unrelated credentials, easy to confuse, documented in `settings::Credentials`:
 Neither can do the other's job. Refresh tokens are **single-use** — persist the
 new one immediately or the next launch is locked out.
 
+**Two threads write `settings.json`.** The sign-in worker persists OAuth tokens
+as it gets them; the UI holds a snapshot of `Settings` taken at launch and
+writes it back whenever a preference changes. Saving that snapshot wholesale put
+`oauth` back to whatever it was at startup — erasing a fresh sign-in outright,
+and, once a refresh had happened, restoring a refresh token Twitch had already
+spent. That is why sign-in never survived a restart: every launch prompted for a
+new device code.
+
+The UI now saves through `Settings::save_preferences`, which re-reads the file
+and keeps the sign-in it finds. It is written as "everything I own wins, and the
+one field somebody else owns is named", so adding a UI field needs no change
+there. `save_forgetting_sign_in` is the deliberate exception, for when the
+client id changes and the tokens stop meaning anything. Both have tests, and the
+first one fails if you swap it back to a plain `save`.
+
 ### GPUI / gpui-component
 
 **`gpui-component 0.5.1` differs from its main-branch docs.** Read the vendored
@@ -206,9 +221,27 @@ guide. Known differences: masking is `InputState::masked(bool)` not
 **`gpui_component::init(cx)` must run before any widget**, and `Root::new` must
 wrap the window's first view or overlays have nowhere to render.
 
-**`group_hover` breaks under mouse capture.** Deriving visibility from it at
-paint time made the volume slider's own control bar vanish the moment you pressed
-it. Hover is explicit state (`on_hover`) now. Do not go back.
+**Neither `group_hover` nor `on_hover` means "the pointer is over this."** Both
+resolve through the same expression:
+
+```rust
+let is_hovered = has_mouse_down.borrow().is_none()
+    && !cx.has_active_drag()
+    && hitbox.is_hovered(window);
+```
+
+`cx.has_active_drag()` is *window-wide*, and gpui-component's `Slider` drags via
+`on_drag` — so touching the volume slider makes every hover listener in the
+window report false, including the one whose control bar holds that slider. And
+because `on_hover` only fires on a `MouseMoveEvent`, leaving the window is
+invisible to it: the last move it saw was inside, so the controls stayed up.
+
+Hover is therefore **measured, not reported**: a `canvas` probe already runs each
+frame for render sizing, and it now also asks
+`window.is_window_hovered() && bounds.contains(&window.mouse_position())`. The
+`on_hover` listeners that remain exist only to wake a repaint — a paused stream
+sends no frames, so without them nothing would ask the probe to run again. Their
+*value* is ignored on purpose. Do not wire it back up.
 
 **Dependencies are plain crates.io versions** — `gpui 0.2.2`, `gpui-component 0.5.1`
 — reproducible from `Cargo.lock`. An earlier plan called for pinning a git rev;
@@ -238,14 +271,13 @@ only ever attached to a state that ends. "Offline" and "failed" deliberately sit
 still: a pulsing error is a permanent 60 fps repaint, and it reads as progress
 when there is none.
 
-**`on_hover` fires on `MouseMoveEvent` only, when the value *changes*.** Two
-consequences. A layout change under a stationary pointer fires nothing, so
-explicit hover state can be one mouse-move stale — unavoidable, and invisible in
-practice. Worse, it means GPUI's idea of hovered and ours must not drift: pane
-element ids are keyed on the **channel**, never the index, because closing a
-pane reindexes the rest and a position-keyed survivor inherits the closed pane's
-`hover_state = true`. Its header then never reappears until the pointer leaves
-the pane entirely, since no *change* ever occurs. See `watch::pane_id`.
+**`on_hover` fires only when its value *changes*.** Since those listeners are
+now just repaint triggers, that matters in one place: GPUI's idea of hovered and
+ours must not drift. Pane element ids are keyed on the **channel**, never the
+index, because closing a pane reindexes the rest and a position-keyed survivor
+inherits the closed pane's `hover_state = true` — no change, so no repaint, so
+its header stays hidden until the pointer leaves the pane entirely. See
+`watch::pane_id`.
 
 ---
 
@@ -283,13 +315,46 @@ no *animation* duration should appear outside `theme.rs`.
 
 ### Where controls live
 
-The watch page has exactly two layers of chrome and they must not meet:
+**Nothing static is ever drawn on the video.** Static information on a moving
+picture is exactly what you end up staring past for three hours, so it lives in
+a header above chat instead — chat is already a panel, so it costs nothing
+there. The split:
 
-- **Page level** — one "← follows" pill, window top-**left**. Settings is not
-  here: it is set once and forgotten, per-stream quality already lives in the
-  control bar, and the follows page is one click away.
-- **Pane level** — channel name and close, anchored to each pane's top-**right**;
-  playback controls along its bottom. Both hover-revealed.
+- **Chat header**, always visible, one per pane: live dot, channel name, viewer
+  count, uptime, and the pane's close control.
+- **Over the video**, hover-revealed only: the playback bar (pause, mute,
+  volume, quality) and the single page-level "← follows" pill in the top-left.
+  Point at the video and they come up; look away and the picture is all that is
+  left.
+
+The back pill follows the *panes'* hover, not the window's, so resting the
+pointer in chat does not keep it on screen. An earlier arrangement put the
+channel name and close over the video at the pane's top-right; that is gone, and
+with it the collision that let one click both close a pane and navigate away.
+
+Viewer count and uptime come from the follows poll — the same `LiveStream` the
+browse cards use, looked up by login at render time rather than copied onto the
+`Slot`, so there is one source and it cannot go stale. A channel you opened by
+name but do not follow has no entry, and the header correctly shows neither.
+Filling that gap needs a `GET /helix/streams?user_login=…` per channel.
+
+**There is no chatter count to be had.** The old
+`tmi.twitch.tv/group/user/<channel>/chatters` was shut down on 3 April 2023 and
+returns 404. Its Helix replacement, `GET /chat/chatters`, requires
+`moderator:read:chatters` *and* that the token's user is the broadcaster or one
+of their moderators — 403 otherwise. IRC `NAMES` via `twitch.tv/membership` still
+responds, but silently stops listing above ~1000 users, so it returns nothing on
+exactly the channels worth asking about. `viewer_count` from Get Streams (no
+scope, app or user token) is the only public number. Do not go looking again.
+
+How a pane divides itself depends on its shape, and the two cases are
+deliberately opposites. Beside the video, chat gets a fixed width and the video
+takes the rest. Below it, the **video** gets a fixed 16:9 box and **chat** takes
+the rest — a window is tall because you want more chat, not more letterboxing.
+`layout::video_box_height` owns that, sized from a constant rather than from the
+stream: render size follows the pane, so sizing the pane from the frame would be
+a feedback loop. A test pins the invariant that the box can never fill the cell
+it stacks in.
 
 Left-anchoring the pane controls put the first pane's close button underneath
 the page navigation, and since neither called `cx.stop_propagation()` a single
@@ -393,7 +458,7 @@ Roughly in the order I would take them.
 
 - Do not enable hardware decode "for performance".
 - Do not let mpv upscale.
-- Do not derive control visibility from `group_hover`.
+- Do not derive control visibility from `group_hover` or from `on_hover`'s value.
 - Do not key animated-image element ids on position.
 - Do not use `--stream-url` to skip streamlink's pipeline.
 - Do not add tokio; use a thread plus an mpsc pump.

@@ -28,8 +28,7 @@ use emotes::ImageCache;
 use follows::{FollowsEvent, FollowsService};
 use gpui::{
     div, prelude::*, px, size, AnyView, App, Application, Bounds, Context, ElementId, Entity,
-    MouseButton, MouseMoveEvent, MouseUpEvent, SharedString, Task, TitlebarOptions, Window,
-    WindowBounds, WindowOptions,
+    SharedString, Task, TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
 use settings::{QualityPreference, Settings};
 use settings_view::{SettingsEvent, SettingsPanel};
@@ -92,10 +91,12 @@ struct RootView {
     _follows_pump: Task<()>,
 
     settings_panel: Option<Entity<SettingsPanel>>,
+    /// Whether the page navigation is up. It follows the video chrome rather
+    /// than sitting there permanently: a control you never look at should not
+    /// be on the picture for three hours.
+    nav: motion::Fade,
     toasts: Vec<Toast>,
     next_toast: u64,
-    /// Chat size at the moment a drag started, plus where it started.
-    resize: Option<(f32, f32)>,
     _cache_pump: Task<()>,
 }
 
@@ -144,9 +145,9 @@ impl RootView {
             _follows: service,
             _follows_pump: follows_pump,
             settings_panel: None,
+            nav: motion::Fade::hidden(),
             toasts: Vec::new(),
             next_toast: 0,
-            resize: None,
             _cache_pump: cache_pump,
         };
 
@@ -301,7 +302,7 @@ impl RootView {
             chat,
             supervisor: None,
             pump: None,
-            header: motion::Fade::hidden(),
+            hovered: false,
         });
 
         self.start_stream(channel, window, cx);
@@ -311,7 +312,7 @@ impl RootView {
         // reopens it automatically.
         if let Some(first) = self.slots.first() {
             self.settings.last_channel = Some(first.channel.clone());
-            if let Err(e) = self.settings.save(&self.settings_path) {
+            if let Err(e) = self.settings.save_preferences(&self.settings_path) {
                 eprintln!("settings: could not save: {e}");
             }
         }
@@ -387,19 +388,11 @@ impl RootView {
                 quality,
                 available,
             } => {
-                let started_at = self
-                    .follows
-                    .iter()
-                    .find(|s| s.user_login == channel)
-                    .map(|s| s.started_at.clone());
-
                 match VideoStream::start(url, RENDER_WIDTH, RENDER_HEIGHT, volume) {
                     Ok((stream, frames)) => {
                         let label = SharedString::from(quality);
                         let view = cx.new(|cx| {
-                            VideoView::from_stream(
-                                stream, frames, label, available, started_at, window, cx,
-                            )
+                            VideoView::from_stream(stream, frames, label, available, window, cx)
                         });
                         let owner = channel.to_string();
                         cx.subscribe_in(
@@ -411,7 +404,9 @@ impl RootView {
                                     // recent choice is only a default for the
                                     // next stream opened.
                                     this.settings.volume = *volume;
-                                    if let Err(e) = this.settings.save(&this.settings_path) {
+                                    if let Err(e) =
+                                        this.settings.save_preferences(&this.settings_path)
+                                    {
                                         eprintln!("settings: could not save: {e}");
                                     }
                                     cx.notify();
@@ -510,7 +505,14 @@ impl RootView {
                                 != updated.credentials.auth_token;
 
                         this.settings = (**updated).clone();
-                        if let Err(e) = this.settings.save(&this.settings_path) {
+                        // A new client id invalidates any stored sign-in, so
+                        // that case drops the tokens rather than keeping them.
+                        let saved = if client_id_changed {
+                            this.settings.save_forgetting_sign_in(&this.settings_path)
+                        } else {
+                            this.settings.save_preferences(&this.settings_path)
+                        };
+                        if let Err(e) = saved {
                             eprintln!("settings: could not save: {e}");
                         }
                         this.settings_panel = None;
@@ -546,46 +548,6 @@ impl RootView {
 
         self.settings_panel = Some(panel);
         cx.notify();
-    }
-
-    // ── Chat sizing ──────────────────────────────────────────────────
-
-    fn chat_is_stacked(&self, window: &Window) -> bool {
-        let aspect = window_aspect(window);
-        let (rows, cols) = layout::grid_shape(self.slots.len().max(1), aspect);
-        layout::cell_is_portrait(layout::cell_aspect(aspect, rows, cols))
-    }
-
-    fn on_mouse_move(&mut self, event: &MouseMoveEvent, window: &Window, cx: &mut Context<Self>) {
-        let Some((origin, start)) = self.resize else {
-            return;
-        };
-        if self.chat_is_stacked(window) {
-            // Chat is below, so dragging up makes it taller.
-            let delta = origin - f32::from(event.position.y);
-            let height = (start + delta).clamp(theme::CHAT_HEIGHT_MIN, theme::CHAT_HEIGHT_MAX);
-            if height != self.settings.chat_height {
-                self.settings.chat_height = height;
-                cx.notify();
-            }
-        } else {
-            let delta = origin - f32::from(event.position.x);
-            let width = (start + delta).clamp(theme::CHAT_WIDTH_MIN, theme::CHAT_WIDTH_MAX);
-            if width != self.settings.chat_width {
-                self.settings.chat_width = width;
-                cx.notify();
-            }
-        }
-    }
-
-    fn on_mouse_up(&mut self, _event: &MouseUpEvent, cx: &mut Context<Self>) {
-        if self.resize.take().is_some() {
-            // Persist when the drag ends, not on every pixel.
-            if let Err(e) = self.settings.save(&self.settings_path) {
-                eprintln!("settings: could not save: {e}");
-            }
-            cx.notify();
-        }
     }
 
     // ── Chrome ───────────────────────────────────────────────────────
@@ -779,46 +741,50 @@ impl RootView {
     }
 
     fn watch_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let aspect = window_aspect(window);
-
         div()
             .size_full()
             .relative()
             .child(watch::page(
                 &self.slots,
-                aspect,
+                &self.follows,
+                window.viewport_size(),
                 self.settings.chat_width,
-                self.settings.chat_height,
                 |this: &mut RootView, index, _window, cx| this.close_slot(index, cx),
                 |this: &mut RootView, index, hovered, cx| {
-                    if let Some(slot) = this.slots.get_mut(index) {
-                        // Only repaint when the pointer crosses a boundary;
-                        // most moves are within the pane it is already in.
-                        if slot.header.set(hovered) {
-                            cx.notify();
-                        }
+                    // Only repaint when the pointer crosses a boundary; most
+                    // moves are within the pane it is already in.
+                    match this.slots.get_mut(index) {
+                        Some(slot) if slot.hovered != hovered => slot.hovered = hovered,
+                        _ => return,
                     }
+                    let over_video = this.slots.iter().any(|slot| slot.hovered);
+                    this.nav.set(over_video);
+                    cx.notify();
                 },
                 cx,
             ))
             .child(
                 // The only page-level control on the watch page, in the corner
-                // a back control belongs in. Everything else here is a pane's
-                // own business, and panes keep their controls on their right so
-                // nothing else ever reaches this corner.
+                // a back control belongs in, and revealed by the same gesture
+                // as everything else: point at the video and the controls come
+                // up, look away and the picture is all that is left.
                 //
                 // Settings is not here on purpose: it is set once and forgotten,
                 // and per-stream quality already lives in the control bar. It is
                 // on the follows page, one click away.
-                div()
-                    .absolute()
-                    .top(px(theme::GAP_TIGHT))
-                    .left(px(theme::GAP_TIGHT))
-                    .child(
-                        self.pill("back", "← follows".into(), cx, |this, _window, cx| {
-                            this.go_browse(cx)
-                        }),
-                    ),
+                self.nav.apply(
+                    "watch-nav",
+                    theme::MOTION_HOVER,
+                    div()
+                        .absolute()
+                        .top(px(theme::GAP_TIGHT))
+                        .left(px(theme::GAP_TIGHT))
+                        .child(
+                            self.pill("back", "← follows".into(), cx, |this, _window, cx| {
+                                this.go_browse(cx)
+                            }),
+                        ),
+                ),
             )
     }
 }
@@ -842,13 +808,6 @@ impl Render for RootView {
             .size_full()
             .bg(theme::bg())
             .text_color(theme::text())
-            .on_mouse_move(
-                cx.listener(|this, event, window, cx| this.on_mouse_move(event, window, cx)),
-            )
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|this, event, _window, cx| this.on_mouse_up(event, cx)),
-            )
             .child(motion::arrive(
                 // Browse and watch share no layout at all, so cutting between
                 // them reads as the window being replaced rather than as

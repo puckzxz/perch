@@ -217,12 +217,10 @@ pub fn ease_enter() -> impl Fn(f32) -> f32 {
 
 // ── Metrics ──────────────────────────────────────────────────────────
 
-/// Chat pane default, and the bounds a drag is clamped to.
+/// What a hand-edited `chat_width` is clamped to. There is no height pair:
+/// stacked chat takes whatever the video leaves rather than a stored size.
 pub const CHAT_WIDTH_MIN: f32 = 260.0;
 pub const CHAT_WIDTH_MAX: f32 = 640.0;
-/// Chat height bounds when stacked below the video on a tall window.
-pub const CHAT_HEIGHT_MIN: f32 = 160.0;
-pub const CHAT_HEIGHT_MAX: f32 = 900.0;
 
 /// Below this window aspect ratio the window is treated as portrait and chat
 /// moves under the video instead of beside it.

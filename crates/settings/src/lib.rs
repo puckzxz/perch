@@ -73,11 +73,10 @@ pub struct Settings {
     pub credentials: Credentials,
     /// Reopened on launch when no channel is given on the command line.
     pub last_channel: Option<String>,
-    /// Width of the chat pane when it sits beside the video.
+    /// Width of the chat pane when it sits beside the video. There is no
+    /// height counterpart: when chat sits below the video it takes whatever the
+    /// video leaves, which on a tall window is the point.
     pub chat_width: f32,
-    /// Height of the chat pane when it sits below the video, which is what a
-    /// portrait window gets.
-    pub chat_height: f32,
 }
 
 impl Default for Settings {
@@ -88,7 +87,6 @@ impl Default for Settings {
             credentials: Credentials::default(),
             last_channel: None,
             chat_width: 340.0,
-            chat_height: 360.0,
         }
     }
 }
@@ -154,6 +152,34 @@ impl Settings {
     /// Writes to a temporary file and renames, so an interrupted save cannot
     /// leave truncated settings — which for a file holding credentials would
     /// mean silently signing the user out.
+    /// Save these settings, keeping whatever sign-in is already on disk.
+    ///
+    /// The UI holds a snapshot of `Settings` taken at launch, but the sign-in
+    /// worker writes OAuth tokens to the same file from its own thread. Saving
+    /// that snapshot with [`save`](Self::save) put `oauth` back to whatever it
+    /// was at startup — erasing a fresh sign-in, and worse, restoring an
+    /// already-spent refresh token, which Twitch honours exactly once. Either
+    /// way the next launch had to run the device flow again.
+    ///
+    /// Everything the UI owns is written as-is, so adding a field needs no
+    /// change here. Only the field somebody else owns is named.
+    pub fn save_preferences(&self, path: &Path) -> Result<(), Error> {
+        let mut out = self.clone();
+        out.credentials.oauth = Self::load(path)?.credentials.oauth;
+        out.save(path)
+    }
+
+    /// Save these settings and discard any stored sign-in.
+    ///
+    /// Tokens are issued against one client id, so changing that id makes them
+    /// useless. Dropping them turns the next sign-in into a clean prompt rather
+    /// than a confusing "sign-in expired".
+    pub fn save_forgetting_sign_in(&self, path: &Path) -> Result<(), Error> {
+        let mut out = self.clone();
+        out.credentials.oauth = None;
+        out.save(path)
+    }
+
     pub fn save(&self, path: &Path) -> Result<(), Error> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|source| Error::Write {
@@ -214,6 +240,71 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
+    fn a_sign_in() -> OAuthTokens {
+        OAuthTokens {
+            access_token: "access".into(),
+            refresh_token: "refresh".into(),
+            expires_at: 4_102_444_800,
+            user_id: "1234".into(),
+            login: "someone".into(),
+        }
+    }
+
+    /// The bug this exists to prevent: the worker signs in on its own thread
+    /// after the UI has already read the file, so the UI's copy has no tokens
+    /// in it. Writing that copy back wholesale erased the sign-in, and the next
+    /// launch asked for the device code all over again.
+    #[test]
+    fn saving_preferences_keeps_a_sign_in_written_since_launch() {
+        let path = temp_file("preferences-keep-sign-in");
+        let _ = std::fs::remove_file(&path);
+
+        // What the UI read at launch.
+        let at_launch = Settings::default();
+        at_launch.save(&path).unwrap();
+
+        // The worker signs in and persists, while the UI holds its snapshot.
+        let mut signed_in = Settings::load(&path).unwrap();
+        signed_in.credentials.oauth = Some(a_sign_in());
+        signed_in.save(&path).unwrap();
+
+        // The UI saves a preference from its now-stale copy.
+        let mut ui = at_launch.clone();
+        ui.volume = 42;
+        ui.save_preferences(&path).unwrap();
+
+        let stored = Settings::load(&path).unwrap();
+        assert_eq!(stored.volume, 42, "the preference did not take");
+        assert!(
+            stored.credentials.oauth.is_some(),
+            "saving a preference erased the sign-in"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Tokens belong to the client id they were issued against, so changing it
+    /// has to drop them rather than leave a sign-in that can only fail.
+    #[test]
+    fn forgetting_a_sign_in_drops_the_tokens() {
+        let path = temp_file("preferences-forget-sign-in");
+        let _ = std::fs::remove_file(&path);
+
+        let mut settings = Settings::default();
+        settings.credentials.oauth = Some(a_sign_in());
+        settings.save(&path).unwrap();
+
+        settings.credentials.client_id = Some("a-different-app".into());
+        settings.save_forgetting_sign_in(&path).unwrap();
+
+        let stored = Settings::load(&path).unwrap();
+        assert!(stored.credentials.oauth.is_none());
+        assert_eq!(
+            stored.credentials.client_id.as_deref(),
+            Some("a-different-app")
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
     /// A file from an older build must not reset every other field.
     #[test]
     fn missing_fields_fall_back_to_defaults() {
@@ -221,7 +312,6 @@ mod tests {
         assert_eq!(settings.volume, 55);
         assert_eq!(settings.quality, QualityPreference::Auto);
         assert_eq!(settings.chat_width, 340.0);
-        assert_eq!(settings.chat_height, 360.0);
     }
 
     /// A file from a newer build must not fail to load here.

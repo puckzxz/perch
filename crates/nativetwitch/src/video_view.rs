@@ -14,7 +14,6 @@ use gpui::{
 };
 use gpui_component::slider::{Slider, SliderEvent, SliderState};
 
-use crate::browse;
 use crate::motion;
 use crate::theme;
 use crate::video::VideoStream;
@@ -47,15 +46,22 @@ pub struct VideoView {
     /// Other qualities this channel offers, highest first.
     available: Vec<String>,
     quality_menu_open: bool,
-    /// When the broadcast started, for the uptime readout. Absent when the
-    /// channel was opened by name rather than picked from the follows list.
-    started_at: Option<String>,
-    /// Whether the pointer is over this player.
+    /// Whether the pointer is over this player, measured from the pane's own
+    /// bounds rather than taken from GPUI's `on_hover`.
     ///
-    /// Tracked explicitly rather than derived from `group_hover` at paint time.
-    /// Pressing the volume slider takes a mouse capture, which stops the group's
-    /// hover state evaluating, so a hover-derived opacity made the whole control
-    /// bar vanish mid-drag.
+    /// `on_hover` answers "is this hovered *and* is nothing being dragged":
+    ///
+    /// ```ignore
+    /// let is_hovered = has_mouse_down.borrow().is_none()
+    ///     && !cx.has_active_drag()
+    ///     && hitbox.is_hovered(window);
+    /// ```
+    ///
+    /// gpui-component's `Slider` drags via `on_drag`, so working the volume
+    /// slider makes every hover listener in the window report false — including
+    /// this one, whose control bar contains the slider being used. It also
+    /// cannot report the pointer leaving the window, because that delivers no
+    /// mouse move. Asking where the pointer is fixes both.
     hovered: bool,
     /// Whether the control bar is up, and how far through fading it is.
     /// Derived from `hovered` and the quality menu by `sync_controls`.
@@ -78,7 +84,6 @@ impl VideoView {
         mut frames: futures::channel::mpsc::Receiver<()>,
         quality: SharedString,
         available: Vec<String>,
-        started_at: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -114,7 +119,6 @@ impl VideoView {
             quality,
             available,
             quality_menu_open: false,
-            started_at,
             hovered: false,
             controls: motion::Fade::hidden(),
             background: false,
@@ -180,6 +184,16 @@ impl VideoView {
     fn sync_controls(&mut self) -> bool {
         let visible = !self.background && (self.hovered || self.quality_menu_open);
         self.controls.set(visible)
+    }
+
+    /// Report where the pointer is, from the probe. Returns whether this needs
+    /// a repaint.
+    fn set_hovered(&mut self, hovered: bool) -> bool {
+        if self.hovered == hovered {
+            return false;
+        }
+        self.hovered = hovered;
+        self.sync_controls()
     }
 
     fn toggle_pause(&mut self, cx: &mut Context<Self>) {
@@ -265,12 +279,6 @@ impl VideoView {
         let volume = self.stream.volume();
         let paused = self.stream.is_paused();
 
-        let uptime = self
-            .started_at
-            .as_deref()
-            .and_then(browse::uptime)
-            .map(SharedString::from);
-
         div()
             .absolute()
             .bottom_0()
@@ -307,24 +315,6 @@ impl VideoView {
                     .child(SharedString::from(format!("{volume}%"))),
             )
             .child(div().flex_1())
-            .children(uptime.map(|text| {
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(theme::GAP_TIGHT))
-                    .child(
-                        // A live dot, so uptime reads as "on air for" rather
-                        // than as a playback position.
-                        div().w(px(6.)).h(px(6.)).rounded_full().bg(theme::live()),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(theme::TEXT_META))
-                            .text_color(theme::text_muted())
-                            .child(text),
-                    )
-            }))
             .child(
                 div()
                     .relative()
@@ -378,16 +368,27 @@ impl Render for VideoView {
         }
         self.current = Some(frame.clone());
 
-        // Measure the pane every frame and let the render thread follow it.
-        // Without this the buffer stays at its initial size and a 1440p stream
-        // is downscaled before it ever reaches the window.
+        // Measure the pane every frame: the render thread follows it, and so
+        // does hover. Without the first the buffer stays at its initial size and
+        // a 1440p stream is downscaled before it ever reaches the window; see
+        // `hovered` for why the second is measured here rather than reported.
         let stream_size = self.stream.size_handle();
+        let this = cx.entity().downgrade();
         let probe = canvas(
-            move |bounds, window, _cx| {
+            move |bounds, window, cx| {
                 let scale = window.scale_factor();
                 let width = (f32::from(bounds.size.width) * scale).round() as u32;
                 let height = (f32::from(bounds.size.height) * scale).round() as u32;
                 stream_size.request(width, height);
+
+                let inside =
+                    window.is_window_hovered() && bounds.contains(&window.mouse_position());
+                this.update(cx, |view: &mut Self, cx| {
+                    if view.set_hovered(inside) {
+                        cx.notify();
+                    }
+                })
+                .ok();
             },
             |_, _, _, _| {},
         )
@@ -399,12 +400,10 @@ impl Render for VideoView {
             .size_full()
             .bg(backdrop)
             .id("video-pane")
-            .on_hover(cx.listener(|this, hovered: &bool, _window, cx| {
-                this.hovered = *hovered;
-                if this.sync_controls() {
-                    cx.notify();
-                }
-            }))
+            // Only here to wake a repaint. Its *value* is wrong during a drag,
+            // so the probe above decides; but a paused stream sends no frames,
+            // and without this nothing would ask the probe to run again.
+            .on_hover(cx.listener(|_, _: &bool, _window, cx| cx.notify()))
             .child(probe)
             // Fade the first frames in rather than cutting from black, which
             // makes a channel switch read as deliberate instead of a glitch.

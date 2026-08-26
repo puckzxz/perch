@@ -72,6 +72,24 @@ pub fn cell_aspect(window_aspect: f32, rows: usize, cols: usize) -> f32 {
     (window_aspect / cols.max(1) as f32) * rows.max(1) as f32
 }
 
+/// The shape of the video box when chat sits below it.
+///
+/// Fixed rather than taken from the stream: render size follows the pane, so
+/// sizing the pane from the frame would be a feedback loop. Practically every
+/// Twitch stream is 16:9, and anything else letterboxes inside the box exactly
+/// as it did when the box was the whole pane.
+const VIDEO_ASPECT: f32 = 16.0 / 9.0;
+
+/// How tall the video is in a cell that stacks, leaving chat the rest.
+///
+/// The two arrangements are deliberate opposites: beside the video, chat gets a
+/// fixed width and the video takes what is left; below it, the video gets a
+/// fixed height and chat takes what is left. A window is tall because you want
+/// more chat, not more letterboxing.
+pub fn video_box_height(cell_width: f32) -> f32 {
+    cell_width / VIDEO_ASPECT
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -104,7 +122,10 @@ mod tests {
         // 32:9 split four ways gives 8:9 cells if stacked 2x2, but a clean
         // 8:9-per-cell row of four is closer to what a pane wants.
         let (rows, cols) = grid_shape(4, ULTRAWIDE);
-        assert_eq!(rows, 1, "expected one row on an ultrawide, got {rows}x{cols}");
+        assert_eq!(
+            rows, 1,
+            "expected one row on an ultrawide, got {rows}x{cols}"
+        );
         assert_eq!(cols, 4);
     }
 
@@ -138,6 +159,32 @@ mod tests {
         assert_eq!(grid_shape(2, 0.0), grid_shape(2, 16.0 / 9.0));
         assert_eq!(grid_shape(2, f32::NAN), grid_shape(2, 16.0 / 9.0));
         assert_eq!(grid_shape(0, WIDE), (1, 1));
+    }
+
+    /// The video box must never be able to fill a cell it stacks in, or chat
+    /// would be squeezed to nothing on some window shape nobody tried. This
+    /// holds because a cell only stacks when it is at least
+    /// `1 / PORTRAIT_ASPECT` as tall as it is wide, which is taller than
+    /// `1 / VIDEO_ASPECT`. Breaking either constant breaks this.
+    #[test]
+    fn a_stacked_video_always_leaves_room_for_chat() {
+        const CELL_WIDTH: f32 = 900.0;
+        // The *widest* cell that still stacks: a wider cell is a shorter one,
+        // so this is the worst case for chat.
+        let cell_aspect = crate::theme::PORTRAIT_ASPECT - 0.001;
+        assert!(cell_is_portrait(cell_aspect));
+        let cell_height = CELL_WIDTH / cell_aspect;
+
+        let video = video_box_height(CELL_WIDTH);
+        let chat = cell_height - video;
+        assert!(
+            video < cell_height,
+            "video {video} filled a {cell_height} cell"
+        );
+        assert!(
+            chat > cell_height * 0.25,
+            "chat got {chat} of {cell_height}, which is not a chat pane"
+        );
     }
 
     #[test]
