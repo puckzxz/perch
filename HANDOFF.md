@@ -325,6 +325,26 @@ back, so a PNG-only file is one you cannot open to check.
 
 ### Motion
 
+**A `list`'s scrollbar extent comes from *measured* items only.** gpui measures
+rows as it draws them, so in a live-appending list the ones you have not looked
+at contribute nothing to `items.summary().height` — which is what
+`max_offset_for_scrollbar` is derived from. The visible symptom is a thumb that
+changes size as you scroll, because scrolling is what does the measuring.
+
+`ListState::measure_all()` is the documented remedy and chat uses it, but it is
+only half a fix: the pass runs once, and rows spliced in afterwards are
+unmeasured until drawn. Re-triggering it needs `reset()`, which also clears the
+scroll pin — so doing it per message would throw away the reader's position,
+which is worse than an imprecise thumb. The thumb's *position* is correct
+regardless; only its size drifts. A complete fix means not using gpui's
+scrollbar geometry, which is a bigger job than it looks.
+
+Related and worth knowing: `reset()` is the **only** thing that clears the
+scroll pin. Every `scroll_to`/`scroll_by` sets one, so a programmatic "jump to
+bottom" built from those lands at the bottom and is then left behind by the next
+message. Scrolling with the wheel re-arms auto-follow on its own, but only on
+reaching the very bottom — which in a fast channel can be a long way down.
+
 **GPUI has no transitions.** `.hover()` swaps styles instantly and there is no
 way to interpolate between them. Every animation in the app therefore goes
 through `with_animation`, and `motion.rs` exists because that primitive only

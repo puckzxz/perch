@@ -12,9 +12,10 @@ use std::sync::Arc;
 
 use emotes::{apply_named_emotes, tokenize, EmoteLoader, EmoteSets, ImageCache, Token};
 use gpui::{
-    div, img, list, prelude::*, px, AnyElement, Context, ListAlignment, ListState, SharedString,
-    Task, Window,
+    div, img, list, prelude::*, px, AnyElement, Context, ListAlignment, ListState, Pixels,
+    SharedString, Task, Window,
 };
+use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 
 use twitch_chat::{ChatClient, ChatEvent, ChatMessage};
 
@@ -156,12 +157,27 @@ impl ChatView {
             }
         });
 
+        // Scrolling changes whether the jump-to-live pill should be up, and
+        // nothing else would repaint a quiet channel to notice.
+        // `measure_all` makes the scrollbar's extent come from every row rather
+        // than only the rendered ones. It is not a complete fix: it runs once,
+        // and rows spliced in afterwards are unmeasured until they are drawn,
+        // so the thumb's *size* still drifts in a live channel. Its *position*
+        // is right, which is the half that answers "how far back am I".
+        // Re-triggering the pass needs `reset`, which would throw away the
+        // scroll position on every message — the cure being worse.
+        let list = ListState::new(0, ListAlignment::Bottom, px(400.)).measure_all();
+        let watcher = cx.entity().downgrade();
+        list.set_scroll_handler(move |_event, _window, cx| {
+            watcher.update(cx, |_, cx| cx.notify()).ok();
+        });
+
         let mut view = Self {
             rows: Vec::new(),
             colors: std::collections::HashMap::new(),
             striped: false,
             next_seq: 0,
-            list: ListState::new(0, ListAlignment::Bottom, px(400.)),
+            list,
             cache,
             emote_sets,
             emote_loader,
@@ -199,6 +215,30 @@ impl ChatView {
                 None,
             ),
         }
+    }
+
+    /// Whether the pane is showing the newest message.
+    ///
+    /// A bottom-aligned list follows new messages until you scroll, then holds
+    /// where you put it — and resumes only once you reach the bottom again. In
+    /// a fast channel that can be a very long way down, with nothing on screen
+    /// to say so, which is what the scrollbar and the pill are both for.
+    fn at_live(&self) -> bool {
+        let furthest = self.list.max_offset_for_scrollbar().height;
+        let scrolled = -self.list.scroll_px_offset_for_scrollbar().y;
+        // A pixel of slack: the offset is derived from measured item heights
+        // and lands a hair short of the maximum more often than not.
+        furthest <= Pixels::ZERO || scrolled >= furthest - px(1.)
+    }
+
+    /// Jump back to the newest message and start following again.
+    ///
+    /// `reset` is the only thing that clears the list's scroll pin — every
+    /// `scroll_to`/`scroll_by` sets one instead, so they would land at the
+    /// bottom and then be left behind by the next message.
+    fn follow_live(&mut self, cx: &mut Context<Self>) {
+        self.list.reset(self.rows.len());
+        cx.notify();
     }
 
     /// Append one row, trimming the backlog, keeping `ListState` in step.
@@ -457,7 +497,10 @@ impl Render for ChatView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let this = cx.entity().downgrade();
 
+        let at_live = self.at_live();
+
         div()
+            .relative()
             .size_full()
             .text_size(px(theme::TEXT_BODY))
             .line_height(px(theme::LINE_BODY))
@@ -468,5 +511,56 @@ impl Render for ChatView {
                 })
                 .size_full(),
             )
+            .child(
+                // Says how far back you are, which is the question a held
+                // position raises and nothing else on screen answers. Kept up
+                // for as long as you are held back, and out of the way while
+                // the pane is following live — the default fades after a
+                // moment, which is exactly when you still want to see it.
+                div()
+                    .absolute()
+                    .inset_0()
+                    .child(Scrollbar::vertical(&self.list).scrollbar_show(if at_live {
+                        ScrollbarShow::Hover
+                    } else {
+                        ScrollbarShow::Always
+                    })),
+            )
+            .when(!at_live, |pane| {
+                pane.child(
+                    div()
+                        .absolute()
+                        .bottom(px(theme::GAP))
+                        .left_0()
+                        .right_0()
+                        .flex()
+                        .flex_row()
+                        .justify_center()
+                        .child(
+                            div()
+                                .id("chat-follow-live")
+                                // Sits over messages, so it has to swallow the
+                                // click rather than pass it to a link beneath.
+                                .block_mouse_except_scroll()
+                                .px(px(theme::CONTROL_PAD_X))
+                                .py(px(theme::CONTROL_PAD_Y))
+                                .rounded_md()
+                                .bg(theme::surface_raised())
+                                .border_1()
+                                .border_color(theme::accent())
+                                .shadow_lg()
+                                .text_size(px(theme::TEXT_LABEL))
+                                .font_weight(theme::weight_label())
+                                .text_color(theme::text())
+                                .cursor_pointer()
+                                .hover(|style| style.bg(theme::hover()))
+                                .active(|style| style.bg(theme::pressed()))
+                                .child("↓ jump to live")
+                                .on_click(
+                                    cx.listener(|this, _event, _window, cx| this.follow_live(cx)),
+                                ),
+                        ),
+                )
+            })
     }
 }
