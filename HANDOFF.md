@@ -589,6 +589,16 @@ deliberately omits `.so`, `.is`, `.at` and `.it` — real TLDs and common Englis
 words both. Punctuation is split off the ends so a trailing comma is neither
 underlined nor sent to the browser.
 
+**Every word can shrink below its content width**, which sounds like it would
+break words in half and does not: `flex_wrap` moves a word to the next line long
+before it would have to shrink, so shrinking only ever reaches a word wider than
+the *whole* pane. That is a long URL, in practice, and without it the link ran
+off the edge of the chat — unreadable and unclickable past the boundary. The
+breaking itself is gpui's job and it is better at it than a character cap would
+be: `/` is not in `LineWrapper::is_word_char`, so a URL breaks at its path
+separators, and a run with no break opportunity at all — an opaque media id — is
+hard-broken at the edge rather than allowed to overflow.
+
 **Mentions take the colour of whoever is being addressed,** from a login→colour
 map that fills itself as people talk. A miss renders plainly rather than
 guessing. This only works *because* of the readability clamp — without it you

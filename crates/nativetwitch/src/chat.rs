@@ -412,8 +412,20 @@ impl ChatView {
     /// One word of message text, styled for whatever it turned out to be.
     ///
     /// The punctuation around a word is rendered separately so a trailing comma
-    /// is neither underlined nor sent to the browser. Everything is wrapped in
-    /// one `flex_none` row so a word never wraps in the middle of itself.
+    /// is neither underlined nor sent to the browser.
+    ///
+    /// Every word here can shrink below its content width, which sounds like it
+    /// would break words in half and does not: `flex_wrap` moves a word to the
+    /// next line long before it would have to shrink, so shrinking only ever
+    /// happens to a word that is wider than the *whole* pane. That is a long
+    /// URL, in practice, and the alternative is the one this replaced — a link
+    /// that simply runs off the edge of the chat, unreadable and unclickable
+    /// past the boundary.
+    ///
+    /// Breaking one is gpui's job and it is better at it than a character cap
+    /// would be: `/` is not a word character, so a URL breaks at its path
+    /// separators, and a run with no break opportunity at all — an opaque media
+    /// id — is hard-broken at the edge rather than overflowing.
     fn render_word(
         &self,
         word: &str,
@@ -429,6 +441,7 @@ impl ChatView {
                 // The common case, and worth keeping as one element rather than
                 // three: most words have no punctuation to split off.
                 return div()
+                    .min_w_0()
                     .text_color(text_color)
                     .child(SharedString::from(word.to_string()))
                     .into_any_element();
@@ -437,6 +450,7 @@ impl ChatView {
                 let url = parsed.url();
                 div()
                     .id(SharedString::from(format!("chat-link-{seq}-{position}")))
+                    .min_w_0()
                     .text_color(theme::accent())
                     .underline()
                     .cursor_pointer()
@@ -455,6 +469,7 @@ impl ChatView {
                     .map(theme::readable)
                     .unwrap_or(text_color);
                 div()
+                    .min_w_0()
                     .font_weight(theme::weight_title())
                     .text_color(color)
                     .child(SharedString::from(parsed.body.to_string()))
@@ -462,14 +477,17 @@ impl ChatView {
             }
         };
 
+        // Pinned, so a shrinking row takes it out of the word rather than out
+        // of the comma after it.
         let punctuation = |text: &str| {
             div()
+                .flex_none()
                 .text_color(text_color)
                 .child(SharedString::from(text.to_string()))
         };
 
         div()
-            .flex_none()
+            .min_w_0()
             .flex()
             .flex_row()
             .items_baseline()
