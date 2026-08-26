@@ -11,6 +11,7 @@ use streamlink::StreamSupervisor;
 
 use crate::chat::ChatView;
 use crate::layout;
+use crate::motion;
 use crate::theme;
 use crate::video_view::VideoView;
 
@@ -38,6 +39,10 @@ pub struct Slot {
     pub chat: Entity<ChatView>,
     pub supervisor: Option<StreamSupervisor>,
     pub pump: Option<Task<()>>,
+    /// Whether this pane's header is showing. Explicit rather than
+    /// `group_hover`, which can only produce an instant switch, and which stops
+    /// evaluating under a mouse capture.
+    pub header: motion::Fade,
 }
 
 impl Slot {
@@ -49,14 +54,31 @@ impl Slot {
     }
 }
 
-fn status_message(slot: &Slot) -> Option<(SharedString, bool)> {
+/// What a pane shows in place of a picture.
+struct Status {
+    text: SharedString,
+    /// Something is still happening. Distinct from `error` because the two
+    /// need opposite treatment: one should look alive, the other should sit
+    /// still and be read.
+    working: bool,
+    error: bool,
+}
+
+fn status_message(slot: &Slot) -> Option<Status> {
+    let status = |text: SharedString, working, error| Status {
+        text,
+        working,
+        error,
+    };
     match &slot.state {
         StreamState::Playing(_) => None,
-        StreamState::Starting => Some(("starting stream…".into(), false)),
-        StreamState::Offline => {
-            Some((format!("{} is offline", slot.channel).into(), false))
-        }
-        StreamState::Failed(reason) => Some((reason.clone(), true)),
+        StreamState::Starting => Some(status("starting stream…".into(), true, false)),
+        StreamState::Offline => Some(status(
+            format!("{} is offline", slot.channel).into(),
+            false,
+            false,
+        )),
+        StreamState::Failed(reason) => Some(status(reason.clone(), false, true)),
     }
 }
 
@@ -79,23 +101,36 @@ fn pane<V: 'static>(
     slot: &Slot,
     layout: PaneLayout,
     on_close: impl Fn(&mut V, usize, &mut Window, &mut Context<V>) + 'static,
+    on_hover: impl Fn(&mut V, usize, bool, &mut Context<V>) + 'static,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
     let video = match (&slot.state, status_message(slot)) {
         (StreamState::Playing(view), _) => view.clone().into_any_element(),
-        (_, Some((text, is_error))) => div()
-            .size_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .text_size(px(theme::TEXT_BODY))
-            .text_color(if is_error {
-                theme::danger()
-            } else {
-                theme::text_dim()
-            })
-            .child(text)
-            .into_any_element(),
+        (_, Some(status)) => {
+            let label = div()
+                .text_size(px(theme::TEXT_BODY))
+                .text_color(if status.error {
+                    theme::danger()
+                } else {
+                    theme::text_dim()
+                })
+                .child(status.text);
+
+            div()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                // Only the states that are going somewhere breathe. A pulsing
+                // error would be both irritating and a repaint that never
+                // stops.
+                .child(if status.working {
+                    motion::waiting(("pane-status", index), label).into_any_element()
+                } else {
+                    label.into_any_element()
+                })
+                .into_any_element()
+        }
         _ => div().into_any_element(),
     };
 
@@ -112,63 +147,71 @@ fn pane<V: 'static>(
         })
         .child(slot.chat.clone());
 
-    let video_pane = div()
-        .flex_1()
-        .min_w_0()
-        .min_h_0()
-        .overflow_hidden()
-        .bg(theme::player_bg())
-        .relative()
-        .group("pane")
-        .child(video)
-        .child(
-            // The channel name and close control ride over the video and only
-            // appear on hover, so a grid of four panes shows four pictures
-            // rather than four title bars.
-            div()
-                .absolute()
-                .top_0()
-                .left_0()
-                .right_0()
-                .flex()
-                .flex_row()
-                .items_start()
-                .gap(px(theme::GAP_TIGHT))
-                .p(px(theme::GAP_TIGHT))
-                .opacity(0.0)
-                .group_hover("pane", |style| style.opacity(1.0))
-                .child(
+    let video_pane =
+        div()
+            .id(("pane-video", index))
+            .flex_1()
+            .min_w_0()
+            .min_h_0()
+            .overflow_hidden()
+            .bg(theme::player_bg())
+            .relative()
+            .on_hover(cx.listener(move |view, hovered: &bool, _window, cx| {
+                on_hover(view, index, *hovered, cx)
+            }))
+            .child(video)
+            .child(
+                // The channel name and close control ride over the video and only
+                // appear on hover, so a grid of four panes shows four pictures
+                // rather than four title bars.
+                //
+                slot.header.apply(
+                    ("pane-header", index),
+                    theme::MOTION_HOVER,
                     div()
-                        .px(px(theme::CONTROL_PAD_X))
-                        .py(px(theme::CONTROL_PAD_Y))
-                        .rounded_sm()
-                        .bg(theme::surface_raised())
-                        .text_size(px(theme::TEXT_LABEL))
-                        .font_weight(theme::weight_label())
-                        .text_color(theme::text())
-                        .child(SharedString::from(slot.channel.clone())),
-                )
-                .child(div().flex_1())
-                .when(layout.closable, |header| {
-                    header.child(
-                        div()
-                            .id(("close-pane", index))
-                            .px(px(theme::CONTROL_PAD_X))
-                            .py(px(theme::CONTROL_PAD_Y))
-                            .rounded_sm()
-                            .bg(theme::surface_raised())
-                            .text_size(px(theme::TEXT_LABEL))
-                            .font_weight(theme::weight_label())
-                            .text_color(theme::text_muted())
-                            .cursor_pointer()
-                            .hover(|style| style.text_color(theme::danger()))
-                            .child("close")
-                            .on_click(cx.listener(move |view, _event, window, cx| {
-                                on_close(view, index, window, cx)
-                            })),
-                    )
-                }),
-        );
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .flex()
+                        .flex_row()
+                        .items_start()
+                        .gap(px(theme::GAP_TIGHT))
+                        .p(px(theme::GAP_TIGHT))
+                        .child(
+                            div()
+                                .px(px(theme::CONTROL_PAD_X))
+                                .py(px(theme::CONTROL_PAD_Y))
+                                .rounded_sm()
+                                .bg(theme::surface_raised())
+                                .text_size(px(theme::TEXT_LABEL))
+                                .font_weight(theme::weight_label())
+                                .text_color(theme::text())
+                                .child(SharedString::from(slot.channel.clone())),
+                        )
+                        .child(div().flex_1())
+                        .when(layout.closable, |header| {
+                            header.child(
+                                div()
+                                    .id(("close-pane", index))
+                                    .px(px(theme::CONTROL_PAD_X))
+                                    .py(px(theme::CONTROL_PAD_Y))
+                                    .rounded_sm()
+                                    .bg(theme::surface_raised())
+                                    .text_size(px(theme::TEXT_LABEL))
+                                    .font_weight(theme::weight_label())
+                                    .text_color(theme::text_muted())
+                                    .cursor_pointer()
+                                    .hover(|style| style.text_color(theme::danger()))
+                                    .active(|style| style.bg(theme::pressed()))
+                                    .child("close")
+                                    .on_click(cx.listener(move |view, _event, window, cx| {
+                                        on_close(view, index, window, cx)
+                                    })),
+                            )
+                        }),
+                ),
+            );
 
     div()
         .flex_1()
@@ -193,6 +236,7 @@ pub fn page<V: 'static>(
     chat_width: f32,
     chat_height: f32,
     on_close: impl Fn(&mut V, usize, &mut Window, &mut Context<V>) + Clone + 'static,
+    on_hover: impl Fn(&mut V, usize, bool, &mut Context<V>) + Clone + 'static,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
     let (rows, cols) = layout::grid_shape(slots.len(), window_aspect);
@@ -222,7 +266,14 @@ pub fn page<V: 'static>(
             let Some(slot) = slots.get(index) else {
                 continue;
             };
-            line = line.child(pane(index, slot, cell, on_close.clone(), cx));
+            line = line.child(pane(
+                index,
+                slot,
+                cell,
+                on_close.clone(),
+                on_hover.clone(),
+                cx,
+            ));
         }
         grid = grid.child(line);
     }

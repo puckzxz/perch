@@ -8,9 +8,10 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use emotes::ImageCache;
-use gpui::{div, img, prelude::*, px, rgb, Context, SharedString};
+use gpui::{div, img, prelude::*, px, rgb, AnyElement, Context, SharedString};
 use twitch_api::LiveStream;
 
+use crate::motion;
 use crate::theme;
 
 /// Card width. Wide enough for a legible 16:9 thumbnail, narrow enough that a
@@ -100,7 +101,10 @@ fn card<V: 'static>(
     ));
 
     let preview = match thumbnail {
-        Some(path) => img(path).w_full().h(px(CARD_WIDTH * 9.0 / 16.0)).into_any_element(),
+        Some(path) => img(path)
+            .w_full()
+            .h(px(CARD_WIDTH * 9.0 / 16.0))
+            .into_any_element(),
         // Sized placeholder, so the grid does not reflow as images arrive.
         None => div()
             .w_full()
@@ -128,9 +132,10 @@ fn card<V: 'static>(
         .bg(theme::surface())
         .cursor_pointer()
         .hover(|style| style.bg(theme::surface_raised()))
-        .on_click(cx.listener(move |view, _event, window, cx| {
-            on_click(view, login.clone(), window, cx)
-        }))
+        .active(|style| style.bg(theme::pressed()))
+        .on_click(
+            cx.listener(move |view, _event, window, cx| on_click(view, login.clone(), window, cx)),
+        )
         .child(
             div()
                 .relative()
@@ -170,6 +175,7 @@ fn card<V: 'static>(
                             .opacity(0.0)
                             .group_hover("card", |style| style.opacity(1.0))
                             .hover(|style| style.bg(theme::accent_dim()))
+                            .active(|style| style.bg(theme::pressed()))
                             .child("+ add")
                             .on_click(cx.listener(move |view, _event, window, cx| {
                                 // Without this the card underneath also fires
@@ -216,7 +222,7 @@ fn card<V: 'static>(
 }
 
 /// A message filling the page when there is nothing to show.
-fn empty_state(sign_in: &SignIn) -> impl IntoElement {
+fn empty_state(sign_in: &SignIn) -> AnyElement {
     let (title, detail): (SharedString, SharedString) = match sign_in {
         SignIn::NeedsClientId => (
             "Not signed in".into(),
@@ -237,7 +243,7 @@ fn empty_state(sign_in: &SignIn) -> impl IntoElement {
         ),
     };
 
-    div()
+    let body = div()
         .flex_1()
         .flex()
         .flex_col()
@@ -262,7 +268,15 @@ fn empty_state(sign_in: &SignIn) -> impl IntoElement {
                     _ => theme::text_dim(),
                 })
                 .child(detail),
-        )
+        );
+
+    // Only the state that is actually still going breathes. "Nobody is live"
+    // and "Not signed in" are answers, not progress, and a pulsing answer both
+    // misleads and repaints forever.
+    match sign_in {
+        SignIn::Connecting => motion::waiting("connecting", body).into_any_element(),
+        _ => body.into_any_element(),
+    }
 }
 
 /// The whole page.
@@ -306,7 +320,7 @@ pub fn page<V: 'static>(
         .flex_col()
         .bg(theme::bg())
         .child(if follows.is_empty() {
-            empty_state(sign_in).into_any_element()
+            empty_state(sign_in)
         } else {
             grid.into_any_element()
         })

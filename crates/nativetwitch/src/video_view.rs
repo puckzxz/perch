@@ -7,7 +7,6 @@
 //! like any other layer.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use gpui::{
     canvas, div, img, prelude::*, px, rgba, Animation, AnimationExt, Context, ElementId, Entity,
@@ -16,8 +15,14 @@ use gpui::{
 use gpui_component::slider::{Slider, SliderEvent, SliderState};
 
 use crate::browse;
+use crate::motion;
 use crate::theme;
 use crate::video::VideoStream;
+
+/// Where the quality menu rests above the control bar, and how far below that
+/// it starts when opening.
+const MENU_BOTTOM: f32 = 32.0;
+const MENU_RISE: f32 = 6.0;
 
 pub enum VideoEvent {
     /// The user changed volume; worth persisting to settings.
@@ -52,6 +57,9 @@ pub struct VideoView {
     /// hover state evaluating, so a hover-derived opacity made the whole control
     /// bar vanish mid-drag.
     hovered: bool,
+    /// Whether the control bar is up, and how far through fading it is.
+    /// Derived from `hovered` and the quality menu by `sync_controls`.
+    controls: motion::Fade,
     /// True while the player is a thumbnail on the browse page. Backgrounded
     /// players are muted and draw no controls.
     background: bool,
@@ -108,6 +116,7 @@ impl VideoView {
             quality_menu_open: false,
             started_at,
             hovered: false,
+            controls: motion::Fade::hidden(),
             background: false,
             volume_before_background: volume,
             _pump: pump,
@@ -158,7 +167,19 @@ impl VideoView {
             self.stream.set_volume(self.volume_before_background);
         }
         self.quality_menu_open = false;
+        self.hovered = false;
+        self.sync_controls();
         cx.notify();
+    }
+
+    /// Recompute whether the control bar should be up, and report whether that
+    /// changed anything.
+    ///
+    /// It stays up while the quality menu is open even after the pointer
+    /// leaves, or reaching for an option would dismiss the menu on the way.
+    fn sync_controls(&mut self) -> bool {
+        let visible = !self.background && (self.hovered || self.quality_menu_open);
+        self.controls.set(visible)
     }
 
     fn toggle_pause(&mut self, cx: &mut Context<Self>) {
@@ -178,13 +199,15 @@ impl VideoView {
             .text_color(theme::text())
             .cursor_pointer()
             .hover(|style| style.bg(theme::hover()))
+            // These sit on video with no shadow or border to deform, so a
+            // press has only the one channel to show itself in.
+            .active(|style| style.bg(theme::pressed()))
             .child(label)
     }
 
     fn quality_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let mut menu = div()
             .absolute()
-            .bottom_8()
             .right_0()
             .flex()
             .flex_col()
@@ -213,18 +236,32 @@ impl VideoView {
                         theme::text()
                     })
                     .hover(|style| style.bg(theme::hover()))
+                    .active(|style| style.bg(theme::pressed()))
                     .child(SharedString::from(name.clone()))
                     .on_click(cx.listener(move |this, _event, _window, cx| {
                         this.quality_menu_open = false;
+                        this.sync_controls();
                         cx.emit(VideoEvent::QualityRequested(chosen.clone()));
                         cx.notify();
                     })),
             );
         }
-        menu
+
+        // Rises the last few pixels into place, so it reads as coming out of
+        // the button rather than being stamped over the video. It is mounted
+        // only while open, which is what makes a plain one-shot enough: there
+        // is no closed state to animate back to.
+        menu.with_animation(
+            ElementId::from("quality-menu"),
+            Animation::new(theme::MOTION_ENTER).with_easing(theme::ease_enter()),
+            |menu, delta| {
+                menu.opacity(delta)
+                    .bottom(px(MENU_BOTTOM - MENU_RISE * (1.0 - delta)))
+            },
+        )
     }
 
-    fn controls(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn control_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let volume = self.stream.volume();
         let paused = self.stream.is_paused();
 
@@ -253,9 +290,8 @@ impl VideoView {
                     .on_click(cx.listener(|this, _event, _window, cx| this.toggle_pause(cx))),
             )
             .child(
-                Self::pill("mute", if volume == 0 { "unmute" } else { "mute" }.into()).on_click(
-                    cx.listener(|this, _event, window, cx| this.toggle_mute(window, cx)),
-                ),
+                Self::pill("mute", if volume == 0 { "unmute" } else { "mute" }.into())
+                    .on_click(cx.listener(|this, _event, window, cx| this.toggle_mute(window, cx))),
             )
             .child(
                 div()
@@ -296,6 +332,7 @@ impl VideoView {
                         Self::pill("quality", self.quality.clone()).on_click(cx.listener(
                             |this, _event, _window, cx| {
                                 this.quality_menu_open = !this.quality_menu_open;
+                                this.sync_controls();
                                 cx.notify();
                             },
                         )),
@@ -312,14 +349,20 @@ impl Render for VideoView {
         let backdrop: Hsla = theme::player_bg();
 
         let Some(frame) = self.stream.latest_frame() else {
+            // Breathing rather than still: a stream takes a few seconds to
+            // arrive, and a motionless word is indistinguishable from a hang.
+            // Only the text pulses - taking the backdrop with it would strobe
+            // the whole pane.
             return div()
                 .size_full()
                 .bg(backdrop)
                 .flex()
                 .items_center()
                 .justify_center()
-                .text_color(theme::text_dim())
-                .child("buffering…")
+                .child(motion::waiting(
+                    "buffering",
+                    div().text_color(theme::text_dim()).child("buffering…"),
+                ))
                 .into_any_element();
         };
 
@@ -358,38 +401,28 @@ impl Render for VideoView {
             .id("video-pane")
             .on_hover(cx.listener(|this, hovered: &bool, _window, cx| {
                 this.hovered = *hovered;
-                cx.notify();
+                if this.sync_controls() {
+                    cx.notify();
+                }
             }))
             .child(probe)
             // Fade the first frames in rather than cutting from black, which
             // makes a channel switch read as deliberate instead of a glitch.
-            .child(
-                img(frame).size_full().with_animation(
-                    ElementId::from("video-fade-in"),
-                    Animation::new(Duration::from_millis(260)),
-                    |element, delta| element.opacity(delta),
-                ),
-            )
+            .child(img(frame).size_full().with_animation(
+                ElementId::from("video-fade-in"),
+                Animation::new(theme::MOTION_VIDEO),
+                |element, delta| element.opacity(delta),
+            ))
             .when(!self.background, |pane| {
-                pane.child(
-                    // Hidden until the pointer is over the video, so nothing
-                    // covers the picture while you are just watching. Kept
-                    // mounted while the quality menu is open, or picking an
-                    // option would dismiss the menu the moment the pointer left
-                    // the video.
-                    div()
-                        .absolute()
-                        .inset_0()
-                        // Stays up while the quality menu is open too, or
-                        // picking an option would dismiss the menu the moment
-                        // the pointer left the video.
-                        .opacity(if self.hovered || self.quality_menu_open {
-                            1.0
-                        } else {
-                            0.0
-                        })
-                        .child(self.controls(cx)),
-                )
+                // Hidden until the pointer is over the video, so nothing covers
+                // the picture while you are just watching - and faded rather
+                // than cut, because over a moving image a hard switch reads as
+                // part of the video instead of a response to the pointer.
+                pane.child(self.controls.apply(
+                    "controls",
+                    theme::MOTION_HOVER,
+                    div().absolute().inset_0().child(self.control_bar(cx)),
+                ))
             })
             .into_any_element()
     }

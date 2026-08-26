@@ -10,6 +10,7 @@ mod browse;
 mod chat;
 mod follows;
 mod layout;
+mod motion;
 mod settings_view;
 mod theme;
 mod video;
@@ -59,6 +60,14 @@ fn image_cache_dir() -> PathBuf {
         .join("images")
 }
 
+/// A transient notice. It owns its own fade because a toast that vanished
+/// mid-sentence read as a dropped frame rather than as time passing.
+struct Toast {
+    id: u64,
+    text: SharedString,
+    fade: motion::Fade,
+}
+
 #[derive(PartialEq, Eq, Clone, Copy)]
 enum Page {
     Browse,
@@ -83,7 +92,7 @@ struct RootView {
     _follows_pump: Task<()>,
 
     settings_panel: Option<Entity<SettingsPanel>>,
-    toasts: Vec<(u64, SharedString)>,
+    toasts: Vec<Toast>,
     next_toast: u64,
     /// Chat size at the moment a drag started, plus where it started.
     resize: Option<(f32, f32)>,
@@ -222,12 +231,26 @@ impl RootView {
     fn toast(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
         let id = self.next_toast;
         self.next_toast += 1;
-        self.toasts.push((id, text.into()));
+        self.toasts.push(Toast {
+            id,
+            text: text.into(),
+            fade: motion::Fade::entering(),
+        });
 
+        // Two stages, because dropping the element is what stops it being
+        // drawn: start the fade at the end of the lifetime, and only remove it
+        // once the fade has had time to run.
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(TOAST_LIFETIME).await;
             let _ = this.update(cx, |this: &mut RootView, cx| {
-                this.toasts.retain(|(existing, _)| *existing != id);
+                if let Some(toast) = this.toasts.iter_mut().find(|toast| toast.id == id) {
+                    toast.fade.set(false);
+                    cx.notify();
+                }
+            });
+            cx.background_executor().timer(theme::MOTION_ENTER).await;
+            let _ = this.update(cx, |this: &mut RootView, cx| {
+                this.toasts.retain(|toast| toast.id != id);
                 cx.notify();
             });
         })
@@ -278,6 +301,7 @@ impl RootView {
             chat,
             supervisor: None,
             pump: None,
+            header: motion::Fade::hidden(),
         });
 
         self.start_stream(channel, window, cx);
@@ -585,6 +609,7 @@ impl RootView {
             .text_color(theme::text_muted())
             .cursor_pointer()
             .hover(|style| style.bg(theme::hover()).text_color(theme::text()))
+            .active(|style| style.bg(theme::pressed()))
             .child(label)
             .on_click(cx.listener(move |this, _event, window, cx| on_click(this, window, cx)))
     }
@@ -599,20 +624,24 @@ impl RootView {
             .gap(px(theme::GAP_TIGHT))
             .items_end();
 
-        for (_, text) in &self.toasts {
+        for toast in &self.toasts {
             stack = stack.child(
-                div()
-                    .px(px(theme::PANEL_PAD))
-                    .py(px(theme::GAP))
-                    .rounded_md()
-                    .bg(theme::surface_raised())
-                    .border_l_2()
-                    .border_color(theme::accent())
-                    .shadow_lg()
-                    .text_size(px(theme::TEXT_META))
-                    .line_height(px(theme::LINE_BODY))
-                    .text_color(theme::text())
-                    .child(text.clone()),
+                toast.fade.apply(
+                    ("toast", toast.id),
+                    theme::MOTION_ENTER,
+                    div()
+                        .px(px(theme::PANEL_PAD))
+                        .py(px(theme::GAP))
+                        .rounded_md()
+                        .bg(theme::surface_raised())
+                        .border_l_2()
+                        .border_color(theme::accent())
+                        .shadow_lg()
+                        .text_size(px(theme::TEXT_META))
+                        .line_height(px(theme::LINE_BODY))
+                        .text_color(theme::text())
+                        .child(toast.text.clone()),
+                ),
             );
         }
         stack
@@ -646,6 +675,9 @@ impl RootView {
                     .bg(theme::player_bg())
                     .border_1()
                     .border_color(theme::border())
+                    // The whole tile is a button back into the stream, which
+                    // nothing about a bordered thumbnail says on its own.
+                    .hover(|style| style.border_color(theme::accent()))
                     .shadow_lg()
                     .child(
                         div()
@@ -716,11 +748,12 @@ impl RootView {
                     |this, _window, cx| this.go_watch(cx),
                 ))
             })
-            .child(
-                self.pill("open-settings", "settings".into(), cx, |this, window, cx| {
-                    this.toggle_settings(window, cx)
-                }),
-            );
+            .child(self.pill(
+                "open-settings",
+                "settings".into(),
+                cx,
+                |this, window, cx| this.toggle_settings(window, cx),
+            ));
 
         div()
             .size_full()
@@ -757,6 +790,15 @@ impl RootView {
                 self.settings.chat_width,
                 self.settings.chat_height,
                 |this: &mut RootView, index, _window, cx| this.close_slot(index, cx),
+                |this: &mut RootView, index, hovered, cx| {
+                    if let Some(slot) = this.slots.get_mut(index) {
+                        // Only repaint when the pointer crosses a boundary;
+                        // most moves are within the pane it is already in.
+                        if slot.header.set(hovered) {
+                            cx.notify();
+                        }
+                    }
+                },
                 cx,
             ))
             .child(
@@ -773,9 +815,11 @@ impl RootView {
                     .flex_row()
                     .justify_center()
                     .gap(px(theme::GAP_TIGHT))
-                    .child(self.pill("back", "follows".into(), cx, |this, _window, cx| {
-                        this.go_browse(cx)
-                    }))
+                    .child(
+                        self.pill("back", "follows".into(), cx, |this, _window, cx| {
+                            this.go_browse(cx)
+                        }),
+                    )
                     .child(self.pill(
                         "watch-settings",
                         "settings".into(),
@@ -812,7 +856,15 @@ impl Render for RootView {
                 MouseButton::Left,
                 cx.listener(|this, event, _window, cx| this.on_mouse_up(event, cx)),
             )
-            .child(page)
+            .child(motion::arrive(
+                // Browse and watch share no layout at all, so cutting between
+                // them reads as the window being replaced rather than as
+                // moving within one app. No movement, only a fade: anything
+                // that slides drags the eye across the whole page.
+                ("page", self.page as u32),
+                0.0,
+                div().size_full().child(page),
+            ))
             .child(self.toast_stack())
             .children(self.settings_panel.clone())
     }

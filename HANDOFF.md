@@ -4,8 +4,8 @@ For whoever picks this up next. `README.md` covers *using* it; this covers
 *working on* it — the architecture, the traps, and the things that cost real
 time to discover and would cost the same again.
 
-State as of `851f76b`: 14 commits, 68 tests, clippy clean, ~6900 lines. Nothing
-pushed; there is no remote.
+State as of the motion pass: 15 commits, 74 tests, clippy clean, ~7300 lines.
+Nothing pushed; there is no remote.
 
 ---
 
@@ -72,7 +72,8 @@ App modules:
 | `chat.rs` | chat pane, emote rendering |
 | `settings_view.rs` | settings sheet |
 | `follows.rs` | sign-in + follows polling worker |
-| `theme.rs` | **all** colour, spacing and type tokens |
+| `theme.rs` | **all** colour, spacing, type and motion tokens |
+| `motion.rs` | the four animation shapes, and the state one of them needs |
 
 **Threading model, used consistently:** anything blocking runs on a plain
 `std::thread` and reports through a `futures::channel::mpsc`, which the UI drains
@@ -213,6 +214,31 @@ it. Hover is explicit state (`on_hover`) now. Do not go back.
 — reproducible from `Cargo.lock`. An earlier plan called for pinning a git rev;
 that turned out to be unnecessary.
 
+### Motion
+
+**GPUI has no transitions.** `.hover()` swaps styles instantly and there is no
+way to interpolate between them. Every animation in the app therefore goes
+through `with_animation`, and `motion.rs` exists because that primitive only
+does one thing: run forward from zero.
+
+**Animation state is keyed on the element id**, and an id GPUI has already seen
+comes back as a *finished* animation holding its last value. That is why a
+two-way fade has to mint a new id on every flip (`Fade`), and why a one-shot
+arrival needs no state at all — mounting the element is the whole trigger.
+
+**Element ids are namespaced by every ancestor that has one**, plus an implicit
+`ElementId::View(entity_id)` per entity. So `"controls"` is unique inside a
+`VideoView` even with four of them on screen, but anything rendered by
+`RootView` — every pane, every toast — has to carry its own discriminator.
+`Fade::apply` composes the caller's id with the flip count via
+`ElementId::NamedChild` rather than replacing it, so both survive.
+
+**A repeating animation never stops asking for frames.** `motion::waiting` is
+only ever attached to a state that ends. "Offline" and "failed" deliberately sit
+still: a pulsing error is a permanent 60 fps repaint, and it reads as progress
+when there is none.
+
+
 ---
 
 ## Design system
@@ -230,15 +256,33 @@ unconsidered.
 - **Type** — five roles (`TEXT_TITLE/BODY/LABEL/META/MICRO`). Label and meta share
   a size but differ in weight, so a thing you can click never looks like a thing
   you can only read. `weight_shout()` (bold) is reserved for the live badge.
+- **Motion** — three durations named by job (`MOTION_HOVER`, `MOTION_ENTER`,
+  `MOTION_VIDEO`) plus the waiting pulse, and two easings (`ease_fade` for
+  two-way changes, `ease_enter` for arrivals). Motion says *that something
+  changed*; anything long enough to wait for is too long.
 
 Audit commands, worth re-running after UI work:
 
 ```bash
 grep -ohE "\.(p|px|py|gap|gap_x|gap_y)_[0-9p]+\(\)" crates/nativetwitch/src/*.rs | sort | uniq -c
 grep -ohE "\.text_(xs|sm|base|lg|xl)\(\)|FontWeight::[A-Z_]+" crates/nativetwitch/src/*.rs | sort | uniq -c
+grep -nE "Duration::from_(millis|secs)" crates/nativetwitch/src/*.rs
 ```
 
-Both should return nothing outside `theme.rs`.
+The first two should return nothing outside `theme.rs`. The third will show
+genuine timings — the follows poll, the toast lifetime, an mpv frame wait — but
+no *animation* duration should appear outside `theme.rs`.
+
+### What deliberately does not move
+
+Both of these were considered and rejected, so they read as decisions rather
+than as things nobody got to:
+
+- **Browse cards.** Hover is instant there. Fading each of a hundred cards would
+  need per-card state in `RootView`, and sweeping a pointer across a grid feels
+  worse with fades than without — the highlight lags behind the cursor.
+- **Chat rows.** Animating arrivals would pin the frame loop at 60 fps for what
+  is a text list, and in a fast channel a per-message fade is a strobe.
 
 ---
 
@@ -274,6 +318,20 @@ PowerShell + `System.Drawing`, then reading the PNG. The pattern:
 is often refused by Windows; use topmost instead. This loop caught the pill/chat
 overlap, the chat-off-screen bug, and the channel-order verification.
 
+**Verify animation by measuring, not by looking.** One still cannot tell a fade
+from a cut. Extend the same loop to burst-capture with a stopwatch and reduce a
+small crop to a mean brightness per frame, then read the numbers: a cut is one
+step between two values, a fade has intermediates. The control bar measured
+`0 → 4.73 @ 87 ms → 6.56 @ 159 ms` going in and the mirror image coming out,
+which is what a 120 ms symmetric fade looks like. Keep crops small — sampling a
+full window through `GetPixel` is slow enough to distort the timing you are
+trying to measure. For the waiting pulse the tell is the *ratio*: trough over
+peak came out at 0.45, which is `PULSE_FLOOR` exactly.
+
+To reach a state that only exists briefly, drive the app into it rather than
+racing a restart — switching quality puts a pane back into `Starting` with the
+window already open and stable.
+
 **Verify pixel correctness by dumping PNGs.** `mpv-frames`'s `dump_frames` example
 writes frames to disk with stats (per-channel means, alpha minimum, non-black
 percentage). A red Superman "S" on a blue suit is how BGRA vs RGBA got confirmed.
@@ -287,20 +345,30 @@ graceful close, but a hard kill orphans it. `taskkill //F //IM streamlink.exe`.
 
 Roughly in the order I would take them.
 
-1. **Motion and feedback pass.** The user picked spacing then typography from a
-   three-way split; this is the remaining one. Hover states are abrupt, panes
-   appear instantly, toasts do not animate in.
-2. **Quality does not re-pick on resize.** It is chosen when a channel opens,
+1. **The page navigation sits on top of a pane's close button.** Page nav is
+   centred at the window top; a pane header puts its close control at the right
+   edge of its own video pane. In a 1×2 grid on a 1600px window those are the
+   same 50 pixels, and neither calls `cx.stop_propagation()`, so one click
+   *both* closes the left pane and navigates to follows. Demonstrated, not
+   theorised. Any fix has to hold for every grid shape the layout can derive.
+2. **Line endings are mixed across the repo**, and `cargo fmt --all` normalises
+   the CRLF files to LF — which rewrites twelve whole files that have nothing to
+   do with your change. Until a `.gitattributes` settles it, format the crate
+   you are working on (`cargo fmt -p nativetwitch`) rather than the workspace,
+   and check `git diff --stat` before committing. `cargo fmt --check` also
+   reports pre-existing deviations in `chat.rs` and several other crates; the
+   repo has never been fully fmt-clean.
+3. **Quality does not re-pick on resize.** It is chosen when a channel opens,
    using the pane size at that moment. Maximising afterwards grows the render
    buffer but not the stream quality.
-3. **No sign-out**, and no way to clear a bad token except editing the field.
-4. **Animated WebP** (7TV, some BTTV) may render as stills. Twitch's animated
+4. **No sign-out**, and no way to clear a bad token except editing the field.
+5. **Animated WebP** (7TV, some BTTV) may render as stills. Twitch's animated
    emotes are GIF and animate correctly.
-5. **Follows poll every 60 s** with no manual refresh.
-6. **Console window** opens alongside the app. Deliberate while iterating —
+6. **Follows poll every 60 s** with no manual refresh.
+7. **Console window** opens alongside the app. Deliberate while iterating —
    `#![windows_subsystem = "windows"]` removes it but also hides stderr.
-7. **Orphaned streamlink on a hard crash.** A Windows job object would close it.
-8. **Never tested on a vertical monitor.** The layout derives portrait grids and
+8. **Orphaned streamlink on a hard crash.** A Windows job object would close it.
+9. **Never tested on a vertical monitor.** The layout derives portrait grids and
    stacks chat below video, and the logic is unit-tested, but nobody has seen it.
 
 ## Things not to redo
@@ -311,3 +379,5 @@ Roughly in the order I would take them.
 - Do not key animated-image element ids on position.
 - Do not use `--stream-url` to skip streamlink's pipeline.
 - Do not add tokio; use a thread plus an mpsc pump.
+- Do not put a repeating animation on a state that can persist.
+- Do not run `cargo fmt --all` here until the line endings are settled.

@@ -13,7 +13,12 @@ use gpui_component::{
 };
 use settings::{QualityPreference, Settings};
 
+use crate::motion;
 use crate::theme;
+
+/// How far the panel travels as it opens. Enough to read as arriving from
+/// somewhere, not enough to watch.
+const PANEL_RISE: f32 = 12.0;
 
 /// Offered in the quality dropdown. "Auto" first because it is usually the
 /// right answer: it picks a stream that lands on a clean scale ratio, which
@@ -81,9 +86,8 @@ impl SettingsPanel {
             .iter()
             .map(|(label, _)| SharedString::from(*label))
             .collect();
-        let quality = cx.new(|cx| {
-            SelectState::new(options, Some(IndexPath::new(selected)), window, cx)
-        });
+        let quality =
+            cx.new(|cx| SelectState::new(options, Some(IndexPath::new(selected)), window, cx));
 
         Self {
             settings,
@@ -159,7 +163,9 @@ impl Render for SettingsPanel {
             // A scrim, so the panel reads as modal rather than as a floating
             // rectangle over live video.
             .bg(theme::scrim())
-            .child(
+            .child(motion::arrive(
+                "settings-panel",
+                PANEL_RISE,
                 div()
                     .w(px(480.))
                     .flex()
@@ -215,6 +221,6 @@ impl Render for SettingsPanel {
                                     .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
                             ),
                     ),
-            )
+            ))
     }
 }

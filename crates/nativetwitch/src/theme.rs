@@ -8,7 +8,9 @@
 //! hours, so the chrome should recede and the video should be the only bright
 //! thing on screen.
 
-use gpui::{rgb, rgba, FontWeight, Hsla};
+use std::time::Duration;
+
+use gpui::{ease_in_out, ease_out_quint, rgb, rgba, FontWeight, Hsla};
 
 /// Behind the video, and nothing else. Pure black rather than near-black: any
 /// lift here shows as a grey halo around letterboxed content, which is exactly
@@ -38,6 +40,12 @@ pub fn surface_raised() -> Hsla {
 /// whatever is beneath rather than needing a variant per background.
 pub fn hover() -> Hsla {
     rgba(0xffffff0a).into()
+}
+
+/// Held down. Stronger than `hover` rather than a different colour, so a press
+/// reads as more of the same gesture instead of a separate state.
+pub fn pressed() -> Hsla {
+    rgba(0xffffff1a).into()
 }
 
 /// Every other chat row, for the same reason ledgers have ruled lines.
@@ -170,6 +178,42 @@ pub const PANE_GAP: f32 = 3.0;
 /// Vertical rhythm inside a chat row.
 pub const ROW_PAD_X: f32 = 12.0;
 pub const ROW_PAD_Y: f32 = 5.0;
+
+// ── Motion ────────────────────────────────────────────────────────────
+//
+// Named by what the movement is *for*, like spacing. Motion here has one job:
+// to say that a thing changed, rather than that a different thing is now on
+// screen. Anything long enough to wait for is too long.
+
+/// Revealing or hiding something under the pointer. Short enough that the
+/// control feels attached to the cursor rather than chasing it.
+pub const MOTION_HOVER: Duration = Duration::from_millis(120);
+/// Something arriving or leaving of its own accord: a menu, a toast, a page.
+/// These get slightly longer because you did not ask for them at a precise
+/// moment, so there is nothing for them to feel behind.
+pub const MOTION_ENTER: Duration = Duration::from_millis(200);
+/// First frames coming up from black. Deliberately the slowest thing in the
+/// app: it is a picture resolving, not a control responding, and cutting
+/// straight to video reads as a glitch.
+pub const MOTION_VIDEO: Duration = Duration::from_millis(300);
+/// One breath of a waiting indicator. Slow on purpose — a fast pulse reads as
+/// alarm, and this only ever means "still working".
+pub const PULSE_PERIOD: Duration = Duration::from_millis(1600);
+/// How faint a waiting indicator gets at the bottom of its breath. Never zero:
+/// something that vanishes entirely looks broken rather than busy.
+pub const PULSE_FLOOR: f32 = 0.45;
+
+/// For a two-way change — visible to hidden and back. Symmetric, because the
+/// reveal and the hide are one event in opposite directions.
+pub fn ease_fade() -> impl Fn(f32) -> f32 {
+    ease_in_out
+}
+
+/// For a one-way arrival. Decelerating, so the thing leaves the mark
+/// immediately and settles, rather than sliding to a stop.
+pub fn ease_enter() -> impl Fn(f32) -> f32 {
+    ease_out_quint()
+}
 
 // ── Metrics ──────────────────────────────────────────────────────────
 
