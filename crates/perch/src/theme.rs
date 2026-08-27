@@ -79,14 +79,14 @@ pub fn stripe() -> Hsla {
 /// ruler of timestamps you scan down, and anything that changes its geometry
 /// puts a jog in that column for the sake of one row.
 pub fn event_wash() -> Hsla {
-    rgba(0x9d7bff14).into()
+    rgba((ACCENT << 8) | 0x14).into()
 }
 
 /// The louder wash, for the two events worth interrupting a read: a raid
 /// changes who is in the room, and an announcement is the broadcaster rather
 /// than the chat. Everything else Twitch invents gets the quiet one.
 pub fn event_wash_loud() -> Hsla {
-    rgba(0x9d7bff33).into()
+    rgba((ACCENT << 8) | 0x33).into()
 }
 
 /// Scrim behind a modal.
@@ -126,13 +126,30 @@ pub fn text_dim() -> Hsla {
 
 // ── Accent and status ────────────────────────────────────────────────
 
+/// The accent, as a bare RGB so the washes and the dim variant cannot drift
+/// from it. See [`accent`] for how the value was chosen.
+const ACCENT: u32 = 0x35a094;
+
 /// Used sparingly: selection, focus, the one control that matters in a view.
+///
+/// Teal, sharing the icon's hue, and picked by measurement rather than by eye.
+/// Its relative luminance is within 2% of the `#9d7bff` it replaces, which is
+/// the property that matters: an accent appears on every focus ring and every
+/// chat link, so a brighter one would quietly undo the opening paragraph of
+/// this file. The obvious brighter teal was 11% up and did exactly that.
+///
+/// It measures 5.8:1 against [`surface`], past AA for the smallest thing it is
+/// used on, which is a chat link at [`TEXT_BODY`]. Both claims are checked by
+/// `accent_carries_its_weight` rather than left as assertions.
+///
+/// The purple it replaces sat a few degrees off Twitch's own. A fair joke while
+/// the app was called nativetwitch; a trademark question once it was not.
 pub fn accent() -> Hsla {
-    rgb(0x9d7bff).into()
+    rgb(ACCENT).into()
 }
 
 pub fn accent_dim() -> Hsla {
-    rgba(0x9d7bff33).into()
+    rgba((ACCENT << 8) | 0x33).into()
 }
 
 /// The live dot. The only saturated red in the app, so it reads as status
@@ -274,6 +291,63 @@ pub const PORTRAIT_ASPECT: f32 = 1.1;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// sRGB relative luminance, per WCAG 2.
+    fn luminance(color: u32) -> f64 {
+        let channel = |c: u32| {
+            let c = c as f64 / 255.0;
+            if c <= 0.04045 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel((color >> 16) & 0xff)
+            + 0.7152 * channel((color >> 8) & 0xff)
+            + 0.0722 * channel(color & 0xff)
+    }
+
+    fn contrast(a: u32, b: u32) -> f64 {
+        let (a, b) = (luminance(a), luminance(b));
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+
+    /// The two things [`accent`] claims about itself.
+    ///
+    /// Both were asserted in a comment first and turned out to be worth
+    /// checking: the colour originally chosen by eye read 11% brighter than the
+    /// one it replaced, which is exactly the kind of drift that turns a quiet
+    /// UI into a loud one an accent at a time.
+    #[test]
+    fn accent_carries_its_weight() {
+        const SURFACE: u32 = 0x131317;
+        /// The purple this replaced. Kept as the reference weight, not because
+        /// anyone wants it back.
+        const PREVIOUS: u32 = 0x9d7bff;
+
+        let drift = (luminance(ACCENT) - luminance(PREVIOUS)).abs() / luminance(PREVIOUS);
+        assert!(
+            drift < 0.05,
+            "the accent is {:.1}% off the weight it replaced; a brighter one              makes every focus ring and link louder",
+            drift * 100.0
+        );
+
+        let ratio = contrast(ACCENT, SURFACE);
+        assert!(
+            ratio >= 4.5,
+            "the accent reads {ratio:.2}:1 on surface(), under AA for a chat link"
+        );
+    }
+
+    /// Everything tinted with the accent has to come from the same value, or a
+    /// retheme leaves a stray hue behind in the one place nobody looks.
+    #[test]
+    fn the_accent_tints_all_share_one_source() {
+        assert_eq!(accent(), rgb(ACCENT).into());
+        assert_eq!(accent_dim(), rgba((ACCENT << 8) | 0x33).into());
+        assert_eq!(event_wash(), rgba((ACCENT << 8) | 0x14).into());
+        assert_eq!(event_wash_loud(), rgba((ACCENT << 8) | 0x33).into());
+    }
 
     /// The palette Twitch itself hands out is the worst case: it contains pure
     /// blue, firebrick and seagreen, all darker than the surface they land on.
