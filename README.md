@@ -1,5 +1,7 @@
 # Perch
 
+[![CI](https://github.com/puckzxz/perch/actions/workflows/ci.yml/badge.svg)](https://github.com/puckzxz/perch/actions/workflows/ci.yml)
+
 Twitch in one native window: the stream, its chat, and the channels you follow.
 No Electron, no second window for the player, no third one for chat.
 
@@ -19,8 +21,7 @@ A personal project, published because a working one is more interesting than a
 tidy one. Not affiliated with, endorsed by, or connected to Twitch Interactive,
 Inc.
 
-<img width="1591" height="918" alt="Screenshot 2026-08-27 004251" src="https://github.com/user-attachments/assets/421cff6e-591f-453d-895e-46415f893517" />
-
+<img width="1591" height="918" alt="Four Twitch streams playing side by side in one window, each with its own chat pane" src="https://github.com/user-attachments/assets/421cff6e-591f-453d-895e-46415f893517" />
 
 ## Running it
 
