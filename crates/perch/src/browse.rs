@@ -959,8 +959,15 @@ pub fn page<V: 'static>(
         }
     };
 
+    // `flex_1` + `min_h_0`, not `size_full`. This is a flex child sitting under
+    // the browse header, so asking for the full window height overflows the
+    // column by exactly the header's height and pushes the bottom of the list
+    // off-screen. It went unnoticed while the last thing in the list was page
+    // padding; a Load more row at the end made it a button you could see and
+    // could not reach.
     div()
-        .size_full()
+        .flex_1()
+        .min_h_0()
         .flex()
         .flex_col()
         .bg(theme::bg())

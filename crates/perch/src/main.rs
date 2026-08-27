@@ -1351,6 +1351,9 @@ impl RootView {
                         .absolute()
                         .top(px(theme::GAP_TIGHT))
                         .left(px(theme::GAP_TIGHT))
+                        // Pinned to the width the pane header keeps clear for
+                        // it, so it cannot grow past the space reserved.
+                        .w(px(theme::NAV_RESERVE))
                         .child(
                             self.pill("back", "← follows".into(), cx, |this, _window, cx| {
                                 this.go_browse(cx)

@@ -333,6 +333,10 @@ fn pane<V: 'static>(
                     .flex_none()
                     .w_full()
                     .py(px(theme::GAP_TIGHT))
+                    // Only the top-left pane, which is the only one the page's
+                    // "← follows" overlay can reach. Every other pane's header
+                    // starts where it always did.
+                    .when(index == 0, |header| header.pl(px(theme::NAV_RESERVE)))
                     .child(header),
             )
             .child(video_pane)

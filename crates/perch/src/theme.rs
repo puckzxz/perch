@@ -214,6 +214,16 @@ pub fn weight_shout() -> FontWeight {
 
 /// Outer margin of a page.
 pub const PAGE_PAD: f32 = 20.0;
+/// Width kept clear at the top-left of the watch page for the "← follows"
+/// control.
+///
+/// That control is an absolute overlay, so it lands on whatever a pane happens
+/// to draw in that corner. While chat was always beside the video that was the
+/// picture, which is where it is meant to be — with chat hidden it is the
+/// pane's header, and the pill sat on top of the channel's name. The nav is
+/// pinned to this width and the header reserves the same, so the two agree by
+/// construction rather than by both being nudged until they looked right.
+pub const NAV_RESERVE: f32 = 92.0;
 /// Inside a card, panel or sheet.
 pub const PANEL_PAD: f32 = 12.0;
 /// Inside a pill or button.
