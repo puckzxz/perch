@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# A run takes long enough that queueing pushes behind each other is pure
+# latency. The newest push is the only one anybody is waiting on.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Free here, and it turns "a test failed" into something actionable without
+  # having to push a commit that only exists to add a backtrace.
+  RUST_BACKTRACE: 1
+
+jobs:
+  check:
+    name: fmt, clippy, test
+    # Windows only, because the app is. `perch` genuinely does not compile
+    # elsewhere: diagnostics.rs redirects the process's stderr through
+    # SetStdHandle, since a windows_subsystem="windows" binary has no console to
+    # print to. Everything below it in the tree is portable; the app is not.
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      # gpui is a large dependency tree and a cold build is most of this job's
+      # wall clock. The cache keys on Cargo.lock, so it only rebuilds when
+      # dependencies actually move.
+      - uses: Swatinem/rust-cache@v2
+
+      # First because it is the fastest thing that can fail, and because it
+      # needs no compilation at all.
+      - name: Formatting
+        run: cargo fmt --all --check
+
+      # `-D warnings` is the point of running this in CI rather than trusting
+      # everyone to look: the tree is clean today, and this is what keeps it
+      # that way.
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      # Nothing here needs libmpv, streamlink, a network or a GPU: mpv-frames
+      # has no tests, and the streamlink and twitch-api suites are pure parsing
+      # over fixture strings. That is a property of how the crates are split,
+      # and it is worth not losing — a test that needs a live Twitch session
+      # cannot run here.
+      - name: Tests
+        run: cargo test --workspace --locked
