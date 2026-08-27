@@ -4,8 +4,10 @@ For whoever picks this up next. `README.md` covers *using* it; this covers
 *working on* it — the architecture, the traps, and the things that cost real
 time to discover and would cost the same again.
 
-State: 23 commits, 114 tests, clippy clean, ~11,000 lines.
-Nothing pushed; there is no remote.
+Roughly 11,000 lines across seven crates. `cargo test --workspace`,
+`cargo clippy --workspace --all-targets` and `cargo fmt --all --check` are all
+expected to pass; if one does not, that is the change you are looking at, not
+the baseline.
 
 ---
 
@@ -53,7 +55,7 @@ crates/
   twitch-api    device-code sign-in, follows, top streams, categories, search
   emotes        Twitch/FFZ/BTTV/7TV resolution + disk image cache
   settings      persisted user settings
-  nativetwitch  the app
+  perch         the app
 ```
 
 Every crate except the last is free of UI types, deliberately — they are
@@ -110,6 +112,15 @@ came from.
 monotonic `ImageId` per frame and GPUI uploads every distinct id into its sprite
 atlas. `VideoView` double-buffers and drops the frame *before* last — never the
 one on screen.
+
+**And it leaks again at teardown, which is a separate fix.** GPUI does not
+refcount atlas tiles against the `Arc<RenderImage>`; `Window::drop_image` is the
+only thing that calls `sprite_atlas.remove`. So the two frames a `VideoView`
+still holds when its entity dies stay resident for the life of the window — and
+the entity dies on every ordinary action, including each quality change.
+`Drop` cannot help here because it has no `Window`; `cx.on_release_in` does, and
+the `Subscription` it returns has to be kept in a field or the hook is dropped
+immediately.
 
 **BGRA bytes go into an `RgbaImage` container unswapped.** GPUI documents
 `RenderImage` as BGRA regardless of the buffer type's name. This looks like a bug
@@ -208,6 +219,30 @@ Unrelated credentials, easy to confuse, documented in `settings::Credentials`:
 Neither can do the other's job. Refresh tokens are **single-use** — persist the
 new one immediately or the next launch is locked out.
 
+**Nothing that can fail may sit between the token swap and the save.**
+`twitch_api::refresh` used to call `current_user()` before returning, which put
+a second network request *after* the point of no return: a dropped packet during
+it returned `Err`, the caller threw away the pair Twitch had just issued, and the
+old refresh token was already dead. Two seconds of bad wifi signed the user out
+permanently. It now takes the id and login as arguments — on a refresh they are
+already on disk, so there is nothing to ask Twitch for. Only first-time sign-in
+looks the user up, where a failure costs nothing because there is no predecessor
+token to lose.
+
+**`slow_down` is an instruction, not a synonym for "pending".** RFC 8628 §3.5
+requires adding five seconds to the poll interval each time the device flow
+returns it. Folding it into `Pending` left the client polling at exactly the rate
+Twitch had asked it to reduce, until the code expired and a correctly typed one
+still reported "the sign-in code expired". A sign-in window also runs for
+minutes, so `Error::Network` during one is retried until the deadline rather
+than tearing the worker down.
+
+**Both followed endpoints paginate.** `/streams/followed` caps at 100 like
+`/channels/followed` does. Fetching one page of it silently truncated the live
+list, and because `on_streams` replaces `known_live` wholesale, a channel
+hovering around rank 100 dropped out and returned on alternate polls — firing a
+went-live toast every time it came back.
+
 **Two threads write `settings.json`.** The sign-in worker persists OAuth tokens
 as it gets them; the UI holds a snapshot of `Settings` taken at launch and
 writes it back whenever a preference changes. Saving that snapshot wholesale put
@@ -298,7 +333,7 @@ that turned out to be unnecessary.
 
 **The release build has no console**, so `eprintln!` and panic messages go to a
 handle that leads nowhere. `diagnostics::capture_stderr` points the process's
-stderr at `%LOCALAPPDATA%\nativetwitch\nativetwitch.log` before anything can
+stderr at `%LOCALAPPDATA%\perch\perch.log` before anything can
 write, and keeps the previous run as `.log.old`. It works by `SetStdHandle`
 rather than by a logging facade because Windows resolves that handle on *every
 write* — so it catches the library crates and panic output too, with no change
@@ -430,9 +465,9 @@ unconsidered.
 Audit commands, worth re-running after UI work:
 
 ```bash
-grep -ohE "\.(p|px|py|gap|gap_x|gap_y)_[0-9p]+\(\)" crates/nativetwitch/src/*.rs | sort | uniq -c
-grep -ohE "\.text_(xs|sm|base|lg|xl)\(\)|FontWeight::[A-Z_]+" crates/nativetwitch/src/*.rs | sort | uniq -c
-grep -nE "Duration::from_(millis|secs)" crates/nativetwitch/src/*.rs
+grep -ohE "\.(p|px|py|gap|gap_x|gap_y)_[0-9p]+\(\)" crates/perch/src/*.rs | sort | uniq -c
+grep -ohE "\.text_(xs|sm|base|lg|xl)\(\)|FontWeight::[A-Z_]+" crates/perch/src/*.rs | sort | uniq -c
+grep -nE "Duration::from_(millis|secs)" crates/perch/src/*.rs
 ```
 
 The first two should return nothing outside `theme.rs`. The third will show
@@ -685,8 +720,8 @@ listener fires only when the path empties, not when focus moves, so it cannot
 loop. Without either half, every binding is dead and nothing says so.
 
 **A key context and a key predicate are different grammars.** A context is
-whitespace-separated identifiers (`NativeTwitch Watch`); a predicate is a
-boolean expression over them (`NativeTwitch && Watch`). Interpolating the first
+whitespace-separated identifiers (`Perch Watch`); a predicate is a
+boolean expression over them (`Perch && Watch`). Interpolating the first
 into the second parses to the first space and then fails, which
 `KeyBinding::new` reports by panicking at startup. `keys.rs` builds predicates
 from the same identifiers the contexts are made of and has a test pinning that
@@ -734,7 +769,7 @@ than as things nobody got to:
 ## Working on it
 
 ```bash
-cargo build --release -p nativetwitch     # always release for anything perf-related
+cargo build --release -p perch     # always release for anything perf-related
 cargo test --workspace
 cargo clippy --workspace --all-targets
 ./run.cmd outerheaven                     # or several channels
@@ -841,42 +876,38 @@ Ranked by what would be noticed, roughly:
 
 None of these is being worked on; all of them are real.
 
-1. **Line endings are mixed across the repo**, and `cargo fmt --all` normalises
-   the CRLF files to LF — rewriting whole files that have nothing to do with
-   your change. Until a `.gitattributes` settles it, format the crate you are
-   working on (`cargo fmt -p nativetwitch`) and check `git diff --stat` before
-   committing. `cargo fmt --check` also reports pre-existing deviations in
-   `chat.rs`, `video.rs`, `layout.rs` and `streamlink`; the repo has never been
-   fully fmt-clean.
-2. **The chat scrollbar's thumb size drifts.** Its position is right. See the
+1. **The chat scrollbar's thumb size drifts.** Its position is right. See the
    `list` trap — a real fix means not using gpui's scrollbar geometry.
-3. **Chat keeps 1000 messages** and drains from the front even while you are
+2. **Chat keeps 1000 messages** and drains from the front even while you are
    scrolled back reading them. Raised from 500 when the pane started opening
    with a backlog; a row is a `ChatMessage` and a few `SharedString`s, and only
    the visible ones are ever laid out, so it can go further if it needs to.
-4. **Quality does not re-pick on resize.** It is chosen when a channel opens,
+3. **Quality does not re-pick on resize.** It is chosen when a channel opens,
    using the pane size at that moment.
-5. **No sign-out**, and no way to clear a bad token except editing the field.
-6. **Animated WebP** (7TV, some BTTV) may render as stills. Twitch's own
+4. **No sign-out**, and no way to clear a bad token except editing the field.
+5. **Animated WebP** (7TV, some BTTV) may render as stills. Twitch's own
    animated emotes are GIF and animate correctly.
-7. **The image cache never prunes.** Permanent entries accumulate forever;
-   previews are bounded because their directory is emptied at startup. Deleting
-   `%LOCALAPPDATA%/nativetwitch/images` is always safe.
-8. **Orphaned streamlink on a hard crash.** A Windows job object would close it.
-9. **Never tested on a vertical monitor.** The layout derives portrait grids and
+6. **`ImageCache::new` is still on the pre-window UI thread.** It is now
+   bounded rather than unbounded — `scan_and_prune` trims the permanent
+   directory to 256MB oldest-first and deletes `.part` debris in the same pass
+   it indexes, so startup no longer gets slower with every run — but it is one
+   `read_dir` plus a stat per file, done synchronously in `RootView::new`.
+   Deleting `%LOCALAPPDATA%/perch/images` is always safe.
+7. **Orphaned streamlink on a hard crash.** A Windows job object would close it.
+8. **Never tested on a vertical monitor.** The layout derives portrait grids and
    stacks chat below video, the logic is unit-tested, but nobody has seen it.
-10. **The offline follows list has no filter and no cap.** Someone following
+9. **The offline follows list has no filter and no cap.** Someone following
     several hundred channels gets several hundred names. See "what to build
     next" — this is the first thing on it for that reason.
-11. **A volume drag writes `settings.json` per pixel.** Pre-existing: every
+10. **A volume drag writes `settings.json` per pixel.** Pre-existing: every
     `SliderEvent::Change` is a full read-modify-write of the file, and there are
     a hundred of them in one drag. `set_volume_for` returns whether anything
     changed so a repeated value is free, but a real fix is a debounce, and
     gpui-component's `Slider` gives no drag-end event to hang one on.
-12. **Chat history depends on somebody else's server.** If it is down the pane
+11. **Chat history depends on somebody else's server.** If it is down the pane
     opens blank, which is what it did before the feature existed. Failures go to
     the log rather than the pane, on purpose.
-13. **Shortcuts are not rebindable**, and `Esc` does not close the video quality
+12. **Shortcuts are not rebindable**, and `Esc` does not close the video quality
     menu — that menu is hand-rolled rather than a gpui-component popup, so it
     carries no key context of its own.
 
@@ -889,7 +920,6 @@ None of these is being worked on; all of them are real.
 - Do not use `--stream-url` to skip streamlink's pipeline.
 - Do not add tokio; use a thread plus an mpsc pump.
 - Do not put a repeating animation on a state that can persist.
-- Do not run `cargo fmt --all` here until the line endings are settled.
 - Do not assume an overlay blocks input because it covers something; use
   `occlude` / `block_mouse_except_scroll`, and put it on the smallest thing that
   is actually opaque.
@@ -910,3 +940,18 @@ None of these is being worked on; all of them are real.
   as "signed out".
 - Do not let anything overhang its line without checking what is directly above
   and below it — inside a wrapped message that is another line, not padding.
+- Do not `join()` a worker thread from a `Drop` that runs on the UI thread.
+  Both supervisors are dropped from click handlers, and neither `stop` flag nor
+  a killed child reaches a thread that is inside a network read — so the join
+  froze the window for as long as that read took. Set the flag, kill what you
+  can, and let the thread retire on its own.
+- Do not use `.output()` or `.status()` on a child something else may need to
+  kill; both own the `Child` internally, so there is no handle to reach it by.
+  See `streamlink::run_tracked`.
+- Do not hand `Library::new` a bare filename on Windows. With no path separator
+  it uses the standard DLL search order, which includes the working directory.
+- Do not write a comment asserting a guarantee the code does not enforce. Two
+  were found this way — streamlink's credential "is never logged and never
+  echoed" while it sat on the child's argv, and `keys::SHORTCUTS` being "beside
+  the bindings" as though proximity were a check. Both were true when written.
+  If it is worth claiming, it is worth a test.

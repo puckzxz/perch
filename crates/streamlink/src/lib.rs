@@ -12,7 +12,7 @@
 
 pub mod quality;
 
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -37,28 +37,42 @@ pub enum StreamEvent {
     },
     /// The channel is not broadcasting.
     Offline,
-    Failed { reason: String },
+    Failed {
+        reason: String,
+    },
 }
 
 /// A running streamlink process. Dropping it kills the child.
 pub struct StreamSupervisor {
     stop: Arc<AtomicBool>,
-    child: Arc<Mutex<Option<Child>>>,
+    child: ChildSlot,
     thread: Option<std::thread::JoinHandle<()>>,
 }
+
+/// Where the worker parks whichever streamlink process it is currently running,
+/// so [`StreamSupervisor::drop`] can kill it.
+///
+/// *Every* child goes here, not just the one serving the stream. It used to
+/// hold only the serving process, which meant that during the resolve phase —
+/// the `--version` probes and a full Twitch HLS lookup, the slowest part of
+/// opening a channel — the slot was `None` and a teardown's `kill()` had
+/// nothing to name.
+type ChildSlot = Arc<Mutex<Option<Child>>>;
 
 /// Locate the streamlink executable.
 ///
 /// `STREAMLINK_PATH` wins so a user with an unusual install is never stuck.
-pub fn find_binary() -> Option<PathBuf> {
+fn find_binary(slot: &ChildSlot) -> Option<PathBuf> {
     if let Some(explicit) = std::env::var_os("STREAMLINK_PATH") {
         let path = PathBuf::from(explicit);
-        return runs(&path).then_some(path);
+        return runs(&path, slot).then_some(path);
     }
 
     let mut candidates = vec![PathBuf::from("streamlink")];
     if cfg!(windows) {
-        candidates.push(PathBuf::from(r"C:\Program Files\Streamlink\bin\streamlink.exe"));
+        candidates.push(PathBuf::from(
+            r"C:\Program Files\Streamlink\bin\streamlink.exe",
+        ));
         candidates.push(PathBuf::from(
             r"C:\Program Files (x86)\Streamlink\bin\streamlink.exe",
         ));
@@ -67,7 +81,7 @@ pub fn find_binary() -> Option<PathBuf> {
         candidates.push(PathBuf::from("/usr/local/bin/streamlink"));
         candidates.push(PathBuf::from("/opt/homebrew/bin/streamlink"));
     }
-    candidates.into_iter().find(runs)
+    candidates.into_iter().find(|path| runs(path, slot))
 }
 
 /// Build a command that does not open a console window.
@@ -90,14 +104,64 @@ fn command(binary: impl AsRef<std::ffi::OsStr>) -> Command {
 }
 
 /// A bare name relies on PATH lookup, which is exactly what we want to test.
-fn runs(path: &PathBuf) -> bool {
-    command(path)
-        .arg("--version")
-        .stdout(Stdio::null())
+fn runs(path: &PathBuf, slot: &ChildSlot) -> bool {
+    let mut probe = command(path);
+    probe.arg("--version");
+    matches!(run_tracked(probe, slot), Ok((_, true)))
+}
+
+/// Run a command to completion with its handle parked in `slot`, so a teardown
+/// can kill it, and return `(stdout, exited cleanly)`.
+///
+/// `.status()` and `.output()` are the obvious calls and both are wrong here:
+/// each owns the `Child` internally, so nothing outside can ever kill it. That
+/// is what made closing a pane mid-resolve hang — `Drop` set its flag, found an
+/// empty slot, and then waited on a process it had no way to interrupt.
+///
+/// The pipe comes out of the child before the handle goes into the slot, so the
+/// read below holds no lock: taking one for the length of a Twitch lookup would
+/// block the very teardown this exists to serve.
+fn run_tracked(mut command: Command, slot: &ChildSlot) -> std::io::Result<(Vec<u8>, bool)> {
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+        .spawn()?;
+
+    let stdout = child.stdout.take();
+    *slot.lock().unwrap() = Some(child);
+
+    let mut captured = Vec::new();
+    if let Some(mut stdout) = stdout {
+        let _ = stdout.read_to_end(&mut captured);
+    }
+
+    // Taken out from under the lock *before* waiting, on its own line rather
+    // than as a temporary inside the `map`. A guard created in a `let`
+    // initializer lives to the end of the statement, so the one-liner form held
+    // the lock across `wait()` — and `Drop`'s first act after setting `stop` is
+    // to take that same lock, on the UI thread. That is the freeze this
+    // function exists to prevent, two lines under the comment promising it does.
+    let child = slot.lock().unwrap().take();
+
+    // A kill closes the pipe, which is what ends the read above — and it also
+    // takes the handle, so by here there may be nothing left to reap.
+    let status = child.map(|mut child| child.wait());
+    Ok((
+        captured,
+        matches!(status, Some(Ok(status)) if status.success()),
+    ))
+}
+
+/// Kill and reap whatever is parked in `slot`, if anything still is.
+fn kill_parked(slot: &ChildSlot) {
+    // Out from under the lock before the wait, for the reason `run_tracked`
+    // spells out.
+    let child = slot.lock().unwrap().take();
+    if let Some(mut child) = child {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
 }
 
 /// Ask the OS for an unused port by binding and immediately releasing it.
@@ -142,7 +206,20 @@ fn twitch_args(channel: &str, options: &StreamOptions) -> Vec<String> {
         "h264,h265,av1".into(),
     ];
 
-    // A full account credential, so it is never logged and never echoed.
+    // A full account credential, and it goes on the child's command line.
+    //
+    // That is worth stating plainly rather than leaving to be discovered. On
+    // Windows a process's command line lives in its PEB and is readable by any
+    // process running as the same user, and it is picked up by Process
+    // Explorer, by EDR agents, and by Event 4688 where command-line auditing is
+    // switched on. The at-rest copy in `settings.json` needs the same access to
+    // read, so this adds no new attacker — but unlike a file in AppData, a
+    // command line is the kind of thing that gets shipped off the machine to a
+    // log server.
+    //
+    // streamlink's `--config` would take the header out of argv, at the cost of
+    // writing the credential to a second file and having to delete it. Left as
+    // argv on purpose; the README says so under "The two Twitch tokens".
     if let Some(token) = options.token() {
         args.push("--twitch-api-header".into());
         args.push(format!("Authorization=OAuth {token}"));
@@ -153,20 +230,24 @@ fn twitch_args(channel: &str, options: &StreamOptions) -> Vec<String> {
 }
 
 /// Which qualities the channel currently offers, newest info from Twitch.
+///
+/// This is the slow half of opening a channel — a full Twitch HLS resolve, with
+/// no timeout of its own — so the child goes in `slot` and a teardown can end it.
 fn list_qualities(
     binary: &PathBuf,
     channel: &str,
     options: &StreamOptions,
+    slot: &ChildSlot,
 ) -> Result<Vec<String>, String> {
     let mut args = vec!["--json".to_string()];
     args.extend(twitch_args(channel, options));
 
-    let output = command(binary)
-        .args(&args)
-        .output()
-        .map_err(|e| format!("could not run streamlink: {e}"))?;
+    let mut probe = command(binary);
+    probe.args(&args);
+    let (stdout, _) =
+        run_tracked(probe, slot).map_err(|e| format!("could not run streamlink: {e}"))?;
 
-    let json: serde_json::Value = serde_json::from_slice(&output.stdout)
+    let json: serde_json::Value = serde_json::from_slice(&stdout)
         .map_err(|e| format!("streamlink returned unreadable JSON: {e}"))?;
 
     if let Some(error) = json.get("error").and_then(|e| e.as_str()) {
@@ -194,7 +275,7 @@ impl StreamSupervisor {
     ) -> (Self, mpsc::UnboundedReceiver<StreamEvent>) {
         let (tx, rx) = mpsc::unbounded();
         let stop = Arc::new(AtomicBool::new(false));
-        let child: Arc<Mutex<Option<Child>>> = Arc::new(Mutex::new(None));
+        let child: ChildSlot = Arc::new(Mutex::new(None));
 
         let thread = std::thread::Builder::new()
             .name("streamlink".into())
@@ -219,14 +300,22 @@ impl StreamSupervisor {
 impl Drop for StreamSupervisor {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        // Killing the child also closes its stdout, which ends the reader loop.
-        if let Some(mut child) = self.child.lock().unwrap().take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
+        // Killing the child also closes its stdout, which ends whichever read
+        // the worker is in — the resolve probes as well as the serving loop,
+        // now that every child is parked in the slot. Waiting here is bounded:
+        // the process is already dying.
+        kill_parked(&self.child);
+        // Deliberately *not* joined. Every drop site is on the UI thread —
+        // closing a pane, going back to browse, changing quality — and the
+        // worker can be somewhere the kill above does not reach, most obviously
+        // `find_binary` when streamlink is missing. Joining there froze the
+        // window for as long as that took, which is exactly the moment the user
+        // has asked for something to go away.
+        //
+        // Nothing here needs ordered teardown: the worker writes to an
+        // unbounded channel whose receiver going away is not an error, and it
+        // checks `stop` between phases, so it retires on its own shortly after.
+        drop(self.thread.take());
     }
 }
 
@@ -236,24 +325,34 @@ fn run(
     options: StreamOptions,
     tx: mpsc::UnboundedSender<StreamEvent>,
     stop: Arc<AtomicBool>,
-    child_slot: Arc<Mutex<Option<Child>>>,
+    child_slot: ChildSlot,
 ) {
-    let Some(binary) = find_binary() else {
+    let Some(binary) = find_binary(&child_slot) else {
         let _ = tx.unbounded_send(StreamEvent::Failed {
             reason: "streamlink not found. Install it, or set STREAMLINK_PATH.".into(),
         });
         return;
     };
+    // `stop` is checked between every phase, not only inside the serving loop.
+    // Teardown no longer joins this thread, so nothing outside is waiting for
+    // it — but a pane closed mid-resolve should not go on to start a stream
+    // nobody is watching.
+    if stop.load(Ordering::Relaxed) {
+        return;
+    }
 
     let _ = tx.unbounded_send(StreamEvent::Resolving);
 
-    let available = match list_qualities(&binary, &channel, &options) {
+    let available = match list_qualities(&binary, &channel, &options, &child_slot) {
         Ok(list) => list,
         Err(reason) => {
             let _ = tx.unbounded_send(StreamEvent::Failed { reason });
             return;
         }
     };
+    if stop.load(Ordering::Relaxed) {
+        return;
+    }
     if available.is_empty() {
         let _ = tx.unbounded_send(StreamEvent::Offline);
         return;
@@ -324,6 +423,20 @@ fn run(
     let stderr = process.stderr.take();
     *child_slot.lock().unwrap() = Some(process);
 
+    // The one window `Drop` cannot cover, closed here.
+    //
+    // Between the `stop` check above and the park on the line before this, the
+    // slot is empty. A `Drop` landing in there sets the flag, finds nothing to
+    // kill, and — since it no longer joins — returns. This thread would then
+    // spawn streamlink anyway and leave it running: `Child`'s own `Drop` does
+    // not kill, so returning from here would orphan the process for the life of
+    // the session. Re-reading the flag *after* parking is what makes the pair
+    // safe in either order.
+    if stop.load(Ordering::Relaxed) {
+        kill_parked(&child_slot);
+        return;
+    }
+
     // streamlink announces the server on stdout, so watch for that rather than
     // probing the port: a probe connection would be a real client, and this
     // also tells us when the channel turns out to be offline.
@@ -331,6 +444,7 @@ fn run(
     if let Some(stdout) = stdout {
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
             if stop.load(Ordering::Relaxed) {
+                kill_parked(&child_slot);
                 return;
             }
             if line.contains("Starting server, access with one of") {
@@ -344,6 +458,7 @@ fn run(
     }
 
     if stop.load(Ordering::Relaxed) {
+        kill_parked(&child_slot);
         return;
     }
 

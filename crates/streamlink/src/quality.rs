@@ -73,7 +73,11 @@ pub fn select(available: &[String], pane_height: u32) -> Option<Quality> {
 
     candidates.sort_by_key(|q| {
         // Tie-break on higher fps, then on name for determinism.
-        (cost(q.height, pane_height), u32::MAX - q.fps, q.name.clone())
+        (
+            cost(q.height, pane_height),
+            u32::MAX - q.fps,
+            q.name.clone(),
+        )
     });
     candidates.into_iter().next()
 }
@@ -117,8 +121,11 @@ pub fn select_named(available: &[String], preference: &str, pane_height: u32) ->
 
     // Match on height, preferring the higher frame rate.
     if let Some(wanted) = parse_quality(preference).map(|q| q.height) {
-        let mut same_height: Vec<Quality> =
-            candidates.iter().filter(|q| q.height == wanted).cloned().collect();
+        let mut same_height: Vec<Quality> = candidates
+            .iter()
+            .filter(|q| q.height == wanted)
+            .cloned()
+            .collect();
         same_height.sort_by_key(|q| q.fps);
         if let Some(best) = same_height.pop() {
             return Some(best);
@@ -139,7 +146,14 @@ mod tests {
     }
 
     const TWITCH: [&str; 8] = [
-        "audio_only", "160p30", "360p30", "480p30", "720p60", "1080p60", "worst", "best",
+        "audio_only",
+        "160p30",
+        "360p30",
+        "480p30",
+        "720p60",
+        "1080p60",
+        "worst",
+        "best",
     ];
 
     #[test]

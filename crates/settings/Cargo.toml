@@ -4,7 +4,9 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Persisted user settings for nativetwitch."
+repository.workspace = true
+publish.workspace = true
+description = "Persisted user settings for the perch app."
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

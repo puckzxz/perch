@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use futures::channel::mpsc as futures_mpsc;
 
@@ -43,6 +43,10 @@ const RETRY_AFTER: Duration = Duration::from_secs(30);
 
 /// Where volatile images live, relative to the cache directory.
 const VOLATILE_DIR: &str = "live";
+
+/// Extension of a download in progress. It is renamed onto the real name once
+/// complete, so one left on disk is the debris of an interrupted run.
+const PART_EXTENSION: &str = "part";
 
 /// Whether a cached image can be trusted to stay the same.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,16 +123,82 @@ fn extension_for(content_type: Option<&str>) -> &'static str {
     }
 }
 
-/// Index whatever is already cached from previous runs, keyed by URL hash.
-fn scan_existing(dir: &Path) -> HashMap<String, PathBuf> {
+/// How much of the permanent cache to keep. Emotes and box art are a few KB
+/// each, so this is thousands of images — reached only by an install that has
+/// been running for a very long time, which is exactly the case that had no
+/// bound at all before.
+const BUDGET_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Index whatever is already cached from previous runs, keyed by URL hash,
+/// deleting anything that should not survive into this one.
+///
+/// Indexing and pruning are one pass on purpose. `read_dir` already walks every
+/// entry, and on both platforms the size and mtime come out of that same walk,
+/// so bounding the directory costs a stat per file rather than a second scan —
+/// and it is what keeps this scan bounded in the first place. Nothing here ever
+/// deleted a permanent entry before, so an install accumulated every emote,
+/// avatar and box art it had ever seen, and `ImageCache::new` grew slower with
+/// every run.
+///
+/// Two things go: `.part` files, which are only ever left behind by a download
+/// interrupted mid-write, and the oldest entries once the total passes
+/// [`BUDGET_BYTES`]. Pruning happens *before* the survivors are indexed, so the
+/// returned map can never name a file this function has just removed.
+fn scan_and_prune(dir: &Path) -> HashMap<String, PathBuf> {
+    prune_to(dir, BUDGET_BYTES)
+}
+
+/// [`scan_and_prune`] against an explicit budget, so a test does not have to
+/// write a quarter of a gigabyte to reach the interesting branch.
+fn prune_to(dir: &Path, budget: u64) -> HashMap<String, PathBuf> {
     let mut found = HashMap::new();
     let Ok(entries) = std::fs::read_dir(dir) else {
         return found;
     };
+
+    let mut files: Vec<(PathBuf, u64, SystemTime)> = Vec::new();
+    let mut total: u64 = 0;
+
     for entry in entries.flatten() {
         let path = entry.path();
+        // The volatile subdirectory is emptied by the caller; skip it and
+        // anything else that is not a plain file.
+        let Ok(meta) = entry.metadata() else { continue };
+        if !meta.is_file() {
+            continue;
+        }
+        if path.extension().is_some_and(|ext| ext == PART_EXTENSION) {
+            let _ = std::fs::remove_file(&path);
+            continue;
+        }
+        let size = meta.len();
+        total += size;
+        files.push((
+            path,
+            size,
+            meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+        ));
+    }
+
+    if total > budget {
+        // Oldest first. Least-recently-*modified* rather than least-recently-
+        // used: nothing here records reads, and for content that never changes
+        // at its address, age is the closest honest proxy.
+        files.sort_by_key(|(_, _, modified)| *modified);
+        let mut index = 0;
+        while total > budget && index < files.len() {
+            let (path, size, _) = &files[index];
+            if std::fs::remove_file(path).is_ok() {
+                total -= size;
+            }
+            index += 1;
+        }
+        files.drain(..index);
+    }
+
+    for (path, _, _) in files {
         if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-            found.insert(stem.to_string(), path);
+            found.insert(stem.to_string(), path.clone());
         }
     }
     found
@@ -148,7 +218,7 @@ impl ImageCache {
         let _ = std::fs::remove_dir_all(&volatile_dir);
         std::fs::create_dir_all(&volatile_dir)?;
 
-        let on_disk = scan_existing(&dir);
+        let on_disk = scan_and_prune(&dir);
         let ready: Arc<Mutex<HashMap<String, Entry>>> = Arc::new(Mutex::new(HashMap::new()));
         let inflight = Arc::new(Mutex::new(HashSet::new()));
         let attempted = Arc::new(Mutex::new(HashMap::new()));
@@ -364,7 +434,7 @@ fn download(agent: &ureq::Agent, dir: &Path, url: &str, unique: bool) -> Result<
 
     // Write to a temp name first so a crash mid-download cannot leave a
     // truncated file that looks cached forever after.
-    let temp = path.with_extension(format!("{extension}.part"));
+    let temp = path.with_extension(format!("{extension}.{PART_EXTENSION}"));
     std::fs::write(&temp, &bytes).map_err(|e| format!("write failed: {e}"))?;
     std::fs::rename(&temp, &path).map_err(|e| format!("rename failed: {e}"))?;
 
@@ -412,11 +482,82 @@ mod tests {
     }
 
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir()
-            .join("nativetwitch-cache-tests")
-            .join(name);
+        let dir = std::env::temp_dir().join("perch-cache-tests").join(name);
         let _ = std::fs::remove_dir_all(&dir);
         dir
+    }
+
+    /// A download that is interrupted mid-write leaves its temp file behind.
+    /// Nothing used to remove those, so they accumulated forever and were also
+    /// indexed as if they were images.
+    #[test]
+    fn a_scan_deletes_the_debris_of_an_interrupted_download() {
+        let dir = scratch("part-files");
+        std::fs::create_dir_all(&dir).unwrap();
+        let debris = dir.join("abc.png.part");
+        let real = dir.join("abc.png");
+        std::fs::write(&debris, b"half a download").unwrap();
+        std::fs::write(&real, b"a whole one").unwrap();
+
+        let index = scan_and_prune(&dir);
+
+        assert!(!debris.exists(), "a .part file survived the scan");
+        assert!(real.exists(), "a finished download was deleted");
+        assert!(
+            !index.values().any(|path| path == &debris),
+            "a .part file was indexed as an image"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Under budget, nothing is touched — which is the case every real install
+    /// is in, and the one a size cap must not disturb.
+    #[test]
+    fn a_cache_under_budget_keeps_everything() {
+        let dir = scratch("under-budget");
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in ["a.png", "b.png", "c.png"] {
+            std::fs::write(dir.join(name), b"small").unwrap();
+        }
+
+        let index = scan_and_prune(&dir);
+
+        assert_eq!(index.len(), 3);
+        for name in ["a.png", "b.png", "c.png"] {
+            assert!(dir.join(name).exists(), "{name} was pruned under budget");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Over budget, the oldest go first and the index never names a file that
+    /// was just deleted — which is why pruning happens before indexing.
+    #[test]
+    fn going_over_budget_drops_the_oldest_and_indexes_only_survivors() {
+        let dir = scratch("over-budget");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Written oldest-first with distinct mtimes, since the sort key is the
+        // modification time and a same-millisecond tie would make this flaky.
+        let mut written = Vec::new();
+        for name in ["old.png", "middle.png", "new.png"] {
+            let path = dir.join(name);
+            std::fs::write(&path, vec![0u8; 8192]).unwrap();
+            std::thread::sleep(Duration::from_millis(20));
+            written.push(path);
+        }
+
+        // 16KB of the 24KB present, so exactly one file has to go.
+        let index = prune_to(&dir, 16 * 1024);
+
+        assert!(!written[0].exists(), "the oldest file was kept");
+        assert!(written[1].exists(), "too much was pruned");
+        assert!(written[2].exists(), "the newest file was pruned");
+        assert_eq!(index.len(), 2);
+        assert!(
+            index.values().all(|path| path.exists()),
+            "the index named a file that had just been deleted"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The bug this exists to prevent: a channel preview from a previous run

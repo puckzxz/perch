@@ -1,4 +1,9 @@
 /target
 **/*.rs.bk
+
+# Frame dumps from `cargo run -p mpv-frames --example dump_frames`. The
+# `--out` flag names the directory, so both defaults are listed rather than
+# ignoring *.png repo-wide — that swallowed README screenshots silently, and a
+# `git add` that appears to succeed and does nothing is a bad half hour.
 /out
-*.png
+/out_twitch

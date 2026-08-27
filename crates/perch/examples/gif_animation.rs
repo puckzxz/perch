@@ -5,7 +5,7 @@
 //! example renders the same GIF twice — once with an id, once without — so the
 //! difference is visible side by side.
 //!
-//!     cargo run -p nativetwitch --example gif_animation -- <path-to.gif>
+//!     cargo run -p perch --example gif_animation -- <path-to.gif>
 
 use std::path::PathBuf;
 

@@ -328,7 +328,9 @@ impl Player {
         if raw.is_null() {
             return None;
         }
-        let value = unsafe { CStr::from_ptr(raw) }.to_string_lossy().into_owned();
+        let value = unsafe { CStr::from_ptr(raw) }
+            .to_string_lossy()
+            .into_owned();
         unsafe { (self.lib.free)(raw as *mut c_void) };
         Some(value)
     }

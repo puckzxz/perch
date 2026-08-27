@@ -159,7 +159,10 @@ mod tests {
 
     #[test]
     fn plain_text_when_no_tag() {
-        assert_eq!(tokenize("hello", None, false), vec![Token::Text("hello".into())]);
+        assert_eq!(
+            tokenize("hello", None, false),
+            vec![Token::Text("hello".into())]
+        );
         assert!(tokenize("", None, false).is_empty());
     }
 

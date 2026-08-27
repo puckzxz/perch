@@ -1,27 +1,41 @@
-# nativetwitch
+# Perch
 
 Twitch in one native window: the stream, its chat, and the channels you follow.
 No Electron, no second window for the player, no third one for chat.
 
+Up to **four channels at once**, side by side in a grid derived from the shape
+of your window, each with its own chat and its own volume. Chat is read-only by
+design — this is somewhere to watch from, not another client to talk in.
+
 Built on [GPUI](https://github.com/zed-industries/zed) (Zed's UI framework) with
 [streamlink](https://streamlink.github.io/) as the Twitch byte source and
 [libmpv](https://mpv.io/) doing decode and A/V sync.
+
+**Windows only** for now. The video path is portable, but the app crate is not:
+`diagnostics.rs` redirects the process's stderr through a Win32 call, because a
+`windows_subsystem = "windows"` binary has no console to print to.
+
+A personal project, published because a working one is more interesting than a
+tidy one. Not affiliated with, endorsed by, or connected to Twitch Interactive,
+Inc.
 
 ## Running it
 
 ```
 run.cmd                    reopen the last channel
 run.cmd forsen             open a channel
+run.cmd forsen xqc         open two, side by side
 run.cmd forsen --volume 30
 ```
 
-`--volume` applies to this run only. It does not overwrite the level each
-channel remembers, and it wins over one for as long as the app is open.
+Name up to four channels to open them together. `--volume` applies to this run
+only: it does not overwrite the level each channel remembers, and it wins over
+one for as long as the app is open.
 
 Or directly, once built:
 
 ```
-cargo run --release -p nativetwitch -- forsen
+cargo run --release -p perch -- forsen
 ```
 
 Use `--release`. The video path does per-frame format conversion, and a debug
@@ -49,10 +63,15 @@ the cursor is in a text box. The same list is in the settings sheet.
 ### Requirements
 
 - **streamlink** on `PATH`, or `STREAMLINK_PATH` pointing at it.
-- **libmpv** — `libmpv-2.dll` on Windows. There is no official Windows
-  development package; the DLL ships inside player distributions such as
-  mpv.net and Plex, and the app finds those automatically. `MPV_DLL` overrides
-  the search.
+- **libmpv** — `libmpv-2.dll`. There is no official Windows development
+  package; the DLL ships inside player distributions such as mpv.net and Plex,
+  and the app looks there, beside its own executable, and along `PATH`.
+  `MPV_DLL` overrides the search.
+
+  Every one of those is an explicit directory. Handing Windows a bare
+  `libmpv-2.dll` would let it search the *working* directory too, which for an
+  executable run out of a shared downloads folder is somebody else's choice of
+  DLL.
 
 ## Chat
 
@@ -79,8 +98,8 @@ asks again now — for whichever list is on screen, not just follows.
 
 ## Settings
 
-The gear in the title bar. Stored at `%APPDATA%/nativetwitch/settings.json`;
-changes apply immediately rather than needing a restart.
+The gear in the title bar. Stored at `%APPDATA%/perch/settings.json`; changes
+apply immediately rather than needing a restart.
 
 Volume is remembered per channel, because streamers are not consistent about
 how loud they run. Muting one is remembered too, and deliberately never becomes
@@ -104,9 +123,17 @@ to **Public**. No client secret — sign-in uses the device code flow, so nothin
 secret is ever stored in the binary. Paste the Client ID into settings and the
 sidebar will show a code to enter at `twitch.tv/activate`.
 
-The auth-token cookie is a **full account credential**. It is stored in plain
-text, which is what desktop Twitch clients generally do, but it is a real
-tradeoff rather than an oversight.
+The auth-token cookie is a **full account credential**, and it is worth knowing
+exactly where it goes before you paste one in. It is stored in plain text, which
+is what desktop Twitch clients generally do, and it is passed to streamlink as a
+command-line argument — where, on Windows, any process running as you can read
+it, and where command-line auditing will log it if your machine has that turned
+on. Reading the file needs the same access, so this is one exposure rather than
+two, but a command line is the kind that leaves the machine.
+
+Both are real tradeoffs rather than oversights, and the feature is entirely
+optional: everything except ad suppression and subscriber-only qualities works
+without it.
 
 ## Quality
 
@@ -137,8 +164,12 @@ crates/
   twitch-api    device-code sign-in, follows, browsing and search
   emotes        Twitch/FFZ/BTTV/7TV resolution, disk image cache
   settings      persisted user settings
-  nativetwitch  the app
+  perch         the app
 ```
 
 Every crate except the last is free of UI types, so the pieces are testable
 without a window.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

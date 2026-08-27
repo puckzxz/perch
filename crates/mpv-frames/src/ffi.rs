@@ -69,9 +69,11 @@ type FnGetPropertyString = unsafe extern "C" fn(MpvHandle, *const c_char) -> *mu
 type FnSetPropertyString = unsafe extern "C" fn(MpvHandle, *const c_char, *const c_char) -> c_int;
 type FnFree = unsafe extern "C" fn(*mut c_void);
 
-type FnRenderCreate = unsafe extern "C" fn(*mut MpvRenderCtx, MpvHandle, *mut MpvRenderParam) -> c_int;
+type FnRenderCreate =
+    unsafe extern "C" fn(*mut MpvRenderCtx, MpvHandle, *mut MpvRenderParam) -> c_int;
 type FnRenderRender = unsafe extern "C" fn(MpvRenderCtx, *mut MpvRenderParam) -> c_int;
-type FnRenderSetUpdateCb = unsafe extern "C" fn(MpvRenderCtx, Option<MpvRenderUpdateFn>, *mut c_void);
+type FnRenderSetUpdateCb =
+    unsafe extern "C" fn(MpvRenderCtx, Option<MpvRenderUpdateFn>, *mut c_void);
 type FnRenderUpdate = unsafe extern "C" fn(MpvRenderCtx) -> u64;
 type FnRenderFree = unsafe extern "C" fn(MpvRenderCtx);
 
@@ -138,7 +140,10 @@ impl Lib {
 
                 render_create: sym(&library, "mpv_render_context_create")?,
                 render_render: sym(&library, "mpv_render_context_render")?,
-                render_set_update_callback: sym(&library, "mpv_render_context_set_update_callback")?,
+                render_set_update_callback: sym(
+                    &library,
+                    "mpv_render_context_set_update_callback",
+                )?,
                 render_update: sym(&library, "mpv_render_context_update")?,
                 render_free: sym(&library, "mpv_render_context_free")?,
 
@@ -163,23 +168,40 @@ impl Lib {
             }
         }
 
+        // On Windows the candidates are filtered to files that exist, so the
+        // list is empty when there is no libmpv anywhere rather than full of
+        // not-found lines. Saying where we looked beats saying nothing.
+        if tried.is_empty() {
+            tried.push(
+                "  nothing named libmpv-2.dll beside the executable, in the usual \
+                 player install directories, or on PATH. Set MPV_DLL to point at one."
+                    .to_string(),
+            );
+        }
+
         Err(crate::Error::NotFound(tried.join("\n")))
     }
 
+    /// Where to look, in order.
+    ///
+    /// On Windows every entry is an absolute path that exists; see
+    /// [`windows_candidates`] for why a bare filename is not acceptable there.
+    /// On Unix the bare sonames are left to the dynamic linker, whose search
+    /// path — unlike Windows' — does not include the current directory.
     fn candidates() -> Vec<PathBuf> {
         #[cfg(windows)]
-        let names = [
-            r"C:\Program Files\mpv.net\libmpv-2.dll",
-            r"C:\Program Files\Plex\Plex\libmpv-2.dll",
-            "libmpv-2.dll",
-            "mpv-2.dll",
-        ];
-        #[cfg(target_os = "macos")]
-        let names = ["libmpv.2.dylib", "libmpv.dylib"];
-        #[cfg(all(unix, not(target_os = "macos")))]
-        let names = ["libmpv.so.2", "libmpv.so"];
+        {
+            windows_candidates()
+        }
+        #[cfg(not(windows))]
+        {
+            #[cfg(target_os = "macos")]
+            let names = ["libmpv.2.dylib", "libmpv.dylib"];
+            #[cfg(not(target_os = "macos"))]
+            let names = ["libmpv.so.2", "libmpv.so"];
 
-        names.iter().map(PathBuf::from).collect()
+            names.iter().map(PathBuf::from).collect()
+        }
     }
 
     /// Human-readable text for a libmpv negative error code.
@@ -192,4 +214,45 @@ impl Lib {
             .to_string_lossy()
             .into_owned()
     }
+}
+
+/// Absolute paths to try on Windows, in order, filtered to those that exist.
+///
+/// The two fallbacks used to be the bare names `libmpv-2.dll` and `mpv-2.dll`,
+/// handed straight to `Library::new` — which is `LoadLibraryExW(name, 0, 0)`,
+/// and with no path separator that means the standard DLL search order,
+/// including the process's current directory. No Windows machine ships a system
+/// copy of libmpv (this module's opening paragraph is about exactly that), so
+/// nothing legitimate ever wins that search — but a DLL sitting beside a
+/// downloaded executable run out of an ordinary Downloads folder would be
+/// loaded into this process.
+///
+/// The directories are searched by hand instead, which removes the current
+/// directory while keeping every case that actually worked before: a copy next
+/// to the binary, and a copy on `PATH`. Filtering on existence also keeps the
+/// `NotFound` error readable, since `PATH` alone is usually dozens of entries.
+///
+/// `MPV_DLL` still overrides all of this — an explicit path is the user saying
+/// where it is, which is not the same as the OS guessing.
+#[cfg(windows)]
+fn windows_candidates() -> Vec<PathBuf> {
+    const NAMES: [&str; 2] = ["libmpv-2.dll", "mpv-2.dll"];
+
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Some(beside_us) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(PathBuf::from))
+    {
+        dirs.push(beside_us);
+    }
+    dirs.push(PathBuf::from(r"C:\Program Files\mpv.net"));
+    dirs.push(PathBuf::from(r"C:\Program Files\Plex\Plex"));
+    if let Some(path) = std::env::var_os("PATH") {
+        dirs.extend(std::env::split_paths(&path));
+    }
+
+    dirs.iter()
+        .flat_map(|dir| NAMES.iter().map(move |name| dir.join(name)))
+        .filter(|candidate| candidate.is_file())
+        .collect()
 }

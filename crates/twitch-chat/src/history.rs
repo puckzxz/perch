@@ -39,7 +39,7 @@ const MAX_LIMIT: usize = 800;
 const TIMEOUT: Duration = Duration::from_secs(8);
 
 /// A free service run by one person. Say who is calling.
-const USER_AGENT: &str = concat!("nativetwitch/", env!("CARGO_PKG_VERSION"));
+const USER_AGENT: &str = concat!("perch/", env!("CARGO_PKG_VERSION"));
 
 /// Whether `channel` could be a Twitch login at all.
 ///

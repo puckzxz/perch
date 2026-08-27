@@ -165,13 +165,18 @@ pub enum Error {
 
 /// Where settings live: roaming app data, unlike the image cache which is
 /// local-only because it is reproducible.
-pub fn default_path() -> PathBuf {
+///
+/// `app_name` is passed in rather than baked in. This crate knows how settings
+/// are *stored*, not what the product is called, and having both this file and
+/// the app declare the directory name meant two constants that had to agree or
+/// the app would silently start reading a different file from the one it wrote.
+pub fn default_path(app_name: &str) -> PathBuf {
     let base = std::env::var_os("APPDATA")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from))
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
         .unwrap_or_else(std::env::temp_dir);
-    base.join("nativetwitch").join("settings.json")
+    base.join(app_name).join("settings.json")
 }
 
 impl Settings {
@@ -295,7 +300,7 @@ mod tests {
 
     fn temp_file(name: &str) -> PathBuf {
         std::env::temp_dir()
-            .join("nativetwitch-tests")
+            .join("perch-tests")
             .join(format!("{name}.json"))
     }
 

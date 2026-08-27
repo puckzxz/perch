@@ -11,8 +11,8 @@
 
 use std::collections::HashMap;
 use std::sync::mpsc;
-use std::sync::{Arc, RwLock};
-use std::time::Duration;
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::time::{Duration, Instant};
 
 use futures::channel::mpsc as futures_mpsc;
 use serde_json::Value;
@@ -22,6 +22,10 @@ const TIMEOUT: Duration = Duration::from_secs(20);
 /// One provider's fetch. `None` for the global set, `Some(room_id)` for a
 /// channel's. Returns name/URL pairs.
 type LoadFn = fn(&ureq::Agent, Option<&str>) -> Result<Vec<(String, String)>, String>;
+
+/// One provider's worth of name/URL pairs, tagged with which provider it came
+/// from. A `Vec` of these is a fetch, in precedence order.
+type Batch = (Provider, Vec<(String, String)>);
 
 /// Which set won a given name. Later providers override earlier ones, so the
 /// order here is also the precedence order, weakest first.
@@ -87,21 +91,22 @@ impl EmoteLoader {
                         .into();
 
                     while let Ok(room) = rx.recv() {
-                        // Weakest provider first so stronger ones overwrite.
-                        let loaders: [(Provider, LoadFn); 3] = [
-                            (Provider::Ffz, load_ffz),
-                            (Provider::Bttv, load_bttv),
-                            (Provider::SevenTv, load_7tv),
-                        ];
+                        // Merged and announced as each provider lands, not once
+                        // all three have. 7TV is by far the largest payload, so
+                        // buffering until the slowest returned would mean the
+                        // pane showed no third-party emotes at all until it did.
+                        let mut deliver = |_provider: Provider, entries| {
+                            sets.merge(entries);
+                            let _ = notify.unbounded_send(());
+                        };
 
-                        for (provider, load) in loaders {
-                            match load(&agent, room.as_deref()) {
-                                Ok(entries) if !entries.is_empty() => {
-                                    sets.merge(entries);
-                                    let _ = notify.unbounded_send(());
-                                }
-                                Ok(_) => {}
-                                Err(e) => eprintln!("emotes: {provider:?} failed: {e}"),
+                        match room.as_deref() {
+                            // The same three sets for every channel, so fetched
+                            // once for the whole process rather than once per
+                            // pane. See [`global_sets`].
+                            None => global_sets(&agent, &mut deliver),
+                            channel => {
+                                fetch_sets(&agent, channel, &mut deliver);
                             }
                         }
                     }
@@ -131,6 +136,103 @@ impl EmoteLoader {
     pub fn load_channel(&self, room_id: String) {
         let _ = self.queue.send(Some(room_id));
     }
+}
+
+/// Weakest provider first, so stronger ones overwrite when merged in order.
+const LOADERS: [(Provider, LoadFn); 3] = [
+    (Provider::Ffz, load_ffz),
+    (Provider::Bttv, load_bttv),
+    (Provider::SevenTv, load_7tv),
+];
+
+/// What one pass at the global endpoints produced.
+struct GlobalCache {
+    batches: Vec<Batch>,
+    /// Whether every provider answered with something. A partial pass is still
+    /// served rather than discarded — see [`global_sets`].
+    complete: bool,
+    fetched: Instant,
+}
+
+/// The global sets, as fetched. `None` until the first pass returns.
+static GLOBAL_SETS: OnceLock<Mutex<Option<GlobalCache>>> = OnceLock::new();
+
+/// How long a partial global pass is served before anyone tries again.
+///
+/// Retrying immediately is what makes the shared lock dangerous: with nothing
+/// cached, every pane in turn takes the lock and spends its own three requests
+/// on the same dead endpoint, so four panes serialise into four full timeouts
+/// instead of overlapping. One retry per cooldown, process-wide, bounds that.
+const GLOBAL_RETRY_AFTER: Duration = Duration::from_secs(60);
+
+/// Fetch every provider's set for `room`, handing each to `deliver` as it lands
+/// rather than after the slowest one. Returns how many answered with entries.
+///
+/// Streaming rather than returning a `Vec` is the point: 7TV is by far the
+/// biggest payload, and buffering meant a pane showed no third-party emotes at
+/// all until it returned, however quickly FFZ had.
+fn fetch_sets(
+    agent: &ureq::Agent,
+    room: Option<&str>,
+    deliver: &mut impl FnMut(Provider, Vec<(String, String)>),
+) -> usize {
+    let mut answered = 0;
+    for (provider, load) in LOADERS {
+        match load(agent, room) {
+            Ok(entries) if !entries.is_empty() => {
+                answered += 1;
+                deliver(provider, entries);
+            }
+            Ok(_) => {}
+            Err(e) => eprintln!("emotes: {provider:?} failed: {e}"),
+        }
+    }
+    answered
+}
+
+/// The global sets, fetched once per process and replayed to everyone after.
+///
+/// Every pane has its own [`EmoteLoader`], and each one used to fetch these
+/// three endpoints for itself: ~147KB of identical JSON per pane (7TV alone is
+/// 117KB), four times over at four panes, and again on every channel change.
+/// They are the same for every channel and change on the order of weeks.
+///
+/// Replayed as raw entries rather than shared as one `EmoteSets`, so each pane
+/// still merges into its own table — otherwise one channel's own emotes would
+/// start resolving inside another channel's chat.
+///
+/// The lock is held across the fetch, so that only the first pane asks. What
+/// makes that safe is that a *partial* pass is cached too: an empty result is
+/// counted as a failure here (unlike a channel set, where a provider legitimately
+/// has nothing, a 404 on a global endpoint is a bad edge, not an answer), but it
+/// is still served for [`GLOBAL_RETRY_AFTER`] rather than sending the next pane
+/// through the same three timeouts behind the same lock.
+fn global_sets(agent: &ureq::Agent, deliver: &mut impl FnMut(Provider, Vec<(String, String)>)) {
+    let cell = GLOBAL_SETS.get_or_init(|| Mutex::new(None));
+    // A panic in another loader thread must not disable global emotes for the
+    // rest of the session; the data behind the lock is still sound.
+    let mut cached = cell.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    if let Some(entry) = cached.as_ref() {
+        if entry.complete || entry.fetched.elapsed() < GLOBAL_RETRY_AFTER {
+            for (provider, entries) in &entry.batches {
+                deliver(*provider, entries.clone());
+            }
+            return;
+        }
+    }
+
+    let mut batches = Vec::new();
+    let answered = fetch_sets(agent, None, &mut |provider, entries| {
+        batches.push((provider, entries.clone()));
+        deliver(provider, entries);
+    });
+
+    *cached = Some(GlobalCache {
+        batches,
+        complete: answered == LOADERS.len(),
+        fetched: Instant::now(),
+    });
 }
 
 /// Fetch JSON, treating 404 as "this channel has no set here" rather than an

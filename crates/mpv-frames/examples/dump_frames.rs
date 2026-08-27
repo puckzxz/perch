@@ -167,7 +167,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let player = Player::open_with(&args.source, config)?;
     println!("libmpv:  {}", player.library_path().display());
     println!("source:  {}", args.source);
-    println!("render:  {}x{} BGRA   hwdec {}", args.width, args.height, if args.hwdec { "auto-copy" } else { "no" });
+    println!(
+        "render:  {}x{} BGRA   hwdec {}",
+        args.width,
+        args.height,
+        if args.hwdec { "auto-copy" } else { "no" }
+    );
     println!();
 
     let mut buf = vec![0u8; args.width as usize * args.height as usize * 4];
@@ -183,7 +188,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     while saved < args.frames {
         if Instant::now() > deadline {
-            eprintln!("\ntimed out after {:?} with {saved} frame(s) saved", args.timeout);
+            eprintln!(
+                "\ntimed out after {:?} with {saved} frame(s) saved",
+                args.timeout
+            );
             if rendered == 0 {
                 eprintln!("no frames rendered at all - mpv never produced video.");
                 std::process::exit(1);
@@ -264,7 +272,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         saved += 1;
     }
 
-    println!("\nrendered {rendered} frame(s), saved {saved} PNG(s) to {}", args.out.display());
+    println!(
+        "\nrendered {rendered} frame(s), saved {saved} PNG(s) to {}",
+        args.out.display()
+    );
     Ok(())
 }
 
@@ -321,7 +332,12 @@ fn run_bench(
     let bytes = args.width as f64 * args.height as f64 * 4.0;
     let fps = samples.len() as f64 / elapsed.as_secs_f64();
 
-    println!("benchmark  {}x{}  over {:.1}s", args.width, args.height, elapsed.as_secs_f64());
+    println!(
+        "benchmark  {}x{}  over {:.1}s",
+        args.width,
+        args.height,
+        elapsed.as_secs_f64()
+    );
     println!();
     println!("  frames rendered   {}", samples.len());
     println!("  delivered fps     {fps:.1}");
@@ -329,9 +345,15 @@ fn run_bench(
     println!("  render p50 / p99  {p50:.2} ms / {p99:.2} ms");
     println!("  render worst      {worst:.2} ms");
     println!("  frame size        {:.2} MB", bytes / 1_048_576.0);
-    println!("  upload rate       {:.0} MB/s at {fps:.0} fps", bytes * fps / 1_048_576.0);
+    println!(
+        "  upload rate       {:.0} MB/s at {fps:.0} fps",
+        bytes * fps / 1_048_576.0
+    );
     println!("  waits with no frame {missed}");
     println!();
-    println!("  budget at 60 fps  {:.1}% of 16.7 ms used by render", mean / 16.667 * 100.0);
+    println!(
+        "  budget at 60 fps  {:.1}% of 16.7 ms used by render",
+        mean / 16.667 * 100.0
+    );
     Ok(())
 }

@@ -3,7 +3,7 @@ resolver = "2"
 members = [
     "crates/emotes",
     "crates/mpv-frames",
-    "crates/nativetwitch",
+    "crates/perch",
     "crates/settings",
     "crates/streamlink",
     "crates/twitch-api",
@@ -14,6 +14,11 @@ members = [
 edition = "2021"
 rust-version = "1.85"
 license = "MIT"
+repository = "https://github.com/puckzxz/perch"
+# None of these are meant for crates.io: `perch` is an application, and the six
+# crates under it are its internals rather than libraries anyone should depend
+# on. Saying so here is what stops a stray `cargo publish` from being possible.
+publish = false
 
 [workspace.dependencies]
 libloading = "0.8"

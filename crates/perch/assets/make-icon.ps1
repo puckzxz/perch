@@ -3,7 +3,7 @@
 # Kept next to the icon so the asset is reproducible rather than a binary blob
 # nobody can regenerate. Run it from anywhere:
 #
-#   powershell -File crates/nativetwitch/assets/make-icon.ps1
+#   powershell -File crates/perch/assets/make-icon.ps1
 #
 # The shape is deliberately blunt, because at 16px in a taskbar there is room
 # for exactly one idea: a rounded screen in the app's accent purple with a play
@@ -154,7 +154,7 @@ foreach ($p in $payloads) {
 foreach ($p in $payloads) { $w.Write($p.Bytes) }
 
 $w.Flush()
-$target = Join-Path $PSScriptRoot "nativetwitch.ico"
+$target = Join-Path $PSScriptRoot "perch.ico"
 [System.IO.File]::WriteAllBytes($target, $ico.ToArray())
 $w.Dispose(); $ico.Dispose()
 

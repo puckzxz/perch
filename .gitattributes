@@ -1,0 +1,18 @@
+# Line endings, settled once.
+#
+# The repo was committed from a machine with core.autocrlf=false, so whatever
+# was on disk went into the index verbatim: most sources were stored CRLF, a
+# few LF, and one Cargo.toml was mixed inside itself. Anyone cloning with the
+# Git-for-Windows default (autocrlf=true) would have had their next commit
+# renormalise every CRLF file, producing whole-file diffs unrelated to their
+# change — and `cargo fmt --all` did the same thing for the same reason.
+#
+# `text=auto` stores text as LF and checks it out however the platform wants.
+* text=auto
+
+# Except the two that Windows itself reads, which want CRLF on disk.
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# And the one thing here that is not text.
+*.ico binary
