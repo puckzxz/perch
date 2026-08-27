@@ -19,6 +19,9 @@ A personal project, published because a working one is more interesting than a
 tidy one. Not affiliated with, endorsed by, or connected to Twitch Interactive,
 Inc.
 
+<img width="1591" height="918" alt="Screenshot 2026-08-27 004251" src="https://github.com/user-attachments/assets/421cff6e-591f-453d-895e-46415f893517" />
+
+
 ## Running it
 
 ```
