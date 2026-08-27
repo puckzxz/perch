@@ -1,0 +1,19 @@
+# The toolchain this is developed and checked with, pinned so that a local run
+# and a CI run are the same run.
+#
+# They were not, once: a local clippy on 1.94 passed a tree that CI failed on
+# 1.98, because four releases had gone by and `unnecessary_sort_by` had learned
+# a pattern the code was full of. A check that cannot fail the way CI fails is
+# not a check, and the version being written down in two places — here and in
+# the workflow — is how it drifts.
+#
+# rustup reads this on any cargo command in the tree and installs what it names,
+# so a clone needs no setup step and CI needs no toolchain action.
+#
+# Not the same thing as the MSRV. `rust-version = "1.85"` in Cargo.toml is the
+# oldest compiler the crates claim to build on; this is what we actually use.
+# Bumping this is a deliberate act, and the commit that does it is the one that
+# fixes whatever new lints came with it.
+[toolchain]
+channel = "1.98.0"
+components = ["rustfmt", "clippy"]

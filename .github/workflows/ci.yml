@@ -30,9 +30,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      # No toolchain action on purpose. rust-toolchain.toml pins the version
+      # and names the components, and rustup — preinstalled on the runner —
+      # installs both on the first cargo command. Naming a version here too
+      # would be the second place for it to drift from, which is the exact way
+      # this workflow went red the first time.
+      - name: Toolchain
+        run: |
+          rustup show active-toolchain
+          cargo --version
 
       # gpui is a large dependency tree and a cold build is most of this job's
       # wall clock. The cache keys on Cargo.lock, so it only rebuilds when
