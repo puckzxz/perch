@@ -367,6 +367,16 @@ pub struct LiveStream {
     pub started_at: String,
 }
 
+/// Most-watched first.
+///
+/// Every list of streams this module hands back is ordered this way, and Helix
+/// promises no order of its own — `/streams` happens to come back sorted and
+/// `/streams/followed` did too until it started being paginated, at which point
+/// "sorted within each page" stopped meaning sorted.
+fn by_viewers(streams: &mut [LiveStream]) {
+    streams.sort_by_key(|stream| std::cmp::Reverse(stream.viewer_count));
+}
+
 /// Fill in a thumbnail template.
 ///
 /// Twitch returns the URL with literal `{width}`/`{height}` placeholders; using
@@ -457,7 +467,7 @@ pub fn followed_streams(
         }
     }
 
-    streams.sort_by(|a, b| b.viewer_count.cmp(&a.viewer_count));
+    by_viewers(&mut streams);
     Ok(streams)
 }
 
@@ -571,7 +581,7 @@ pub fn top_streams(
     }
     let json = helix_get(client_id, token, "/streams", &query)?;
     let mut streams = parse_streams(&json);
-    streams.sort_by(|a, b| b.viewer_count.cmp(&a.viewer_count));
+    by_viewers(&mut streams);
     Ok(streams)
 }
 
@@ -645,7 +655,7 @@ pub fn streams_by_login(
 
     let json = helix_get(client_id, token, "/streams", &query)?;
     let mut streams = parse_streams(&json);
-    streams.sort_by(|a, b| b.viewer_count.cmp(&a.viewer_count));
+    by_viewers(&mut streams);
     Ok(streams)
 }
 

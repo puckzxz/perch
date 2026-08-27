@@ -597,7 +597,7 @@ impl RootView {
                 .iter()
                 .filter(|s| !self.known_live.contains(&s.user_login))
                 .collect();
-            newly.sort_by(|a, b| b.viewer_count.cmp(&a.viewer_count));
+            newly.sort_by_key(|stream| std::cmp::Reverse(stream.viewer_count));
             for stream in newly {
                 self.toast(
                     format!("{} went live · {}", stream.display_name, stream.game_name),

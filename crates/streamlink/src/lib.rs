@@ -365,7 +365,7 @@ fn run(
             .iter()
             .filter_map(|name| quality::parse_quality(name).map(|q| (q.height, name.clone())))
             .collect();
-        list.sort_by(|a, b| b.0.cmp(&a.0));
+        list.sort_by_key(|(height, _)| std::cmp::Reverse(*height));
         list.into_iter().map(|(_, name)| name).collect()
     };
 
