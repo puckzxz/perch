@@ -75,19 +75,64 @@ impl Tab {
 #[derive(Default)]
 pub struct Discovery {
     pub tab: Tab,
-    pub popular: Vec<LiveStream>,
-    pub categories: Vec<Category>,
+    pub popular: Listing<LiveStream>,
+    pub categories: Listing<Category>,
     /// Set while looking inside one category, which takes over the page.
     pub open: Option<Category>,
     /// Set while showing search results, which also take over the page.
     pub search: Option<SearchResults>,
     /// Streams within [`open`](Self::open).
-    pub streams: Vec<LiveStream>,
+    pub streams: Listing<LiveStream>,
     /// A request is in flight. One at a time, so one flag is enough.
     pub loading: bool,
     /// A browse request failed. Deliberately separate from `SignIn::Error`:
     /// the session is fine, and blanking the whole page would say otherwise.
     pub error: Option<SharedString>,
+}
+
+/// A list that arrives a page at a time.
+///
+/// Twitch caps a page at 100, and "popular" has no natural end — it is every
+/// live channel there is. So the cursor is kept beside the items rather than
+/// being walked to exhaustion inside the API layer the way the follows lists
+/// are: those finish, this one does not, and how far to go is the user's call.
+pub struct Listing<T> {
+    pub items: Vec<T>,
+    /// Where the next page starts. `None` means there is no more, which is what
+    /// takes the Load more row away.
+    pub next: Option<String>,
+}
+
+// Hand-written rather than derived: `derive(Default)` would demand `T: Default`,
+// and an empty list needs no such thing from its element type.
+impl<T> Default for Listing<T> {
+    fn default() -> Self {
+        Self {
+            items: Vec::new(),
+            next: None,
+        }
+    }
+}
+
+impl<T> Listing<T> {
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    /// Take a page, either replacing the list or extending it.
+    pub fn absorb(&mut self, items: Vec<T>, next: Option<String>, append: bool) {
+        if append {
+            self.items.extend(items);
+        } else {
+            self.items = items;
+        }
+        self.next = next;
+    }
+
+    pub fn clear(&mut self) {
+        self.items.clear();
+        self.next = None;
+    }
 }
 
 /// What a search turned up. Both kinds at once, because a name like "zomboid"
@@ -119,6 +164,8 @@ pub enum Action {
     OpenCategory(Category),
     CloseCategory,
     CloseSearch,
+    /// Fetch the next page of whichever list is on screen.
+    LoadMore,
 }
 
 /// How far sign-in has got.
@@ -450,15 +497,75 @@ fn category_row<V: 'static>(
 
 fn stream_grid<V: 'static>(
     id: &'static str,
-    streams: &[LiveStream],
+    streams: &Listing<LiveStream>,
+    loading: bool,
     cache: &ImageCache,
     can_add: bool,
     on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + Clone + 'static,
     cx: &mut Context<V>,
 ) -> AnyElement {
     scroller(id)
-        .child(stream_row(streams, cache, can_add, on_action, cx))
+        .child(stream_row(
+            &streams.items,
+            cache,
+            can_add,
+            on_action.clone(),
+            cx,
+        ))
+        .children(load_more(streams.next.is_some(), loading, on_action, cx))
         .into_any_element()
+}
+
+/// The row at the end of a paginated list.
+///
+/// A button rather than loading as you approach the bottom. Each press is a
+/// request plus a hundred thumbnails to fetch and cache, and a list that keeps
+/// growing while you scroll spends that on your way past rather than on your
+/// say-so. It is also inside the scroller, so reaching it *is* the gesture of
+/// having got to the end.
+fn load_more<V: 'static>(
+    more: bool,
+    loading: bool,
+    on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + 'static,
+    cx: &mut Context<V>,
+) -> Option<impl IntoElement> {
+    if !more {
+        return None;
+    }
+
+    let row = div()
+        .id("load-more")
+        .px(px(theme::PANEL_PAD))
+        .py(px(theme::CONTROL_PAD_Y))
+        .rounded_sm()
+        .bg(theme::surface_raised())
+        .text_size(px(theme::TEXT_LABEL))
+        .font_weight(theme::weight_label())
+        .text_color(theme::text_muted());
+
+    // While a page is in flight the row says so and stops taking clicks, so a
+    // second press cannot queue a second page against the same cursor.
+    let row = if loading {
+        row.child("Loading…")
+    } else {
+        row.cursor_pointer()
+            .hover(|style| style.bg(theme::hover()).text_color(theme::text()))
+            .active(|style| style.bg(theme::pressed()))
+            .child("Load more")
+            .on_click(cx.listener(move |view, _event, window, cx| {
+                on_action(view, Action::LoadMore, window, cx)
+            }))
+    };
+
+    Some(
+        div()
+            .w_full()
+            .flex()
+            .flex_row()
+            .justify_center()
+            .py(px(theme::PAGE_PAD))
+            .child(row),
+    )
 }
 
 /// Everything a search turned up, channels first.
@@ -787,6 +894,7 @@ pub fn page<V: 'static>(
             stream_grid(
                 "category-streams",
                 &discovery.streams,
+                discovery.loading,
                 cache,
                 can_add,
                 on_action.clone(),
@@ -825,6 +933,7 @@ pub fn page<V: 'static>(
             Tab::Popular => stream_grid(
                 "popular-grid",
                 &discovery.popular,
+                discovery.loading,
                 cache,
                 can_add,
                 on_action,
@@ -834,7 +943,18 @@ pub fn page<V: 'static>(
                 browse_placeholder(discovery, "No categories came back.".into())
             }
             Tab::Categories => scroller("categories-grid")
-                .child(category_row(&discovery.categories, cache, on_action, cx))
+                .child(category_row(
+                    &discovery.categories.items,
+                    cache,
+                    on_action.clone(),
+                    cx,
+                ))
+                .children(load_more(
+                    discovery.categories.next.is_some(),
+                    discovery.loading,
+                    on_action,
+                    cx,
+                ))
                 .into_any_element(),
         }
     };
@@ -850,6 +970,48 @@ pub fn page<V: 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The difference between a Load more and a fresh tab is one bool, and
+    /// getting it wrong either doubles the list or throws away what you were
+    /// looking at.
+    #[test]
+    fn a_listing_appends_a_page_but_replaces_a_first_one() {
+        let mut listing: Listing<u32> = Listing::default();
+        assert!(listing.is_empty());
+        assert!(listing.next.is_none(), "an empty list offers no Load more");
+
+        listing.absorb(vec![1, 2, 3], Some("page2".into()), false);
+        assert_eq!(listing.items, vec![1, 2, 3]);
+        assert_eq!(listing.next.as_deref(), Some("page2"));
+
+        listing.absorb(vec![4, 5], Some("page3".into()), true);
+        assert_eq!(listing.items, vec![1, 2, 3, 4, 5], "a page did not append");
+
+        // A refresh starts again rather than continuing.
+        listing.absorb(vec![9], None, false);
+        assert_eq!(listing.items, vec![9], "a fresh page did not replace");
+        assert!(
+            listing.next.is_none(),
+            "the end of the list still offered more"
+        );
+    }
+
+    /// Running out of pages has to take the row away, not leave a button that
+    /// asks Twitch for nothing.
+    #[test]
+    fn the_last_page_clears_the_cursor() {
+        let mut listing: Listing<u32> = Listing::default();
+        listing.absorb(vec![1], Some("more".into()), false);
+        assert!(listing.next.is_some());
+
+        listing.absorb(vec![2], None, true);
+        assert_eq!(listing.items, vec![1, 2]);
+        assert!(listing.next.is_none());
+
+        listing.clear();
+        assert!(listing.is_empty());
+        assert!(listing.next.is_none(), "clear left a cursor behind");
+    }
 
     #[test]
     fn formats_viewer_counts_compactly() {

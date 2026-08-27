@@ -76,6 +76,16 @@ pub struct ChannelPrefs {
     /// distinguishable from `Some(0)` — a channel you deliberately muted should
     /// reopen muted, and one you have never opened should not.
     pub volume: Option<u8>,
+    /// Whether this channel opens with its chat pane hidden.
+    ///
+    /// A plain `bool` rather than an `Option`, unlike `volume`, because there
+    /// is no global default for it to fall back to: chat shown is simply what
+    /// every channel does until you say otherwise about that one. Hiding chat
+    /// on a channel you watch for the game says nothing about the next channel,
+    /// which is the same argument that keeps muting from becoming the default
+    /// level.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub chat_hidden: bool,
 }
 
 /// How a channel is identified in [`Settings::channel_prefs`].
@@ -218,6 +228,27 @@ impl Settings {
         changed
     }
 
+    /// Whether `channel` opens with chat hidden.
+    pub fn chat_hidden_for(&self, channel: &str) -> bool {
+        self.channel_prefs
+            .get(&channel_key(channel))
+            .is_some_and(|prefs| prefs.chat_hidden)
+    }
+
+    /// Remember whether `channel` shows chat. Returns whether anything changed,
+    /// so a no-op toggle does not rewrite the file.
+    ///
+    /// Deliberately not carried forward as a default the way a volume is — see
+    /// [`ChannelPrefs::chat_hidden`].
+    pub fn set_chat_hidden_for(&mut self, channel: &str, hidden: bool) -> bool {
+        let entry = self.channel_prefs.entry(channel_key(channel)).or_default();
+        if entry.chat_hidden == hidden {
+            return false;
+        }
+        entry.chat_hidden = hidden;
+        true
+    }
+
     /// Load from `path`, returning defaults if the file does not exist yet.
     ///
     /// A missing file is normal on first run and is not an error. A corrupt
@@ -323,7 +354,10 @@ mod tests {
             last_channel: Some("forsen".into()),
             channel_prefs: BTreeMap::from([(
                 "forsen".to_string(),
-                ChannelPrefs { volume: Some(35) },
+                ChannelPrefs {
+                    volume: Some(35),
+                    ..Default::default()
+                },
             )]),
             credentials: Credentials {
                 client_id: Some("abc123".into()),
@@ -444,6 +478,43 @@ mod tests {
 
     /// Muting one stream to hear another must not make silence the default,
     /// and must still be remembered for the stream it was done to.
+    /// Hiding chat is per channel and never becomes a default, for the same
+    /// reason muting does not: it is a statement about one stream.
+    #[test]
+    fn hiding_chat_is_remembered_per_channel_only() {
+        let mut settings = Settings::default();
+        assert!(!settings.chat_hidden_for("forsen"));
+
+        assert!(settings.set_chat_hidden_for("forsen", true));
+        assert!(settings.chat_hidden_for("forsen"));
+        assert!(
+            !settings.chat_hidden_for("xqc"),
+            "hiding one channel's chat hid another's"
+        );
+
+        // A repeated value is not a reason to rewrite the file.
+        assert!(!settings.set_chat_hidden_for("forsen", true));
+        assert!(settings.set_chat_hidden_for("forsen", false));
+        assert!(!settings.chat_hidden_for("forsen"));
+    }
+
+    /// It travels with the channel's other preferences, and shares their
+    /// case-insensitive key.
+    #[test]
+    fn hidden_chat_round_trips_and_ignores_case() {
+        let path = temp_file("chat-hidden");
+        let mut settings = Settings::default();
+        settings.set_chat_hidden_for("Forsen", true);
+        settings.set_volume_for("Forsen", 40);
+        settings.save(&path).unwrap();
+
+        let loaded = Settings::load(&path).unwrap();
+        assert!(loaded.chat_hidden_for("forsen"));
+        assert!(loaded.chat_hidden_for("#FORSEN"));
+        assert_eq!(loaded.volume_for("forsen"), 40);
+        let _ = std::fs::remove_file(&path);
+    }
+
     #[test]
     fn muting_is_remembered_but_never_becomes_the_default() {
         let mut settings = Settings::default();

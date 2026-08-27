@@ -471,6 +471,21 @@ pub fn followed_streams(
     Ok(streams)
 }
 
+/// One page of a Helix list, and where the next one starts.
+///
+/// Twitch caps a page at 100 however many you ask for, so a list somebody might
+/// scroll to the end of has to be fetched a page at a time rather than in one
+/// go. The follows lists walk their pages internally because they have a
+/// natural end — you follow a fixed number of people. The browse lists do not:
+/// "popular" is every live channel on Twitch, so the cursor comes back out to
+/// the caller and the user decides how far to go.
+#[derive(Debug, Clone)]
+pub struct Page<T> {
+    pub items: Vec<T>,
+    /// `None` once Twitch has nothing more to give.
+    pub next: Option<String>,
+}
+
 /// The `after` value for the next page, or `None` at the end of the list.
 ///
 /// Twitch signals the end two ways — the key missing, and the key present but
@@ -574,24 +589,46 @@ pub fn top_streams(
     client_id: &str,
     token: &str,
     category_id: Option<&str>,
-) -> Result<Vec<LiveStream>, Error> {
+    after: Option<&str>,
+) -> Result<Page<LiveStream>, Error> {
     let mut query = vec![("first", PAGE_SIZE)];
     if let Some(id) = category_id {
         query.push(("game_id", id));
     }
+    if let Some(cursor) = after {
+        query.push(("after", cursor));
+    }
     let json = helix_get(client_id, token, "/streams", &query)?;
-    let mut streams = parse_streams(&json);
-    by_viewers(&mut streams);
-    Ok(streams)
+    let mut items = parse_streams(&json);
+    // Sorted within the page rather than across pages, which is enough: Helix
+    // hands these back in descending viewer order, so every stream on page two
+    // sits below every stream on page one and appending keeps the whole list
+    // ordered.
+    by_viewers(&mut items);
+    Ok(Page {
+        items,
+        next: next_cursor(&json),
+    })
 }
 
 /// The categories with the most viewers right now, in Twitch's own order.
 ///
 /// Twitch does not report a viewer count per category here, only the ranking,
 /// so there is no number to show beside the name.
-pub fn top_categories(client_id: &str, token: &str) -> Result<Vec<Category>, Error> {
-    let json = helix_get(client_id, token, "/games/top", &[("first", PAGE_SIZE)])?;
-    Ok(parse_categories(&json))
+pub fn top_categories(
+    client_id: &str,
+    token: &str,
+    after: Option<&str>,
+) -> Result<Page<Category>, Error> {
+    let mut query = vec![("first", PAGE_SIZE)];
+    if let Some(cursor) = after {
+        query.push(("after", cursor));
+    }
+    let json = helix_get(client_id, token, "/games/top", &query)?;
+    Ok(Page {
+        items: parse_categories(&json),
+        next: next_cursor(&json),
+    })
 }
 
 /// Categories whose name matches `query`.

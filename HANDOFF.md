@@ -872,6 +872,24 @@ Ranked by what would be noticed, roughly:
   own history server-side and exposes no endpoint; every client that shows it
   uses the third-party service `twitch_chat::history` talks to.
 
+## Paging, and what is not paged
+
+`twitch_api::Page` carries a cursor back out to the caller; `browse::Listing`
+holds one beside the items it belongs to. The two followed endpoints do *not*
+work that way — they walk their pages inside the API layer until Helix stops —
+and the difference is that they finish. You follow a fixed number of people;
+"popular" is every live channel on Twitch, so how far to go is the user's call
+and the cursor has to survive the round trip to reach them.
+
+Search is deliberately unpaged. `SEARCH_PAGE_SIZE` is 40 and
+`SEARCH_CATEGORY_LIMIT` is 12 because a short relevance-ordered list is the
+feature — see the comment on the latter.
+
+`Listing::absorb` takes an `append` flag rather than working it out, because a
+reply carries no memory of the request that asked for it. Refresh always starts
+a list again: appending a fresh page one onto a stale page two is neither the
+old list nor the new one.
+
 ## Known limits
 
 None of these is being worked on; all of them are real.

@@ -39,6 +39,8 @@ actions!(
         ToggleMute,
         VolumeUp,
         VolumeDown,
+        /// Show or hide the active pane's chat.
+        ToggleChat,
         /// Close the active pane.
         ClosePane,
         /// Leave the watch page, keeping the streams as muted thumbnails.
@@ -107,6 +109,7 @@ fn bindings() -> Vec<KeyBinding> {
         // guard: nothing on the watch page takes typed input.
         KeyBinding::new("space", TogglePlayback, Some(&watch)),
         KeyBinding::new("m", ToggleMute, Some(&watch)),
+        KeyBinding::new("c", ToggleChat, Some(&watch)),
         KeyBinding::new("up", VolumeUp, Some(&watch)),
         KeyBinding::new("down", VolumeDown, Some(&watch)),
         KeyBinding::new("ctrl-w", ClosePane, Some(&watch)),
@@ -137,9 +140,10 @@ pub fn init(cx: &mut App) {
 /// — a row could describe a key nobody had bound and nothing would notice.
 /// The display column stays separate because `↑ / ↓` is two bindings a reader
 /// thinks of as one, and `escape` should read as `Esc`.
-pub const SHORTCUTS: [(&[&str], &str, &str); 8] = [
+pub const SHORTCUTS: [(&[&str], &str, &str); 9] = [
     (&["space"], "Space", "Pause or resume"),
     (&["m"], "M", "Mute or unmute"),
+    (&["c"], "C", "Show or hide this chat"),
     (&["up", "down"], "↑ / ↓", "Volume"),
     (&["ctrl-w"], "Ctrl+W", "Close this pane"),
     (&["escape"], "Esc", "Back to follows"),
@@ -159,7 +163,7 @@ mod tests {
     /// symptom is "the key does nothing", which is a poor thing to debug.
     #[test]
     fn every_binding_and_every_context_parses() {
-        assert_eq!(bindings().len(), 10);
+        assert_eq!(bindings().len(), 11);
         for context in [CONTEXT_WATCH, CONTEXT_BROWSE, CONTEXT_MODAL] {
             KeyContext::parse(context)
                 .unwrap_or_else(|e| panic!("{context} is not a key context: {e}"));

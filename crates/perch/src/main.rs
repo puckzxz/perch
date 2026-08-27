@@ -302,6 +302,32 @@ impl RootView {
         }
     }
 
+    /// Show or hide the active pane's chat, and remember it for that channel.
+    ///
+    /// Per pane rather than per app: the whole watch page is built on panes
+    /// being independent, and the reason to hide chat — watching one stream for
+    /// the game while reading another's chat — only makes sense if it is.
+    fn on_toggle_chat(
+        &mut self,
+        _: &keys::ToggleChat,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = self.active_slot() else {
+            return;
+        };
+        let hidden = !self.slots[index].chat_hidden;
+        self.slots[index].chat_hidden = hidden;
+
+        let channel = self.slots[index].channel.clone();
+        if self.settings.set_chat_hidden_for(&channel, hidden) {
+            if let Err(e) = self.settings.save_preferences(&self.settings_path) {
+                eprintln!("settings: could not save: {e}");
+            }
+        }
+        cx.notify();
+    }
+
     fn on_close_pane(&mut self, _: &keys::ClosePane, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(index) = self.active_slot() {
             self.close_slot(index, cx);
@@ -402,12 +428,16 @@ impl RootView {
                 self.sign_in = SignIn::Error(reason.into());
             }
 
-            TwitchEvent::Popular(streams) => {
-                self.discovery.popular = streams;
+            TwitchEvent::Popular(page) => {
+                self.discovery
+                    .popular
+                    .absorb(page.items, page.next, page.append);
                 self.discovery.loading = false;
             }
-            TwitchEvent::Categories(categories) => {
-                self.discovery.categories = categories;
+            TwitchEvent::Categories(page) => {
+                self.discovery
+                    .categories
+                    .absorb(page.items, page.next, page.append);
                 self.discovery.loading = false;
             }
             TwitchEvent::CategoryStreams { category, streams } => {
@@ -419,7 +449,9 @@ impl RootView {
                     .as_ref()
                     .is_some_and(|open| open.id == category.id);
                 if still_open {
-                    self.discovery.streams = streams;
+                    self.discovery
+                        .streams
+                        .absorb(streams.items, streams.next, streams.append);
                 }
                 self.discovery.loading = false;
             }
@@ -483,9 +515,11 @@ impl RootView {
     /// Twitch does not move in the time it takes to look at another tab.
     fn fill_tab(&mut self) {
         match self.discovery.tab {
-            Tab::Popular if self.discovery.popular.is_empty() => self.fetch(Request::Popular),
+            Tab::Popular if self.discovery.popular.is_empty() => {
+                self.fetch(Request::Popular { after: None })
+            }
             Tab::Categories if self.discovery.categories.is_empty() => {
-                self.fetch(Request::Categories)
+                self.fetch(Request::Categories { after: None })
             }
             _ => {}
         }
@@ -503,13 +537,19 @@ impl RootView {
             self.run_search(query, cx);
             return;
         }
+        // Refresh starts the list again rather than continuing it: the point is
+        // to see what is on *now*, and appending a fresh page one onto a stale
+        // page two would be neither.
         if let Some(category) = self.discovery.open.clone() {
-            self.fetch(Request::Category(category));
+            self.fetch(Request::Category {
+                category,
+                after: None,
+            });
         } else {
             match self.discovery.tab {
                 Tab::Following => self.refresh_follows(),
-                Tab::Popular => self.fetch(Request::Popular),
-                Tab::Categories => self.fetch(Request::Categories),
+                Tab::Popular => self.fetch(Request::Popular { after: None }),
+                Tab::Categories => self.fetch(Request::Categories { after: None }),
             }
         }
         cx.notify();
@@ -568,7 +608,10 @@ impl RootView {
                 self.discovery.search = None;
                 self.discovery.streams.clear();
                 self.discovery.open = Some(category.clone());
-                self.fetch(Request::Category(category));
+                self.fetch(Request::Category {
+                    category,
+                    after: None,
+                });
                 cx.notify();
             }
             Action::CloseCategory => {
@@ -582,6 +625,56 @@ impl RootView {
                 self.discovery.error = None;
                 cx.notify();
             }
+            Action::LoadMore => self.load_more(cx),
+        }
+    }
+
+    /// Ask for the next page of whichever list is on screen.
+    ///
+    /// The cursor comes from the list itself rather than from the click, so a
+    /// stale button cannot ask for a page that has already arrived — and a
+    /// list with nothing left simply has no cursor, which is also what takes
+    /// the row away.
+    ///
+    /// Nothing here is reachable while `loading` is set: the row renders as
+    /// "Loading…" and stops taking clicks, so one cursor cannot be spent twice.
+    fn load_more(&mut self, cx: &mut Context<Self>) {
+        // Search results are not paginated — see `SEARCH_PAGE_SIZE`, where a
+        // short list is the feature.
+        if self.discovery.search.is_some() {
+            return;
+        }
+
+        let request = if let Some(category) = self.discovery.open.clone() {
+            self.discovery
+                .streams
+                .next
+                .clone()
+                .map(|after| Request::Category {
+                    category,
+                    after: Some(after),
+                })
+        } else {
+            match self.discovery.tab {
+                Tab::Popular => self
+                    .discovery
+                    .popular
+                    .next
+                    .clone()
+                    .map(|after| Request::Popular { after: Some(after) }),
+                Tab::Categories => self
+                    .discovery
+                    .categories
+                    .next
+                    .clone()
+                    .map(|after| Request::Categories { after: Some(after) }),
+                Tab::Following => None,
+            }
+        };
+
+        if let Some(request) = request {
+            self.fetch(request);
+            cx.notify();
         }
     }
 
@@ -699,6 +792,7 @@ impl RootView {
             supervisor: None,
             pump: None,
             hovered: false,
+            chat_hidden: self.settings.chat_hidden_for(&channel),
         });
 
         self.active = Some(channel.clone());
@@ -1291,6 +1385,7 @@ impl Render for RootView {
             .key_context(self.key_context())
             .on_action(cx.listener(Self::on_toggle_playback))
             .on_action(cx.listener(Self::on_toggle_mute))
+            .on_action(cx.listener(Self::on_toggle_chat))
             .on_action(cx.listener(Self::on_volume_up))
             .on_action(cx.listener(Self::on_volume_down))
             .on_action(cx.listener(Self::on_close_pane))

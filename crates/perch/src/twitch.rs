@@ -35,14 +35,41 @@ pub enum Request {
     /// Answered in [`run`] rather than in [`serve`], because it is the one
     /// request that has to move the timer — see the call site.
     Follows,
-    /// The most-watched streams overall.
-    Popular,
+    /// The most-watched streams overall. `after` continues an existing list
+    /// rather than starting one — see [`twitch_api::Page`].
+    Popular { after: Option<String> },
     /// The categories with the most viewers.
-    Categories,
+    Categories { after: Option<String> },
     /// The most-watched streams inside one category.
-    Category(Category),
+    Category {
+        category: Category,
+        after: Option<String>,
+    },
     /// Categories and live channels matching a name.
     Search(String),
+}
+
+/// A page of a browse list, and what the UI should do with it.
+///
+/// `append` rather than letting the receiver work it out: a reply carries no
+/// memory of the request that asked for it, and "was this a Load more or a
+/// fresh tab" is exactly the difference between adding a hundred rows and
+/// replacing them.
+#[derive(Debug, Clone)]
+pub struct Listing<T> {
+    pub items: Vec<T>,
+    pub next: Option<String>,
+    pub append: bool,
+}
+
+impl<T> Listing<T> {
+    fn from(page: twitch_api::Page<T>, append: bool) -> Self {
+        Self {
+            items: page.items,
+            next: page.next,
+            append,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -68,11 +95,11 @@ pub enum TwitchEvent {
     /// [`Error`](TwitchEvent::Error), which the UI reads as "signed out" and
     /// which would blank the whole page over one dropped request.
     FollowsError(String),
-    Popular(Vec<LiveStream>),
-    Categories(Vec<Category>),
+    Popular(Listing<LiveStream>),
+    Categories(Listing<Category>),
     CategoryStreams {
         category: Category,
-        streams: Vec<LiveStream>,
+        streams: Listing<LiveStream>,
     },
     SearchResults {
         query: String,
@@ -334,15 +361,21 @@ fn serve(
     let result = match request {
         // Intercepted by the caller, which owns the poll timer.
         Request::Follows => return,
-        Request::Popular => {
-            twitch_api::top_streams(client_id, token, None).map(TwitchEvent::Popular)
+        Request::Popular { after } => {
+            twitch_api::top_streams(client_id, token, None, after.as_deref())
+                .map(|page| TwitchEvent::Popular(Listing::from(page, after.is_some())))
         }
-        Request::Categories => {
-            twitch_api::top_categories(client_id, token).map(TwitchEvent::Categories)
+        Request::Categories { after } => {
+            twitch_api::top_categories(client_id, token, after.as_deref())
+                .map(|page| TwitchEvent::Categories(Listing::from(page, after.is_some())))
         }
-        Request::Category(category) => {
-            twitch_api::top_streams(client_id, token, Some(&category.id))
-                .map(|streams| TwitchEvent::CategoryStreams { category, streams })
+        Request::Category { category, after } => {
+            twitch_api::top_streams(client_id, token, Some(&category.id), after.as_deref()).map(
+                |page| TwitchEvent::CategoryStreams {
+                    category,
+                    streams: Listing::from(page, after.is_some()),
+                },
+            )
         }
         Request::Search(query) => search(client_id, token, query),
     };

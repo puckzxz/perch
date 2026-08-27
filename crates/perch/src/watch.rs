@@ -61,6 +61,11 @@ pub struct Slot {
     /// reported — see `VideoView::hovered` for why that distinction matters.
     /// The page navigation is revealed by any pane being hovered.
     pub hovered: bool,
+    /// Whether this pane's chat is hidden, so the video has the whole cell.
+    ///
+    /// Per pane, like everything else here, and remembered per channel: a
+    /// channel you watch for the game is not a statement about the next one.
+    pub chat_hidden: bool,
 }
 
 impl Slot {
@@ -228,7 +233,7 @@ fn pane<V: 'static>(
     on_close: impl Fn(&mut V, usize, &mut Window, &mut Context<V>) + 'static,
     on_hover: impl Fn(&mut V, usize, bool, &mut Context<V>) + 'static,
     cx: &mut Context<V>,
-) -> impl IntoElement {
+) -> gpui::AnyElement {
     let video = match (&slot.state, status_message(slot)) {
         (StreamState::Playing(view), _) => view.clone().into_any_element(),
         (_, Some(status)) => {
@@ -259,27 +264,7 @@ fn pane<V: 'static>(
         _ => div().into_any_element(),
     };
 
-    let chat_pane = div()
-        .flex()
-        .flex_col()
-        .py(px(theme::GAP_TIGHT))
-        .bg(theme::surface())
-        .map(|pane| {
-            if layout.portrait {
-                pane.flex_1().min_h_0().w_full()
-            } else {
-                pane.flex_none().w(px(layout.chat_width)).h_full()
-            }
-        })
-        .child(chat_header(
-            index,
-            slot,
-            info,
-            layout.closable,
-            on_close,
-            cx,
-        ))
-        .child(div().flex_1().min_h_0().child(slot.chat.clone()));
+    let header = chat_header(index, slot, info, layout.closable, on_close, cx);
 
     // Where the pointer actually is, rather than what `on_hover` claims while
     // something in the window is being dragged. The listener below only exists
@@ -300,7 +285,12 @@ fn pane<V: 'static>(
     let video_pane = div()
         .id(pane_id(&slot.channel, "video"))
         .map(|pane| {
-            if layout.portrait {
+            // With chat hidden the video is the whole cell, so it stops being
+            // sized against chat and simply takes what is left under the
+            // header.
+            if slot.chat_hidden {
+                pane.flex_1().min_w_0()
+            } else if layout.portrait {
                 pane.flex_none().h(px(layout.video_height)).w_full()
             } else {
                 pane.flex_1().min_w_0()
@@ -314,20 +304,66 @@ fn pane<V: 'static>(
         .child(hover_probe)
         .child(video);
 
-    div()
-        .flex_1()
-        .min_w_0()
-        .min_h_0()
+    // With chat hidden the cell is a column whatever the grid shape, because
+    // the only thing left beside the video is the header strip.
+    //
+    // That strip stays rather than going with the chat it used to sit on. It
+    // carries the channel's name and the close button, and nothing is drawn
+    // over the video on purpose — so losing it would leave a pane with no
+    // identity and no way to close it but the keyboard.
+    let cell = div().flex_1().min_w_0().min_h_0().flex();
+
+    if slot.chat_hidden {
+        // A column whatever the grid shape, because the only thing left beside
+        // the video is the header strip.
+        //
+        // That strip stays rather than going with the chat it used to sit on:
+        // it carries the channel's name and the close button, and nothing is
+        // drawn over the video on purpose — so dropping it would leave a pane
+        // with no identity and no way to close it but the keyboard.
+        return cell
+            .flex_col()
+            .bg(theme::surface())
+            .child(
+                // The same vertical padding chat used to give it. Without this
+                // the header sits flush against the top of the cell and the top
+                // of the video, and the pane reads as clipped rather than as
+                // deliberately bare.
+                div()
+                    .flex_none()
+                    .w_full()
+                    .py(px(theme::GAP_TIGHT))
+                    .child(header),
+            )
+            .child(video_pane)
+            .into_any_element();
+    }
+
+    let chat_pane = div()
         .flex()
-        .map(|cell| {
+        .flex_col()
+        .py(px(theme::GAP_TIGHT))
+        .bg(theme::surface())
+        .map(|pane| {
             if layout.portrait {
-                cell.flex_col()
+                pane.flex_1().min_h_0().w_full()
             } else {
-                cell.flex_row()
+                pane.flex_none().w(px(layout.chat_width)).h_full()
             }
         })
-        .child(video_pane)
-        .child(chat_pane)
+        .child(header)
+        .child(div().flex_1().min_h_0().child(slot.chat.clone()));
+
+    cell.map(|cell| {
+        if layout.portrait {
+            cell.flex_col()
+        } else {
+            cell.flex_row()
+        }
+    })
+    .child(video_pane)
+    .child(chat_pane)
+    .into_any_element()
 }
 
 /// The whole watch page.

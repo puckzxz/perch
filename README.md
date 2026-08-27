@@ -54,6 +54,7 @@ video, which is no use when you are not holding the mouse.
 |---|---|
 | `Space` | Pause or resume |
 | `M` | Mute or unmute |
+| `C` | Show or hide this pane's chat |
 | `↑` `↓` | Volume |
 | `Ctrl+W` | Close this pane |
 | `Esc` | Back to follows |
@@ -63,6 +64,11 @@ video, which is no use when you are not holding the mouse.
 
 Player keys act on the pane you last pointed at. All of them stand aside while
 the cursor is in a text box. The same list is in the settings sheet.
+
+Hiding chat is remembered per channel, the way volume is — a channel you watch
+for the game stays that way without saying anything about the next one. The
+header keeps its place above the video, so a pane without chat still has its
+name and its close button.
 
 ### Requirements
 
@@ -90,6 +96,11 @@ those come from the same community service
 [Chatterino](https://chatterino.com/) uses — which means the request tells
 someone other than Twitch which channels you watch. Settings has the switch,
 including **Off**.
+
+Popular and the categories arrive a hundred at a time, which is Twitch's cap
+per request rather than a choice. **Load more** at the end of the list fetches
+the next hundred — a page you asked for, rather than a list that grows while you
+scroll past it.
 
 ## Follows
 
