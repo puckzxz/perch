@@ -512,12 +512,15 @@ picture is exactly what you end up staring past for three hours, so it lives in
 a header above chat instead — chat is already a panel, so it costs nothing
 there. The split:
 
-- **Chat header**, always visible, one per pane: live dot, channel name, viewer
-  count, uptime, and the pane's close control.
+- **Chat header**, always visible, one per pane: a live dot *when the pane is
+  actually showing a picture*, the channel name — which opens twitch.tv, the
+  way out of a chat that is read-only by design — viewer count, uptime, and the
+  pane's close control. With more than one pane its bottom border marks the one
+  the keyboard is talking to.
 - **Over the video**, hover-revealed only: the playback bar (pause, mute,
-  volume, quality) and the single page-level "← follows" pill in the top-left.
-  Point at the video and they come up; look away and the picture is all that is
-  left.
+  volume, quality), and in the top-left the "← follows" pill plus, when the rail
+  is folded away, the control that brings it back. Point at the video and they
+  come up; look away and the picture is all that is left.
 
 The back pill follows the *panes'* hover, not the window's, so resting the
 pointer in chat does not keep it on screen. An earlier arrangement put the
@@ -938,8 +941,14 @@ Ranked by what would be noticed, roughly:
 
 1. **Filtering a list in memory.** The offline follows list is now the longest
    thing on the page and has no filter, no sort and no way to collapse it. The
-   search box beside it searches *Twitch*, which is a different question. This
-   moved up the list precisely because offline follows landed.
+   search box beside it searches *Twitch*, which is a different question.
+
+   The palette is now the second thing that is not that question — it filters
+   live follows in memory and already has the matcher, the row and the keyboard
+   path. What it does not have is the offline list, which is the one that
+   actually needs filtering. Feeding `palette::entries` the offline follows, and
+   giving the browse page a filter that shares the same `matches`, is most of
+   this item.
 2. **Stream metadata for channels you do not follow.** The chat header's viewer
    count and uptime come from the follows poll, so they are blank for anything
    opened from popular, from search, or by name. `GET /helix/streams?user_login=…`
@@ -1023,14 +1032,25 @@ None of these is being worked on; all of them are real.
 10. **A volume drag writes `settings.json` per pixel.** Pre-existing: every
     `SliderEvent::Change` is a full read-modify-write of the file, and there are
     a hundred of them in one drag. `set_volume_for` returns whether anything
-    changed so a repeated value is free, but a real fix is a debounce, and
-    gpui-component's `Slider` gives no drag-end event to hang one on.
+    changed so a repeated value is free.
+
+    The `Slider` still reports no drag-end, but that is no longer the obstacle
+    it was written as: the divider drag has the same shape and solves it with
+    `RootView::on_mouse_up` on the root, because the *window* sees the release
+    even when the widget does not. Whoever fixes this can hang a save on the
+    same listener rather than inventing a debounce.
 11. **Chat history depends on somebody else's server.** If it is down the pane
     opens blank, which is what it did before the feature existed. Failures go to
     the log rather than the pane, on purpose.
 12. **Shortcuts are not rebindable**, and `Esc` does not close the video quality
     menu — that menu is hand-rolled rather than a gpui-component popup, so it
     carries no key context of its own.
+13. **The settings sheet and the palette scroll with no visible scrollbar.**
+    Both are plain `overflow_y_scroll`, so the only sign there is more below is
+    content cut at the boundary. The wheel works; nothing says so.
+14. **The rail lists live channels only.** Offline follows are on the browse
+    page and nowhere else, which is the same gap as limit 9 seen from the other
+    side.
 
 ## Things not to redo
 
@@ -1071,6 +1091,29 @@ None of these is being worked on; all of them are real.
   See `streamlink::run_tracked`.
 - Do not hand `Library::new` a bare filename on Windows. With no path separator
   it uses the standard DLL search order, which includes the working directory.
+- Do not use `.truncate()` and expect an ellipsis. It sets one, and gpui only
+  applies it when the measure pass has a definite width — which a child of a
+  flex *column* does not get, so the text is clipped mid-glyph by the ancestor's
+  `overflow_hidden` and eats its own padding on the way out. `text_ellipsis()`
+  plus `line_clamp(1)` takes the wrapping path, where the width is known. Both
+  were built and looked at; only the second one truncates.
+- Do not put a `flex_wrap` row of `min_w_0` children directly inside a flex
+  column. gpui sizes it from its own content, and a line that can shrink to
+  nothing measures one character wide — so it wraps one letter per line and
+  paints over whatever is beneath. Wrap it in a `flex_row` first; see
+  `render_event`.
+- Do not assume `gpui-component` draws its own icons. It asks the *host* for
+  `icons/<name>.svg` and ships none, so with no `AssetSource` every chevron,
+  eye and clear button renders as nothing — and silently, since a missing asset
+  is not an error anywhere in that path. The clickable ones are still there and
+  still clickable, which is worse than absent.
+- Do not let `gpui_component::init` have the last word on the palette. It seeds
+  itself from `cx.window_appearance()`, which is the *operating system's*
+  light/dark setting, and nothing else in this app asks the OS anything. Call
+  `widget_theme::apply` after it.
+- Do not set a margin on the element you hand to `motion::arrive`. It animates
+  `mt` and overwrites whatever is there, so the offset belongs on a wrapper.
+  The palette spent a build cycle against the top of the window this way.
 - Do not write a comment asserting a guarantee the code does not enforce. Two
   were found this way — streamlink's credential "is never logged and never
   echoed" while it sat on the child's argv, and `keys::SHORTCUTS` being "beside
