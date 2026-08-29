@@ -168,15 +168,12 @@ impl Lib {
             }
         }
 
-        // On Windows the candidates are filtered to files that exist, so the
-        // list is empty when there is no libmpv anywhere rather than full of
-        // not-found lines. Saying where we looked beats saying nothing.
+        // On Windows and macOS the candidates are filtered to files that
+        // exist, so the list is empty when there is no libmpv anywhere rather
+        // than full of not-found lines. Saying where we looked beats saying
+        // nothing.
         if tried.is_empty() {
-            tried.push(
-                "  nothing named libmpv-2.dll beside the executable, in the usual \
-                 player install directories, or on PATH. Set MPV_DLL to point at one."
-                    .to_string(),
-            );
+            tried.push(format!("  {NOTHING_FOUND}"));
         }
 
         Err(crate::Error::NotFound(tried.join("\n")))
@@ -184,23 +181,29 @@ impl Lib {
 
     /// Where to look, in order.
     ///
-    /// On Windows every entry is an absolute path that exists; see
-    /// [`windows_candidates`] for why a bare filename is not acceptable there.
-    /// On Unix the bare sonames are left to the dynamic linker, whose search
-    /// path — unlike Windows' — does not include the current directory.
+    /// On Windows and macOS every entry is an absolute path that exists, for
+    /// reasons that differ by platform but land in the same place: see
+    /// [`windows_candidates`] for why a bare filename is not acceptable there,
+    /// and [`macos_candidates`] for why dyld cannot be relied on to find it
+    /// here. Only on other Unixes are the bare sonames handed to the dynamic
+    /// linker, because there a packaged libmpv really is on the loader's path
+    /// and that path — unlike Windows' — does not include the current
+    /// directory.
     fn candidates() -> Vec<PathBuf> {
         #[cfg(windows)]
         {
             windows_candidates()
         }
-        #[cfg(not(windows))]
+        #[cfg(target_os = "macos")]
         {
-            #[cfg(target_os = "macos")]
-            let names = ["libmpv.2.dylib", "libmpv.dylib"];
-            #[cfg(not(target_os = "macos"))]
-            let names = ["libmpv.so.2", "libmpv.so"];
-
-            names.iter().map(PathBuf::from).collect()
+            macos_candidates()
+        }
+        #[cfg(not(any(windows, target_os = "macos")))]
+        {
+            ["libmpv.so.2", "libmpv.so"]
+                .iter()
+                .map(PathBuf::from)
+                .collect()
         }
     }
 
@@ -251,8 +254,72 @@ fn windows_candidates() -> Vec<PathBuf> {
         dirs.extend(std::env::split_paths(&path));
     }
 
+    existing(&dirs, &NAMES)
+}
+
+/// Absolute paths to try on macOS, in order, filtered to those that exist.
+///
+/// The two fallbacks used to be the bare sonames `libmpv.2.dylib` and
+/// `libmpv.dylib` handed straight to `Library::new`, i.e. to dlopen, whose
+/// fallback search is `/usr/local/lib` and then `/usr/lib`. Homebrew on Apple
+/// Silicon installs to `/opt/homebrew/lib`, which is in neither — so the one
+/// thing every Mac user will actually have done, `brew install mpv`, was the
+/// one case that could not work. `DYLD_FALLBACK_LIBRARY_PATH` is not a way
+/// out of that: SIP strips every `DYLD_*` variable from a protected process.
+///
+/// So the directories are searched by hand, as on Windows and for the mirror
+/// image of the reason — there the loader's search included somewhere it
+/// should not be trusted from, here it excludes the one place the library
+/// actually is.
+///
+/// `MPV_DLL` still overrides all of this — an explicit path is the user saying
+/// where it is, which is not the same as the OS guessing.
+#[cfg(target_os = "macos")]
+fn macos_candidates() -> Vec<PathBuf> {
+    const NAMES: [&str; 2] = ["libmpv.2.dylib", "libmpv.dylib"];
+
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Some(beside_us) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(PathBuf::from))
+    {
+        // Inside an .app the executable is in `Contents/MacOS` and a bundled
+        // dylib belongs in `Contents/Frameworks`, which is the same "shipped
+        // alongside" case that `beside_us` covers for a loose binary.
+        dirs.push(beside_us.join("../Frameworks"));
+        dirs.push(beside_us);
+    }
+    dirs.push(PathBuf::from("/opt/homebrew/lib")); // Homebrew, Apple Silicon
+    dirs.push(PathBuf::from("/usr/local/lib")); // Homebrew, Intel
+    dirs.push(PathBuf::from("/opt/local/lib")); // MacPorts
+
+    existing(&dirs, &NAMES)
+}
+
+/// Join every name onto every directory, in that order, keeping what exists.
+///
+/// Filtering on existence is what keeps the `NotFound` error readable: `PATH`
+/// alone is usually dozens of entries, and a screenful of paths that were never
+/// going to hold a libmpv says nothing about what went wrong.
+#[cfg(any(windows, target_os = "macos"))]
+fn existing(dirs: &[PathBuf], names: &[&str]) -> Vec<PathBuf> {
     dirs.iter()
-        .flat_map(|dir| NAMES.iter().map(move |name| dir.join(name)))
+        .flat_map(|dir| names.iter().map(move |name| dir.join(name)))
         .filter(|candidate| candidate.is_file())
         .collect()
 }
+
+/// What to say when the search turned up nothing at all.
+///
+/// Named directories rather than a general apology: the user is about to go
+/// looking, and the list is the useful half of the message.
+#[cfg(windows)]
+const NOTHING_FOUND: &str = "nothing named libmpv-2.dll beside the executable, in the usual \
+     player install directories, or on PATH. Set MPV_DLL to point at one.";
+#[cfg(target_os = "macos")]
+const NOTHING_FOUND: &str = "no libmpv.2.dylib beside the executable, in /opt/homebrew/lib, \
+     /usr/local/lib or /opt/local/lib. `brew install mpv` puts one in the first of those; \
+     otherwise set MPV_DLL to point at one.";
+#[cfg(not(any(windows, target_os = "macos")))]
+const NOTHING_FOUND: &str = "no libmpv.so.2 on the dynamic linker's search path. Install your \
+     distribution's libmpv package, or set MPV_DLL to point at one.";

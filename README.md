@@ -26,22 +26,36 @@ Inc.
 
 ## Getting it
 
-A built Windows binary is on the [releases
-page](https://github.com/puckzxz/perch/releases): one zip, one executable, no
-installer, nothing written outside your own user folder. `RUNNING.txt` inside
-it covers the two things it cannot ship — streamlink and `libmpv-2.dll` — and
-the Twitch Client ID you register yourself. The app says which is missing when
-you hit it, but reading that file first is quicker.
+Built binaries are on the [releases
+page](https://github.com/puckzxz/perch/releases): a zip per platform, no
+installer, nothing written outside your own user folder. Windows gets the
+executable on its own; macOS gets a universal `perch.app` that runs on both
+Apple Silicon and Intel. `RUNNING.txt` inside each covers the things it cannot
+ship — streamlink, libmpv, and the Twitch Client ID you register yourself. The
+app says which is missing when you hit it, but reading that file first is
+quicker.
+
+The Mac build is signed only ad-hoc, not with a paid Apple Developer
+certificate, so macOS quarantines it on download and claims it is damaged. It
+is not; `xattr -d com.apple.quarantine perch.app` clears it, and the Mac
+`RUNNING.txt` says so in more detail.
 
 Or build it, which is the rest of this page.
 
 ## Running it
 
 ```
-run.cmd                    reopen the last channel
+run.cmd                    reopen the last channel        (Windows)
 run.cmd forsen             open a channel
 run.cmd forsen xqc         open two, side by side
 run.cmd forsen --volume 30
+```
+
+```
+./run.sh                   reopen the last channel        (macOS, Linux)
+./run.sh forsen            open a channel
+./run.sh forsen xqc        open two, side by side
+./run.sh forsen --volume 30
 ```
 
 Name up to four channels to open them together. `--volume` applies to this run
@@ -76,8 +90,11 @@ video, which is no use when you are not holding the mouse.
 | `Ctrl+,` | Settings |
 | `Ctrl+K` | Command palette |
 | `Ctrl+0` | Reset the pane sizes |
-| `Ctrl+K` | Command palette |
-| `Ctrl+0` | Reset the pane sizes |
+
+On macOS every `Ctrl` above is `⌘` — the bindings are declared on gpui's
+`secondary` modifier, which is cmd there and ctrl everywhere else, so the two
+never drift apart. The settings sheet draws whichever one this machine actually
+binds, and a test holds it to that.
 
 Player keys act on the pane you last pointed at, or last clicked — clicking
 anywhere in a pane, video or chat, makes it the one the keyboard is talking to,
@@ -101,15 +118,28 @@ name and its close button.
 ### Requirements
 
 - **streamlink** on `PATH`, or `STREAMLINK_PATH` pointing at it.
-- **libmpv** — `libmpv-2.dll`. There is no official Windows development
-  package; the DLL ships inside player distributions such as mpv.net and Plex,
-  and the app looks there, beside its own executable, and along `PATH`.
-  `MPV_DLL` overrides the search.
+- **libmpv**, which is a different errand on each platform:
 
-  Every one of those is an explicit directory. Handing Windows a bare
+  On **macOS**, `brew install mpv streamlink` is both requirements at once —
+  unlike Windows, there is a real libmpv package. The app looks in
+  `/opt/homebrew/lib`, `/usr/local/lib` and `/opt/local/lib`, covering Homebrew
+  on either architecture and MacPorts.
+
+  On **Windows**, `libmpv-2.dll`. There is no official development package; the
+  DLL ships inside player distributions such as mpv.net and Plex, and the app
+  looks there, beside its own executable, and along `PATH`.
+
+  `MPV_DLL` overrides the search on both.
+
+  Every one of those is an explicit directory, for a reason that is the same
+  shape on each platform and points the opposite way. Handing Windows a bare
   `libmpv-2.dll` would let it search the *working* directory too, which for an
   executable run out of a shared downloads folder is somebody else's choice of
-  DLL.
+  DLL. Handing macOS a bare `libmpv.2.dylib` has the reverse problem: dyld's
+  fallback search is `/usr/local/lib` then `/usr/lib` and nothing else, so the
+  Homebrew install that every Mac user actually has would never be found.
+  `DYLD_FALLBACK_LIBRARY_PATH` is not a way round it either — SIP strips every
+  `DYLD_*` variable from a protected process.
 
 ## Chat
 

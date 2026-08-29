@@ -92,6 +92,10 @@ fn find_binary(slot: &ChildSlot) -> Option<PathBuf> {
 /// as the stream plays. `CREATE_NO_WINDOW` suppresses them without touching the
 /// pipes: stdout is still captured exactly as before.
 fn command(binary: impl AsRef<std::ffi::OsStr>) -> Command {
+    // The `mut` is the Windows branch's; everywhere else that block is compiled
+    // out and the binding is never written to, which is an `unused_mut` warning
+    // — and a warning is a CI failure on the macOS leg of the matrix.
+    #[cfg_attr(not(windows), allow(unused_mut))]
     let mut command = Command::new(binary);
     #[cfg(windows)]
     {

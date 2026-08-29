@@ -23,6 +23,10 @@ futures = "0.3"
 image = { version = "0.25", default-features = false }
 smallvec = "1"
 
+# Only for `dup2` in `diagnostics`, which has no std equivalent.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 # Only to stamp the icon onto the .exe; see build.rs.
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"

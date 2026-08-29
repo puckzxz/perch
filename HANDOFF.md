@@ -906,33 +906,57 @@ writes frames to disk with stats (per-channel means, alpha minimum, non-black
 percentage). A red Superman "S" on a blue suit is how BGRA vs RGBA got confirmed.
 
 **Clean up processes.** streamlink is a child of the app and dies with it on a
-graceful close, but a hard kill orphans it. `taskkill //F //IM streamlink.exe`.
+graceful close, but a hard kill orphans it. `taskkill //F //IM streamlink.exe`
+on Windows, `pkill -f streamlink` on macOS.
 
 ---
 
 ## Shipping a build
 
-`.github/workflows/release.yml` builds `--release --locked`, zips `perch.exe`
-alongside `LICENSE` and `packaging/RUNNING.txt`, and either publishes it or
-leaves it on the run:
+`.github/workflows/release.yml` builds `--release --locked` on two runners and
+zips each result beside `LICENSE` and that platform's `RUNNING` page:
 
 - push a `v*` tag and it cuts a GitHub Release, whose assets download without
   an account — which is the whole point, since the reason to build this at all
   is somebody who does not want to compile it;
-- run it by hand (`workflow_dispatch`) and the same zip is a run artifact,
-  which needs a login and expires. That is for handing a build to somebody who
+- run it by hand (`workflow_dispatch`) and the same zips are run artifacts,
+  which need a login and expire. That is for handing a build to somebody who
   is already here.
 
-The zip is the executable and two text files, and that is genuinely all it
-needs: the widget icons are `include_bytes!` and the app icon is a linked
-resource, so there is nothing beside the exe to lose. Verified by extracting it
-somewhere else and running it.
+Publishing is its own job, gated on both builds. It has to be: two jobs each
+calling `gh release create` on the same tag is a race whose loser fails on a
+release that already exists.
 
-What it deliberately does *not* carry is libmpv — somebody else's licence to
-redistribute, from an MIT app — or streamlink, which is a Python application.
-`packaging/RUNNING.txt` says where to get both. Neither is a silent failure:
-each surfaces in the pane, naming itself and the environment variable that
-overrides the search.
+**Windows** ships the bare `perch.exe`, and that is genuinely all it needs: the
+widget icons are `include_bytes!` and the app icon is a linked resource, so
+there is nothing beside the exe to lose.
+
+**macOS** ships a `perch.app`, because on that system the icon, the name and
+dock activation come from a bundle rather than from the executable — the one
+place where the two platforms need different shapes rather than the same shape
+built twice. `packaging/macos/bundle.sh` assembles it: the `.icns` is generated
+from the same `perch.ico` Windows uses, so there is no second icon file to
+drift, and the plist's version is read from the crate manifest. The binary is
+universal, `lipo`'d from `aarch64-` and `x86_64-apple-darwin` slices both built
+at `MACOSX_DEPLOYMENT_TARGET=11.0` so the `LSMinimumSystemVersion` it claims is
+true of both halves.
+
+The signature is ad-hoc. That is not a substitute for a Developer ID and is not
+trying to be: an arm64 binary needs *some* signature to execute at all, and
+copying files into a bundle invalidates the linker's. Gatekeeper still
+quarantines the download, and `RUNNING-macos.txt` opens by explaining how to
+clear it. Notarising properly means a paid Apple Developer account, which is a
+decision rather than a task.
+
+CI runs `bundle.sh` on the macOS leg against a debug binary. A bundle that
+assembles and then will not launch is invisible to every other check, and a tag
+push is the worst moment to discover one.
+
+What neither zip carries is libmpv — somebody else's licence to redistribute,
+from an MIT app — or streamlink, which is a Python application. The `RUNNING`
+pages say where to get both, and on macOS that is one `brew install` for the
+pair. Neither is a silent failure: each surfaces in the pane, naming itself and
+the environment variable that overrides the search.
 
 ## What to build next
 

@@ -1,14 +1,18 @@
 name: Release
 
-# Two ways in, one build.
+# Two ways in, two builds.
 #
 # Pushing a `v*` tag cuts a public release, whose assets anyone can download
 # without a GitHub account — which is the point, since the reason to build this
 # at all is somebody who does not want to compile it.
 #
-# `workflow_dispatch` builds the same zip and leaves it as a run artifact
+# `workflow_dispatch` builds the same zips and leaves them as run artifacts
 # instead. Artifacts need a login to download and expire, so that is for
 # handing a build to somebody who is already here, not for publishing.
+#
+# Windows gets a portable zip around a bare .exe; macOS gets one around a
+# perch.app, because that is what the two systems each need in order to have an
+# icon and behave like an installed program.
 on:
   push:
     tags: ["v*"]
@@ -23,9 +27,6 @@ env:
 jobs:
   windows:
     name: portable zip
-    # Windows only, because the app is: `diagnostics.rs` redirects the
-    # process's stderr through a Win32 call, since a `windows_subsystem`
-    # binary has no console to print to.
     runs-on: windows-latest
 
     steps:
@@ -48,15 +49,16 @@ jobs:
         run: cargo build --release --locked -p perch
 
       # The zip carries the licence and the one page that decides whether this
-      # works on somebody else's machine — see `RUNNING.txt`, which is about
-      # the two things perch does not ship and cannot.
+      # works on somebody else's machine — see `RUNNING-windows.txt`, which is
+      # about the two things perch does not ship and cannot. It goes in named
+      # plainly, because inside a Windows zip there is only one of them.
       - name: Stage
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path staging | Out-Null
           Copy-Item target/release/perch.exe staging/
           Copy-Item LICENSE staging/
-          Copy-Item packaging/RUNNING.txt staging/
+          Copy-Item packaging/RUNNING-windows.txt staging/RUNNING.txt
 
           # A build that produced no binary must not become a release
           # containing a readme and an apology.
@@ -77,20 +79,122 @@ jobs:
           # default is already BOM-less, but the mistake is cheap to rule out.
           "ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8NoBOM
 
-      # Tag pushes publish; everything else leaves the zip on the run.
-      - name: Release
-        if: github.ref_type == 'tag'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create $env:GITHUB_REF_NAME $env:ZIP `
-            --title $env:GITHUB_REF_NAME `
-            --generate-notes
-
+      # Always an artifact, tag or not. Publishing moved to its own job once
+      # there were two platforms: both would otherwise race to be the one that
+      # calls `gh release create`, and the loser fails on a release that
+      # already exists.
       - name: Artifact
-        if: github.ref_type != 'tag'
         uses: actions/upload-artifact@v4
         with:
           name: perch-windows-x64
           path: ${{ env.ZIP }}
+          if-no-files-found: error
+
+  macos:
+    name: app bundle
+    # arm64 runner. The Intel half of the universal binary is cross-compiled on
+    # it, which needs no extra tooling — only the target's std, added below.
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Toolchain
+        run: |
+          rustup show active-toolchain
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          cargo --version
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Both slices are pinned to the same deployment target so the
+      # `LSMinimumSystemVersion` the bundle claims is true of the whole binary.
+      # 11.0 is already rustc's default for aarch64-apple-darwin; saying it
+      # here is what stops the x86_64 slice from quietly being built for 10.12
+      # and making the plist a lie.
+      - name: Build
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+        run: |
+          cargo build --release --locked -p perch --target aarch64-apple-darwin
+          cargo build --release --locked -p perch --target x86_64-apple-darwin
+
+      - name: Universal binary
+        run: |
+          lipo -create -output perch-universal \
+            target/aarch64-apple-darwin/release/perch \
+            target/x86_64-apple-darwin/release/perch
+          lipo -info perch-universal
+
+          # The same guard the Windows job applies, for the same reason: a
+          # build that produced no binary must not become a release containing
+          # a readme and an apology. Two slices, and each of them a real one.
+          archs=$(lipo -archs perch-universal)
+          [ "$archs" = "x86_64 arm64" ] || [ "$archs" = "arm64 x86_64" ] \
+            || { echo "universal binary has architectures '$archs'"; exit 1; }
+          size=$(stat -f%z perch-universal)
+          [ "$size" -gt 2000000 ] || { echo "perch-universal is $size bytes, which is not a build"; exit 1; }
+
+      # macOS reads an app's icon and name from a bundle, not from the
+      # executable — so unlike the Windows job there is a build step here after
+      # the compiler is done. See the script for what it assembles and why.
+      - name: Bundle
+        run: |
+          mkdir -p staging
+          packaging/macos/bundle.sh perch-universal staging
+          cp LICENSE staging/
+          cp packaging/RUNNING-macos.txt staging/RUNNING.txt
+
+      - name: Zip
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then name=$GITHUB_REF_NAME; else name=${GITHUB_SHA:0:7}; fi
+          zip="perch-$name-macos-universal.zip"
+          # ditto rather than zip: it is the tool that preserves the bundle's
+          # structure and its code signature, and an .app that arrives with a
+          # broken signature is one macOS kills on launch.
+          #
+          # No --keepParent, which would put a directory called `staging` at
+          # the top of the archive. Unpacking gives perch.app, LICENSE and
+          # RUNNING.txt loose, which is what the Windows zip does too.
+          #
+          # --norsrc --noextattr because otherwise ditto carries the files'
+          # extended attributes across as AppleDouble `._` entries, or as a
+          # `__MACOSX` directory with --sequesterRsrc. Neither is wanted here:
+          # the signature lives in the Mach-O and in _CodeSignature, both
+          # ordinary files, so dropping the xattrs costs nothing and is the
+          # difference between a clean archive and one full of dotfiles for
+          # anyone who unzips it outside Finder.
+          ditto -c -k --norsrc --noextattr staging "$zip"
+          echo "ZIP=$zip" >> "$GITHUB_ENV"
+
+      - name: Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: perch-macos-universal
+          path: ${{ env.ZIP }}
+          if-no-files-found: error
+
+  publish:
+    name: release
+    # Only on a tag, and only once both platforms have a zip. `workflow_dispatch`
+    # stops at the artifacts above, which is the documented difference between
+    # the two ways in.
+    needs: [windows, macos]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -l assets
+          gh release create "$GITHUB_REF_NAME" assets/*.zip \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes

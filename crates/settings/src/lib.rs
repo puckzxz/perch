@@ -208,20 +208,36 @@ pub enum Error {
     },
 }
 
-/// Where settings live: roaming app data, unlike the image cache which is
-/// local-only because it is reproducible.
+/// Where settings live: wherever this platform keeps configuration a user is
+/// expected to keep, unlike the image cache which is throwaway because it is
+/// reproducible.
+///
+/// Each platform is asked in its own branch rather than by falling through one
+/// list of variables. The list happened to give the right answer on Windows and
+/// on Linux, but it got there by trying `APPDATA` first everywhere — and it had
+/// no macOS branch at all, so a Mac landed on `~/.config`. That works; it is
+/// simply not where a Mac user, or anything else on the system, would look.
 ///
 /// `app_name` is passed in rather than baked in. This crate knows how settings
 /// are *stored*, not what the product is called, and having both this file and
 /// the app declare the directory name meant two constants that had to agree or
 /// the app would silently start reading a different file from the one it wrote.
 pub fn default_path(app_name: &str) -> PathBuf {
-    let base = std::env::var_os("APPDATA")
+    #[cfg(windows)]
+    let base = std::env::var_os("APPDATA").map(PathBuf::from);
+
+    #[cfg(target_os = "macos")]
+    let base = std::env::var_os("HOME")
+        .map(|home| PathBuf::from(home).join("Library/Application Support"));
+
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from))
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
-        .unwrap_or_else(std::env::temp_dir);
-    base.join(app_name).join("settings.json")
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")));
+
+    base.unwrap_or_else(std::env::temp_dir)
+        .join(app_name)
+        .join("settings.json")
 }
 
 impl Settings {

@@ -69,12 +69,28 @@ const TOAST_LIFETIME: Duration = Duration::from_secs(8);
 /// into a buffer this big.
 const MINI_WIDTH: f32 = 96.0;
 
-/// Emotes and thumbnails are reproducible, so they live in local app data
-/// rather than roaming with settings.
+/// Emotes and thumbnails are reproducible, so they live in the platform's
+/// cache directory rather than roaming with settings.
+///
+/// Each platform is asked by name rather than falling through to `temp_dir`,
+/// which was the old behaviour everywhere `LOCALAPPDATA` was unset. On macOS
+/// that resolves to a per-process `/var/folders/…/T` the OS prunes on a
+/// schedule nobody chose, so every emote and thumbnail would quietly
+/// re-download every so often. `temp_dir` is still the last resort, which is
+/// what it was meant to be.
 fn image_cache_dir() -> PathBuf {
-    std::env::var_os("LOCALAPPDATA")
+    #[cfg(windows)]
+    let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
+
+    #[cfg(target_os = "macos")]
+    let base = std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Caches"));
+
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let base = std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache")));
+
+    base.unwrap_or_else(std::env::temp_dir)
         .join(APP_NAME)
         .join("images")
 }

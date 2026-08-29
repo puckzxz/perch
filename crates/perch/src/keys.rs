@@ -118,7 +118,7 @@ fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("c", ToggleChat, Some(&watch)),
         KeyBinding::new("up", VolumeUp, Some(&watch)),
         KeyBinding::new("down", VolumeDown, Some(&watch)),
-        KeyBinding::new("ctrl-w", ClosePane, Some(&watch)),
+        KeyBinding::new("secondary-w", ClosePane, Some(&watch)),
         KeyBinding::new("escape", GoBrowse, Some(&watch)),
         // The rail is on both pages, so its key is too — twice rather than in
         // the `app` context, which a modal's own context also satisfies. A
@@ -128,15 +128,16 @@ fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("b", ToggleSidebar, Some(&watch)),
         KeyBinding::new("b", ToggleSidebar, Some(&browse)),
         // Browsing.
-        KeyBinding::new("ctrl-f", FocusSearch, Some(&browse)),
-        // Anywhere. `ctrl-,` is the platform-neutral settings gesture and also
-        // closes the sheet, so the same key both opens and dismisses it.
-        KeyBinding::new("ctrl-,", ToggleSettings, Some(&app)),
-        KeyBinding::new("ctrl-r", Refresh, Some(&browse)),
-        KeyBinding::new("ctrl-k", TogglePalette, Some(&app)),
-        // Only where the sizes exist. `ctrl-0` is the reset gesture every
+        KeyBinding::new("secondary-f", FocusSearch, Some(&browse)),
+        // Anywhere. `secondary-,` is the settings gesture on both platforms —
+        // literally so on macOS, where ⌘, opens preferences in everything —
+        // and it also closes the sheet, so the same key opens and dismisses it.
+        KeyBinding::new("secondary-,", ToggleSettings, Some(&app)),
+        KeyBinding::new("secondary-r", Refresh, Some(&browse)),
+        KeyBinding::new("secondary-k", TogglePalette, Some(&app)),
+        // Only where the sizes exist. `secondary-0` is the reset gesture every
         // browser and editor already uses for the same kind of thing.
-        KeyBinding::new("ctrl-0", ResetLayout, Some(&watch)),
+        KeyBinding::new("secondary-0", ResetLayout, Some(&watch)),
         KeyBinding::new("escape", ToggleSettings, Some(&modal)),
     ]
 }
@@ -145,6 +146,37 @@ fn bindings() -> Vec<KeyBinding> {
 /// the bindings these stand aside for.
 pub fn init(cx: &mut App) {
     cx.bind_keys(bindings());
+}
+
+/// How this platform writes the modifier `secondary-` binds to.
+///
+/// A macro rather than a `const` because [`SHORTCUTS`] is a const array of
+/// `&'static str`, and `concat!` is the only way to build one of those at
+/// compile time. The no-argument arm is the prefix on its own, so the test that
+/// checks a label against its keystroke reads it from here rather than
+/// repeating the string a third time.
+///
+/// `⌘` rather than `Cmd+` on macOS: the glyph is how every other Mac app writes
+/// it, and a menu bar full of `⌘,` next to a settings sheet saying `Cmd+,` is
+/// the app looking foreign for no reason.
+#[cfg(target_os = "macos")]
+macro_rules! secondary {
+    () => {
+        "\u{2318}"
+    };
+    ($key:literal) => {
+        concat!(secondary!(), $key)
+    };
+}
+
+#[cfg(not(target_os = "macos"))]
+macro_rules! secondary {
+    () => {
+        "Ctrl+"
+    };
+    ($key:literal) => {
+        concat!(secondary!(), $key)
+    };
 }
 
 /// What the settings sheet lists, so a shortcut nobody can discover is not the
@@ -156,20 +188,25 @@ pub fn init(cx: &mut App) {
 /// against the real keymap. Being *next to* the bindings was never a guarantee
 /// — a row could describe a key nobody had bound and nothing would notice.
 /// The display column stays separate because `↑ / ↓` is two bindings a reader
-/// thinks of as one, and `escape` should read as `Esc`.
+/// thinks of as one, and `escape` should read as `Esc`. It is not free-form
+/// though: anything on the secondary modifier is built with [`secondary!`], so
+/// a label cannot claim `Ctrl` on a machine that binds `⌘`. That was the one
+/// way this table could still lie after the check below — the keystrokes
+/// normalise through `Keystroke::parse`, and the labels used to normalise
+/// through nothing at all.
 pub const SHORTCUTS: [(&[&str], &str, &str); 12] = [
     (&["space"], "Space", "Pause or resume"),
     (&["m"], "M", "Mute or unmute"),
     (&["c"], "C", "Show or hide this chat"),
     (&["b"], "B", "Show or hide the follows rail"),
     (&["up", "down"], "↑ / ↓", "Volume"),
-    (&["ctrl-w"], "Ctrl+W", "Close this pane"),
+    (&["secondary-w"], secondary!("W"), "Close this pane"),
     (&["escape"], "Esc", "Back to follows"),
-    (&["ctrl-f"], "Ctrl+F", "Search"),
-    (&["ctrl-r"], "Ctrl+R", "Refresh this list"),
-    (&["ctrl-,"], "Ctrl+,", "Settings"),
-    (&["ctrl-k"], "Ctrl+K", "Command palette"),
-    (&["ctrl-0"], "Ctrl+0", "Reset the pane sizes"),
+    (&["secondary-f"], secondary!("F"), "Search"),
+    (&["secondary-r"], secondary!("R"), "Refresh this list"),
+    (&["secondary-,"], secondary!(","), "Settings"),
+    (&["secondary-k"], secondary!("K"), "Command palette"),
+    (&["secondary-0"], secondary!("0"), "Reset the pane sizes"),
 ];
 
 #[cfg(test)]
@@ -207,6 +244,33 @@ mod tests {
         for (_, display, description) in SHORTCUTS {
             assert!(!description.is_empty(), "{display} has no description");
             assert!(!display.is_empty(), "{description} shows no key");
+        }
+    }
+
+    /// The other half of the sheet's claim: that the key it *draws* is the key
+    /// it binds.
+    ///
+    /// [`every_documented_key_is_actually_bound`] normalises both sides through
+    /// `Keystroke::parse`, which keeps the keystroke column honest and says
+    /// nothing at all about the label beside it. That was survivable while the
+    /// labels were fixed strings on one platform. It stopped being survivable
+    /// when the modifier started depending on the target: a row reading `Ctrl+W`
+    /// on a machine that binds `⌘W` is wrong in the one place a reader has no
+    /// way to check.
+    #[test]
+    fn the_listing_names_the_modifier_it_binds() {
+        const PREFIX: &str = secondary!();
+
+        for (keystrokes, display, _) in SHORTCUTS {
+            for keystroke in keystrokes {
+                let parsed = Keystroke::parse(keystroke)
+                    .unwrap_or_else(|e| panic!("{display}: {keystroke} does not parse: {e}"));
+                assert_eq!(
+                    parsed.modifiers.secondary(),
+                    display.starts_with(PREFIX),
+                    "{display} and {keystroke} disagree about the {PREFIX} modifier"
+                );
+            }
         }
     }
 

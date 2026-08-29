@@ -20,12 +20,29 @@ env:
 
 jobs:
   check:
-    name: fmt, clippy, test
-    # Windows only, because the app is. `perch` genuinely does not compile
-    # elsewhere: diagnostics.rs redirects the process's stderr through
-    # SetStdHandle, since a windows_subsystem="windows" binary has no console to
-    # print to. Everything below it in the tree is portable; the app is not.
-    runs-on: windows-latest
+    name: fmt, clippy, test (${{ matrix.os }})
+    # This was Windows-only, and the reason given was true at the time:
+    # diagnostics.rs redirected the process's stderr through `SetStdHandle` and
+    # had no other branch, so `perch` genuinely did not compile anywhere else.
+    # It has a `dup2` branch beside it now.
+    #
+    # A matrix rather than a swap, because the interesting part is not that both
+    # compile. It is that each leg compiles code the other never sees: where
+    # libmpv is looked for, which directory settings and the image cache land
+    # in, and whether the secondary modifier is ctrl or cmd are all decided by
+    # `cfg` at compile time. A green Windows run says nothing about macOS.
+    #
+    # No Linux leg. The code has the branches for it — `libmpv.so.2`, the XDG
+    # directories — but nobody has run it there, and claiming a platform in CI
+    # that no one has watched start up is worse than not claiming it.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One platform going red is not a reason to stop learning about the other,
+      # and with per-platform `cfg` branches the second result is usually the
+      # one worth having.
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
 
     steps:
       - uses: actions/checkout@v5
@@ -63,3 +80,20 @@ jobs:
       # cannot run here.
       - name: Tests
         run: cargo test --workspace --locked
+
+      # The one part of a release that nothing else here exercises. Its failure
+      # mode is a bundle that assembles and then will not launch — a plist the
+      # system rejects, an icon that did not convert, a signature invalidated by
+      # copying the binary in — and the worst time to find that out is while
+      # cutting a tag. Run against the debug binary, since what is being checked
+      # is the bundling, not the build.
+      - name: Bundle
+        if: runner.os == 'macOS'
+        run: |
+          cargo build --locked -p perch
+          packaging/macos/bundle.sh target/debug/perch "$RUNNER_TEMP/bundle-check"
+          app=$RUNNER_TEMP/bundle-check/perch.app
+          test -x "$app/Contents/MacOS/perch"
+          test -s "$app/Contents/Resources/perch.icns"
+          # `-v` reads the plist back rather than trusting that writing it worked.
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")" = perch

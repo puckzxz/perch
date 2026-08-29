@@ -1,0 +1,116 @@
+perch — Twitch in one native window
+===================================
+
+This zip is the whole app: perch.app, no installer, nothing written outside
+your own user folder. Drag it to /Applications, or run it where it sits.
+
+Read section 0 first. Everything else can wait until something breaks.
+
+
+0. macOS will refuse to open it the first time
+----------------------------------------------
+
+perch is signed, but not with a paid Apple Developer certificate, so macOS
+quarantines it on download and says the app "is damaged and can't be opened"
+or comes from an unidentified developer. It is neither damaged nor, as far as
+anyone can tell, especially identified. Clear the quarantine flag:
+
+    xattr -d com.apple.quarantine /Applications/perch.app
+
+Or, without a terminal: right-click perch.app, choose Open, then Open again in
+the dialog that appears. macOS remembers the decision for that copy.
+
+This is the cost of not paying Apple $99 a year to notarise a Twitch viewer.
+If you would rather not take that on faith, the source is on GitHub and
+`cargo build --release -p perch` produces the same binary without the warning,
+because a thing you built yourself was never quarantined.
+
+
+1. streamlink and mpv — both required
+-------------------------------------
+
+perch does not talk to Twitch's video servers itself; streamlink does, and
+perch plays what it hands over using libmpv as the decoder. Homebrew has both:
+
+    brew install mpv streamlink
+
+That is the whole step. Unlike Windows, macOS has a real libmpv package, so
+there is no hunting for a library inside somebody else's media player.
+
+perch looks for the dylib in /opt/homebrew/lib (Homebrew on Apple Silicon),
+/usr/local/lib (Homebrew on Intel), /opt/local/lib (MacPorts), and beside its
+own executable. MPV_DLL overrides that with a full path; STREAMLINK_PATH does
+the same for streamlink.
+
+Note that perch never asks the dynamic linker to find libmpv by name. dyld's
+fallback search covers /usr/local/lib and /usr/lib and nothing else, so on an
+Apple Silicon Mac — where Homebrew installs to /opt/homebrew — the ordinary
+install would be the one case that could not be found.
+
+Without them: a pane opens and says which one is missing, and for libmpv it
+lists every directory it looked in.
+
+
+2. A Twitch Client ID — required to see who you follow
+------------------------------------------------------
+
+perch has no application key baked into it, so you register your own. It takes
+a minute and costs nothing:
+
+  - Go to https://dev.twitch.tv/console and register an application.
+  - Set OAuth Redirect URL to http://localhost (the form demands one; perch
+    never uses it).
+  - Set Client Type to Public. There is no client secret to store.
+  - Copy the Client ID, open perch, press ⌘, and paste it in.
+
+perch then shows a code to enter at twitch.tv/activate, and your follows list
+appears. Nothing secret is ever stored in the binary.
+
+Without it: the follows page says "Not signed in" and offers you Settings.
+Everything else — popular, categories, search, and watching a channel by name
+— still works.
+
+
+Optional: the auth-token cookie
+-------------------------------
+
+Settings has a second field for the `auth-token` cookie from twitch.tv. It
+unlocks Prime/Turbo ad suppression and subscriber-only qualities.
+
+It is a full account credential. perch stores it in plain text and passes it
+to streamlink on the command line, where any process running as you can read
+it. That is a real tradeoff rather than an oversight, and everything except
+those two features works without it. Leave it empty if you would rather.
+
+
+Where things live
+-----------------
+
+  Settings   ~/Library/Application Support/perch/settings.json
+  Log        ~/Library/Caches/perch/perch.log
+  Images     ~/Library/Caches/perch/images
+
+Deleting the settings file resets everything, including the sign-in.
+
+
+Getting around
+--------------
+
+  Space     Pause or resume          ⌘K       Command palette
+  M         Mute or unmute           ⌘F       Search
+  C         Show or hide chat        ⌘R       Refresh this list
+  B         Show or hide the rail    ⌘,       Settings
+  Up/Down   Volume                   ⌘0       Reset the pane sizes
+  ⌘W        Close this pane          Esc      Back to follows
+
+Player keys act on the pane you last pointed at or clicked. All of them stand
+aside while the cursor is in a text box.
+
+You can open up to four channels at once — click a card, or the + on a row in
+the rail down the left.
+
+
+perch is MIT licensed; see LICENSE. Not affiliated with, endorsed by, or
+connected to Twitch Interactive, Inc.
+
+Source, issues and newer builds: https://github.com/puckzxz/perch
