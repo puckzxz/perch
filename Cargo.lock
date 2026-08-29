@@ -1524,7 +1524,7 @@ dependencies = [
 
 [[package]]
 name = "emotes"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "futures",
  "serde_json",
@@ -3523,7 +3523,7 @@ dependencies = [
 
 [[package]]
 name = "mpv-frames"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "image",
  "libloading",
@@ -5322,7 +5322,7 @@ dependencies = [
 
 [[package]]
 name = "settings"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -5551,7 +5551,7 @@ checksum = "2b2231b7c3057d5e4ad0156fb3dc807d900806020c5ffa3ee6ff2c8c76fb8520"
 
 [[package]]
 name = "streamlink"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "futures",
  "serde_json",
@@ -6321,7 +6321,7 @@ dependencies = [
 
 [[package]]
 name = "twitch-api"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -6331,7 +6331,7 @@ dependencies = [
 
 [[package]]
 name = "twitch-chat"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "futures",
  "futures-timer",

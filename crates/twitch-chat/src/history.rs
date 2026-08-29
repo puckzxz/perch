@@ -39,7 +39,12 @@ const MAX_LIMIT: usize = 800;
 const TIMEOUT: Duration = Duration::from_secs(8);
 
 /// A free service run by one person. Say who is calling.
-const USER_AGENT: &str = concat!("perch/", env!("CARGO_PKG_VERSION"));
+///
+/// The version is this crate's, which is the workspace's, which is the one
+/// `perch` is released under — they are one number, inherited, precisely so
+/// that this string cannot go stale. It said `perch/0.1.0` through two releases
+/// when they were separate. `perch` has a test holding it to that.
+pub const USER_AGENT: &str = concat!("perch/", env!("CARGO_PKG_VERSION"));
 
 /// Whether `channel` could be a Twitch login at all.
 ///

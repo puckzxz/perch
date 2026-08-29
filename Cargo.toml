@@ -11,6 +11,16 @@ members = [
 ]
 
 [workspace.package]
+# One version for the whole workspace, inherited by every crate.
+#
+# It used to be per-crate, and the six internals never moved off 0.1.0 while
+# `perch` was tagged twice — which would be harmless bookkeeping except that
+# `env!("CARGO_PKG_VERSION")` expands to the version of the crate being
+# compiled. `twitch-chat` builds the chat-history `User-Agent` from it, so every
+# request introduced itself to a stranger's server as `perch/0.1.0` through both
+# releases. Inheriting means there is one number to bump and nowhere for it to
+# drift; a test in `perch` holds that `User-Agent` to this version.
+version = "0.2.1"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT"

@@ -92,3 +92,25 @@ fn redirect_stderr(file: File) -> std::io::Result<()> {
     // to the same open file, so the original closes normally on drop.
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    /// The two things perch tells the outside world its version is: the header
+    /// this module writes, and the `User-Agent` `twitch-chat` sends to the
+    /// recent-messages service. They are one number now — every crate inherits
+    /// the workspace's — and this holds them to it.
+    ///
+    /// Worth a test rather than a comment because the failure was invisible
+    /// from either side. `env!("CARGO_PKG_VERSION")` expands to whichever crate
+    /// is being compiled, so the header here was right through both releases
+    /// while the identical-looking expression in `twitch-chat` sat at the 0.1.0
+    /// that crate was still nominally on.
+    #[test]
+    fn the_chat_user_agent_names_this_release() {
+        assert_eq!(
+            twitch_chat::history::USER_AGENT,
+            concat!("perch/", env!("CARGO_PKG_VERSION")),
+            "chat is introducing itself as a different version than this build"
+        );
+    }
+}
