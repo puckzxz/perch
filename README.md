@@ -13,9 +13,11 @@ Built on [GPUI](https://github.com/zed-industries/zed) (Zed's UI framework) with
 [streamlink](https://streamlink.github.io/) as the Twitch byte source and
 [libmpv](https://mpv.io/) doing decode and A/V sync.
 
-**Windows only** for now. The video path is portable, but the app crate is not:
-`diagnostics.rs` redirects the process's stderr through a Win32 call, because a
-`windows_subsystem = "windows"` binary has no console to print to.
+**Windows and macOS.** Both are built and tested on every push and released
+together; the Mac download is a universal `perch.app` covering Apple Silicon and
+Intel. Linux is deliberately not claimed — the platform branches are there and
+they compile, but nobody has watched it start up, and a platform claimed on
+paper is worse than one left out.
 
 A personal project, published because a working one is more interesting than a
 tidy one. Not affiliated with, endorsed by, or connected to Twitch Interactive,
@@ -91,7 +93,7 @@ video, which is no use when you are not holding the mouse.
 | `Ctrl+K` | Command palette |
 | `Ctrl+0` | Reset the pane sizes |
 
-On macOS every `Ctrl` above is `⌘` — the bindings are declared on gpui's
+On macOS every `Ctrl` on this page is `⌘` — the bindings are declared on gpui's
 `secondary` modifier, which is cmd there and ctrl everywhere else, so the two
 never drift apart. The settings sheet draws whichever one this machine actually
 binds, and a test holds it to that.
@@ -101,10 +103,6 @@ anywhere in a pane, video or chat, makes it the one the keyboard is talking to,
 and with more than one pane open its header is underlined to say so. All of them
 stand aside while the cursor is in a text box. The same list is in the settings
 sheet.
-
-The seam between video and chat can be dragged, in either arrangement, and the
-size is remembered. `Ctrl+0` puts both back to what the layout would have
-derived.
 
 The seam between video and chat can be dragged, in either arrangement, and the
 size is remembered. `Ctrl+0` puts both back to what the layout would have
@@ -201,32 +199,13 @@ the right of it; the rail belongs to the window.
 `Ctrl+K` — a channel to open, a pane to close, a page to go to, typed rather
 than aimed at. It filters what the app already knows, so it costs nothing and
 runs on every keystroke; the search box in the header is the one that asks
-Twitch. `qb` finds QuickyBaby. Settings can turn that off, in which case leaving the watch page
-stops the streams instead, which is the cheaper answer if you go to the follows
-page to pick the next thing rather than to glance at the list.
-
-### The rail
-
-Who is live, down the left-hand edge of both pages: avatar, name, what they are
-playing, and how many people are there. Click to watch, or `+` to open beside
-what is already playing. It folds away with the arrow in its header and stays
-folded — a window left on one stream for three hours should be able to be just
-the stream.
-
-On the left, opposite chat. Chat belongs to the pane it is part of and sits on
-the right of it; the rail belongs to the window.
-
-### The palette
-
-`Ctrl+K` — a channel to open, a pane to close, a page to go to, typed rather
-than aimed at. It filters what the app already knows, so it costs nothing and
-runs on every keystroke; the search box in the header is the one that asks
 Twitch. `qb` finds QuickyBaby.
 
 ## Settings
 
-The gear in the title bar. Stored at `%APPDATA%/perch/settings.json`; changes
-apply immediately rather than needing a restart.
+The gear in the title bar. Stored at `%APPDATA%/perch/settings.json` on Windows
+and `~/Library/Application Support/perch/settings.json` on macOS; changes apply
+immediately rather than needing a restart.
 
 Volume is remembered per channel, because streamers are not consistent about
 how loud they run. Muting one is remembered too, and deliberately never becomes
