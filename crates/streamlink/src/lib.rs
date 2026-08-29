@@ -8,8 +8,11 @@
 //! over loopback and starts no player of its own.
 //!
 //! The supervisor owns the child process and kills it on drop, so closing the
-//! window does not leave streamlink running.
+//! window does not leave streamlink running. That covers every teardown perch
+//! runs itself; [`job`] covers the ones it does not get to run, where the
+//! process dies without destructors and would otherwise strand streamlink.
 
+mod job;
 pub mod quality;
 
 use std::io::{BufRead, BufReader, Read};
@@ -133,6 +136,9 @@ fn run_tracked(mut command: Command, slot: &ChildSlot) -> std::io::Result<(Vec<u
         .spawn()?;
 
     let stdout = child.stdout.take();
+    // Before the handle goes into the slot, so a child is under the job for as
+    // much of its life as this can manage.
+    job::track(&child);
     *slot.lock().unwrap() = Some(child);
 
     let mut captured = Vec::new();
@@ -425,6 +431,9 @@ fn run(
 
     let stdout = process.stdout.take();
     let stderr = process.stderr.take();
+    // This is the one that matters: the long-lived serving process, the one
+    // found still running hours after perch was gone.
+    job::track(&process);
     *child_slot.lock().unwrap() = Some(process);
 
     // The one window `Drop` cannot cover, closed here.

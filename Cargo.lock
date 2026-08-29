@@ -5555,6 +5555,7 @@ version = "0.1.0"
 dependencies = [
  "futures",
  "serde_json",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

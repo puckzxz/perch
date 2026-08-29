@@ -11,3 +11,15 @@ description = "Supervise streamlink as a headless Twitch byte source."
 [dependencies]
 futures = "0.3"
 serde_json = "1"
+
+# Job objects, so a streamlink child cannot outlive perch even when perch dies
+# without running destructors. See `src/job.rs`.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_JobObjects",
+    # CreateJobObjectW takes SECURITY_ATTRIBUTES, and the extended limit struct
+    # lives behind the threading feature rather than the job-object one.
+    "Win32_Security",
+    "Win32_System_Threading",
+] }
