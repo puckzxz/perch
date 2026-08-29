@@ -21,7 +21,8 @@ A personal project, published because a working one is more interesting than a
 tidy one. Not affiliated with, endorsed by, or connected to Twitch Interactive,
 Inc.
 
-<img width="1591" height="918" alt="One stream filling the window with its chat alongside: the channel header shows viewer count and uptime, and chat rows carry timestamps, coloured names and emotes" src="https://github.com/user-attachments/assets/421cff6e-591f-453d-895e-46415f893517" />
+<img width="1661" height="901" alt="image" src="https://github.com/user-attachments/assets/0d776907-df7e-4700-9a4e-508e552922c9" />
+
 
 ## Getting it
 
