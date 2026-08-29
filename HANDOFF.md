@@ -1080,6 +1080,14 @@ None of these is being worked on; all of them are real.
 
 - Do not enable hardware decode "for performance".
 - Do not let mpv upscale.
+- Do not reach for mpv's `profile=fast` or `dither=no` to cut the render cost.
+  Dithering is a `vo=gpu` shader stage and is not in the software render path at
+  all: `dither=no` renders byte-for-byte identical frames (compared by hash) and
+  measured the same, four alternating pairs splitting 2-2 — what looked like a
+  20% saving was one outlier dragging a mean. `profile=fast` *does* measure
+  faster, by also forcing bilinear scaling, which every pane in a grid downscales
+  through: picture quality spent on a number that is mostly not real. Forcing
+  `scale=bilinear` on its own measured *slower* than the default.
 - Do not derive control visibility from `group_hover` or from `on_hover`'s value.
 - Do not key animated-image element ids on position.
 - Do not use `--stream-url` to skip streamlink's pipeline.
