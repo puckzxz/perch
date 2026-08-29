@@ -1,0 +1,111 @@
+perch — Twitch in one native window
+===================================
+
+This zip is the whole app: one executable, no installer, nothing written
+outside your own user folder. Unzip it anywhere and run perch.exe.
+
+It needs three things it cannot ship, and it will tell you which one is
+missing when you hit it. Here they are up front instead.
+
+
+1. streamlink — required
+------------------------
+
+perch does not talk to Twitch's video servers itself; streamlink does, and
+perch plays what it hands over.
+
+    https://streamlink.github.io/install.html
+
+The Windows installer is the easy answer. Anything that puts `streamlink` on
+your PATH works, and if yours lives somewhere unusual, set STREAMLINK_PATH to
+the full path of the executable.
+
+Without it: a pane opens and says "streamlink not found".
+
+
+2. libmpv-2.dll — required
+--------------------------
+
+The decoder. There is no official Windows package of just this file, which is
+the annoying part. It ships inside several media players, and perch looks in
+those install folders, beside its own executable, and along PATH.
+
+The simplest fix is to put a copy of libmpv-2.dll in this folder, next to
+perch.exe. You can take it from an mpv.net or Plex install, or from the mpv
+Windows development builds:
+
+    https://sourceforge.net/projects/mpv-player-windows/files/libmpv/
+
+Set MPV_DLL to a full path if you would rather keep it elsewhere.
+
+Without it: a pane opens and says it could not find libmpv, and lists every
+directory it looked in.
+
+Note that perch never searches the *working* directory for this file. That is
+deliberate: an app run out of a shared downloads folder would otherwise load
+whatever DLL somebody else left there.
+
+
+3. A Twitch Client ID — required to see who you follow
+------------------------------------------------------
+
+perch has no application key baked into it, so you register your own. It takes
+a minute and costs nothing:
+
+  - Go to https://dev.twitch.tv/console and register an application.
+  - Set OAuth Redirect URL to http://localhost (the form demands one; perch
+    never uses it).
+  - Set Client Type to Public. There is no client secret to store.
+  - Copy the Client ID, open perch, press Ctrl+, and paste it in.
+
+perch then shows a code to enter at twitch.tv/activate, and your follows list
+appears. Nothing secret is ever stored in the binary.
+
+Without it: the follows page says "Not signed in" and offers you Settings.
+Everything else — popular, categories, search, and watching a channel by name
+— still works.
+
+
+Optional: the auth-token cookie
+-------------------------------
+
+Settings has a second field for the `auth-token` cookie from twitch.tv. It
+unlocks Prime/Turbo ad suppression and subscriber-only qualities.
+
+It is a full account credential. perch stores it in plain text and passes it
+to streamlink on the command line, where any process running as you can read
+it. That is a real tradeoff rather than an oversight, and everything except
+those two features works without it. Leave it empty if you would rather.
+
+
+Where things live
+-----------------
+
+  Settings   %APPDATA%\perch\settings.json
+  Log        %LOCALAPPDATA%\perch\perch.log
+  Images     %LOCALAPPDATA%\perch\images
+
+Deleting the settings file resets everything, including the sign-in.
+
+
+Getting around
+--------------
+
+  Space     Pause or resume          Ctrl+K   Command palette
+  M         Mute or unmute           Ctrl+F   Search
+  C         Show or hide chat        Ctrl+R   Refresh this list
+  B         Show or hide the rail    Ctrl+,   Settings
+  Up/Down   Volume                   Ctrl+0   Reset the pane sizes
+  Ctrl+W    Close this pane          Esc      Back to follows
+
+Player keys act on the pane you last pointed at or clicked. All of them stand
+aside while the cursor is in a text box.
+
+You can open up to four channels at once — click a card, or the + on a row in
+the rail down the left.
+
+
+perch is MIT licensed; see LICENSE. Not affiliated with, endorsed by, or
+connected to Twitch Interactive, Inc.
+
+Source, issues and newer builds: https://github.com/puckzxz/perch

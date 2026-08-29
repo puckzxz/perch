@@ -1,0 +1,96 @@
+name: Release
+
+# Two ways in, one build.
+#
+# Pushing a `v*` tag cuts a public release, whose assets anyone can download
+# without a GitHub account — which is the point, since the reason to build this
+# at all is somebody who does not want to compile it.
+#
+# `workflow_dispatch` builds the same zip and leaves it as a run artifact
+# instead. Artifacts need a login to download and expire, so that is for
+# handing a build to somebody who is already here, not for publishing.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    name: portable zip
+    # Windows only, because the app is: `diagnostics.rs` redirects the
+    # process's stderr through a Win32 call, since a `windows_subsystem`
+    # binary has no console to print to.
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same reasoning as CI: rust-toolchain.toml pins the version and rustup
+      # installs it on the first cargo command. A version named here too would
+      # be a second place for it to drift from.
+      - name: Toolchain
+        run: |
+          rustup show active-toolchain
+          cargo --version
+
+      - uses: Swatinem/rust-cache@v2
+
+      # `--locked` for the same reason CI uses it: a release should be built
+      # from the dependency versions that were tested, not from whatever has
+      # been published since.
+      - name: Build
+        run: cargo build --release --locked -p perch
+
+      # The zip carries the licence and the one page that decides whether this
+      # works on somebody else's machine — see `RUNNING.txt`, which is about
+      # the two things perch does not ship and cannot.
+      - name: Stage
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path staging | Out-Null
+          Copy-Item target/release/perch.exe staging/
+          Copy-Item LICENSE staging/
+          Copy-Item packaging/RUNNING.txt staging/
+
+          # A build that produced no binary must not become a release
+          # containing a readme and an apology.
+          $exe = Get-Item staging/perch.exe
+          if ($exe.Length -lt 1MB) {
+            throw "perch.exe is $($exe.Length) bytes, which is not a build"
+          }
+
+      - name: Zip
+        shell: pwsh
+        run: |
+          $name = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { $env:GITHUB_SHA.Substring(0, 7) }
+          $zip = "perch-$name-windows-x64.zip"
+          Compress-Archive -Path staging/* -DestinationPath $zip
+          # `utf8NoBOM` explicitly: Windows PowerShell's `utf8` writes a byte
+          # order mark, and a BOM in $GITHUB_ENV is three invisible bytes on
+          # the front of the variable name. This runner is pwsh, where the
+          # default is already BOM-less, but the mistake is cheap to rule out.
+          "ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8NoBOM
+
+      # Tag pushes publish; everything else leaves the zip on the run.
+      - name: Release
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create $env:GITHUB_REF_NAME $env:ZIP `
+            --title $env:GITHUB_REF_NAME `
+            --generate-notes
+
+      - name: Artifact
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: perch-windows-x64
+          path: ${{ env.ZIP }}

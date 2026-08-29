@@ -23,6 +23,17 @@ Inc.
 
 <img width="1591" height="918" alt="One stream filling the window with its chat alongside: the channel header shows viewer count and uptime, and chat rows carry timestamps, coloured names and emotes" src="https://github.com/user-attachments/assets/421cff6e-591f-453d-895e-46415f893517" />
 
+## Getting it
+
+A built Windows binary is on the [releases
+page](https://github.com/puckzxz/perch/releases): one zip, one executable, no
+installer, nothing written outside your own user folder. `RUNNING.txt` inside
+it covers the two things it cannot ship — streamlink and `libmpv-2.dll` — and
+the Twitch Client ID you register yourself. The app says which is missing when
+you hit it, but reading that file first is quicker.
+
+Or build it, which is the rest of this page.
+
 ## Running it
 
 ```

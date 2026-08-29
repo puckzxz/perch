@@ -828,6 +828,30 @@ graceful close, but a hard kill orphans it. `taskkill //F //IM streamlink.exe`.
 
 ---
 
+## Shipping a build
+
+`.github/workflows/release.yml` builds `--release --locked`, zips `perch.exe`
+alongside `LICENSE` and `packaging/RUNNING.txt`, and either publishes it or
+leaves it on the run:
+
+- push a `v*` tag and it cuts a GitHub Release, whose assets download without
+  an account — which is the whole point, since the reason to build this at all
+  is somebody who does not want to compile it;
+- run it by hand (`workflow_dispatch`) and the same zip is a run artifact,
+  which needs a login and expires. That is for handing a build to somebody who
+  is already here.
+
+The zip is the executable and two text files, and that is genuinely all it
+needs: the widget icons are `include_bytes!` and the app icon is a linked
+resource, so there is nothing beside the exe to lose. Verified by extracting it
+somewhere else and running it.
+
+What it deliberately does *not* carry is libmpv — somebody else's licence to
+redistribute, from an MIT app — or streamlink, which is a Python application.
+`packaging/RUNNING.txt` says where to get both. Neither is a silent failure:
+each surfaces in the pane, naming itself and the environment variable that
+overrides the search.
+
 ## What to build next
 
 Nothing here is agreed. The four items that were, plus chat backfill, are built.
