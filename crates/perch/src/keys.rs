@@ -41,6 +41,8 @@ actions!(
         VolumeDown,
         /// Show or hide the active pane's chat.
         ToggleChat,
+        /// Fold the follows rail away, or bring it back.
+        ToggleSidebar,
         /// Close the active pane.
         ClosePane,
         /// Leave the watch page, keeping the streams as muted thumbnails.
@@ -51,6 +53,10 @@ actions!(
         FocusSearch,
         /// Ask Twitch again for whichever list is on screen.
         Refresh,
+        /// Open the command palette, or close it if it is already open.
+        TogglePalette,
+        /// Put the video and chat back to the sizes they are derived at.
+        ResetLayout,
     ]
 );
 
@@ -114,12 +120,23 @@ fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("down", VolumeDown, Some(&watch)),
         KeyBinding::new("ctrl-w", ClosePane, Some(&watch)),
         KeyBinding::new("escape", GoBrowse, Some(&watch)),
+        // The rail is on both pages, so its key is too — twice rather than in
+        // the `app` context, which a modal's own context also satisfies. A
+        // bare letter is safe on the browse page for the same reason it is on
+        // the watch page: `TYPING` stands the whole keymap aside while the
+        // search box has the cursor.
+        KeyBinding::new("b", ToggleSidebar, Some(&watch)),
+        KeyBinding::new("b", ToggleSidebar, Some(&browse)),
         // Browsing.
         KeyBinding::new("ctrl-f", FocusSearch, Some(&browse)),
         // Anywhere. `ctrl-,` is the platform-neutral settings gesture and also
         // closes the sheet, so the same key both opens and dismisses it.
         KeyBinding::new("ctrl-,", ToggleSettings, Some(&app)),
         KeyBinding::new("ctrl-r", Refresh, Some(&browse)),
+        KeyBinding::new("ctrl-k", TogglePalette, Some(&app)),
+        // Only where the sizes exist. `ctrl-0` is the reset gesture every
+        // browser and editor already uses for the same kind of thing.
+        KeyBinding::new("ctrl-0", ResetLayout, Some(&watch)),
         KeyBinding::new("escape", ToggleSettings, Some(&modal)),
     ]
 }
@@ -140,16 +157,19 @@ pub fn init(cx: &mut App) {
 /// — a row could describe a key nobody had bound and nothing would notice.
 /// The display column stays separate because `↑ / ↓` is two bindings a reader
 /// thinks of as one, and `escape` should read as `Esc`.
-pub const SHORTCUTS: [(&[&str], &str, &str); 9] = [
+pub const SHORTCUTS: [(&[&str], &str, &str); 12] = [
     (&["space"], "Space", "Pause or resume"),
     (&["m"], "M", "Mute or unmute"),
     (&["c"], "C", "Show or hide this chat"),
+    (&["b"], "B", "Show or hide the follows rail"),
     (&["up", "down"], "↑ / ↓", "Volume"),
     (&["ctrl-w"], "Ctrl+W", "Close this pane"),
     (&["escape"], "Esc", "Back to follows"),
     (&["ctrl-f"], "Ctrl+F", "Search"),
     (&["ctrl-r"], "Ctrl+R", "Refresh this list"),
     (&["ctrl-,"], "Ctrl+,", "Settings"),
+    (&["ctrl-k"], "Ctrl+K", "Command palette"),
+    (&["ctrl-0"], "Ctrl+0", "Reset the pane sizes"),
 ];
 
 #[cfg(test)]
@@ -163,7 +183,7 @@ mod tests {
     /// symptom is "the key does nothing", which is a poor thing to debug.
     #[test]
     fn every_binding_and_every_context_parses() {
-        assert_eq!(bindings().len(), 11);
+        assert_eq!(bindings().len(), 15);
         for context in [CONTEXT_WATCH, CONTEXT_BROWSE, CONTEXT_MODAL] {
             KeyContext::parse(context)
                 .unwrap_or_else(|e| panic!("{context} is not a key context: {e}"));

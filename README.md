@@ -66,15 +66,31 @@ video, which is no use when you are not holding the mouse.
 | `Space` | Pause or resume |
 | `M` | Mute or unmute |
 | `C` | Show or hide this pane's chat |
+| `B` | Show or hide the follows rail |
 | `↑` `↓` | Volume |
 | `Ctrl+W` | Close this pane |
 | `Esc` | Back to follows |
 | `Ctrl+F` | Search |
 | `Ctrl+R` | Refresh whichever list is on screen |
 | `Ctrl+,` | Settings |
+| `Ctrl+K` | Command palette |
+| `Ctrl+0` | Reset the pane sizes |
+| `Ctrl+K` | Command palette |
+| `Ctrl+0` | Reset the pane sizes |
 
-Player keys act on the pane you last pointed at. All of them stand aside while
-the cursor is in a text box. The same list is in the settings sheet.
+Player keys act on the pane you last pointed at, or last clicked — clicking
+anywhere in a pane, video or chat, makes it the one the keyboard is talking to,
+and with more than one pane open its header is underlined to say so. All of them
+stand aside while the cursor is in a text box. The same list is in the settings
+sheet.
+
+The seam between video and chat can be dragged, in either arrangement, and the
+size is remembered. `Ctrl+0` puts both back to what the layout would have
+derived.
+
+The seam between video and chat can be dragged, in either arrangement, and the
+size is remembered. `Ctrl+0` puts both back to what the layout would have
+derived.
 
 Hiding chat is remembered per channel, the way volume is — a channel you watch
 for the game stays that way without saying anything about the next one. The
@@ -101,6 +117,11 @@ emotes (Twitch, FFZ, BTTV and 7TV), links are clickable, `@mentions` are drawn
 in the colour of whoever is being addressed, and subs, gifts, raids and
 announcements appear as their own rows rather than being dropped.
 
+The time is shown once a minute, as a break between messages, rather than once
+per row — in a channel where fifteen messages share a minute, a column of
+identical timestamps is not a ruler. The channel's name in the pane header opens
+it on twitch.tv, which is the way out of a chat you cannot type in.
+
 A pane also opens with the last hundred messages from *before* you joined, so
 four panes do not open blank. Twitch publishes no scrollback of its own, so
 those come from the same community service
@@ -121,6 +142,55 @@ way.
 
 The list refreshes itself every minute. `Ctrl+R`, or the pill in the header,
 asks again now — for whichever list is on screen, not just follows.
+
+Cards are as wide as the window allows: the grid takes the room it has and
+divides it, rather than leaving whatever a fixed width could not use as a gutter
+down one side. Viewer count and uptime sit on the thumbnail; the name, title and
+game are underneath.
+
+Whatever is playing while you browse keeps playing, muted, in a bar along the
+bottom — each stream with its own close button, and one control back to
+watching. Settings can turn that off, in which case leaving the watch page
+stops the streams instead, which is the cheaper answer if you go to the follows
+page to pick the next thing rather than to glance at the list.
+
+### The rail
+
+Who is live, down the left-hand edge of both pages: avatar, name, what they are
+playing, and how many people are there. Click to watch, or `+` to open beside
+what is already playing. It folds away with the arrow in its header and stays
+folded — a window left on one stream for three hours should be able to be just
+the stream.
+
+On the left, opposite chat. Chat belongs to the pane it is part of and sits on
+the right of it; the rail belongs to the window.
+
+### The palette
+
+`Ctrl+K` — a channel to open, a pane to close, a page to go to, typed rather
+than aimed at. It filters what the app already knows, so it costs nothing and
+runs on every keystroke; the search box in the header is the one that asks
+Twitch. `qb` finds QuickyBaby. Settings can turn that off, in which case leaving the watch page
+stops the streams instead, which is the cheaper answer if you go to the follows
+page to pick the next thing rather than to glance at the list.
+
+### The rail
+
+Who is live, down the left-hand edge of both pages: avatar, name, what they are
+playing, and how many people are there. Click to watch, or `+` to open beside
+what is already playing. It folds away with the arrow in its header and stays
+folded — a window left on one stream for three hours should be able to be just
+the stream.
+
+On the left, opposite chat. Chat belongs to the pane it is part of and sits on
+the right of it; the rail belongs to the window.
+
+### The palette
+
+`Ctrl+K` — a channel to open, a pane to close, a page to go to, typed rather
+than aimed at. It filters what the app already knows, so it costs nothing and
+runs on every keystroke; the search box in the header is the one that asks
+Twitch. `qb` finds QuickyBaby.
 
 ## Settings
 

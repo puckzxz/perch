@@ -132,6 +132,38 @@ pub struct Settings {
     /// which channels are being watched. That is the reason it is a setting
     /// rather than a constant.
     pub chat_history: usize,
+    /// Whether what is playing keeps playing while you browse.
+    ///
+    /// Off is a real answer rather than a tidiness preference: a backgrounded
+    /// stream is still decoding frames and still pulling bytes, and somebody
+    /// who goes to the follows page to *pick the next thing* would rather it
+    /// stopped. On, it is one click back into what you were watching.
+    #[serde(default = "yes")]
+    pub miniplayer: bool,
+    /// How much of a stacked cell the video keeps, 0.0 for "work it out".
+    ///
+    /// Chat *beside* the video has a width and the video takes the rest;
+    /// chat *below* it has the opposite arrangement, so this is the other half
+    /// of [`chat_width`](Self::chat_width) rather than a second copy of it.
+    /// Zero means nobody has dragged the divider and the video is a 16:9 box,
+    /// which is what it always was.
+    #[serde(default)]
+    pub video_share: f32,
+    /// Whether the follows rail is folded away.
+    ///
+    /// Remembered because the two ways to use this app want opposite answers:
+    /// somebody switching between channels all evening wants the list there,
+    /// and somebody watching one stream for three hours wants the window to be
+    /// the stream. Neither should have to say so twice.
+    #[serde(default)]
+    pub sidebar_collapsed: bool,
+}
+
+/// `#[serde(default)]` for a `bool` is `false`, and this one defaults to true —
+/// a settings file written before the field existed should keep the behaviour
+/// it had.
+fn yes() -> bool {
+    true
 }
 
 impl Default for Settings {
@@ -147,6 +179,9 @@ impl Default for Settings {
             // opens with something, without the pane starting scrolled through
             // an hour of backlog nobody asked for.
             chat_history: 100,
+            video_share: 0.0,
+            miniplayer: true,
+            sidebar_collapsed: false,
         }
     }
 }
@@ -265,7 +300,17 @@ impl Settings {
                 })
             }
         };
-        serde_json::from_str(&text).map_err(|source| Error::Parse {
+        // A byte-order mark is stripped rather than parsed, because
+        // `serde_json` will not have one and every obvious way to hand-edit
+        // this file on Windows writes one: Notepad's "UTF-8", PowerShell's
+        // `Set-Content -Encoding utf8`, and most of what an editor calls
+        // "UTF-8 with signature". The file is documented as hand-editable, so
+        // refusing it over three invisible bytes means the app silently starts
+        // on defaults — and then cannot save either, since every write reads
+        // the file back first to keep the tokens another thread put there.
+        let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+
+        serde_json::from_str(text).map_err(|source| Error::Parse {
             path: path.to_path_buf(),
             source,
         })
@@ -328,6 +373,32 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A settings file saved by Notepad, PowerShell, or anything else on
+    /// Windows that calls a leading byte-order mark "UTF-8".
+    ///
+    /// This is not hypothetical: the file is documented as hand-editable, and
+    /// the failure it caused was silent twice over — the app started on
+    /// defaults, and then every save failed too, because a save reads the file
+    /// back first to keep somebody else's tokens.
+    #[test]
+    fn a_byte_order_mark_does_not_make_the_file_unreadable() {
+        let path = temp_file("bom");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+
+        let settings = Settings {
+            volume: 42,
+            ..Settings::default()
+        };
+        settings.save(&path).unwrap();
+
+        let json = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, format!("\u{feff}{json}")).unwrap();
+
+        let loaded = Settings::load(&path).expect("a BOM should not be fatal");
+        assert_eq!(loaded.volume, 42);
+        let _ = std::fs::remove_file(&path);
+    }
 
     fn temp_file(name: &str) -> PathBuf {
         std::env::temp_dir()

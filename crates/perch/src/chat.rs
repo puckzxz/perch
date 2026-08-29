@@ -20,6 +20,7 @@ use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 use twitch_chat::{ChatClient, ChatEvent, ChatMessage, ChatNotice, NoticeKind};
 
 use crate::chat_text::{self, Kind};
+use crate::controls;
 use crate::motion;
 use crate::theme;
 
@@ -34,7 +35,7 @@ impl Render for EmoteTooltip {
         div()
             .px(px(theme::CONTROL_PAD_X))
             .py(px(theme::CONTROL_PAD_Y))
-            .rounded_sm()
+            .rounded(px(theme::RADIUS))
             .bg(theme::surface_raised())
             .text_size(px(theme::TEXT_LABEL))
             .text_color(theme::text())
@@ -319,11 +320,15 @@ impl ChatView {
         }
     }
 
-    /// The frame every row shares: a fixed timestamp column, then the content.
+    /// The frame every row shares.
     ///
-    /// Two columns rather than one wrapping row, so the stamps line up as a
-    /// ruler. Added as the first child of a `flex_wrap` row they would re-flow
-    /// with the text and give no column at all.
+    /// One column, not two. There used to be a fixed 34px timestamp gutter down
+    /// the left holding a stamp per row, which in a busy channel meant fifteen
+    /// consecutive `15:27`s standing in for a ruler — and stamping only the
+    /// rows that said something new left the gutter empty for most of them,
+    /// which is 11% of a 300px chat pane reserved for nothing. The time moved
+    /// to [`time_break`] instead, where it is said once per minute and the rows
+    /// get their width back.
     fn row_frame(row: &Row) -> gpui::Div {
         let wash = row.kind.wash();
         div()
@@ -331,26 +336,44 @@ impl ChatView {
             .flex()
             .flex_row()
             .items_start()
-            .gap_x(px(theme::GAP_TIGHT))
             .px(px(theme::ROW_PAD_X))
             .py(px(theme::ROW_PAD_Y))
-            .border_b_1()
-            .border_color(theme::divider())
             // The stripe is a reading aid for a run of like rows; an event is
             // not one of those, and two washes on one row is mud.
+            //
+            // It used to be a stripe *and* a hairline under every row, which is
+            // two separators doing one job. The stripe is the one that survives
+            // a wrapped message: it fills the whole block, so three lines of one
+            // message read as one thing rather than as three rows.
             .when(wash.is_none() && row.striped, |line| {
                 line.bg(theme::stripe())
             })
             .when_some(wash, |line, color| line.bg(color))
+    }
+
+    /// The time, once, above the first message of each minute.
+    ///
+    /// A rule rather than a column: it says the same thing the gutter did — how
+    /// long ago this was — using space that is empty anyway, and it reads as a
+    /// break in the conversation, which a minute passing in a chat usually is.
+    fn time_break(stamp: SharedString) -> impl IntoElement {
+        div()
+            .w_full()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(theme::GAP_TIGHT))
+            .px(px(theme::ROW_PAD_X))
+            .pt(px(theme::GAP_TIGHT))
             .child(
                 div()
                     .flex_none()
-                    .w(px(theme::STAMP_WIDTH))
                     .text_size(px(theme::TEXT_META))
-                    .line_height(px(theme::LINE_BODY))
+                    .line_height(px(theme::LINE_TIGHT))
                     .text_color(theme::text_dim())
-                    .child(row.stamp.clone()),
+                    .child(stamp),
             )
+            .child(div().flex_1().h(px(1.)).bg(theme::divider()))
     }
 
     fn render_row(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
@@ -358,7 +381,12 @@ impl ChatView {
             return div().into_any_element();
         };
 
-        match &row.kind {
+        // Only when it says something the row above did not. Read from the rows
+        // rather than from the list, which only knows about the ones on screen:
+        // scrolling a stamp off the top must not make the row below it grow one.
+        let stamped = index == 0 || self.rows[index - 1].stamp != row.stamp;
+
+        let body = match &row.kind {
             RowKind::Notice(text) => Self::row_frame(row)
                 .child(
                     div()
@@ -375,7 +403,18 @@ impl ChatView {
                 .into_any_element(),
 
             RowKind::Event(notice) => self.render_event(row, notice, cx),
+        };
+
+        if !stamped {
+            return body;
         }
+        div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .child(Self::time_break(row.stamp.clone()))
+            .child(body)
+            .into_any_element()
     }
 
     /// A Twitch event: the sentence Twitch wrote, and whatever the user
@@ -403,7 +442,25 @@ impl ChatView {
             );
         }
         if let Some(body) = &notice.body {
-            column = column.child(self.message_line(row, body, cx));
+            // Wrapped in a row rather than added straight to the column, so
+            // this is laid out exactly the way an ordinary message is: a
+            // wrapping line that is the only child of a flex *row*.
+            //
+            // Dropped into the column directly, it was a wrapping line inside a
+            // flex *column*, and gpui sized it from its own content — which for
+            // a line whose every word is `min_w_0` is one character wide. The
+            // words then wrapped one per line and painted straight over the
+            // rows beneath, so a resub with a note attached, or an announcement
+            // carrying a link, came out as a vertical stack of letters. It only
+            // ever showed on event rows, because they are the only place a
+            // message line is not already a row's child.
+            column = column.child(
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_row()
+                    .child(self.message_line(row, body, cx)),
+            );
         }
 
         Self::row_frame(row).child(column).into_any_element()
@@ -678,28 +735,18 @@ impl Render for ChatView {
                         .flex_row()
                         .justify_center()
                         .child(
-                            div()
-                                .id("chat-follow-live")
-                                // Sits over messages, so it has to swallow the
-                                // click rather than pass it to a link beneath.
-                                .block_mouse_except_scroll()
-                                .px(px(theme::CONTROL_PAD_X))
-                                .py(px(theme::CONTROL_PAD_Y))
-                                .rounded_md()
-                                .bg(theme::surface_raised())
-                                .border_1()
-                                .border_color(theme::accent())
-                                .shadow_lg()
-                                .text_size(px(theme::TEXT_LABEL))
-                                .font_weight(theme::weight_label())
-                                .text_color(theme::text())
-                                .cursor_pointer()
-                                .hover(|style| style.bg(theme::hover()))
-                                .active(|style| style.bg(theme::pressed()))
-                                .child("↓ jump to live")
-                                .on_click(
-                                    cx.listener(|this, _event, _window, cx| this.follow_live(cx)),
-                                ),
+                            controls::pill(
+                                "chat-follow-live",
+                                "↓ jump to live",
+                                controls::Variant::Primary,
+                            )
+                            // Sits over messages, so it has to swallow the
+                            // click rather than pass it to a link beneath.
+                            .block_mouse_except_scroll()
+                            .shadow_lg()
+                            .on_click(
+                                cx.listener(|this, _event, _window, cx| this.follow_live(cx)),
+                            ),
                         ),
                 )
             })

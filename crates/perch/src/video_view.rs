@@ -9,11 +9,12 @@
 use std::sync::Arc;
 
 use gpui::{
-    canvas, div, img, prelude::*, px, rgba, Animation, AnimationExt, Context, ElementId, Entity,
+    canvas, div, img, prelude::*, px, Animation, AnimationExt, Context, ElementId, Entity,
     EventEmitter, Hsla, RenderImage, SharedString, Subscription, Task, Window,
 };
 use gpui_component::slider::{Slider, SliderEvent, SliderState};
 
+use crate::controls;
 use crate::motion;
 use crate::theme;
 use crate::video::VideoStream;
@@ -230,24 +231,6 @@ impl VideoView {
         cx.notify();
     }
 
-    fn pill(id: &'static str, label: SharedString) -> gpui::Stateful<gpui::Div> {
-        div()
-            .id(ElementId::from(id))
-            .px(px(theme::CONTROL_PAD_X))
-            .py(px(theme::CONTROL_PAD_Y))
-            .rounded_sm()
-            .text_size(px(theme::TEXT_LABEL))
-            .font_weight(theme::weight_label())
-            .line_height(px(theme::LINE_TIGHT))
-            .text_color(theme::text())
-            .cursor_pointer()
-            .hover(|style| style.bg(theme::hover()))
-            // These sit on video with no shadow or border to deform, so a
-            // press has only the one channel to show itself in.
-            .active(|style| style.bg(theme::pressed()))
-            .child(label)
-    }
-
     fn quality_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let mut menu = div()
             .absolute()
@@ -255,7 +238,7 @@ impl VideoView {
             .flex()
             .flex_col()
             .min_w(px(120.))
-            .rounded_md()
+            .rounded(px(theme::RADIUS_LG))
             .overflow_hidden()
             .bg(theme::surface_raised())
             .border_1()
@@ -321,14 +304,22 @@ impl VideoView {
             .py(px(theme::GAP_TIGHT))
             // Sits over live video, so it carries its own contrast rather than
             // relying on whatever happens to be on screen behind it.
-            .bg(rgba(0x000000b3))
+            .bg(theme::overlay())
             .child(
-                Self::pill("pause", if paused { "play" } else { "pause" }.into())
-                    .on_click(cx.listener(|this, _event, _window, cx| this.toggle_playback(cx))),
+                controls::pill(
+                    "pause",
+                    if paused { "play" } else { "pause" },
+                    controls::Variant::OnVideo,
+                )
+                .on_click(cx.listener(|this, _event, _window, cx| this.toggle_playback(cx))),
             )
             .child(
-                Self::pill("mute", if volume == 0 { "unmute" } else { "mute" }.into())
-                    .on_click(cx.listener(|this, _event, window, cx| this.toggle_mute(window, cx))),
+                controls::pill(
+                    "mute",
+                    if volume == 0 { "unmute" } else { "mute" },
+                    controls::Variant::OnVideo,
+                )
+                .on_click(cx.listener(|this, _event, window, cx| this.toggle_mute(window, cx))),
             )
             .child(
                 div()
@@ -348,13 +339,12 @@ impl VideoView {
                 div()
                     .relative()
                     .child(
-                        Self::pill("quality", self.quality.clone()).on_click(cx.listener(
-                            |this, _event, _window, cx| {
+                        controls::pill("quality", self.quality.clone(), controls::Variant::OnVideo)
+                            .on_click(cx.listener(|this, _event, _window, cx| {
                                 this.quality_menu_open = !this.quality_menu_open;
                                 this.sync_controls();
                                 cx.notify();
-                            },
-                        )),
+                            })),
                     )
                     .when(self.quality_menu_open, |anchor| {
                         anchor.child(self.quality_menu(cx))

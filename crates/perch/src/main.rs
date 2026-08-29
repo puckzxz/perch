@@ -11,21 +11,26 @@
 // `diagnostics` for where the output goes instead.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod assets;
 mod browse;
 mod chat;
 mod chat_text;
+mod controls;
 mod diagnostics;
 mod keys;
 mod layout;
 mod motion;
+mod palette;
 mod settings_view;
+mod sidebar;
 mod theme;
 mod twitch;
 mod video;
 mod video_view;
 mod watch;
+mod widget_theme;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -35,8 +40,8 @@ use chat::ChatView;
 use emotes::ImageCache;
 use gpui::{
     div, prelude::*, px, size, AnyView, App, Application, Bounds, Context, ElementId, Entity,
-    FocusHandle, SharedString, Subscription, Task, TitlebarOptions, Window, WindowBounds,
-    WindowOptions,
+    FocusHandle, KeyDownEvent, MouseButton, MouseMoveEvent, MouseUpEvent, SharedString,
+    Subscription, Task, TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
 use gpui_component::input::{Input, InputEvent, InputState};
 use settings::{QualityPreference, Settings};
@@ -46,7 +51,7 @@ use twitch::{Request, TwitchEvent, TwitchService};
 use twitch_api::{FollowedChannel, LiveStream};
 use video::VideoStream;
 use video_view::{VideoEvent, VideoView};
-use watch::{Slot, StreamState, MAX_PANES};
+use watch::{ResizeStart, Slot, StreamState, MAX_PANES};
 
 pub const APP_NAME: &str = "perch";
 
@@ -59,6 +64,11 @@ const RENDER_HEIGHT: u32 = 720;
 /// How long a "went live" toast stays up.
 const TOAST_LIFETIME: Duration = Duration::from_secs(8);
 
+/// Thumbnail width in the now-playing bar. Small on purpose, and not only for
+/// the room: render size follows the element, so a stream shown this big decodes
+/// into a buffer this big.
+const MINI_WIDTH: f32 = 96.0;
+
 /// Emotes and thumbnails are reproducible, so they live in local app data
 /// rather than roaming with settings.
 fn image_cache_dir() -> PathBuf {
@@ -67,6 +77,16 @@ fn image_cache_dir() -> PathBuf {
         .unwrap_or_else(std::env::temp_dir)
         .join(APP_NAME)
         .join("images")
+}
+
+/// A drag of the video/chat divider in progress.
+struct Resize {
+    start: ResizeStart,
+    /// The sizes when the pointer went down, so the drag is measured from where
+    /// it began rather than accumulated frame by frame — the second of those
+    /// drifts, and drifts worst when the pointer is moving fastest.
+    chat_width: f32,
+    video_share: f32,
 }
 
 /// A transient notice. It owns its own fade because a toast that vanished
@@ -99,6 +119,21 @@ struct RootView {
     /// requests set this, so the minute-by-minute poll does not blink the
     /// control every time it runs.
     refreshing: bool,
+    /// Login to profile picture, for the follows rail.
+    ///
+    /// Merged rather than replaced on each poll: the pictures arrive a moment
+    /// after the list they belong to, and a rail that blanked itself every
+    /// minute while it waited for them would be worse than one that is briefly
+    /// out of date by one avatar.
+    avatars: HashMap<String, String>,
+    /// Whether a follows list has ever come back.
+    ///
+    /// The worker announces `SignedIn` before it polls anything, and the poll
+    /// that follows walks up to ten pages twice. In that window the page had a
+    /// signed-in session and two empty lists, which it read as an answer and
+    /// said so: "Nobody is live — none of the channels you follow are streaming
+    /// right now", on every launch, for as long as the request took.
+    follows_loaded: bool,
     /// Who was live at the last poll, so newly-live channels can be told apart
     /// from ones that were already streaming. Without this every poll would
     /// re-announce everybody.
@@ -132,6 +167,23 @@ struct RootView {
     /// have that silently overwrite the level every channel remembers, and
     /// should not be ignored on the channels that remember one.
     volume_override: Option<u8>,
+
+    /// A divider being dragged: where it started, and the sizes it started
+    /// from.
+    ///
+    /// Held on the root rather than in the pane, because the pointer leaves the
+    /// six-pixel handle on the first frame of any drag worth making — the move
+    /// events that matter arrive at the window.
+    resize: Option<Resize>,
+
+    /// The command palette's box, kept for the life of the app rather than
+    /// built per opening: it carries the subscription that runs a command on
+    /// Enter, and re-subscribing on every `Ctrl+K` would stack those up.
+    palette_input: Entity<InputState>,
+    palette_open: bool,
+    /// Which row Enter would run. An index into the entries computed at render,
+    /// clamped there — the list changes under it on every keystroke.
+    palette_selected: usize,
 
     settings_panel: Option<Entity<SettingsPanel>>,
     /// Whether the page navigation is up. It follows the video chrome rather
@@ -189,6 +241,25 @@ impl RootView {
         })
         .detach();
 
+        let palette_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("channel, or a command"));
+        cx.subscribe_in(
+            &palette_input,
+            window,
+            |this: &mut RootView, _, event, window, cx| {
+                match event {
+                    // Retyping changes what is under the cursor, so the cursor
+                    // goes back to the top rather than staying on a row that
+                    // now means something else.
+                    InputEvent::Change => this.palette_selected = 0,
+                    InputEvent::PressEnter { .. } => this.run_selected_command(window, cx),
+                    _ => {}
+                }
+                cx.notify();
+            },
+        )
+        .detach();
+
         let mut view = Self {
             settings,
             settings_path,
@@ -198,6 +269,8 @@ impl RootView {
             follows: Vec::new(),
             offline: Vec::new(),
             refreshing: false,
+            avatars: HashMap::new(),
+            follows_loaded: false,
             known_live: HashSet::new(),
             sign_in: SignIn::Connecting,
             discovery: Discovery::default(),
@@ -208,6 +281,10 @@ impl RootView {
             focus,
             _focus_lost,
             volume_override,
+            resize: None,
+            palette_input,
+            palette_open: false,
+            palette_selected: 0,
             settings_panel: None,
             nav: motion::Fade::hidden(),
             toasts: Vec::new(),
@@ -236,7 +313,7 @@ impl RootView {
     /// shortcut scoped to a page cannot fire through a modal without every
     /// binding having to remember to say so.
     fn key_context(&self) -> &'static str {
-        if self.settings_panel.is_some() {
+        if self.settings_panel.is_some() || self.palette_open {
             return keys::CONTEXT_MODAL;
         }
         match self.page {
@@ -328,6 +405,15 @@ impl RootView {
         cx.notify();
     }
 
+    fn on_toggle_sidebar(
+        &mut self,
+        _: &keys::ToggleSidebar,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_sidebar(cx);
+    }
+
     fn on_close_pane(&mut self, _: &keys::ClosePane, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(index) = self.active_slot() {
             self.close_slot(index, cx);
@@ -354,6 +440,135 @@ impl RootView {
         cx: &mut Context<Self>,
     ) {
         self.search.update(cx, |state, cx| state.focus(window, cx));
+    }
+
+    /// Everything the palette could run right now, in the order it shows them.
+    ///
+    /// Recomputed per render rather than held: it is a filter over lists this
+    /// view already owns, and holding a copy would mean keeping it in step with
+    /// a follows poll, a pane closing and every keystroke.
+    fn palette_entries(&self, cx: &App) -> Vec<palette::Entry> {
+        let watching: Vec<String> = self.slots.iter().map(|slot| slot.channel.clone()).collect();
+        palette::entries(
+            self.palette_input.read(cx).value().as_ref(),
+            &self.follows,
+            &watching,
+            self.slots.len() < MAX_PANES,
+        )
+    }
+
+    fn toggle_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.palette_open = !self.palette_open;
+        self.palette_selected = 0;
+
+        if self.palette_open {
+            // Opened on a query from last time, the first thing you type lands
+            // in the middle of it.
+            self.palette_input
+                .update(cx, |state, cx| state.set_value("", window, cx));
+            self.palette_input
+                .update(cx, |state, cx| state.focus(window, cx));
+        } else {
+            // Focus has to come back to the root or every shortcut stops
+            // working; see the `focus` field.
+            self.focus.focus(window);
+        }
+        cx.notify();
+    }
+
+    fn on_toggle_palette(
+        &mut self,
+        _: &keys::TogglePalette,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_palette(window, cx);
+    }
+
+    /// Move the selection, wrapping at both ends.
+    fn move_palette_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let count = self.palette_entries(cx).len();
+        if count == 0 {
+            return;
+        }
+        let next = self.palette_selected as isize + delta;
+        self.palette_selected = next.rem_euclid(count as isize) as usize;
+        cx.notify();
+    }
+
+    /// Arrow keys and Escape, handled as key events rather than as bindings.
+    ///
+    /// A binding cannot win here: the palette's own text field is focused, its
+    /// context is deeper than this view's, and the keymap deliberately stands
+    /// aside for a focused input — which is the behaviour that keeps typing
+    /// working everywhere else. Reading the event on the way past costs nothing
+    /// and answers to nobody's precedence rules.
+    fn on_palette_key(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.palette_open {
+            return;
+        }
+        match event.keystroke.key.as_str() {
+            "escape" => self.toggle_palette(window, cx),
+            "up" => self.move_palette_selection(-1, cx),
+            "down" => self.move_palette_selection(1, cx),
+            _ => {}
+        }
+    }
+
+    fn run_selected_command(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let entries = self.palette_entries(cx);
+        let Some(entry) = entries.get(self.palette_selected).cloned() else {
+            return;
+        };
+        self.run_command(entry.command, window, cx);
+    }
+
+    fn run_command(
+        &mut self,
+        command: palette::Command,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Closed first, whatever the command turns out to be: every one of them
+        // changes what is on screen, and a palette still sitting over the
+        // result is a palette you have to dismiss before you can see it.
+        if self.palette_open {
+            self.toggle_palette(window, cx);
+        }
+
+        match command {
+            palette::Command::Watch(channel) => self.open_channel(channel, true, window, cx),
+            palette::Command::Add(channel) => self.open_channel(channel, false, window, cx),
+            palette::Command::Close(index) => self.close_slot(index, cx),
+            palette::Command::GoBrowse => self.go_browse(cx),
+            palette::Command::GoWatch => self.go_watch(cx),
+            palette::Command::StopAll => self.stop_all(cx),
+            palette::Command::ToggleSidebar => self.toggle_sidebar(cx),
+            palette::Command::ToggleSettings => self.toggle_settings(window, cx),
+            palette::Command::Refresh => self.refresh(cx),
+        }
+        cx.notify();
+    }
+
+    /// Put the video and chat back to the sizes they are derived at.
+    fn on_reset_layout(
+        &mut self,
+        _: &keys::ResetLayout,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let defaults = Settings::default();
+        self.settings.chat_width = defaults.chat_width;
+        self.settings.video_share = defaults.video_share;
+        if let Err(e) = self.settings.save_preferences(&self.settings_path) {
+            eprintln!("settings: could not save: {e}");
+        }
+        cx.notify();
     }
 
     // ── Twitch ───────────────────────────────────────────────────────
@@ -407,6 +622,11 @@ impl RootView {
                     .filter(|channel| !self.known_live.contains(&channel.login))
                     .collect();
                 self.refreshing = false;
+                self.follows_loaded = true;
+                cx.notify();
+            }
+            TwitchEvent::Avatars(images) => {
+                self.avatars.extend(images);
                 cx.notify();
             }
             TwitchEvent::FollowsError(reason) => {
@@ -626,6 +846,7 @@ impl RootView {
                 cx.notify();
             }
             Action::LoadMore => self.load_more(cx),
+            Action::OpenSettings => self.toggle_settings(window, cx),
         }
     }
 
@@ -707,6 +928,7 @@ impl RootView {
 
         self.known_live = now_live;
         self.follows = streams;
+        self.follows_loaded = true;
         cx.notify();
     }
 
@@ -955,13 +1177,21 @@ impl RootView {
         }
     }
 
-    /// Leave the watch page, keeping streams as muted thumbnails.
+    /// Leave the watch page.
     ///
-    /// Thumbnails are genuinely cheaper, not just smaller: render size follows
-    /// the element, so a small miniplayer decodes into a small buffer.
+    /// With the miniplayer on, the streams keep going as muted thumbnails —
+    /// genuinely cheaper, not just smaller, since render size follows the
+    /// element and a small one decodes into a small buffer. With it off they
+    /// stop, which is what somebody who came here to pick the next thing
+    /// wanted: a backgrounded stream is still decoding and still pulling bytes.
     fn go_browse(&mut self, cx: &mut Context<Self>) {
         self.page = Page::Browse;
-        self.set_background(true, cx);
+        if self.settings.miniplayer {
+            self.set_background(true, cx);
+        } else {
+            // Dropping the slots stops each streamlink and its mpv.
+            self.slots.clear();
+        }
         cx.notify();
     }
 
@@ -1000,6 +1230,10 @@ impl RootView {
                     SettingsEvent::Saved(updated) => {
                         let client_id_changed =
                             this.settings.credentials.client_id != updated.credentials.client_id;
+                        // Turned off while streams are already parked on the
+                        // browse page, the setting has to act now — otherwise
+                        // it reads as broken until the next navigation.
+                        let miniplayer_off = this.settings.miniplayer && !updated.miniplayer;
                         let stream_changed = this.settings.quality != updated.quality
                             || this.settings.credentials.auth_token
                                 != updated.credentials.auth_token;
@@ -1017,6 +1251,10 @@ impl RootView {
                         }
                         this.settings_panel = None;
 
+                        if miniplayer_off && this.page == Page::Browse {
+                            this.slots.clear();
+                        }
+
                         // Apply immediately rather than asking for a restart,
                         // which is the entire reason this panel exists.
                         if client_id_changed {
@@ -1024,6 +1262,8 @@ impl RootView {
                             this.follows.clear();
                             this.offline.clear();
                             this.known_live.clear();
+                            this.avatars.clear();
+                            this.follows_loaded = false;
                             // Browsing was fetched with the old app's token, so
                             // it goes with it.
                             this.discovery = Discovery::default();
@@ -1054,8 +1294,122 @@ impl RootView {
         cx.notify();
     }
 
+    /// Remember where a divider drag began.
+    fn start_resize(&mut self, start: ResizeStart, window: &mut Window, _cx: &mut Context<Self>) {
+        self.resize = Some(Resize {
+            start,
+            chat_width: self.settings.chat_width,
+            video_share: self.effective_video_share(window),
+        });
+    }
+
+    /// What share of a stacked cell the video has right now.
+    ///
+    /// A drag has to start from what is on screen, and until somebody has
+    /// dragged one there is no stored share — only the 16:9 box the layout
+    /// derives. Reading it back means the first pull moves from where the
+    /// divider actually is rather than jumping to a default.
+    fn effective_video_share(&self, window: &Window) -> f32 {
+        if self.settings.video_share > 0.0 {
+            return self.settings.video_share;
+        }
+        let height = f32::from(window.viewport_size().height);
+        let (rows, cols) = layout::grid_shape(self.slots.len().max(1), window_aspect(window));
+        let cell_height = height / rows as f32;
+        if cell_height <= 0.0 {
+            return theme::VIDEO_SHARE_MIN;
+        }
+        let cell_width = self.body_width(window) / cols as f32;
+        (layout::video_box_height(cell_width) / cell_height)
+            .clamp(theme::VIDEO_SHARE_MIN, theme::VIDEO_SHARE_MAX)
+    }
+
+    /// Follow the pointer, if a divider is being dragged.
+    fn on_mouse_move(
+        &mut self,
+        event: &MouseMoveEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(resize) = &self.resize else {
+            return;
+        };
+
+        if resize.start.portrait {
+            let rows = layout::grid_shape(self.slots.len().max(1), window_aspect(window)).0;
+            let cell_height = f32::from(window.viewport_size().height) / rows as f32;
+            if cell_height <= 0.0 {
+                return;
+            }
+            let travelled = f32::from(event.position.y - resize.start.origin.y);
+            self.settings.video_share = (resize.video_share + travelled / cell_height)
+                .clamp(theme::VIDEO_SHARE_MIN, theme::VIDEO_SHARE_MAX);
+        } else {
+            // Chat is to the *right* of the video, so dragging left widens it.
+            let travelled = f32::from(resize.start.origin.x - event.position.x);
+            self.settings.chat_width =
+                (resize.chat_width + travelled).clamp(theme::CHAT_WIDTH_MIN, theme::CHAT_WIDTH_MAX);
+        }
+        cx.notify();
+    }
+
+    /// Let go, and write the size down.
+    ///
+    /// Saved here rather than on every move: a drag is hundreds of events and
+    /// each save is a read-modify-write of the whole settings file.
+    fn on_mouse_up(&mut self, _event: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.resize.take().is_none() {
+            return;
+        }
+        if let Err(e) = self.settings.save_preferences(&self.settings_path) {
+            eprintln!("settings: could not save: {e}");
+        }
+        cx.notify();
+    }
+
+    /// Fold the follows rail away, or bring it back, and remember which.
+    fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
+        self.settings.sidebar_collapsed = !self.settings.sidebar_collapsed;
+        if let Err(e) = self.settings.save_preferences(&self.settings_path) {
+            eprintln!("settings: could not save: {e}");
+        }
+        cx.notify();
+    }
+
+    /// The rail, and everything it needs to know about what is already open.
+    fn follows_rail(&mut self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        let watching: Vec<String> = self.slots.iter().map(|slot| slot.channel.clone()).collect();
+        sidebar::rail(
+            &self.follows,
+            &self.avatars,
+            &watching,
+            self.slots.len() < MAX_PANES,
+            self.settings.sidebar_collapsed,
+            &self.cache,
+            |this: &mut RootView, _window, cx| this.toggle_sidebar(cx),
+            |this: &mut RootView, action, window, cx| this.on_browse_action(action, window, cx),
+            cx,
+        )
+    }
+
+    /// How much width the page body actually has, which is not the window's
+    /// once the rail is open — the browse grid divides this to decide how many
+    /// cards fit across.
+    fn body_width(&self, window: &Window) -> f32 {
+        let width = f32::from(window.viewport_size().width);
+        if self.settings.sidebar_collapsed {
+            width
+        } else {
+            width - sidebar::WIDTH
+        }
+    }
+
     // ── Chrome ───────────────────────────────────────────────────────
 
+    /// One of the shell's controls, wired to a method on this view.
+    ///
+    /// The styling lives in [`controls`]; what is left here is the listener,
+    /// which needs `cx` and so cannot.
     fn pill(
         &self,
         id: &'static str,
@@ -1063,56 +1417,59 @@ impl RootView {
         cx: &mut Context<Self>,
         on_click: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
     ) -> impl IntoElement {
-        div()
-            .id(ElementId::from(id))
-            .px(px(theme::CONTROL_PAD_X))
-            .py(px(theme::CONTROL_PAD_Y))
-            .rounded_sm()
-            .bg(theme::surface_raised())
-            .text_size(px(theme::TEXT_LABEL))
-            .font_weight(theme::weight_label())
-            .line_height(px(theme::LINE_TIGHT))
-            .text_color(theme::text_muted())
-            .cursor_pointer()
-            .hover(|style| style.bg(theme::hover()).text_color(theme::text()))
-            .active(|style| style.bg(theme::pressed()))
-            .child(label)
+        controls::pill(id, label, controls::Variant::Pill)
             .on_click(cx.listener(move |this, _event, window, cx| on_click(this, window, cx)))
     }
 
     /// A pill that says whether it is the list you are looking at.
     fn tab_pill(&self, tab: Tab, cx: &mut Context<Self>) -> impl IntoElement {
-        let selected = self.discovery.tab == tab;
-        div()
-            .id(ElementId::from(tab.label()))
-            .px(px(theme::CONTROL_PAD_X))
-            .py(px(theme::CONTROL_PAD_Y))
-            .rounded_sm()
-            .bg(if selected {
-                theme::accent_dim()
-            } else {
-                theme::surface_raised()
-            })
-            .text_size(px(theme::TEXT_LABEL))
-            .font_weight(theme::weight_label())
-            .line_height(px(theme::LINE_TIGHT))
-            .text_color(if selected {
-                theme::text()
-            } else {
-                theme::text_muted()
-            })
-            .cursor_pointer()
-            .hover(|style| style.bg(theme::hover()).text_color(theme::text()))
-            .active(|style| style.bg(theme::pressed()))
-            .child(tab.label())
+        let variant = if self.discovery.tab == tab {
+            controls::Variant::Selected
+        } else {
+            controls::Variant::Pill
+        };
+        controls::pill(tab.label(), tab.label(), variant)
             .on_click(cx.listener(move |this, _event, _window, cx| this.show_tab(tab, cx)))
     }
 
+    /// Transient notices, top-right.
+    ///
+    /// Offset below the browse header rather than pinned to the window, because
+    /// that corner is not empty there: the search box and the refresh and
+    /// settings pills are in it, and a "went live" toast landed squarely on top
+    /// of them. The watch page has no header, so there the offset is nothing.
+    /// The palette, when it is open.
+    fn palette_sheet(&mut self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        if !self.palette_open {
+            return None;
+        }
+        let entries = self.palette_entries(cx);
+        // Clamped here rather than where it moves: the list shrinks under the
+        // cursor as you type, and a selection past the end would run nothing.
+        let selected = self.palette_selected.min(entries.len().saturating_sub(1));
+
+        Some(palette::sheet(
+            Input::new(&self.palette_input),
+            &entries,
+            selected,
+            move |this: &mut RootView, index, window, cx| {
+                this.palette_selected = index;
+                this.run_selected_command(window, cx);
+            },
+            cx,
+        ))
+    }
+
     fn toast_stack(&self) -> impl IntoElement {
+        let top = match self.page {
+            Page::Browse => theme::HEADER_HEIGHT + theme::GAP_TIGHT,
+            Page::Watch => theme::GAP,
+        };
+
         let mut stack = div()
             .absolute()
-            .top_4()
-            .right_4()
+            .top(px(top))
+            .right(px(theme::GAP))
             .flex()
             .flex_col()
             .gap(px(theme::GAP_TIGHT))
@@ -1130,7 +1487,7 @@ impl RootView {
                         .block_mouse_except_scroll()
                         .px(px(theme::PANEL_PAD))
                         .py(px(theme::GAP))
-                        .rounded_md()
+                        .rounded(px(theme::RADIUS_LG))
                         .bg(theme::surface_raised())
                         .border_l_2()
                         .border_color(theme::accent())
@@ -1145,81 +1502,26 @@ impl RootView {
         stack
     }
 
-    /// Muted thumbnails of whatever is playing, shown while browsing.
-    fn miniplayers(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
-        if self.slots.is_empty() {
+    /// What is playing while you browse: a bar along the bottom of the page,
+    /// or nothing at all when the miniplayer is turned off — in which case
+    /// there is nothing playing to put in it.
+    ///
+    /// This was a floating strip of 220px thumbnails in the bottom-right
+    /// corner, which worked at one window size. At 1000px it covered two cards;
+    /// four streams would have been 900px of tiles laid over the bottom row of
+    /// the grid — and every one of them needed its own `block_mouse` so that
+    /// clicking a thumbnail did not also open whatever card was underneath it.
+    ///
+    /// Docked, none of that is true: the grid ends where the bar begins, the
+    /// bar is a row rather than a wall, and each stream gets its own close
+    /// button, which the floating version never had room for — the only way
+    /// out of a stream from this page was to stop all of them.
+    fn now_playing(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        if self.slots.is_empty() || !self.settings.miniplayer {
             return None;
         }
 
-        let mut strip = div()
-            .absolute()
-            .bottom_4()
-            .right_4()
-            .flex()
-            .flex_row()
-            .items_end()
-            .gap(px(theme::GAP_TIGHT));
-
-        for slot in &self.slots {
-            let Some(video) = slot.video() else {
-                continue;
-            };
-            let id = ElementId::from(SharedString::from(format!("mini-{}", slot.channel)));
-            strip = strip.child(
-                div()
-                    .id(id)
-                    .w(px(220.))
-                    .rounded_md()
-                    .overflow_hidden()
-                    .bg(theme::player_bg())
-                    .border_1()
-                    .border_color(theme::border())
-                    // The whole tile is a button back into the stream, which
-                    // nothing about a bordered thumbnail says on its own.
-                    .hover(|style| style.border_color(theme::accent()))
-                    .shadow_lg()
-                    .cursor_pointer()
-                    // Per tile rather than on the strip. The strip is
-                    // `items_end`, so its box is as tall as a tile even where
-                    // it only holds the short "stop all" pill — occluding that
-                    // would leave an invisible dead patch over the card grid.
-                    .block_mouse_except_scroll()
-                    .on_click(cx.listener(|this, _event, _window, cx| this.go_watch(cx)))
-                    .child(div().h(px(124.)).w_full().child(video.clone()))
-                    .child(
-                        div()
-                            .px(px(theme::ROW_PAD_X))
-                            .py(px(theme::CONTROL_PAD_Y))
-                            .bg(theme::surface())
-                            .text_size(px(theme::TEXT_META))
-                            .text_color(theme::text_muted())
-                            .child(SharedString::from(format!("{} · muted", slot.channel))),
-                    ),
-            );
-        }
-
-        Some(
-            strip
-                .child(
-                    // Wrapped so the blocking area is exactly the pill. Clicking
-                    // this used to stop every stream *and* open whichever card
-                    // happened to be behind it.
-                    div().block_mouse_except_scroll().child(self.pill(
-                        "mini-stop",
-                        "stop all".into(),
-                        cx,
-                        |this, _window, cx| this.stop_all(cx),
-                    )),
-                )
-                .into_any_element(),
-        )
-    }
-
-    // ── Pages ────────────────────────────────────────────────────────
-
-    fn browse_page(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let watching = self.slots.len();
-        let header = div()
+        let mut bar = div()
             .w_full()
             .flex_none()
             .flex()
@@ -1227,9 +1529,109 @@ impl RootView {
             .items_center()
             .gap(px(theme::GAP))
             .px(px(theme::PAGE_PAD))
-            .py(px(theme::PANEL_PAD))
+            .py(px(theme::GAP_TIGHT))
+            .bg(theme::surface())
+            .border_t_1()
+            .border_color(theme::border());
+
+        for (index, slot) in self.slots.iter().enumerate() {
+            let id = ElementId::from(SharedString::from(format!("mini-{}", slot.channel)));
+            let mut entry = div()
+                .id(id)
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(theme::GAP_TIGHT))
+                .pr(px(theme::GAP_TIGHT))
+                .rounded(px(theme::RADIUS))
+                .cursor_pointer()
+                .hover(|style| style.bg(theme::hover()))
+                .active(|style| style.bg(theme::pressed()))
+                .on_click(cx.listener(|this, _event, _window, cx| this.go_watch(cx)));
+
+            // A pane still starting has no picture yet, and a placeholder the
+            // same size keeps the bar from reflowing when it arrives.
+            entry = entry.child(
+                div()
+                    .flex_none()
+                    .w(px(MINI_WIDTH))
+                    .h(px(MINI_WIDTH * 9.0 / 16.0))
+                    .rounded(px(theme::RADIUS))
+                    .overflow_hidden()
+                    .bg(theme::player_bg())
+                    .children(slot.video().cloned()),
+            );
+
+            entry = entry.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .text_size(px(theme::TEXT_LABEL))
+                            .font_weight(theme::weight_label())
+                            .line_height(px(theme::LINE_TIGHT))
+                            .text_color(theme::text())
+                            .child(SharedString::from(slot.channel.clone())),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(theme::TEXT_META))
+                            .line_height(px(theme::LINE_TIGHT))
+                            .text_color(theme::text_dim())
+                            .child("muted"),
+                    ),
+            );
+
+            bar = bar.child(div().flex().flex_row().items_center().child(entry).child(
+                controls::destructive(("mini-close", index), "×").on_click(cx.listener(
+                    move |this: &mut Self, _event, _window, cx| this.close_slot(index, cx),
+                )),
+            ));
+        }
+
+        Some(
+            bar.child(div().flex_1())
+                .child(self.pill(
+                    "mini-watch",
+                    "back to watching".into(),
+                    cx,
+                    |this, _w, cx| this.go_watch(cx),
+                ))
+                .child(
+                    self.pill("mini-stop", "stop all".into(), cx, |this, _w, cx| {
+                        this.stop_all(cx)
+                    }),
+                ),
+        )
+    }
+
+    // ── Pages ────────────────────────────────────────────────────────
+
+    fn browse_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let watching = self.slots.len();
+        let header = div()
+            .w_full()
+            .flex_none()
+            // Fixed rather than however tall its contents happen to be: the
+            // toast stack is anchored to the window and has to clear this, and
+            // one constant read by both is what makes them agree.
+            .h(px(theme::HEADER_HEIGHT))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(theme::GAP))
+            .px(px(theme::PAGE_PAD))
             .border_b_1()
             .border_color(theme::border())
+            // Only when the rail is folded away. Open, it has its own control,
+            // and two of them would be two things that do one thing.
+            .when(self.settings.sidebar_collapsed, |header| {
+                header.child(sidebar::expand(
+                    |this: &mut RootView, _window, cx| this.toggle_sidebar(cx),
+                    cx,
+                ))
+            })
             .child(
                 div()
                     .text_size(px(theme::TEXT_TITLE))
@@ -1285,36 +1687,73 @@ impl RootView {
                 |this, window, cx| this.toggle_settings(window, cx),
             ));
 
+        let width = self.body_width(window);
+
         div()
             .size_full()
-            .relative()
             .flex()
-            .flex_col()
+            .flex_row()
             .bg(theme::bg())
-            .child(header)
-            .child(browse::page(
-                &self.follows,
-                &self.offline,
-                &self.discovery,
-                &self.sign_in,
-                &self.cache,
-                self.slots.len() < MAX_PANES,
-                |this: &mut RootView, action, window, cx| this.on_browse_action(action, window, cx),
-                cx,
-            ))
-            .children(self.miniplayers(cx))
+            .children(self.follows_rail(cx))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .child(header)
+                    .child(browse::page(
+                        &self.follows,
+                        &self.offline,
+                        &self.discovery,
+                        &self.sign_in,
+                        self.follows_loaded,
+                        width,
+                        &self.cache,
+                        self.slots.len() < MAX_PANES,
+                        |this: &mut RootView, action, window, cx| {
+                            this.on_browse_action(action, window, cx)
+                        },
+                        cx,
+                    ))
+                    .children(self.now_playing(cx)),
+            )
     }
 
     fn watch_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .size_full()
+        let grid = div()
+            .flex_1()
+            .min_w_0()
             .relative()
             .child(watch::page(
                 &self.slots,
                 &self.follows,
                 window.viewport_size(),
                 self.settings.chat_width,
+                self.settings.video_share,
+                self.active_slot(),
                 |this: &mut RootView, index, _window, cx| this.close_slot(index, cx),
+                |this: &mut RootView, index, window, cx| {
+                    let Some(slot) = this.slots.get_mut(index) else {
+                        return;
+                    };
+                    slot.state = StreamState::Starting;
+                    let channel = slot.channel.clone();
+                    this.start_stream(channel, window, cx);
+                    cx.notify();
+                },
+                |this: &mut RootView, index, cx| {
+                    let Some(channel) = this.slots.get(index).map(|slot| slot.channel.clone())
+                    else {
+                        return;
+                    };
+                    if this.active.as_deref() != Some(channel.as_str()) {
+                        this.active = Some(channel);
+                        cx.notify();
+                    }
+                },
+                |this: &mut RootView, start, window, cx| this.start_resize(start, window, cx),
                 |this: &mut RootView, index, hovered, cx| {
                     // Only repaint when the pointer crosses a boundary; most
                     // moves are within the pane it is already in.
@@ -1354,13 +1793,34 @@ impl RootView {
                         // Pinned to the width the pane header keeps clear for
                         // it, so it cannot grow past the space reserved.
                         .w(px(theme::NAV_RESERVE))
+                        .flex()
+                        .flex_row()
+                        .gap(px(theme::GAP_TIGHT))
                         .child(
                             self.pill("back", "← follows".into(), cx, |this, _window, cx| {
                                 this.go_browse(cx)
                             }),
-                        ),
+                        )
+                        // Bringing the rail back is chrome like everything else
+                        // here: it comes up with the video controls and goes
+                        // away with them, so a window left on one stream stays
+                        // the stream. Beside the back pill rather than in the
+                        // opposite corner, because that corner is chat's.
+                        .when(self.settings.sidebar_collapsed, |nav| {
+                            nav.child(sidebar::expand(
+                                |this: &mut RootView, _window, cx| this.toggle_sidebar(cx),
+                                cx,
+                            ))
+                        }),
                 ),
-            )
+            );
+
+        div()
+            .size_full()
+            .flex()
+            .flex_row()
+            .children(self.follows_rail(cx))
+            .child(grid)
     }
 }
 
@@ -1374,7 +1834,7 @@ fn window_aspect(window: &Window) -> f32 {
 impl Render for RootView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let page = match self.page {
-            Page::Browse => self.browse_page(cx).into_any_element(),
+            Page::Browse => self.browse_page(window, cx).into_any_element(),
             Page::Watch => self.watch_page(window, cx).into_any_element(),
         };
 
@@ -1396,6 +1856,15 @@ impl Render for RootView {
             .on_action(cx.listener(Self::on_toggle_settings))
             .on_action(cx.listener(Self::on_focus_search))
             .on_action(cx.listener(Self::on_refresh))
+            .on_action(cx.listener(Self::on_toggle_sidebar))
+            .on_action(cx.listener(Self::on_toggle_palette))
+            .on_action(cx.listener(Self::on_reset_layout))
+            .on_key_down(cx.listener(Self::on_palette_key))
+            // A divider drag is followed here rather than on the handle: the
+            // pointer leaves a six-pixel target on the first frame of any pull
+            // worth making, and these are the only listeners that still hear it.
+            .on_mouse_move(cx.listener(Self::on_mouse_move))
+            .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .relative()
             .size_full()
             .bg(theme::bg())
@@ -1410,6 +1879,7 @@ impl Render for RootView {
                 div().size_full().child(page),
             ))
             .child(self.toast_stack())
+            .children(self.palette_sheet(cx))
             .children(self.settings_panel.clone())
     }
 }
@@ -1452,31 +1922,39 @@ fn main() {
         }
     }
 
-    Application::new().run(move |cx: &mut App| {
-        // Must come before any gpui-component widget is constructed.
-        gpui_component::init(cx);
-        // After it, not before: same-depth ties are won by whoever registered
-        // last, and these bindings are the ones that must stand aside.
-        keys::init(cx);
+    // The assets are the widget library's icons; see `assets`. Without them
+    // every chevron, eye and clear button in the app renders as nothing, and
+    // silently — a missing asset is not an error anywhere in that path.
+    Application::new()
+        .with_assets(assets::Icons)
+        .run(move |cx: &mut App| {
+            // Must come before any gpui-component widget is constructed.
+            gpui_component::init(cx);
+            // And this must come after it: `init` installs the palette this
+            // overwrites, seeded from the *operating system's* light/dark setting.
+            widget_theme::apply(cx);
+            // After it, not before: same-depth ties are won by whoever registered
+            // last, and these bindings are the ones that must stand aside.
+            keys::init(cx);
 
-        let bounds = Bounds::centered(None, size(px(1600.), px(920.)), cx);
-        let options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            titlebar: Some(TitlebarOptions {
-                title: Some(APP_NAME.into()),
+            let bounds = Bounds::centered(None, size(px(1600.), px(920.)), cx);
+            let options = WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                titlebar: Some(TitlebarOptions {
+                    title: Some(APP_NAME.into()),
+                    ..Default::default()
+                }),
                 ..Default::default()
-            }),
-            ..Default::default()
-        };
+            };
 
-        cx.open_window(options, |window, cx| {
-            let root = cx.new(|cx| RootView::new(channels.clone(), volume, window, cx));
-            // Root is required as the window's first child so overlay layers
-            // have somewhere to render.
-            cx.new(|cx| gpui_component::Root::new(AnyView::from(root), window, cx))
-        })
-        .expect("failed to open window");
+            cx.open_window(options, |window, cx| {
+                let root = cx.new(|cx| RootView::new(channels.clone(), volume, window, cx));
+                // Root is required as the window's first child so overlay layers
+                // have somewhere to render.
+                cx.new(|cx| gpui_component::Root::new(AnyView::from(root), window, cx))
+            })
+            .expect("failed to open window");
 
-        cx.activate(true);
-    });
+            cx.activate(true);
+        });
 }

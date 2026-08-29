@@ -90,6 +90,10 @@ pub enum TwitchEvent {
     /// [`FollowedChannel`] for why merging them would be wrong three times
     /// over.
     FollowedChannels(Vec<FollowedChannel>),
+    /// Avatars for whoever is live, as `(login, url)`. Arrives after the live
+    /// list it belongs to and is merged into what the UI already holds, so a
+    /// rail that is already on screen fills in rather than blinking.
+    Avatars(Vec<(String, String)>),
     /// A follows poll failed with a session that is otherwise fine — a network
     /// blip, or Twitch having a moment. Deliberately not
     /// [`Error`](TwitchEvent::Error), which the UI reads as "signed out" and
@@ -422,7 +426,25 @@ fn poll_follows(
 
     match twitch_api::followed_streams(client_id, token, &session.user_id) {
         Ok(streams) => {
+            // Asked for before the list is handed over, so the logins are still
+            // to hand; the pictures follow in their own event because they are
+            // another round trip and the names should not wait on them.
+            let live: Vec<String> = streams
+                .iter()
+                .map(|stream| stream.user_login.clone())
+                .collect();
             let _ = tx.unbounded_send(TwitchEvent::Streams(streams));
+
+            if !live.is_empty() && !stop.load(Ordering::Relaxed) {
+                match twitch_api::profile_images(client_id, token, &live) {
+                    Ok(images) => {
+                        let _ = tx.unbounded_send(TwitchEvent::Avatars(images));
+                    }
+                    // Not worth a failure of its own. Every row this feeds
+                    // still has a name, which is the part that identifies it.
+                    Err(e) => eprintln!("avatars: {e}"),
+                }
+            }
         }
         Err(e) => failure = Some(e.to_string()),
     }

@@ -78,6 +78,11 @@ App modules:
 | `twitch.rs` | the worker: sign-in, follows polling, browse requests |
 | `keys.rs` | the keymap: actions, bindings, contexts, and the listing |
 | `theme.rs` | **all** colour, spacing, type and motion tokens |
+| `sidebar.rs` | the follows rail down the left of both pages |
+| `palette.rs` | the command palette, and what it can run |
+| `controls.rs` | the one button, and the variants it comes in |
+| `widget_theme.rs` | hands `theme.rs` to `gpui-component`'s own palette |
+| `assets.rs` | the icons `gpui-component` asks the host for |
 | `motion.rs` | the four animation shapes, and the state one of them needs |
 | `diagnostics.rs` | where stderr goes when there is no console |
 
@@ -284,10 +289,13 @@ too — which is exactly what makes the modal pattern work.
 Two things worth keeping in mind:
 
 - **Occlude the smallest thing that is actually opaque.** Put it on a container
-  and you block its whole bounding box, including empty space: the miniplayer
-  strip is `items_end`, so occluding the strip would have left an invisible dead
-  patch over the card grid above the short "stop all" pill. Toast cards and
-  miniplayer tiles are occluded individually for the same reason.
+  and you block its whole bounding box, including empty space. Toast cards are
+  occluded individually for that reason. The now-playing bar needs none of it:
+  it is docked at the bottom of the browse page rather than floating over the
+  grid, so there is nothing underneath it to block. It used to be a strip of
+  220px thumbnails in the bottom-right corner, which covered two cards at
+  1000px and would have laid 900px of tiles over the bottom row with four
+  streams open.
 - **`block_mouse_except_scroll` for overlays on the browse page**, so the wheel
   still reaches the grid underneath; plain `occlude` for the modal, where the
   page behind should not scroll either.
@@ -454,9 +462,32 @@ unconsidered.
   the command line says whatever was typed.
 - **Spacing** — named by role (`PAGE_PAD`, `PANEL_PAD`, `CONTROL_PAD_*`,
   `GAP_TIGHT`, `GAP`, `GAP_SECTION`, `PANE_GAP`, `ROW_PAD_*`), not by size.
-- **Type** — five roles (`TEXT_TITLE/BODY/LABEL/META/MICRO`). Label and meta share
+- **Controls come from `controls.rs`.** There were ten hand-rolled buttons in
+  six shapes — the tokens were shared the whole time and the component was not,
+  which is the same drift one file down. A control that needs a shape not on
+  that list is a new variant there, not an eleventh `div`.
+- **Sizes the user dragged are settings, not view state.** `chat_width` and
+  `video_share` live in `settings.json`, and the drag writes them on mouse *up*
+  rather than on every move — a drag is hundreds of events and each save is a
+  read-modify-write of the whole file. `Ctrl+0` puts both back to their
+  defaults, `video_share: 0.0` meaning "derive it", which is what the layout did
+  before anybody dragged anything.
+- **The widget library reads the same tokens**, via `widget_theme::apply` after
+  `gpui_component::init`. Without it `init` seeds its palette from
+  `cx.window_appearance()` — the *operating system's* light/dark setting — so
+  every input, dropdown, button and slider followed the OS while everything
+  around them stayed dark.
+- **Type** — four roles (`TEXT_TITLE/BODY/LABEL/META`). Label and meta share
   a size but differ in weight, so a thing you can click never looks like a thing
-  you can only read. `weight_shout()` (bold) is reserved for the live badge.
+  you can only read. There were five: `TEXT_MICRO` and `weight_shout()` existed
+  for the `LIVE` badge alone and went when it did.
+- **Contrast is measured, not judged.** `MIN_CONTRAST` is AA for the sizes this
+  app uses, `theme::contrast` computes it, and `every_text_tier_is_legible`
+  holds every text token to it on every surface it lands on. `text_dim` used to
+  fail that on two of three surfaces while carrying game names, offline channel
+  names and the whole of the settings help. `readable()` bisects a username's
+  lightness until it *measures* legible rather than stopping at a fixed one —
+  the flat floor it replaced left pure blue at 2.7:1.
 - **Motion** — three durations named by job (`MOTION_HOVER`, `MOTION_ENTER`,
   `MOTION_VIDEO`) plus the waiting pulse, and two easings (`ease_fade` for
   two-way changes, `ease_enter` for arrivals). Motion says *that something
@@ -526,9 +557,9 @@ columns, the third pane's *left* edge also lands under a centred nav.
 ### Browsing
 
 Follows are **two lists that never merge**. `LiveStream` means *is live*, and
-three things read it that way — the went-live toasts, the LIVE badge, and the
-chat header's viewer count — so an offline channel sitting in that vec would be
-wrong in all three at once. Offline follows are `FollowedChannel`s, and they are
+three things read it that way — the went-live toasts, the card's viewer count,
+and the chat header's live dot — so an offline channel sitting in that vec would
+be wrong in all three at once. Offline follows are `FollowedChannel`s, and they are
 drawn as names rather than cards: a card is mostly a picture, and an offline
 channel has none worth showing — a thumbnail stale by hours, or a profile
 picture that costs another request per refresh and says nothing. Names also
@@ -592,25 +623,73 @@ returns twenty-odd games with "moon" in them — and with categories first the
 channel you actually searched for was below the fold. A live channel is directly
 watchable; a category is another click.
 
-Search runs on Enter, not per keystroke, since each one is three requests.
+Search runs on Enter, not per keystroke, since each one is three requests. The
+**palette** is the opposite and deliberately so: it filters lists the app
+already holds, costs nothing, and runs on every keystroke. Two boxes that look
+alike doing different things is worth the words — one asks Twitch, one asks the
+app.
+
+**The palette's arrows and Escape are key events, not bindings.** Its own text
+field is focused while it is open, that field's context is deeper than the
+root's, and the keymap deliberately stands aside for a focused input — which is
+the behaviour that keeps typing working everywhere else. A binding cannot win
+that argument, so `on_key_down` reads the event on the way past instead.
+
+**Avatars are a second request.** `/streams` carries a stream's preview, not the
+channel's picture, so the rail gets its faces from `/users` — batched at Helix's
+hundred per request, sent after the live list rather than with it, and merged
+into what the UI already holds so the rail fills in rather than blinking.
+
+**Card width is derived from the window**, by `browse::card_width`, and the row
+is filled rather than merely fitted. A fixed 300px card left 306px of gutter
+down one side of a 1600px window — one card short of another column — and a
+different amount of it at every other size.
+
+**What is only true right now goes over the picture**: the viewer count and
+uptime sit on the thumbnail behind an `overlay()` wash, where broadcast UIs have
+put them for decades. That corner used to hold a `LIVE` badge, which said the
+same thing on every card in every list — all three lists are live-only, since
+offline follows are names under their own heading — in the app's only saturated
+red, while the number that actually varies sat in grey underneath.
 
 ### Chat
 
 The pane reads a live log for hours, so nearly every decision in it is about
 scanning rather than features.
 
-**A row is two columns**: a fixed timestamp gutter, then the content. Not one
-wrapping row — a stamp added as the first child of a `flex_wrap` row re-flows
-with the text and gives no column at all. The structure pays twice: a wrapped
-message indents under the gutter instead of running back beneath its own
-timestamp.
+**A hand-editable file has to survive being hand-edited.** `Settings::load`
+strips a leading byte-order mark, because every obvious way to edit
+`settings.json` on Windows writes one — Notepad's "UTF-8", PowerShell's
+`Set-Content -Encoding utf8` — and `serde_json` will not take it. The failure
+was silent twice: the app started on defaults, *and* could no longer save,
+since every write reads the file back first to keep the tokens the worker put
+there.
+
+**The time is said once a minute, not once a row.** It used to be a fixed 34px
+gutter down the left holding a stamp per row, which in a busy channel is fifteen
+consecutive `15:27`s standing in for a ruler — and stamping only the rows that
+say something new leaves the gutter empty for most of them, which is 11% of a
+300px pane reserved for nothing. `ChatView::time_break` draws the time and a
+rule above the first row of each minute instead, and the rows get their width
+back.
+
+**An event row's body is wrapped in a `flex_row`**, and that is load-bearing. A
+`message_line` is a `flex_wrap` row whose every word is `min_w_0`; dropped
+straight into the event's `flex_col`, gpui sized it from its own content, which
+for a line that can shrink to nothing is one character wide. The words then
+wrapped one per line and painted over the rows beneath — so a resub with a note
+attached, or an announcement carrying a link, came out as a vertical stack of
+letters. Ordinary messages never showed it because they are already a row's
+only child. Anything else that renders a `message_line` needs the same wrapper.
 
 **Usernames go through `theme::readable`.** Twitch lets people pick any colour
 and its own fallback palette ships pure blue, firebrick and seagreen — all
 darker than the surface they land on. Lightness is lifted and hue kept, so
-people stay recognisable by colour rather than being flattened to one. The test
-runs against `twitch_chat::message::DEFAULT_COLORS` itself so the two cannot
-drift.
+people stay recognisable by colour rather than being flattened to one, and the
+lift stops at a *measured* contrast rather than a fixed lightness: the two are
+not the same thing, and the flat floor this replaced left pure blue at 2.7:1.
+The test runs against `twitch_chat::message::DEFAULT_COLORS` itself so the two
+cannot drift.
 
 **Anything per-row belongs to the row, never to its index.** The backlog drains
 from the front once full, which shifts every surviving index. That inverted the

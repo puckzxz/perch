@@ -532,6 +532,61 @@ fn parse_followed_channels(json: &Value) -> Vec<FollowedChannel> {
         .unwrap_or_default()
 }
 
+/// How many logins `/users` takes in one request. Helix's cap, not a choice.
+const USERS_PER_REQUEST: usize = 100;
+
+fn parse_profile_images(json: &Value) -> Vec<(String, String)> {
+    json.get("data")
+        .and_then(Value::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(|entry| {
+                    let login = entry.get("login").and_then(Value::as_str)?;
+                    let image = entry
+                        .get("profile_image_url")
+                        .and_then(Value::as_str)
+                        .filter(|url| !url.is_empty())?;
+                    Some((login.to_string(), image.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Avatars for `logins`, as `(login, url)` pairs.
+///
+/// A channel's picture is the one thing about it that `/streams` does not carry
+/// — the `thumbnail_url` there is the stream's own preview — so the follows
+/// rail, which is a list of people rather than of pictures of games, needs this
+/// second request to be recognisable at a glance.
+///
+/// Anyone Twitch does not answer for is simply absent from the result rather
+/// than an error: a deleted account among two hundred follows should cost that
+/// one row its picture, not the whole rail.
+///
+/// Needs no scope beyond the token already held; `/users` is public data.
+pub fn profile_images(
+    client_id: &str,
+    token: &str,
+    logins: &[String],
+) -> Result<Vec<(String, String)>, Error> {
+    let mut all = Vec::new();
+
+    for batch in logins.chunks(USERS_PER_REQUEST) {
+        // Repeated `login=` pairs rather than a comma-joined list: that is the
+        // shape Helix takes, and building them as pairs is what gets each one
+        // escaped.
+        let query: Vec<(&str, &str)> = batch
+            .iter()
+            .map(|login| ("login", login.as_str()))
+            .collect();
+        let json = helix_get(client_id, token, "/users", &query)?;
+        all.extend(parse_profile_images(&json));
+    }
+
+    Ok(all)
+}
+
 /// Every channel the signed-in user follows, in name order.
 ///
 /// Needs `user:read:follows`, the same scope the live list already uses, so
@@ -801,6 +856,61 @@ mod tests {
 
         let more: Value = serde_json::from_str(r#"{"pagination":{"cursor":"abc"}}"#).unwrap();
         assert_eq!(next_cursor(&more), Some("abc".to_string()));
+    }
+
+    #[test]
+    fn parses_a_users_payload_into_avatars() {
+        let json: Value = serde_json::from_str(
+            r#"{"data":[
+                 {"id":"1","login":"forsen","display_name":"Forsen",
+                  "profile_image_url":"https://cdn/forsen.png"},
+                 {"id":"2","login":"quin69","display_name":"Quin69",
+                  "profile_image_url":"https://cdn/quin.png"}
+               ]}"#,
+        )
+        .unwrap();
+
+        let images = parse_profile_images(&json);
+        assert_eq!(images.len(), 2);
+        assert_eq!(
+            images[0],
+            ("forsen".into(), "https://cdn/forsen.png".into())
+        );
+    }
+
+    /// One entry without a picture must not cost the rest theirs, which is the
+    /// whole reason this is a filter rather than a map.
+    #[test]
+    fn a_user_without_a_picture_is_skipped_not_fatal() {
+        let json: Value = serde_json::from_str(
+            r#"{"data":[
+                 {"login":"nopic","profile_image_url":""},
+                 {"login":"nokey"},
+                 {"profile_image_url":"https://cdn/orphan.png"},
+                 {"login":"fine","profile_image_url":"https://cdn/fine.png"}
+               ]}"#,
+        )
+        .unwrap();
+
+        let images = parse_profile_images(&json);
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].0, "fine");
+    }
+
+    #[test]
+    fn an_empty_users_payload_is_not_an_error() {
+        let json: Value = serde_json::from_str(r#"{"data":[]}"#).unwrap();
+        assert!(parse_profile_images(&json).is_empty());
+        assert!(parse_profile_images(&Value::Null).is_empty());
+    }
+
+    /// Helix takes a hundred logins per request and the rail can be asked for
+    /// more than that, so the batching is the part worth pinning down.
+    #[test]
+    fn logins_are_batched_at_helix_cap() {
+        let logins: Vec<String> = (0..250).map(|n| format!("user{n}")).collect();
+        let batches: Vec<usize> = logins.chunks(USERS_PER_REQUEST).map(|b| b.len()).collect();
+        assert_eq!(batches, vec![100, 100, 50]);
     }
 
     #[test]

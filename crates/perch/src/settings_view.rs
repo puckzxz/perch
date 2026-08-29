@@ -4,11 +4,12 @@
 //! two Twitch tokens do different jobs and are easy to confuse, so the panel
 //! says which is which rather than assuming anyone remembers.
 
-use gpui::{div, prelude::*, px, Context, Entity, EventEmitter, SharedString, Window};
+use gpui::{div, prelude::*, px, relative, Context, Entity, EventEmitter, SharedString, Window};
 use gpui_component::{
     button::{Button, ButtonVariants},
     input::{Input, InputState},
     select::{Select, SelectState},
+    switch::Switch,
     IndexPath,
 };
 use settings::{QualityPreference, Settings};
@@ -70,6 +71,9 @@ pub struct SettingsPanel {
     auth_token: Entity<InputState>,
     quality: Entity<SelectState<Vec<SharedString>>>,
     history: Entity<SelectState<Vec<SharedString>>>,
+    /// Held here rather than read back off the switch: a `Switch` reports
+    /// clicks and keeps no state of its own.
+    miniplayer: bool,
     sign_in_status: SharedString,
 }
 
@@ -125,6 +129,7 @@ impl SettingsPanel {
             cx.new(|cx| SelectState::new(options, Some(IndexPath::new(selected)), window, cx));
 
         Self {
+            miniplayer: settings.miniplayer,
             settings,
             client_id,
             auth_token,
@@ -164,6 +169,7 @@ impl SettingsPanel {
             .map(|path| path.row)
             .unwrap_or(0);
         settings.chat_history = HISTORY_OPTIONS[index].1;
+        settings.miniplayer = self.miniplayer;
 
         self.settings = settings.clone();
         cx.emit(SettingsEvent::Saved(Box::new(settings)));
@@ -199,6 +205,20 @@ impl SettingsPanel {
                     )
                     .child(div().text_color(theme::text_muted()).child(*description))
             }))
+    }
+
+    /// A heading over a group of fields.
+    ///
+    /// The sheet was five fields in a flat column, which is five things to read
+    /// in order rather than three subjects to find. Credentials, playback and
+    /// chat are what somebody comes here to change; the keyboard listing is a
+    /// reference and sits last.
+    fn section(title: &'static str) -> impl IntoElement {
+        div()
+            .text_size(px(theme::TEXT_LABEL))
+            .font_weight(theme::weight_label())
+            .text_color(theme::text_dim())
+            .child(title)
     }
 
     fn field(
@@ -250,22 +270,43 @@ impl Render for SettingsPanel {
                 PANEL_RISE,
                 div()
                     .w(px(480.))
+                    // The sheet is taller than a small window, and used to be
+                    // centred inside one with no way to reach either end: at
+                    // 1000x640 the title was cut off the top and Save and Close
+                    // were cut off the bottom, so the sheet could be opened and
+                    // dismissed but not used. The title and the buttons are
+                    // pinned now and only the fields scroll.
+                    .max_h(relative(0.9))
                     .flex()
                     .flex_col()
-                    .gap(px(theme::GAP_SECTION))
-                    .p(px(theme::PAGE_PAD))
-                    .rounded_lg()
+                    .rounded(px(theme::RADIUS_LG))
                     .bg(theme::surface_raised())
                     .border_1()
                     .border_color(theme::border())
                     .shadow_lg()
                     .child(
                         div()
+                            .flex_none()
+                            .px(px(theme::PAGE_PAD))
+                            .pt(px(theme::PAGE_PAD))
+                            .pb(px(theme::PANEL_PAD))
                             .text_size(px(theme::TEXT_TITLE))
                             .font_weight(theme::weight_title())
                             .text_color(theme::text())
                             .child("Settings"),
                     )
+                    .child(
+                        div()
+                    .id("settings-fields")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .flex()
+                    .flex_col()
+                    .gap(px(theme::GAP_SECTION))
+                    .px(px(theme::PAGE_PAD))
+                    .pb(px(theme::PAGE_PAD))
+                    .child(Self::section("Twitch account"))
                     .child(Self::field(
                         "Twitch Client ID",
                         "From an application you register at dev.twitch.tv. Set Client Type to Public; no secret is needed. Required to list your follows.",
@@ -276,33 +317,55 @@ impl Render for SettingsPanel {
                         "A different credential: the auth-token cookie from twitch.tv. Unlocks Prime/Turbo ad suppression and sub-only qualities. This is a full account credential and is stored in plain text.",
                         Input::new(&self.auth_token).mask_toggle().cleanable(true),
                     ))
+                    .child(Self::section("Playback"))
                     .child(Self::field(
                         "Stream quality",
                         "Auto picks a stream that scales cleanly to the video pane. Best is usually the wrong choice: a 1440p stream in a 720px pane decodes four times the pixels and then throws them away.",
                         Select::new(&self.quality),
                     ))
                     .child(Self::field(
+                        "Keep playing while browsing",
+                        "What you are watching carries on, muted, in a bar along the bottom of the follows page. Turned off, leaving the watch page stops the stream — which is the cheaper answer if you go there to pick the next thing rather than to glance at the list.",
+                        Switch::new("miniplayer")
+                            .checked(self.miniplayer)
+                            .label(if self.miniplayer { "On" } else { "Off" })
+                            .on_click(cx.listener(|this: &mut Self, checked: &bool, _, cx| {
+                                this.miniplayer = *checked;
+                                cx.notify();
+                            })),
+                    ))
+                    .child(Self::section("Chat"))
+                    .child(Self::field(
                         "Chat history on join",
                         "Opens a new chat pane with what was already being said. Twitch publishes no scrollback, so these come from the community service Chatterino uses — which means the request tells someone other than Twitch which channels you watch.",
                         Select::new(&self.history),
                     ))
+                    .child(Self::section("Keyboard"))
                     .child(Self::field(
                         "Keyboard shortcuts",
                         "Player keys act on the pane you last pointed at. All of them stand aside while the cursor is in a box like this one.",
                         Self::shortcuts(),
                     ))
-                    .child(
-                        div()
-                            .text_size(px(theme::TEXT_META))
-                            .text_color(theme::text_muted())
-                            .child(self.sign_in_status.clone()),
                     )
                     .child(
                         div()
+                            .flex_none()
                             .flex()
                             .flex_row()
-                            .justify_end()
-                            .gap(px(theme::GAP_TIGHT))
+                            .items_center()
+                            .gap(px(theme::GAP))
+                            .px(px(theme::PAGE_PAD))
+                            .py(px(theme::PANEL_PAD))
+                            .border_t_1()
+                            .border_color(theme::border())
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_size(px(theme::TEXT_META))
+                                    .text_color(theme::text_muted())
+                                    .child(self.sign_in_status.clone()),
+                            )
                             .child(Button::new("cancel").ghost().label("Close").on_click(
                                 cx.listener(|_, _, _, cx| cx.emit(SettingsEvent::Dismissed)),
                             ))

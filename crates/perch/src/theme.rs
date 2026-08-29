@@ -10,7 +10,7 @@
 
 use std::time::Duration;
 
-use gpui::{ease_in_out, ease_out_quint, rgb, rgba, FontWeight, Hsla};
+use gpui::{ease_in_out, ease_out_quint, rgb, rgba, FontWeight, Hsla, Rgba};
 
 /// Behind the video, and nothing else. Pure black rather than near-black: any
 /// lift here shows as a grey halo around letterboxed content, which is exactly
@@ -48,22 +48,69 @@ pub fn pressed() -> Hsla {
     rgba(0xffffff1a).into()
 }
 
-/// How dark a username is allowed to be.
+/// The contrast every piece of text in this app is held to, against whatever
+/// it sits on. WCAG AA for text below 18.66px bold, which is all of it.
+pub const MIN_CONTRAST: f32 = 4.5;
+
+/// sRGB relative luminance, per WCAG 2.
 ///
-/// Twitch lets people pick any colour, and its own default palette contains
-/// pure blue, firebrick and seagreen — all of which sit at or below the
-/// lightness of `surface()` and effectively vanish against it.
-const NAME_MIN_LIGHTNESS: f32 = 0.6;
+/// Here rather than in the tests because [`readable`] needs it at runtime: a
+/// username is lifted until it *measures* legible, not until it reaches a
+/// lightness that usually is.
+fn luminance(color: Hsla) -> f32 {
+    let rgba: Rgba = color.into();
+    let channel = |c: f32| {
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * channel(rgba.r) + 0.7152 * channel(rgba.g) + 0.0722 * channel(rgba.b)
+}
+
+/// WCAG contrast ratio between two colours, 1:1 to 21:1.
+pub fn contrast(a: Hsla, b: Hsla) -> f32 {
+    let (a, b) = (luminance(a), luminance(b));
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
+}
+
+/// How many halving steps [`readable`] spends finding the lightness it needs.
+/// Ten puts it within 0.1% of the true floor, which is finer than the eye or
+/// the 8-bit colour it ends up as.
+const READABLE_STEPS: u32 = 10;
 
 /// A username colour that can be read on this background.
 ///
 /// Hue and saturation are kept and only lightness is lifted, so people stay
-/// recognisable by colour rather than being flattened to one. This is not
-/// perceptual — blue reads darker than yellow at equal lightness — but a flat
-/// floor is predictable, and the alternative is a name nobody can see.
+/// recognisable by colour rather than being flattened to one. The lift stops
+/// at a *measured* [`MIN_CONTRAST`] rather than at a fixed lightness, because
+/// the two are not the same thing: blue reads far darker than yellow at equal
+/// lightness, so the flat floor this replaces left pure blue at 2.7:1 — under
+/// the bar the whole function exists to clear.
+///
+/// Luminance rises monotonically with lightness at fixed hue and saturation,
+/// so bisection finds the floor; the alternative is stepping, which costs a
+/// hundred times as much for every name on screen every frame.
 pub fn readable(color: u32) -> Hsla {
     let mut color: Hsla = rgb(color).into();
-    color.l = color.l.max(NAME_MIN_LIGHTNESS);
+    if contrast(color, surface()) >= MIN_CONTRAST {
+        return color;
+    }
+
+    let (mut low, mut high) = (color.l, 1.0);
+    for _ in 0..READABLE_STEPS {
+        let mid = (low + high) / 2.0;
+        color.l = mid;
+        if contrast(color, surface()) >= MIN_CONTRAST {
+            high = mid;
+        } else {
+            low = mid;
+        }
+    }
+    // Land on the light side of the bracket: the low end is the last value
+    // known to be *under* the bar.
+    color.l = high;
     color
 }
 
@@ -94,6 +141,16 @@ pub fn scrim() -> Hsla {
     rgba(0x00000099).into()
 }
 
+/// Behind anything drawn on top of a picture: the control bar, a viewer count
+/// on a thumbnail.
+///
+/// Darker than [`scrim`], because this one is not dimming what is behind it —
+/// it is making its own contrast on top of an image that could be any colour at
+/// all in the next frame.
+pub fn overlay() -> Hsla {
+    rgba(0x000000cc).into()
+}
+
 // ── Lines ────────────────────────────────────────────────────────────
 
 /// Structural borders between panes.
@@ -119,9 +176,15 @@ pub fn text_muted() -> Hsla {
     rgb(0x9a97a5).into()
 }
 
-/// Placeholders and disabled states.
+/// The quietest tier: timestamps, help text, a game name under a title.
+///
+/// Quiet is a job; invisible is not. The value this replaced measured 3.16:1
+/// on [`surface`] and 2.95:1 on [`surface_raised`], both under AA — and it was
+/// not carrying placeholders, it was carrying the game name you pick a stream
+/// by, the names of every offline channel you follow, and every line of help
+/// in the settings sheet. `every_text_tier_is_legible` holds it to the bar now.
 pub fn text_dim() -> Hsla {
-    rgb(0x66636f).into()
+    rgb(0x8a8794).into()
 }
 
 // ── Accent and status ────────────────────────────────────────────────
@@ -164,11 +227,16 @@ pub fn danger() -> Hsla {
 
 // ── Type ─────────────────────────────────────────────────────────────
 //
-// Five roles rather than five sizes. The app previously used one size,
+// Four roles rather than four sizes. The app previously used one size,
 // text_xs, for nineteen different jobs - button labels, chat notices, stream
 // metadata, settings labels - so nothing had rank. Weight was the same story:
 // BOLD was the only weight in the codebase, which means emphasis had no
 // degrees, only on and off.
+//
+// There were five. `TEXT_MICRO` and `weight_shout` existed for one element, the
+// `LIVE` badge on a browse card, and went when it did - a card in a live-only
+// list was wearing a badge that said the same thing on every card in every
+// list. A role nothing plays is not a role.
 
 /// Page and panel titles.
 pub const TEXT_TITLE: f32 = 15.0;
@@ -179,9 +247,6 @@ pub const TEXT_BODY: f32 = 13.0;
 pub const TEXT_LABEL: f32 = 11.5;
 /// Supporting information: viewers, uptime, status, help text.
 pub const TEXT_META: f32 = 11.5;
-/// Badges only.
-pub const TEXT_MICRO: f32 = 9.5;
-
 /// Leading for running text. Chat is dense and repetitive; default leading
 /// makes consecutive lines hard to separate.
 pub const LINE_BODY: f32 = 19.0;
@@ -200,17 +265,19 @@ pub fn weight_label() -> FontWeight {
     FontWeight::MEDIUM
 }
 
-/// Reserved for the live badge.
-pub fn weight_shout() -> FontWeight {
-    FontWeight::BOLD
-}
-
 // ── Spacing ──────────────────────────────────────────────────────────
 //
 // Named by role rather than by size. The point is not the numbers but that
 // two things playing the same role get the same value: the app previously
 // mixed px_2/px_3/px_4 for the same kind of padding in different files, which
 // is what made it read as unconsidered rather than any single gap being wrong.
+
+/// Corner radius for a control: a pill, a button, a text field, a dropdown.
+/// Shared with the widget library through [`crate::widget_theme`], so a button
+/// this app draws and one `gpui-component` draws are the same shape.
+pub const RADIUS: f32 = 4.0;
+/// Corner radius for a surface: a card, a panel, a sheet.
+pub const RADIUS_LG: f32 = 8.0;
 
 /// Outer margin of a page.
 pub const PAGE_PAD: f32 = 20.0;
@@ -223,7 +290,16 @@ pub const PAGE_PAD: f32 = 20.0;
 /// pane's header, and the pill sat on top of the channel's name. The nav is
 /// pinned to this width and the header reserves the same, so the two agree by
 /// construction rather than by both being nudged until they looked right.
-pub const NAV_RESERVE: f32 = 92.0;
+pub const NAV_RESERVE: f32 = 132.0;
+/// The browse header's height.
+///
+/// Fixed rather than falling out of its padding, because the toast stack has to
+/// clear it: toasts are anchored to the *window*, and the header's search box
+/// and pills live in exactly the corner they arrive in. Pinning the height is
+/// what lets the two agree by construction rather than by a number nudged until
+/// it looked right — the same trick as [`NAV_RESERVE`].
+pub const HEADER_HEIGHT: f32 = 52.0;
+
 /// Inside a card, panel or sheet.
 pub const PANEL_PAD: f32 = 12.0;
 /// Inside a pill or button.
@@ -244,9 +320,6 @@ pub const PANE_GAP: f32 = 3.0;
 /// Vertical rhythm inside a chat row.
 pub const ROW_PAD_X: f32 = 12.0;
 pub const ROW_PAD_Y: f32 = 5.0;
-/// The timestamp column. Fixed, so the stamps line up as a ruler down the
-/// side rather than shifting with each message.
-pub const STAMP_WIDTH: f32 = 34.0;
 /// Breathing room either side of an emote. Emotes need more air than words
 /// do, and `GAP_WORD` alone crowds them.
 pub const EMOTE_PAD_X: f32 = 2.0;
@@ -294,6 +367,18 @@ pub fn ease_enter() -> impl Fn(f32) -> f32 {
 pub const CHAT_WIDTH_MIN: f32 = 260.0;
 pub const CHAT_WIDTH_MAX: f32 = 640.0;
 
+/// What a hand-dragged `video_share` is clamped to.
+///
+/// Both ends leave the other half of the cell usable: a video squeezed under a
+/// third of the pane is not worth watching, and one over four fifths leaves
+/// chat too short to read a sentence in.
+pub const VIDEO_SHARE_MIN: f32 = 0.3;
+pub const VIDEO_SHARE_MAX: f32 = 0.8;
+
+/// The grab area of a pane divider. Wider than the line it draws, because a
+/// 1px target is a game rather than a control.
+pub const DIVIDER_GRAB: f32 = 6.0;
+
 /// Below this window aspect ratio the window is treated as portrait and chat
 /// moves under the video instead of beside it.
 pub const PORTRAIT_ASPECT: f32 = 1.1;
@@ -302,24 +387,13 @@ pub const PORTRAIT_ASPECT: f32 = 1.1;
 mod tests {
     use super::*;
 
-    /// sRGB relative luminance, per WCAG 2.
-    fn luminance(color: u32) -> f64 {
-        let channel = |c: u32| {
-            let c = c as f64 / 255.0;
-            if c <= 0.04045 {
-                c / 12.92
-            } else {
-                ((c + 0.055) / 1.055).powf(2.4)
-            }
-        };
-        0.2126 * channel((color >> 16) & 0xff)
-            + 0.7152 * channel((color >> 8) & 0xff)
-            + 0.0722 * channel(color & 0xff)
-    }
-
-    fn contrast(a: u32, b: u32) -> f64 {
-        let (a, b) = (luminance(a), luminance(b));
-        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    /// Every surface a piece of text is ever drawn on.
+    fn surfaces() -> [(&'static str, Hsla); 3] {
+        [
+            ("bg", bg()),
+            ("surface", surface()),
+            ("surface_raised", surface_raised()),
+        ]
     }
 
     /// The two things [`accent`] claims about itself.
@@ -330,23 +404,64 @@ mod tests {
     /// UI into a loud one an accent at a time.
     #[test]
     fn accent_carries_its_weight() {
-        const SURFACE: u32 = 0x131317;
         /// The purple this replaced. Kept as the reference weight, not because
         /// anyone wants it back.
         const PREVIOUS: u32 = 0x9d7bff;
 
-        let drift = (luminance(ACCENT) - luminance(PREVIOUS)).abs() / luminance(PREVIOUS);
+        let previous = luminance(rgb(PREVIOUS).into());
+        let drift = (luminance(accent()) - previous).abs() / previous;
         assert!(
             drift < 0.05,
             "the accent is {:.1}% off the weight it replaced; a brighter one              makes every focus ring and link louder",
             drift * 100.0
         );
 
-        let ratio = contrast(ACCENT, SURFACE);
+        let ratio = contrast(accent(), surface());
         assert!(
-            ratio >= 4.5,
+            ratio >= MIN_CONTRAST,
             "the accent reads {ratio:.2}:1 on surface(), under AA for a chat link"
         );
+    }
+
+    /// A tier can be quiet without being unreadable, and the difference is a
+    /// number rather than a matter of taste.
+    ///
+    /// `text_dim` used to fail this on two of the three surfaces while carrying
+    /// game names, offline channel names and the whole of the settings help —
+    /// which is how a token named for placeholders ends up holding content.
+    #[test]
+    fn every_text_tier_is_legible() {
+        let tiers: [(&str, Hsla); 4] = [
+            ("text", text()),
+            ("text_muted", text_muted()),
+            ("text_dim", text_dim()),
+            ("danger", danger()),
+        ];
+
+        for (tier, color) in tiers {
+            for (surface_name, surface) in surfaces() {
+                let ratio = contrast(color, surface);
+                assert!(
+                    ratio >= MIN_CONTRAST,
+                    "{tier} reads {ratio:.2}:1 on {surface_name}, under AA at every size this app uses"
+                );
+            }
+        }
+    }
+
+    /// The tiers have to stay *apart*, or three names for one grey is all they
+    /// are. Ranked by contrast rather than by hex, since that is what the eye
+    /// sorts them by.
+    #[test]
+    fn the_text_tiers_are_ordered_and_distinct() {
+        let ladder = [text(), text_muted(), text_dim()];
+        for pair in ladder.windows(2) {
+            let (louder, quieter) = (contrast(pair[0], surface()), contrast(pair[1], surface()));
+            assert!(
+                louder > quieter * 1.15,
+                "{louder:.2}:1 and {quieter:.2}:1 are too close to read as different tiers"
+            );
+        }
     }
 
     /// Everything tinted with the accent has to come from the same value, or a
@@ -363,16 +478,34 @@ mod tests {
     /// blue, firebrick and seagreen, all darker than the surface they land on.
     /// Tested against the real array rather than a copy, so the two cannot
     /// drift apart.
+    ///
+    /// Measured, not assumed: the lightness floor this replaced passed every
+    /// one of these while leaving pure blue at 2.7:1.
     #[test]
     fn every_default_username_colour_clears_the_background() {
         for color in twitch_chat::message::DEFAULT_COLORS {
-            let lifted = readable(color);
+            let ratio = contrast(readable(color), surface());
             assert!(
-                lifted.l >= NAME_MIN_LIGHTNESS,
-                "{color:#08x} came out at lightness {}",
-                lifted.l
+                ratio >= MIN_CONTRAST,
+                "{color:#08x} came out at {ratio:.2}:1"
             );
         }
+    }
+
+    /// The one the lightness floor missed, kept as its own case because it is
+    /// the reason the floor became a measurement.
+    #[test]
+    fn pure_blue_is_lifted_until_it_is_actually_readable() {
+        let raw: Hsla = rgb(0x0000ff).into();
+        assert!(
+            contrast(raw, surface()) < MIN_CONTRAST,
+            "pure blue should need lifting"
+        );
+
+        let lifted = readable(0x0000ff);
+        assert!(contrast(lifted, surface()) >= MIN_CONTRAST);
+        assert_eq!(lifted.h, raw.h, "the hue is the person");
+        assert!(lifted.l > raw.l);
     }
 
     /// A colour that is already legible must be left alone. Lifting everything
@@ -380,17 +513,34 @@ mod tests {
     #[test]
     fn colours_that_are_already_light_enough_are_untouched() {
         let raw: Hsla = rgb(0xff7f50).into();
-        assert!(raw.l > NAME_MIN_LIGHTNESS, "coral should not need lifting");
+        assert!(
+            contrast(raw, surface()) > MIN_CONTRAST,
+            "coral should not need lifting"
+        );
         assert_eq!(readable(0xff7f50), raw);
     }
 
-    /// Hue has to survive the lift, or people stop being recognisable by their
-    /// colour — which is the only reason to keep it at all.
+    /// Lifting further than necessary is the same flattening the floor caused,
+    /// arrived at politely: a colour taken well past the bar stops being that
+    /// person's colour. Anything that *was* lifted has to sit within a hair of
+    /// where it became readable.
     #[test]
-    fn lifting_a_dark_colour_keeps_its_hue() {
-        let raw: Hsla = rgb(0x0000ff).into();
-        let lifted = readable(0x0000ff);
-        assert_eq!(lifted.h, raw.h);
-        assert!(lifted.l > raw.l);
+    fn the_lift_stops_as_soon_as_it_clears_the_bar() {
+        for color in twitch_chat::message::DEFAULT_COLORS {
+            let raw: Hsla = rgb(color).into();
+            let lifted = readable(color);
+            if lifted.l == raw.l {
+                continue; // Already legible, and returned untouched.
+            }
+
+            let mut under = lifted;
+            under.l -= 0.02;
+            assert!(
+                contrast(under, surface()) < MIN_CONTRAST,
+                "{color:#08x} was lifted to {:.3} when {:.3} would have done",
+                lifted.l,
+                under.l
+            );
+        }
     }
 }
