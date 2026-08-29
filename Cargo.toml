@@ -33,3 +33,18 @@ publish = false
 [workspace.dependencies]
 libloading = "0.8"
 thiserror = "2"
+
+# Release codegen with symbols, for profilers.
+#
+# A separate profile rather than `debug = true` on `release` itself, because
+# every CI run and every tag builds `--release`: turning debug info on there
+# would slow all of them down to serve a thing nobody does on a build machine.
+# `inherits` means the code generated is the same code that ships, which is the
+# only part a profile has to get right — a profile of a differently-optimised
+# binary is a profile of a different program.
+#
+#     cargo build --profile profiling -p perch
+#     samply record target/profiling/perch.exe <channel>     (needs elevation)
+[profile.profiling]
+inherits = "release"
+debug = true

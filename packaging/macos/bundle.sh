@@ -31,9 +31,22 @@ ICO=$ROOT/crates/perch/assets/perch.ico
 [ -f "$ICO" ] || { echo "no icon at $ICO" >&2; exit 1; }
 [ -f "$BINARY" ] || { echo "no binary at $BINARY" >&2; exit 1; }
 
-# First `version = "..."` in the crate manifest, which is the one in
-# [package]; everything else there inherits from the workspace.
-VERSION=$(awk -F'"' '/^version = /{print $2; exit}' "$ROOT/crates/perch/Cargo.toml")
+# The version, from the workspace manifest that now holds the only copy.
+#
+# It used to be read out of `crates/perch/Cargo.toml`, on the grounds that
+# `version` was the one key there not inherited from the workspace. That stopped
+# being true: every crate says `version.workspace = true` now, so perch's own
+# manifest carries no number to find and this read came back empty.
+#
+# Scoped to the [workspace.package] block rather than taking the first match in
+# the file, because the root manifest also has a [profile.profiling] section and
+# dependency entries, and any of them could grow a `version = ` line that would
+# otherwise be picked up instead — silently, and with a plausible-looking value.
+VERSION=$(awk -F'"' '
+    /^\[workspace\.package\]/ { in_section = 1; next }
+    /^\[/                     { in_section = 0 }
+    in_section && /^version = / { print $2; exit }
+' "$ROOT/Cargo.toml")
 case $VERSION in
     [0-9]*.[0-9]*) ;;
     *) echo "read '$VERSION' as the version, which is not one" >&2; exit 1 ;;
