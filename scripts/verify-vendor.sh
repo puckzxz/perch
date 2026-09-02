@@ -72,6 +72,9 @@ version=$(grep -m1 '^version = ' "$VENDOR/Cargo.toml" | sed 's/.*"\(.*\)".*/\1/'
    If the bump is deliberate: re-apply the patch to the new source, update
    EXPECT_VERSION and EXPECT_SHA256 here, then run with --update."
 
+# Absolute, because the apply below runs with the extracted upstream as cwd.
+patch_abs="$PWD/$PATCH"
+
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
@@ -122,26 +125,42 @@ if ! diff -u "$work/expected" "$work/differing" > "$work/contentdrift" 2>&1; the
   fail "unexpected edits to the vendored tree"
 fi
 
-# The patch itself, one file at a time with fixed labels so it is byte-stable
-# across machines.
-: > "$work/actual.patch"
-for f in "${PATCHED[@]}"; do
-  diff -u --label "a/$CRATE/$f" --label "b/$CRATE/$f" \
-    "$upstream/$f" "$VENDOR/$f" >> "$work/actual.patch" || true
-done
-
 if [ "${1:-}" = "--update" ]; then
-  cp "$work/actual.patch" "$PATCH"
+  : > "$PATCH"
+  for f in "${PATCHED[@]}"; do
+    diff -u --label "a/$CRATE/$f" --label "b/$CRATE/$f" \
+      "$upstream/$f" "$VENDOR/$f" >> "$PATCH" || true
+  done
   echo "verify-vendor: wrote $PATCH ($(wc -l < "$PATCH" | tr -d ' ') lines)"
   exit 0
 fi
 
 [ -f "$PATCH" ] || fail "$PATCH is missing; run: scripts/verify-vendor.sh --update"
 
-if ! diff -u "$PATCH" "$work/actual.patch" > "$work/patchdrift" 2>&1; then
-  echo "verify-vendor: $VENDOR does not match upstream + $PATCH." >&2
-  echo "               (-) the committed patch, (+) what the tree actually is:" >&2
-  sed 's/^/    /' "$work/patchdrift" >&2
+# Apply the committed patch to the pristine upstream and require the result to
+# be the vendored tree, byte for byte.
+#
+# Deliberately not a text comparison of a freshly generated diff against the
+# committed one, which is what this did first and what CI killed: BSD diff on
+# macOS numbers its hunks differently from GNU diff, so a patch generated on one
+# could never match one regenerated on the other, and the check was structurally
+# incapable of passing on both legs. Applying asks the better question anyway -
+# whether the patch really does reconstruct the tree, rather than whether some
+# rendering of a diff of it looks familiar.
+if ! (cd "$upstream" && git apply -p2 "$patch_abs") 2> "$work/applyerr"; then
+  echo "verify-vendor: $PATCH does not apply to upstream $CRATE $version." >&2
+  sed 's/^/    /' "$work/applyerr" >&2
+  fail "the committed patch and the vendored tree have diverged"
+fi
+
+: > "$work/mismatch"
+while IFS= read -r f; do
+  cmp -s "$upstream/$f" "$VENDOR/$f" || printf '%s\n' "$f" >> "$work/mismatch"
+done < "$work/up.files"
+if [ -s "$work/mismatch" ]; then
+  echo "verify-vendor: applying $PATCH to upstream does not reproduce $VENDOR." >&2
+  echo "               These files differ from what the patch says they are:" >&2
+  sed 's/^/    /' "$work/mismatch" >&2
   fail "patch drift"
 fi
 
