@@ -22,6 +22,13 @@
 //! bytes underneath would leave the stale picture on screen — the one thing this
 //! is trying to fix. The previous file is deleted as the new one arrives, so a
 //! refreshing image costs one file, not one per refresh.
+//!
+//! Deleting the file is only half of it. What the UI decoded from that path is
+//! keyed on the path rather than on the file, so it outlives the deletion and
+//! would be held for the rest of the session - the same picture kept twice
+//! over, once per refresh. Every superseded path therefore goes on a list that
+//! [`ImageCache::take_retired`] drains, and releasing whatever was decoded from
+//! it is the caller's half of the bargain.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -87,6 +94,13 @@ pub struct ImageCache {
     /// spinning. Replaces the old "never retry" set: a transient network blip
     /// should not disable an emote for the rest of the session.
     attempted: Arc<Mutex<HashMap<String, Instant>>>,
+    /// Files a refresh has superseded, waiting for the caller to release what
+    /// it decoded from them. See [`ImageCache::take_retired`].
+    ///
+    /// A path lands here only once its replacement is in `ready`, never when the
+    /// refresh is queued: until the new bytes exist, the old path is exactly
+    /// what the UI is still drawing.
+    retired: Arc<Mutex<Vec<PathBuf>>>,
     queue: mpsc::Sender<Job>,
     _workers: Vec<std::thread::JoinHandle<()>>,
 }
@@ -222,6 +236,7 @@ impl ImageCache {
         let ready: Arc<Mutex<HashMap<String, Entry>>> = Arc::new(Mutex::new(HashMap::new()));
         let inflight = Arc::new(Mutex::new(HashSet::new()));
         let attempted = Arc::new(Mutex::new(HashMap::new()));
+        let retired = Arc::new(Mutex::new(Vec::new()));
         let (queue, rx) = mpsc::channel::<Job>();
         let (notify, notify_rx) = futures_mpsc::unbounded();
 
@@ -243,6 +258,7 @@ impl ImageCache {
             let volatile_dir = volatile_dir.clone();
             let agent = agent.clone();
             let notify = notify.clone();
+            let retired = retired.clone();
 
             workers.push(
                 std::thread::Builder::new()
@@ -268,10 +284,11 @@ impl ImageCache {
                                     },
                                 );
                                 // Deleted only once the replacement is indexed,
-                                // or a failure would leave nothing to draw.
-                                if let Some(old) = job.replaces {
-                                    let _ = std::fs::remove_file(old);
-                                }
+                                // or a failure would leave nothing to draw - and
+                                // retired in the same breath, for the same
+                                // reason: `ready` already names the new file, so
+                                // nothing can ask for this one again.
+                                retire(&retired, job.replaces);
                                 let _ = notify.unbounded_send(());
                             }
                             Err(e) => eprintln!("image cache: {}: {e}", job.url),
@@ -304,6 +321,7 @@ impl ImageCache {
                 ready,
                 inflight,
                 attempted,
+                retired,
                 queue,
                 _workers: workers,
             },
@@ -344,6 +362,19 @@ impl ImageCache {
                 None
             }
         }
+    }
+
+    /// Take the paths that refreshes have superseded since the last call.
+    ///
+    /// Drains: each path is reported exactly once, so this is cheap enough to
+    /// call every frame and harmless on a frame that draws none of these images.
+    ///
+    /// The caller is expected to release whatever it decoded from each path
+    /// *before* it next asks this cache for anything. That ordering is what
+    /// makes it safe: a path appears here only once `ready` names its
+    /// replacement, so a lookup after the drain can only return the new file.
+    pub fn take_retired(&self) -> Vec<PathBuf> {
+        std::mem::take(&mut *self.retired.lock().unwrap())
     }
 
     /// What we hold for `url`, promoting a file left by a previous run.
@@ -395,6 +426,22 @@ impl ImageCache {
     pub fn volatile_dir(&self) -> &Path {
         &self.volatile_dir
     }
+}
+
+/// A replacement has landed: the file it supersedes goes from disk, and its
+/// path goes on the retired list.
+///
+/// Retired whether or not the unlink succeeded, and deliberately so. The delete
+/// is best-effort - a scanner holding a handle open is enough to fail it on
+/// Windows - but the decoded copy has to be released either way, and `ready`
+/// already names the replacement, so nothing can ask for this path again.
+/// Retiring without deleting costs one stale file until the volatile directory
+/// is emptied at startup; not retiring costs the image for the rest of the
+/// session, which is the whole bug.
+fn retire(retired: &Mutex<Vec<PathBuf>>, replaced: Option<PathBuf>) {
+    let Some(old) = replaced else { return };
+    let _ = std::fs::remove_file(&old);
+    retired.lock().unwrap().push(old);
 }
 
 fn download(agent: &ureq::Agent, dir: &Path, url: &str, unique: bool) -> Result<PathBuf, String> {
@@ -479,6 +526,56 @@ mod tests {
         assert_eq!(extension_for(Some("image/png")), "png");
         assert_eq!(extension_for(Some("image/webp")), "webp");
         assert_eq!(extension_for(None), "img");
+    }
+
+    /// A superseded file goes from disk *and* on to the retired list. Deleting
+    /// it alone is what left the decoded copy behind.
+    #[test]
+    fn a_replaced_file_is_deleted_and_reported() {
+        let dir = scratch("retire");
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = dir.join("abcdef0123456789-0.jpg");
+        std::fs::write(&old, b"yesterday's preview").unwrap();
+
+        let retired = Mutex::new(Vec::new());
+        retire(&retired, Some(old.clone()));
+
+        assert!(!old.exists(), "a superseded file was left on disk");
+        assert_eq!(retired.lock().unwrap().as_slice(), &[old]);
+
+        // A first fetch replaces nothing, and must retire nothing.
+        retire(&retired, None);
+        assert_eq!(retired.lock().unwrap().len(), 1);
+
+        // The unlink is best-effort; the retirement is not. Releasing the
+        // decoded copy matters whether or not the file went.
+        let missing = dir.join("never-existed.jpg");
+        retire(&retired, Some(missing));
+        assert_eq!(
+            retired.lock().unwrap().len(),
+            2,
+            "a failed unlink skipped the retirement"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Draining is what makes it safe to call every frame: reporting a path
+    /// twice would ask the UI to free one image two times.
+    #[test]
+    fn a_retired_path_is_reported_once() {
+        let dir = scratch("retire-drains");
+        let (cache, _ready) = ImageCache::new(dir.clone()).unwrap();
+        assert!(cache.take_retired().is_empty());
+
+        cache.retired.lock().unwrap().push(dir.join("x.jpg"));
+        assert_eq!(cache.take_retired().len(), 1);
+        assert!(
+            cache.take_retired().is_empty(),
+            "a retired path was reported twice"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn scratch(name: &str) -> PathBuf {

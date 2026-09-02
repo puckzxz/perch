@@ -1,0 +1,554 @@
+--- a/gpui/src/platform.rs
++++ b/gpui/src/platform.rs
+@@ -766,6 +766,26 @@
+         build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
+     ) -> Result<Option<AtlasTile>>;
+     fn remove(&self, key: &AtlasKey);
++
++    /// PERCH PATCH: overwrite the pixels of a tile already in the atlas.
++    ///
++    /// `get_or_insert_with` is insert-once - a key it already holds is handed
++    /// back without consulting `build` - so an image whose pixels change every
++    /// frame can only reach the GPU by changing its key too, and a new key is a
++    /// new texture created and destroyed every frame. A maximised 1440p video
++    /// pane is a 14.7 MB texture built and released sixty times a second.
++    ///
++    /// Returns whether the atlas took the update. `false` means it did not and
++    /// the caller must let the next paint insert `key` the ordinary way;
++    /// `Window::update_image`, the only caller, removes the key on that path so
++    /// nothing can go on sampling a tile whose contents or bounds are stale.
++    ///
++    /// Defaulted, so the Metal, Blade and test atlases need no change - they
++    /// simply never take the fast path, and `update_image` degrades to the
++    /// remove-and-reinsert it replaces.
++    fn update(&self, _key: &AtlasKey, _size: Size<DevicePixels>, _bytes: &[u8]) -> bool {
++        false
++    }
+ }
+ 
+ struct AtlasTextureList<T> {
+--- a/gpui/src/platform/mac/metal_atlas.rs
++++ b/gpui/src/platform/mac/metal_atlas.rs
+@@ -59,9 +59,23 @@
+ 
+     fn remove(&self, key: &AtlasKey) {
+         let mut lock = self.0.lock();
+-        let Some(id) = lock.tiles_by_key.get(key).map(|v| v.texture_id) else {
++        // PERCH PATCH: take the key out here, the way the DirectX and Blade
++        // atlases already do.
++        //
++        // This read used to be a `get`, with the key erased only in the
++        // unreferenced branch below. So `remove` on a key whose texture was
++        // still shared decremented `live_atlas_keys` and left the key behind,
++        // and a second `remove` for it decremented again - driving the count to
++        // zero with another key still pointing at the texture, freeing it and
++        // recycling its index under a live tile. perch reaches that: its release
++        // hook drops `current` and `previous`, which hold the same `Arc`
++        // whenever the UI repainted without a new frame. Taking the key first
++        // makes the second call a no-op, which is also what makes the
++        // `deallocate` below safe to add.
++        let Some(tile) = lock.tiles_by_key.remove(key) else {
+             return;
+         };
++        let id = tile.texture_id;
+ 
+         let textures = match id.kind {
+             AtlasTextureKind::Monochrome => &mut lock.monochrome_textures,
+@@ -77,11 +91,25 @@
+         };
+ 
+         if let Some(mut texture) = texture_slot.take() {
++            // PERCH PATCH: hand the tile's space back to the shelf allocator.
++            //
++            // Without this a shared atlas is write-once: `allocate` takes shelf
++            // space and nothing ever returns it, so once the texture is full it
++            // can only be discarded wholesale - and it is only discarded when
++            // *every* key in it has gone. perch retires one video frame per pane
++            // per frame, so any frame that fits inside 1024x1024 (a 2x2 layout,
++            // or any pane under the default atlas size) burns through fresh
++            // 4 MiB atlases continuously. Measured on two panes: 491 live
++            // atlases climbing to 889 in three minutes, 3.6 GB and still going.
++            //
++            // This is upstream's own fix - Zed PR #58874, "gpui: Free atlas tile
++            // space when removing tiles", whose release note is this symptom
++            // exactly. It landed after 0.2.2 was published.
++            texture.allocator.deallocate(tile.tile_id.into());
+             texture.decrement_ref_count();
+ 
+             if texture.is_unreferenced() {
+                 textures.free_list.push(id.index as usize);
+-                lock.tiles_by_key.remove(key);
+             } else {
+                 *texture_slot = Some(texture);
+             }
+@@ -101,9 +129,16 @@
+                 AtlasTextureKind::Polychrome => &mut self.polychrome_textures,
+             };
+ 
++            // PERCH PATCH: skip dedicated textures when looking for room.
++            // Same bug as the DirectX atlas, same fix - see the long comment in
++            // platform/windows/directx_atlas.rs. An image larger than the
++            // default in one axis and smaller in the other leaves a strip that
++            // unrelated sprites get packed into, which pins the whole texture
++            // because `live_atlas_keys` never returns to zero.
+             if let Some(tile) = textures
+                 .iter_mut()
+                 .rev()
++                .filter(|texture| !texture.dedicated)
+                 .find_map(|texture| texture.allocate(size))
+             {
+                 return Some(tile);
+@@ -129,6 +164,9 @@
+             height: DevicePixels(16384),
+         };
+         let size = min_size.min(&MAX_ATLAS_SIZE).max(&DEFAULT_ATLAS_SIZE);
++        // PERCH PATCH: anything bigger than the default was sized for one image.
++        let dedicated =
++            size.width > DEFAULT_ATLAS_SIZE.width || size.height > DEFAULT_ATLAS_SIZE.height;
+         let texture_descriptor = metal::TextureDescriptor::new();
+         texture_descriptor.set_width(size.width.into());
+         texture_descriptor.set_height(size.height.into());
+@@ -163,6 +201,8 @@
+             allocator: etagere::BucketedAtlasAllocator::new(size.into()),
+             metal_texture: AssertSend(metal_texture),
+             live_atlas_keys: 0,
++            // PERCH PATCH
++            dedicated,
+         };
+ 
+         if let Some(ix) = index {
+@@ -191,6 +231,9 @@
+     allocator: BucketedAtlasAllocator,
+     metal_texture: AssertSend<metal::Texture>,
+     live_atlas_keys: u32,
++    /// PERCH PATCH: this texture was created oversized for one specific image
++    /// and must not be used to pack unrelated sprites. See `allocate`.
++    dedicated: bool,
+ }
+ 
+ impl MetalAtlasTexture {
+--- a/gpui/src/platform/windows/directx_atlas.rs
++++ b/gpui/src/platform/windows/directx_atlas.rs
+@@ -31,6 +31,9 @@
+     texture: ID3D11Texture2D,
+     view: [Option<ID3D11ShaderResourceView>; 1],
+     live_atlas_keys: u32,
++    /// PERCH PATCH: this texture was created oversized for one specific image
++    /// and must not be used to pack unrelated sprites. See `allocate`.
++    dedicated: bool,
+ }
+ 
+ impl DirectXAtlas {
+@@ -95,9 +98,12 @@
+     fn remove(&self, key: &AtlasKey) {
+         let mut lock = self.0.lock();
+ 
+-        let Some(id) = lock.tiles_by_key.remove(key).map(|tile| tile.texture_id) else {
++        // PERCH PATCH: keep the whole tile, not just its texture id - the
++        // `tile_id` is what the allocator needs back below.
++        let Some(tile) = lock.tiles_by_key.remove(key) else {
+             return;
+         };
++        let id = tile.texture_id;
+ 
+         let textures = match id.kind {
+             AtlasTextureKind::Monochrome => &mut lock.monochrome_textures,
+@@ -109,15 +115,51 @@
+         };
+ 
+         if let Some(mut texture) = texture_slot.take() {
++            // PERCH PATCH: hand the tile's space back to the shelf allocator.
++            //
++            // Without this a shared atlas is write-once: `allocate` takes shelf
++            // space and nothing ever returns it, so once the texture is full it
++            // can only be discarded wholesale - and it is only discarded when
++            // *every* key in it has gone. perch retires one video frame per pane
++            // per frame, so any frame that fits inside 1024x1024 (a 2x2 layout,
++            // or any pane under the default atlas size) burns through fresh
++            // 4 MiB atlases continuously. Measured on two panes: 491 live
++            // atlases climbing to 889 in three minutes, 3.6 GB and still going.
++            //
++            // This is upstream's own fix - Zed PR #58874, "gpui: Free atlas tile
++            // space when removing tiles", whose release note is this symptom
++            // exactly. It landed after 0.2.2 was published.
++            texture.allocator.deallocate(tile.tile_id.into());
+             texture.decrement_ref_count();
+             if texture.is_unreferenced() {
+                 textures.free_list.push(texture.id.index as usize);
+-                lock.tiles_by_key.remove(key);
++                // PERCH PATCH: the second `tiles_by_key.remove(key)` that stood
++                // here was dead - the key is taken out at the top of the
++                // function now, as it always was.
+             } else {
+                 *texture_slot = Some(texture);
+             }
+         }
+     }
++
++    /// PERCH PATCH: in-place update, see `PlatformAtlas::update`.
++    fn update(&self, key: &AtlasKey, size: Size<DevicePixels>, bytes: &[u8]) -> bool {
++        let lock = self.0.lock();
++        let Some(tile) = lock.tiles_by_key.get(key) else {
++            return false;
++        };
++        // A tile is only reusable while it still describes the image. A video
++        // pane follows its own size, so the frame behind one id changes shape;
++        // the caller drops the key on a false and the next paint allocates at
++        // the new size.
++        if tile.bounds.size != size {
++            return false;
++        }
++        let bounds = tile.bounds;
++        let texture = lock.texture(tile.texture_id);
++        texture.upload(&lock.device_context, bounds, bytes);
++        true
++    }
+ }
+ 
+ impl DirectXAtlasState {
+@@ -132,9 +174,25 @@
+                 AtlasTextureKind::Polychrome => &mut self.polychrome_textures,
+             };
+ 
++            // PERCH PATCH: skip dedicated textures when looking for room.
++            //
++            // `push_texture` rounds a texture up to at least DEFAULT_ATLAS_SIZE
++            // in each dimension, so an image larger than the default in one axis
++            // but smaller in the other gets a texture with a leftover strip - a
++            // 1280x936 video frame becomes a 1280x1024 texture with 64 rows to
++            // spare, because etagere rounds the shelf to 960. Without this
++            // filter the next small sprite (a chat emote, a badge) is packed
++            // into that strip, `live_atlas_keys` never falls back to zero, and
++            // `remove` therefore never frees the texture. perch mints a fresh
++            // RenderImage per video frame, so that pinned one frame's 5 MiB
++            // texture for every emote inserted - 43.7 GB over five hours.
++            //
++            // A dedicated texture is full by construction, so skipping it costs
++            // nothing: the scan would have failed to find room in it anyway.
+             if let Some(tile) = textures
+                 .iter_mut()
+                 .rev()
++                .filter(|texture| !texture.dedicated)
+                 .find_map(|texture| texture.allocate(size))
+             {
+                 return Some(tile);
+@@ -161,6 +219,9 @@
+             height: DevicePixels(16384),
+         };
+         let size = min_size.min(&MAX_ATLAS_SIZE).max(&DEFAULT_ATLAS_SIZE);
++        // PERCH PATCH: anything bigger than the default was sized for one image.
++        let dedicated =
++            size.width > DEFAULT_ATLAS_SIZE.width || size.height > DEFAULT_ATLAS_SIZE.height;
+         let pixel_format;
+         let bind_flag;
+         let bytes_per_pixel;
+@@ -223,6 +284,8 @@
+             texture,
+             view,
+             live_atlas_keys: 0,
++            // PERCH PATCH
++            dedicated,
+         };
+         if let Some(ix) = index {
+             texture_list.textures[ix] = Some(atlas_texture);
+@@ -264,6 +327,27 @@
+         bounds: Bounds<DevicePixels>,
+         bytes: &[u8],
+     ) {
++        // PERCH PATCH: refuse an upload the source slice cannot cover.
++        //
++        // `UpdateSubresource` reads `row_pitch * height` bytes from a raw
++        // pointer with no length attached, so a slice one row short makes the
++        // driver read past the end of the buffer - kilobytes at a glyph,
++        // megabytes at a video frame - and the result is a crash or garbage on
++        // screen rather than an error anyone can act on. This runs once per new
++        // tile, not per frame, so it costs nothing measurable. Upstream added
++        // the same check after 0.2.2.
++        let row_bytes = bounds.size.width.to_bytes(self.bytes_per_pixel as u8) as usize;
++        let expected = row_bytes * bounds.size.height.0.max(0) as usize;
++        if bytes.len() < expected {
++            log::error!(
++                "DirectXAtlasTexture::upload: source slice is {} bytes but the {}x{} region                  requires {} bytes; skipping upload to avoid a driver over-read",
++                bytes.len(),
++                bounds.size.width.0,
++                bounds.size.height.0,
++                expected,
++            );
++            return;
++        }
+         unsafe {
+             device_context.UpdateSubresource(
+                 &self.texture,
+--- a/gpui/src/platform/windows/directx_renderer.rs
++++ b/gpui/src/platform/windows/directx_renderer.rs
+@@ -45,6 +45,9 @@
+     pipelines: DirectXRenderPipelines,
+     direct_composition: Option<DirectComposition>,
+     font_info: &'static FontInfo,
++    /// PERCH PATCH: set while the renderer has been rebuilt after a device
++    /// loss but nothing has re-rendered into it yet. See `draw`.
++    skip_draws: bool,
+ }
+ 
+ /// Direct3D objects
+@@ -60,7 +63,16 @@
+ struct DirectXResources {
+     // Direct3D rendering objects
+     swap_chain: IDXGISwapChain1,
+-    render_target: ManuallyDrop<ID3D11Texture2D>,
++    /// PERCH PATCH: `Option`, not `ManuallyDrop`.
++    ///
++    /// `resize` has to release this before `ResizeBuffers`, and that call can
++    /// fail - its own comment says a move to a monitor on another GPU returns
++    /// device-removed. With `ManuallyDrop` the early return left a value that
++    /// had already been dropped, and `Drop for DirectXResources` then released
++    /// the same COM pointer a second time. Nothing reads this field; it is held
++    /// only to keep the back buffer alive, so `Option` costs nothing at the use
++    /// sites and makes the release idempotent.
++    render_target: Option<ID3D11Texture2D>,
+     render_target_view: [Option<ID3D11RenderTargetView>; 1],
+ 
+     // Path intermediate textures (with MSAA)
+@@ -164,6 +176,8 @@
+             pipelines,
+             direct_composition,
+             font_info: Self::get_font_info(),
++            // PERCH PATCH
++            skip_draws: false,
+         })
+     }
+ 
+@@ -185,11 +199,16 @@
+                 _pad: 0,
+             }],
+         )?;
++        // PERCH PATCH: a failed `resize` leaves this empty until the next one
++        // succeeds. Returning the error loses a frame; unwrapping lost the
++        // process.
++        let render_target_view = self.resources.render_target_view[0]
++            .as_ref()
++            .context("Render target view is missing")?;
+         unsafe {
+-            self.devices.device_context.ClearRenderTargetView(
+-                self.resources.render_target_view[0].as_ref().unwrap(),
+-                &[0.0; 4],
+-            );
++            self.devices
++                .device_context
++                .ClearRenderTargetView(render_target_view, &[0.0; 4]);
+             self.devices
+                 .device_context
+                 .OMSetRenderTargets(Some(&self.resources.render_target_view), None);
+@@ -280,10 +299,31 @@
+                 .device_context
+                 .OMSetRenderTargets(Some(&self.resources.render_target_view), None);
+         }
++        // PERCH PATCH: everything above just replaced the device, and with it
++        // every atlas texture - `DirectXAtlas::handle_device_lost` swapped both
++        // texture lists for empty ones. The window's `rendered_frame.scene`
++        // still holds `AtlasTile`s indexing the lists that are gone, so until
++        // something re-renders, replaying that scene is an out-of-bounds unwrap
++        // in `DirectXAtlasState::texture`. Refuse to draw until told otherwise.
++        self.skip_draws = true;
+         Ok(())
+     }
+ 
++    /// PERCH PATCH: the scene about to be drawn was built after the device was
++    /// replaced, so its tiles are real again.
++    pub(crate) fn mark_drawable(&mut self) {
++        self.skip_draws = false;
++    }
++
+     pub(crate) fn draw(&mut self, scene: &Scene) -> Result<()> {
++        // PERCH PATCH: drop the frame rather than replay a scene whose atlas
++        // tiles belong to the device we just lost. gpui presents without
++        // re-rendering whenever the view is clean but there was recent input
++        // (`window.rs`'s `needs_present` branch), and that path would otherwise
++        // panic here rather than lose one frame.
++        if self.skip_draws {
++            return Ok(());
++        }
+         self.pre_draw()?;
+         for batch in scene.batches() {
+             match batch {
+@@ -318,7 +358,16 @@
+     pub(crate) fn resize(&mut self, new_size: Size<DevicePixels>) -> Result<()> {
+         let width = new_size.width.0.max(1) as u32;
+         let height = new_size.height.0.max(1) as u32;
+-        if self.resources.width == width && self.resources.height == height {
++        // PERCH PATCH: the size alone cannot decide this is a no-op. A resize
++        // that failed after releasing the back buffer leaves the swap chain
++        // with no render target view, and the `WM_SIZE` that came back to the
++        // pre-failure size would otherwise take this early return and leave the
++        // window black for good - `events.rs` does not resize on
++        // restore-from-minimize either, so nothing else would rescue it.
++        if self.resources.width == width
++            && self.resources.height == height
++            && self.resources.render_target_view[0].is_some()
++        {
+             return Ok(());
+         }
+         self.resources.width = width;
+@@ -326,8 +375,10 @@
+ 
+         // Clear the render target before resizing
+         unsafe { self.devices.device_context.OMSetRenderTargets(None, None) };
+-        unsafe { ManuallyDrop::drop(&mut self.resources.render_target) };
+-        drop(self.resources.render_target_view[0].take().unwrap());
++        // PERCH PATCH: `take`, so a failure below cannot leave a dropped value
++        // behind for `Drop` to release a second time.
++        drop(self.resources.render_target.take());
++        drop(self.resources.render_target_view[0].take());
+ 
+         // Resizing the swap chain requires a call to the underlying DXGI adapter, which can return the device removed error.
+         // The app might have moved to a monitor that's attached to a different graphics device.
+@@ -1005,13 +1056,9 @@
+     }
+ }
+ 
+-impl Drop for DirectXResources {
+-    fn drop(&mut self) {
+-        unsafe {
+-            ManuallyDrop::drop(&mut self.render_target);
+-        }
+-    }
+-}
++// PERCH PATCH: `Drop for DirectXResources` is gone with the `ManuallyDrop` on
++// `render_target` - an `Option` releases itself, exactly once, wherever it is
++// dropped or taken.
+ 
+ #[inline]
+ fn get_comp_device(dxgi_device: &IDXGIDevice) -> Result<IDCompositionDevice> {
+@@ -1082,7 +1129,8 @@
+     width: u32,
+     height: u32,
+ ) -> Result<(
+-    ManuallyDrop<ID3D11Texture2D>,
++    // PERCH PATCH: see `DirectXResources::render_target`.
++    Option<ID3D11Texture2D>,
+     [Option<ID3D11RenderTargetView>; 1],
+     ID3D11Texture2D,
+     [Option<ID3D11ShaderResourceView>; 1],
+@@ -1113,14 +1161,16 @@
+     swap_chain: &IDXGISwapChain1,
+     device: &ID3D11Device,
+ ) -> Result<(
+-    ManuallyDrop<ID3D11Texture2D>,
++    // PERCH PATCH: see `DirectXResources::render_target`.
++    Option<ID3D11Texture2D>,
+     [Option<ID3D11RenderTargetView>; 1],
+ )> {
+     let render_target: ID3D11Texture2D = unsafe { swap_chain.GetBuffer(0) }?;
+     let mut render_target_view = None;
+     unsafe { device.CreateRenderTargetView(&render_target, None, Some(&mut render_target_view))? };
+     Ok((
+-        ManuallyDrop::new(render_target),
++        // PERCH PATCH: see `DirectXResources::render_target`.
++        Some(render_target),
+         [Some(render_target_view.unwrap())],
+     ))
+ }
+--- a/gpui/src/platform/windows/events.rs
++++ b/gpui/src/platform/windows/events.rs
+@@ -1189,12 +1189,27 @@
+         let devices = lparam.0 as *const DirectXDevices;
+         let devices = unsafe { &*devices };
+         lock.renderer.handle_device_lost(&devices);
++        // PERCH PATCH: the renderer now refuses to draw until something renders
++        // into it. Make sure the next `draw_window` is a forced one, so it both
++        // clears that and bypasses the view cache.
++        lock.force_render_pending = true;
+         Some(0)
+     }
+ 
+     #[inline]
+     fn draw_window(&self, handle: HWND, force_render: bool) -> Option<isize> {
+         let mut request_frame = self.state.borrow_mut().callbacks.request_frame.take()?;
++        // PERCH PATCH: consume the post-device-lost flag. Taken after the `?`
++        // above on purpose - with no frame callback nothing draws, and the
++        // forced render still has to happen on whichever call does.
++        let force_render = {
++            let mut lock = self.state.borrow_mut();
++            let pending = std::mem::take(&mut lock.force_render_pending);
++            if pending {
++                lock.renderer.mark_drawable();
++            }
++            force_render || pending
++        };
+         request_frame(RequestFrameOptions {
+             require_presentation: false,
+             force_render,
+--- a/gpui/src/platform/windows/window.rs
++++ b/gpui/src/platform/windows/window.rs
+@@ -47,6 +47,11 @@
+     pub last_reported_capslock: Option<Capslock>,
+     pub system_key_handled: bool,
+     pub hovered: bool,
++    /// PERCH PATCH: the renderer was rebuilt after a device loss and is
++    /// refusing to draw until a frame is rendered fresh. The next `draw_window`
++    /// has to be a forced render so it bypasses the view cache, which would
++    /// otherwise replay tiles belonging to the device that went away.
++    pub force_render_pending: bool,
+ 
+     pub renderer: DirectXRenderer,
+ 
+@@ -114,6 +119,8 @@
+         let last_reported_capslock = None;
+         let system_key_handled = false;
+         let hovered = false;
++        // PERCH PATCH: see `WindowsWindowState::force_render_pending`.
++        let force_render_pending = false;
+         let click_state = ClickState::new();
+         let nc_button_pressed = None;
+         let fullscreen = None;
+@@ -135,6 +142,7 @@
+             last_reported_capslock,
+             system_key_handled,
+             hovered,
++            force_render_pending,
+             renderer,
+             click_state,
+             current_cursor,
+--- a/gpui/src/window.rs
++++ b/gpui/src/window.rs
+@@ -3194,6 +3194,40 @@
+         });
+     }
+ 
++    /// PERCH PATCH: replace the pixels of an image already in the sprite atlas,
++    /// keeping its tile.
++    ///
++    /// Returns `true` when the atlas overwrote the tile in place, in which case
++    /// painting `data` this frame costs nothing further. `false` means it could
++    /// not - the image is not resident, its size changed, or this platform's
++    /// atlas has no in-place update - and the key is removed on the way out, so
++    /// the next [`Self::paint_image`] inserts it afresh rather than sampling
++    /// old pixels or old bounds. Callers need do nothing with the result but
++    /// paint as they otherwise would.
++    ///
++    /// This exists for video. A source that mints one `RenderImage` per frame
++    /// gets a fresh `ImageId`, hence a fresh `AtlasKey`, hence a GPU texture
++    /// created and destroyed sixty times a second. Holding one `ImageId` for
++    /// the life of the stream and calling this instead keeps one tile.
++    pub fn update_image(&mut self, data: &RenderImage, frame_index: usize) -> bool {
++        let params = RenderImageParams {
++            image_id: data.id,
++            frame_index,
++        };
++
++        if let Some(bytes) = data.as_bytes(frame_index) {
++            if self
++                .sprite_atlas
++                .update(&params.clone().into(), data.size(frame_index), bytes)
++            {
++                return true;
++            }
++        }
++
++        self.sprite_atlas.remove(&params.into());
++        false
++    }
++
+     /// Removes an image from the sprite atlas.
+     pub fn drop_image(&mut self, data: Arc<RenderImage>) -> Result<()> {
+         for frame_index in 0..data.frame_count() {

@@ -95,6 +95,22 @@ impl VideoStream {
         let paused = Arc::new(AtomicBool::new(false));
         let (mut tx, rx) = mpsc::channel::<()>(1);
 
+        // One `ImageId` for the whole stream, minted here rather than per frame.
+        //
+        // GPUI keys its sprite atlas on the id `RenderImage::new` takes from a
+        // global counter, and a key it has not seen is a new tile: on Windows a
+        // CreateTexture2D plus a shader resource view, and a Release of the pair
+        // the frame before. That is 14.7 MB built and thrown away sixty times a
+        // second for a maximised 1440p pane. Holding the id lets the UI
+        // overwrite the tile in place instead — see `Window::update_image`.
+        //
+        // The id has to come *from* GPUI's counter rather than be invented.
+        // `ImageId` is a bare `usize`, so a number we picked could collide with
+        // a real image — an emote, an avatar, a thumbnail — and the two would
+        // share one atlas tile. A 1x1 throwaway is the cheapest way to draw one
+        // legitimately.
+        let image_id = RenderImage::new(smallvec![Frame::new(RgbaImage::new(1, 1))]).id;
+
         let thread = std::thread::Builder::new()
             .name("mpv-render".into())
             .spawn({
@@ -206,9 +222,12 @@ impl VideoStream {
                             eprintln!("video: buffer did not match {current_w}x{current_h}");
                             break;
                         };
-                        let frame = Arc::new(RenderImage::new(smallvec![Frame::new(image)]));
+                        let mut frame = RenderImage::new(smallvec![Frame::new(image)]);
+                        // Overwrite the id `new` just took from the global
+                        // counter with the stream's own; see `image_id`.
+                        frame.id = image_id;
 
-                        *latest.lock().unwrap() = Some(frame);
+                        *latest.lock().unwrap() = Some(Arc::new(frame));
 
                         // Full channel means the UI has not consumed the last
                         // wake yet; it will see this frame when it gets there.

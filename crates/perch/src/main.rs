@@ -1849,6 +1849,15 @@ fn window_aspect(window: &Window) -> f32 {
 
 impl Render for RootView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // First, before anything builds a card. A preview that has been replaced
+        // has to be released while nothing is asking for it any more, and this
+        // whole function runs before any element it returns lays itself out.
+        // Here rather than in `browse_page` for two reasons: that has no
+        // `&mut Window`, and the drain has to run on watch-page frames too, or a
+        // wave of retirements sits undrained with its images resident until the
+        // user happens to navigate back. See `browse::release_retired_previews`.
+        browse::release_retired_previews(&self.cache, window, cx);
+
         let page = match self.page {
             Page::Browse => self.browse_page(window, cx).into_any_element(),
             Page::Watch => self.watch_page(window, cx).into_any_element(),

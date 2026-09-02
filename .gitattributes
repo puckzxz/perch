@@ -14,5 +14,20 @@
 *.cmd text eol=crlf
 *.ps1 text eol=crlf
 
+# And the shell scripts, which want LF wherever they are checked out. CI runs
+# `scripts/verify-vendor.sh` on the windows leg as well as the macOS one, and
+# bash reads a CRLF script as commands with a trailing carriage return —
+# `$'': command not found`, on a line that looks perfectly fine in a diff.
+*.sh text eol=lf
+
 # And the one thing here that is not text.
 *.ico binary
+
+# The vendored dependency is not ours to renormalise. `scripts/verify-vendor.sh`
+# compares it byte for byte against the .crate tarball from crates.io, and that
+# tarball is LF — so `text=auto` above, which checks out CRLF wherever the
+# platform asks for it, would fail that comparison on any clone made with the
+# Git-for-Windows default, CI's own windows leg included. `-text` means never
+# convert in either direction, which is also what keeps a `cargo fmt` or an
+# editor from producing a 181-file diff through somebody else's code.
+vendor/** -text

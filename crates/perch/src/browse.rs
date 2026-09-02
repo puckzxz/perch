@@ -12,7 +12,10 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use emotes::ImageCache;
-use gpui::{div, img, prelude::*, px, rgb, AnyElement, Context, SharedString};
+use gpui::{
+    div, img, prelude::*, px, rgb, AnyElement, App, Context, ImgResourceLoader, Resource,
+    SharedString, Window,
+};
 use twitch_api::{Category, FollowedChannel, LiveStream};
 
 use crate::controls;
@@ -263,6 +266,39 @@ pub fn format_viewers(count: u64) -> String {
 /// is known, and stops after one line.
 fn one_line() -> gpui::Div {
     div().w_full().text_ellipsis().line_clamp(1)
+}
+
+/// Release the decoded previews that refreshes have replaced.
+///
+/// A refreshed preview lands at a new filename - see `emotes::ImageCache` for
+/// why it has to - and GPUI decodes an image once per *path*: a new path means a
+/// new `RenderImage` with a new id, a new entry in `App::loading_assets`, and a
+/// new sprite-atlas tile. Nothing takes any of the three away on its own. The
+/// grid is not virtualised and painting is not culled, so an idle browse page
+/// mints all three for every stream in the list every `THUMBNAIL_MAX_AGE` and
+/// keeps every generation it has ever drawn.
+///
+/// Call this before anything builds a card, and from nowhere else. The cache
+/// records a path as retired only once the replacement is in its ready map, so
+/// every card built later in the same render pass already asks for the new file.
+/// Release one *after* a card has asked for it and that card is left drawing a
+/// path whose file is gone and whose decoded copy has just been thrown away:
+/// GPUI would re-read the file, fail, and memoise the failure, which is an empty
+/// card for the rest of the session rather than for a frame.
+///
+/// All three calls below are deliberate. `get_asset` is the only public way to
+/// reach a decoded image and it re-inserts the entry it read, so `remove_asset`
+/// is not optional and has to run even when nothing was decoded. And all three
+/// are free of the phase assertions their neighbours carry - `paint_image` opens
+/// with `debug_assert_paint` - which is what makes them legal from `render`.
+pub fn release_retired_previews(cache: &ImageCache, window: &mut Window, cx: &mut App) {
+    for path in cache.take_retired() {
+        let resource = Resource::Path(path.into());
+        if let Some(Ok(image)) = window.get_asset::<ImgResourceLoader>(&resource, cx) {
+            let _ = window.drop_image(image);
+        }
+        cx.remove_asset::<ImgResourceLoader>(&resource);
+    }
 }
 
 /// One live channel.

@@ -12,8 +12,8 @@ use std::sync::Arc;
 
 use emotes::{apply_named_emotes, tokenize, EmoteLoader, EmoteSets, ImageCache, Token};
 use gpui::{
-    div, img, list, prelude::*, px, AnyElement, Context, ListAlignment, ListState, Pixels,
-    SharedString, Task, Window,
+    div, img, list, point, prelude::*, px, AnyElement, Context, Entity, ListAlignment, ListState,
+    Pixels, RetainAllImageCache, SharedString, Subscription, Task, Window,
 };
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 
@@ -153,6 +153,25 @@ pub struct ChatView {
     next_seq: u64,
     list: ListState,
     cache: Arc<ImageCache>,
+    /// Decoded emotes, held per pane rather than per process.
+    ///
+    /// Without this, `img(path)` falls through to GPUI's global asset cache
+    /// (`App::loading_assets`), which has no eviction of any kind: every emote
+    /// this pane ever drew — and, for an animated one, every *frame* of it as
+    /// its own atlas tile — stays resident for the life of the process, long
+    /// after the channel is closed. A 7TV set runs to several hundred emotes
+    /// and a 40-frame animated one is ~655 KB decoded plus 40 tiles, so an
+    /// evening of channel-hopping is the bill for every channel at once.
+    ///
+    /// Scoping it here means the pane owns what it decoded and `on_release_in`
+    /// gives it all back. What that bounds is emotes for *panes that are open*,
+    /// which is the growth that actually compounds. It does not bound a single
+    /// channel left open for hours: that set saturates on its own, and capping
+    /// it would need a byte budget whose eviction can only ever be a guess
+    /// about what is still on screen.
+    emote_images: Entity<RetainAllImageCache>,
+    /// Keeps the release hook alive; a dropped `Subscription` unsubscribes.
+    _release: Subscription,
     /// Name lookups for FFZ / BTTV / 7TV emotes, filled in as they load.
     emote_sets: EmoteSets,
     emote_loader: EmoteLoader,
@@ -206,12 +225,22 @@ impl ChatView {
         // Scrolling changes whether the jump-to-live pill should be up, and
         // nothing else would repaint a quiet channel to notice.
         // `measure_all` makes the scrollbar's extent come from every row rather
-        // than only the rendered ones. It is not a complete fix: it runs once,
-        // and rows spliced in afterwards are unmeasured until they are drawn,
-        // so the thumb's *size* still drifts in a live channel. Its *position*
-        // is right, which is the half that answers "how far back am I".
-        // Re-triggering the pass needs `reset`, which would throw away the
-        // scroll position on every message — the cure being worse.
+        // than only the rendered ones. It is not a complete fix: the pass runs
+        // once. Rows spliced in afterwards stay unmeasured until something
+        // draws them — and a change in the list's *width* throws away every
+        // measurement it has, because `List::prepaint` rebuilds the whole tree
+        // as `Unmeasured` without re-running the pass, so resizing a pane
+        // collapses the extent to whatever is on screen. In a window that is
+        // one to four resizable panes that is the bigger source of drift, not
+        // the appended rows. The thumb's *position* is right throughout, which
+        // is the half that answers "how far back am I".
+        //
+        // Re-arming the pass is possible — `ListState` is `Clone` over an
+        // `Rc<RefCell<_>>` and `measure_all` mutates the shared inner, so
+        // `self.list.clone().measure_all()` would do it without touching the
+        // scroll pin. It is deliberately not done: `layout_all_items` rebuilds
+        // the whole `SumTree` every pass, so paying that on a cadence to stop a
+        // thumb from drifting is a worse trade than the drift.
         let list = ListState::new(0, ListAlignment::Bottom, px(400.)).measure_all();
         let watcher = cx.entity().downgrade();
         list.set_scroll_handler(move |_event, _window, cx| {
@@ -223,6 +252,18 @@ impl ChatView {
         // "connecting…" row would sit above an hour of history wearing a later
         // timestamp than everything beneath it. It is a state of the pane, not
         // an event in the log, and it belongs in the empty space it explains.
+        let emote_images = RetainAllImageCache::new(cx);
+        // GPUI does not free atlas tiles when the `Arc<RenderImage>` goes:
+        // `clear` is what calls `App::drop_image` for each entry, and it needs a
+        // `Window`, which `Drop` does not have. Same shape as `VideoView`'s
+        // frame release, and for the same reason.
+        let release = cx.on_release_in(window, {
+            let emote_images = emote_images.clone();
+            move |_this: &mut Self, window, cx| {
+                emote_images.update(cx, |cache, cx| cache.clear(window, cx));
+            }
+        });
+
         Self {
             rows: Vec::new(),
             channel: SharedString::from(format!("connecting to #{channel}…")),
@@ -231,6 +272,8 @@ impl ChatView {
             next_seq: 0,
             list,
             cache,
+            emote_images,
+            _release: release,
             emote_sets,
             emote_loader,
             _client: client,
@@ -289,11 +332,35 @@ impl ChatView {
 
     /// Jump back to the newest message and start following again.
     ///
-    /// `reset` is the only thing that clears the list's scroll pin — every
-    /// `scroll_to`/`scroll_by` sets one instead, so they would land at the
-    /// bottom and then be left behind by the next message.
+    /// What "following" *is*, for a `ListAlignment::Bottom` list, is
+    /// `logical_scroll_top == None` — the state the wheel restores when you
+    /// scroll back to the end. So the job is to clear the pin, and the whole
+    /// question is which call clears it without doing anything else.
+    ///
+    /// `scroll_to`/`scroll_by` are out: they *set* a pin, so they land at the
+    /// bottom and are then left behind by the next message. `reset` clears it,
+    /// which is why this used to call it — but it also splices the entire list
+    /// and re-arms the measuring pass, so with `measure_all` on, every click
+    /// laid out all 1000 rows, emote images included, in one frame. It drops
+    /// wheel events until the next paint too; its own doc comment says so.
+    ///
+    /// `set_offset_from_scrollbar` clamps the offset to `scroll_max` and, for a
+    /// bottom-aligned list sitting exactly at `scroll_max`, sets
+    /// `logical_scroll_top = None` and nothing else (`list.rs`'s
+    /// `set_offset_from_scrollbar`). Any offset past the end clamps there, so
+    /// the value is "further than the list can go" rather than a real
+    /// coordinate. It is a no-op before the first layout, which is fine: an
+    /// unlaid-out bottom-aligned list is already following.
+    ///
+    /// One thing is genuinely lost with `reset`. It re-armed `measure_all` too,
+    /// so the stall it caused left every row measured and the scrollbar extent
+    /// briefly correct. It no longer will: rows that arrived while you were
+    /// scrolled back stay unmeasured until something draws them. That is the
+    /// trade — a stall on every click, for a thumb that is a few pixels short
+    /// until you scroll back through it.
     fn follow_live(&mut self, cx: &mut Context<Self>) {
-        self.list.reset(self.rows.len());
+        self.list
+            .set_offset_from_scrollbar(point(px(0.), px(f32::MAX)));
         cx.notify();
     }
 
@@ -653,6 +720,10 @@ impl ChatView {
                                 .px(px(theme::EMOTE_PAD_X))
                                 .child(
                                     img(path)
+                                        // Before `.id(..)`: `image_cache` is on
+                                        // `Img`, and `.id(..)` yields a
+                                        // `Stateful<Img>`.
+                                        .image_cache(&self.emote_images)
                                         .id((SharedString::from(emote.url.clone()), emote_index))
                                         .h(px(EMOTE_HEIGHT))
                                         .mt(px(-EMOTE_OVERHANG))

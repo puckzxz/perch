@@ -62,8 +62,28 @@ jobs:
       # dependencies actually move.
       - uses: Swatinem/rust-cache@v2
 
-      # First because it is the fastest thing that can fail, and because it
-      # needs no compilation at all.
+      # `vendor/gpui` is gpui 0.2.2 with a four-line fix for an atlas bug that
+      # leaked 43.7 GB in five hours. Nothing about that patch is load-bearing
+      # at compile time: delete it and the tree still builds, still passes
+      # clippy, still passes the tests, and leaks again in production. This is
+      # the only thing standing between that and a silent regression, so it
+      # runs before anything that takes a minute to fail.
+      #
+      # On both legs on purpose. The check itself is platform-independent, but
+      # the script is not — it picks between `sha256sum` and `shasum`, and
+      # leans on `diff` and `sed` behaving the same on GNU and BSD. Running it
+      # in both places is what keeps those shims honest.
+      - name: Vendored dependencies
+        shell: bash
+        # `bash script` rather than `./script`: this repo has
+        # core.filemode=false, so `git add` records a new file 100644 whatever
+        # its mode on disk, and the macOS runner would exit 126 on a file it is
+        # not allowed to execute. Windows would pass, because Git Bash ignores
+        # the bit — the worst shape for a CI failure to have.
+        run: bash scripts/verify-vendor.sh
+
+      # First of the cargo steps because it is the fastest thing that can fail,
+      # and because it needs no compilation at all.
       - name: Formatting
         run: cargo fmt --all --check
 

@@ -34,12 +34,14 @@ pub enum VideoEvent {
 
 pub struct VideoView {
     stream: VideoStream,
-    /// The frame currently painted, and the one before it. GPUI uploads every
-    /// distinct `RenderImage` into its sprite atlas and `RenderImage::new` mints
-    /// a fresh id per frame, so without evicting the frame before last the atlas
-    /// grows by one frame every frame until VRAM runs out.
+    /// The stream's frame as the sprite atlas knows it.
+    ///
+    /// Every frame from one stream carries the same `ImageId` (see
+    /// `video::VideoStream::start`), so this is really "the atlas key this view
+    /// owns" — kept so `on_release_in` has something to hand `drop_image`, and
+    /// so `render` can tell a genuinely new frame from a repaint of the one the
+    /// atlas already holds.
     current: Option<Arc<RenderImage>>,
-    previous: Option<Arc<RenderImage>>,
     /// Volume before muting, so unmute restores rather than guessing.
     volume_before_mute: u8,
     volume_slider: Entity<SliderState>,
@@ -113,18 +115,17 @@ impl VideoView {
         })
         .detach();
 
-        // `render` retires the frame before last, which handles the steady
-        // state — but not the end of it. GPUI does not refcount atlas tiles
-        // against the `Arc`: `Window::drop_image` is the only thing that calls
-        // `sprite_atlas.remove`, so the two frames still held when the entity
-        // dies stay resident for the life of the window. This view is destroyed
-        // on every ordinary action — Ctrl+W, closing a pane, going back to
-        // browse, and every quality or credentials change, which replace
-        // `Playing` with `Starting` — so those leak two full-size frames each
-        // time. `Drop` cannot do this; it has no `Window`. `on_release_in`
-        // does.
+        // GPUI does not refcount atlas tiles against the `Arc`:
+        // `Window::drop_image` is the only thing that calls
+        // `sprite_atlas.remove`, so the one tile this stream owns stays
+        // resident for the life of the window unless it is freed here. This
+        // view is destroyed on every ordinary action — Ctrl+W, closing a pane,
+        // going back to browse, and every quality or credentials change, which
+        // replace `Playing` with `Starting` — so each would otherwise leak a
+        // full-size frame. `Drop` cannot do this; it has no `Window`.
+        // `on_release_in` does.
         let release = cx.on_release_in(window, |this: &mut Self, window, _cx| {
-            for frame in this.current.take().into_iter().chain(this.previous.take()) {
+            if let Some(frame) = this.current.take() {
                 let _ = window.drop_image(frame);
             }
         });
@@ -132,7 +133,6 @@ impl VideoView {
         Self {
             stream,
             current: None,
-            previous: None,
             volume_before_mute: volume.max(1),
             volume_slider,
             quality,
@@ -375,17 +375,35 @@ impl Render for VideoView {
                 .into_any_element();
         };
 
-        // Retire the frame before last: it is no longer on screen, so its atlas
-        // entry can go. Never drop `current` itself - that one is still painted.
-        if let Some(current) = self.current.take() {
-            if let Some(previous) = self.previous.take() {
-                if previous.id != current.id {
-                    let _ = window.drop_image(previous);
-                }
-            }
-            self.previous = Some(current);
+        // One tile for the life of the stream: every frame carries the same
+        // `ImageId`, so this overwrites the pixels already in the atlas instead
+        // of asking GPUI to build and throw away a texture per frame.
+        //
+        // Guarded on the `Arc`, not on the id: `render` runs on every window
+        // draw, not every decoded frame — `impl Element for Entity<V>` has no
+        // cache key — so chat traffic, the control fade and hover all arrive
+        // here with the frame the atlas already holds. Without the guard each
+        // of those would re-upload up to 14.7 MB. And `RenderImage`'s
+        // `PartialEq` is id-only, while every frame of this stream now shares
+        // one id, so comparing ids would skip *every* real frame and freeze the
+        // picture. Pointer identity is the only thing that tells them apart.
+        //
+        // Skipping is safe whichever way the last draw went: if `update_image`
+        // returned true the tile holds these bytes, and if it returned false it
+        // removed the key and the paint that followed inserted these same
+        // bytes. If the key is absent for any other reason — a device loss
+        // clears `tiles_by_key` — `img` below re-inserts it.
+        let is_new = self
+            .current
+            .as_ref()
+            .is_none_or(|current| !Arc::ptr_eq(current, &frame));
+        if is_new {
+            // False on the first frame, and again once a resize changed the
+            // frame's size, having left the atlas with no entry for the id;
+            // `img` below then inserts it the ordinary way.
+            window.update_image(&frame, 0);
+            self.current = Some(frame.clone());
         }
-        self.current = Some(frame.clone());
 
         // Measure the pane every frame: the render thread follows it, and so
         // does hover. Without the first the buffer stays at its initial size and

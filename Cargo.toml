@@ -9,6 +9,11 @@ members = [
     "crates/twitch-api",
     "crates/twitch-chat",
 ]
+# `vendor/gpui` is a patched dependency, not a member. It has to stay out of
+# `--workspace` or `cargo fmt --all --check` and `cargo clippy --workspace
+# --all-targets -- -D warnings` would start policing 90k lines of somebody
+# else's code, and CI would go red on their style rather than ours.
+exclude = ["vendor/gpui"]
 
 [workspace.package]
 # One version for the whole workspace, inherited by every crate.
@@ -33,6 +38,62 @@ publish = false
 [workspace.dependencies]
 libloading = "0.8"
 thiserror = "2"
+
+# gpui is vendored, and this is the only reason why.
+#
+# `DirectXAtlas::allocate` looks for free space in *every* atlas texture it has,
+# newest first, and `push_texture` rounds each new texture up to at least
+# 1024x1024 in *each* dimension separately. So a 1280x936 video frame gets a
+# 1280x1024 texture with 64 rows to spare (etagere rounds the 936 shelf to 960),
+# the next chat emote is packed into that strip, and the texture's
+# `live_atlas_keys` never falls back to zero - so `remove` never frees it.
+# `RenderImage::new` mints a fresh id per frame, so this pinned one 5 MiB
+# texture for every emote inserted: 43.7 GB of committed memory over five hours,
+# 54% of the machine's entire commit charge, against a 5.6 GB working set that
+# made it look like a 6 GB problem in Task Manager.
+#
+# Six fixes, every hunk tagged `PERCH PATCH`. The first two are the leak; the
+# rest were found while proving it fixed.
+#
+#  1. A texture created oversized is marked dedicated to the one image it was
+#     sized for, and skipped when scanning for room. That is the 43.7 GB.
+#  2. `remove` hands the tile's space back to the shelf allocator. Without it a
+#     shared atlas is write-once, so any video frame small enough to land in one
+#     - a 2x2 layout, or any pane under 1024x1024 - burns fresh 4 MiB atlases
+#     forever. Measured after fix 1 alone: 491 live atlases climbing to 891 in
+#     four minutes, 3.6 GB and still going. Upstream's own patch (Zed PR
+#     #58874), which landed after 0.2.2 was published; the Metal side also
+#     needed its `remove` to take the key out up front, the way DirectX and
+#     Blade already did, or a repeated drop would free one tile twice.
+#  3. `DirectXAtlasTexture::upload` refuses a source slice too short for the
+#     region it is about to hand the driver, rather than letting it over-read.
+#     Also upstream's, also after 0.2.2.
+#  4. `skip_draws` on the renderer and `force_render_pending` on the window
+#     state: after a device loss the atlas is empty but the last scene still
+#     holds tiles indexing it, and GPUI's present-without-redraw path would
+#     replay that scene straight into an out-of-bounds unwrap. Upstream's shape.
+#  5. `PlatformAtlas::update` and `Window::update_image` - overwrite a tile's
+#     pixels in place. `get_or_insert_with` is insert-once, so without this a
+#     video frame can only reach the GPU by minting a new key, which means a
+#     texture built and destroyed every frame. NOT upstream; this is the one
+#     invention here, and the one to re-examine when a release lands.
+#  6. `DirectXResources::render_target` is an `Option` rather than a
+#     `ManuallyDrop`. `resize` has to release it before `ResizeBuffers`, that
+#     call can fail, and the early return then left a dropped value for `Drop`
+#     to release a second time. `resize`'s no-op check now also requires the
+#     render target view to be present, so a failed resize cannot strand the
+#     window black, and `pre_draw` returns an error rather than unwrapping one
+#     that is missing.
+#
+# `scripts/verify-vendor.sh` re-downloads the crate from crates.io and proves
+# the tree differs from it in exactly the seven files it expects, and that each
+# fix is still present rather than merely commented.
+#
+# 0.2.2 is the newest release on crates.io and Zed's `main` still has the bug,
+# so there is nothing to upgrade to. Delete this section and the `vendor/gpui`
+# tree the day a release carries the fix.
+[patch.crates-io]
+gpui = { path = "vendor/gpui" }
 
 # Release codegen with symbols, for profilers.
 #

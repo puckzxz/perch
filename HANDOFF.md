@@ -113,19 +113,84 @@ Windows. Frames go through `img()` + `RenderImage`, which is CPU-side BGRA. Zed
 does the same thing for screen share on non-macOS; that is where the pattern
 came from.
 
-**The atlas leaks without `drop_image`.** `RenderImage::new` mints a fresh
-monotonic `ImageId` per frame and GPUI uploads every distinct id into its sprite
-atlas. `VideoView` double-buffers and drops the frame *before* last — never the
-one on screen.
+**One `ImageId` per stream, not per frame.** `RenderImage::new` takes a fresh
+monotonic id from a global counter on every call, and GPUI keys its sprite atlas
+on that id — so a source that mints one `RenderImage` per frame is asking it to
+build and destroy a GPU texture sixty times a second. On a maximised 1440p pane
+that is a 14.7 MB `CreateTexture2D` plus a shader resource view, and a `Release`
+of the pair from the frame before, every frame. `video.rs` mints one id for the
+whole stream and stamps it onto every frame instead, and `video_view.rs` calls
+`Window::update_image`, which overwrites the tile's pixels in place.
+`RenderImage.id` is a public field, so the perch half needs no patch; the
+`update` verb is what does, because `get_or_insert_with` is insert-once and
+hands back a cached tile without ever consulting the builder.
 
-**And it leaks again at teardown, which is a separate fix.** GPUI does not
-refcount atlas tiles against the `Arc<RenderImage>`; `Window::drop_image` is the
-only thing that calls `sprite_atlas.remove`. So the two frames a `VideoView`
-still holds when its entity dies stay resident for the life of the window — and
-the entity dies on every ordinary action, including each quality change.
-`Drop` cannot help here because it has no `Window`; `cx.on_release_in` does, and
-the `Subscription` it returns has to be kept in a field or the hook is dropped
-immediately.
+Two things about that call are easy to get wrong. It is guarded on
+`Arc::ptr_eq`, **not** on the id: `render` runs on every *window draw*, not on
+every decoded frame — `impl Element for Entity<V>` has no cache key, so chat
+traffic and the control fade arrive there too — and every frame of a stream now
+shares one id, so an id comparison would skip every real frame and freeze the
+picture. And `update_image` returns `false` when the tile is missing or has
+changed size (a pane resize), having removed the key on the way out, so the
+`img` that follows inserts it the ordinary way.
+
+**GPUI still does not refcount atlas tiles against the `Arc<RenderImage>`.**
+`Window::drop_image` is the only thing that calls `sprite_atlas.remove`, so the
+one tile a `VideoView` owns stays resident for the life of the window unless the
+view hands it back — and the view dies on every ordinary action, including each
+quality change. `Drop` cannot do it; it has no `Window`. `cx.on_release_in` can,
+and the `Subscription` it returns has to be kept in a field or the hook is
+dropped immediately. `ChatView` does the same for its emote cache.
+
+**And it leaks a third time inside GPUI itself, where `drop_image` cannot
+reach.** This is the expensive one: 43.7 GB of committed memory in five hours,
+54% of the machine's entire commit charge. `DirectXAtlas::push_texture` rounds a
+new atlas texture up to at least 1024x1024 in *each dimension separately*, so a
+1280x936 frame gets a 1280x1024 texture — and etagere rounds the 936-tall shelf
+to 960, leaving 64 rows spare. `DirectXAtlas::allocate` then scans *every*
+existing texture for room, newest first, so the next chat emote lands in that
+strip. The texture's `live_atlas_keys` never falls back to zero, `remove` never
+frees it, and because `RenderImage::new` mints a fresh id per frame, one 5 MiB
+texture is pinned for every emote inserted.
+
+The tell is that it depends on the *source resolution*, which is why it looks
+like magic until you measure it. Watching a 1098p stream and a 936p stream side
+by side, the 936p one had leaked 8,731 textures and the 1098p one exactly zero:
+1098 is over 1024, so its shelf fills the texture and nothing else can be packed
+in. Anything from roughly 90p to 960p leaks; 961p and up does not.
+
+The fix is in `vendor/gpui` — see the comment on `[patch.crates-io]` in the root
+`Cargo.toml`. Textures created oversized are marked `dedicated` and skipped in
+that scan. `scripts/verify-vendor.sh` proves the vendored tree is upstream plus
+exactly that patch, and CI runs it before anything slower.
+
+**Fixing that exposes a second leak underneath it, in the same file.** `remove`
+never returned a tile's space to the shelf allocator, so a *shared* atlas was
+write-once: `allocate` took space, nothing gave it back, and the texture could
+only be discarded whole - which happens only once every key in it has gone.
+While the bug above was live this was invisible, because frames were being
+pinned into oversized textures instead of shared ones. Fix the first and the
+traffic moves to shared atlases, where it shows up immediately: two panes went
+from 491 live 4 MiB atlases to 891 in four minutes, 3.6 GB and climbing. Any
+frame that fits inside 1024x1024 hits this - a 2x2 layout, or any pane smaller
+than the default atlas.
+
+That one is upstream's own fix (Zed PR #58874, "gpui: Free atlas tile space when
+removing tiles"), so the vendored copy carries their version of it. Backporting
+it to Metal needed one extra change: Metal's `remove` looked the key up with
+`get` and erased it only when the texture hit zero live keys, so dropping the
+same image twice decremented the count twice and could free a texture out from
+under a live tile. `VideoView`'s release hook used to do exactly that, back when it
+held `current` and `previous` and both could be the same `Arc`. Metal now takes
+the key out up front like the other two backends; the hook that made it
+reachable is gone anyway, since one id per stream means one frame to release.
+
+**Task Manager lies about all of this.** It shows the working set, and these
+textures are committed pages the driver mostly never touches, so 44 GB of commit
+charge showed up as 5.6 GB "memory" in the process list. Read
+`PrivateMemorySize64` — or walk the address space with `VirtualQueryEx` and
+group by allocation size, which is what identified the 5,242,880-byte
+(1280x1024 BGRA) blocks and turned a guess into a count.
 
 **BGRA bytes go into an `RgbaImage` container unswapped.** GPUI documents
 `RenderImage` as BGRA regardless of the buffer type's name. This looks like a bug
@@ -386,8 +451,31 @@ Two things had to be true to fix it, and the second is the non-obvious one:
   screen. The old file is deleted once the replacement is indexed, so a
   refreshing image costs one file rather than one per refresh.
 
-Emotes and box art still use `get_or_request` and are still kept forever, which
-is right: they never change at their address.
+Emotes and box art still use `get_or_request` and are still kept forever on
+*disk*, which is right: they never change at their address.
+
+**Deleting the file is only half of a refresh.** GPUI decodes an image once per
+*path*, so a new filename means a new `RenderImage`, a new entry in
+`App::loading_assets` and a new atlas tile — and nothing removes any of the
+three on its own. The grid is not virtualised and painting is not culled, so an
+idle browse page minted all three for every stream in the list every five
+minutes and kept every generation it had ever drawn. `ImageCache` now records
+each superseded path, `browse::release_retired_previews` releases what was
+decoded from it, and `RootView::render` drains that list as its first statement.
+The ordering is the whole trick: a path is recorded only once its replacement is
+in the ready map, and the drain runs before any card is built, so nothing in the
+frame can still be asking for what is being released. Get that backwards and the
+card does not flicker — it goes permanently blank, because GPUI memoises the
+failed re-read for the life of the process.
+
+**Chat emotes are cached per pane, not per process.** A bare `img(path)` falls
+through to `App::loading_assets`, which has no eviction of any kind: every emote
+a pane ever drew — and every *frame* of an animated one, each its own atlas tile
+— stayed resident forever, long after the channel was closed. `ChatView` owns a
+`RetainAllImageCache` and clears it in `on_release_in`, so closing a pane or
+switching channels gives it all back. That bounds emotes for panes that are
+*open*, which is the growth that compounds over an evening; it does not bound a
+single channel left open for hours, whose emote set saturates on its own.
 
 **A `list`'s scrollbar extent comes from *measured* items only.** gpui measures
 rows as it draws them, so in a live-appending list the ones you have not looked
@@ -396,18 +484,34 @@ at contribute nothing to `items.summary().height` — which is what
 changes size as you scroll, because scrolling is what does the measuring.
 
 `ListState::measure_all()` is the documented remedy and chat uses it, but it is
-only half a fix: the pass runs once, and rows spliced in afterwards are
-unmeasured until drawn. Re-triggering it needs `reset()`, which also clears the
-scroll pin — so doing it per message would throw away the reader's position,
-which is worse than an imprecise thumb. The thumb's *position* is correct
-regardless; only its size drifts. A complete fix means not using gpui's
-scrollbar geometry, which is a bigger job than it looks.
+only half a fix: the pass runs once. Rows spliced in afterwards stay unmeasured
+until something draws them — and a change in the list's *width* throws away
+every measurement it has, because `List::prepaint` rebuilds the whole tree as
+`Unmeasured` without re-running the pass. In a window that is one to four
+resizable panes, that resize case is the bigger source of drift. The thumb's
+*position* is correct throughout; only its size is short. A complete fix means
+not using gpui's scrollbar geometry, which is a bigger job than it looks.
 
-Related and worth knowing: `reset()` is the **only** thing that clears the
-scroll pin. Every `scroll_to`/`scroll_by` sets one, so a programmatic "jump to
-bottom" built from those lands at the bottom and is then left behind by the next
-message. Scrolling with the wheel re-arms auto-follow on its own, but only on
-reaching the very bottom — which in a fast channel can be a long way down.
+Re-arming the pass *is* possible — `ListState` is `Clone` over an
+`Rc<RefCell<_>>` and `measure_all` mutates the shared inner, so
+`list.clone().measure_all()` does it without touching the scroll pin. It is
+deliberately not done: `layout_all_items` rebuilds the whole `SumTree` on every
+pass, and paying that on a cadence to stop a thumb drifting is the worse trade.
+
+**Do not reach for `reset()` to jump to the bottom.** It clears the scroll pin,
+which is the thing you want, and it also splices every row as unmeasured, so
+the next prepaint lays out all thousand of them — emote images included — in one
+frame. It sets `reset = true` as well, so the scroll after a jump goes nowhere.
+It did buy one thing on the way — re-arming `measure_all`, so the extent came
+out correct — which is why the jump is now cheap and the thumb slightly less
+accurate. What `follow_live` uses instead is
+`set_offset_from_scrollbar(point(px(0.), px(f32::MAX)))`: any offset past the
+end clamps to `scroll_max`, and a bottom-aligned list sitting exactly there sets
+`logical_scroll_top = None` and does nothing else. `scroll_to`/`scroll_by` are
+not alternatives — they *set* a pin, so they land at the bottom and are then
+left behind by the next message. Scrolling with the wheel re-arms auto-follow on
+its own, but only on reaching the very bottom, which in a fast channel is a long
+way down.
 
 **GPUI has no transitions.** `.hover()` swaps styles instantly and there is no
 way to interpolate between them. Every animation in the app therefore goes
