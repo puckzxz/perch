@@ -147,7 +147,12 @@ fi
 # incapable of passing on both legs. Applying asks the better question anyway -
 # whether the patch really does reconstruct the tree, rather than whether some
 # rendering of a diff of it looks familiar.
-if ! (cd "$upstream" && git apply -p2 "$patch_abs") 2> "$work/applyerr"; then
+# `-c core.autocrlf=false -c core.eol=lf`: `git apply` honours those settings
+# when it writes, and the Windows runner sets autocrlf=true globally. Without
+# them it applies the patch perfectly and then writes CRLF into files the
+# vendored tree stores as LF, so every patched file "differs" for a reason that
+# has nothing to do with the patch.
+if ! (cd "$upstream" && git -c core.autocrlf=false -c core.eol=lf apply -p2 "$patch_abs")   2> "$work/applyerr"; then
   echo "verify-vendor: $PATCH does not apply to upstream $CRATE $version." >&2
   sed 's/^/    /' "$work/applyerr" >&2
   fail "the committed patch and the vendored tree have diverged"
