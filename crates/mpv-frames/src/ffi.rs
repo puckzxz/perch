@@ -28,9 +28,19 @@ pub const MPV_RENDER_UPDATE_FRAME: u64 = 1;
 // ── client.h: mpv_event_id (only the ones we act on) ─────────────────
 pub const MPV_EVENT_NONE: c_int = 0;
 pub const MPV_EVENT_SHUTDOWN: c_int = 1;
+pub const MPV_EVENT_GET_PROPERTY_REPLY: c_int = 3;
+pub const MPV_EVENT_SET_PROPERTY_REPLY: c_int = 4;
+pub const MPV_EVENT_COMMAND_REPLY: c_int = 5;
 pub const MPV_EVENT_END_FILE: c_int = 7;
 pub const MPV_EVENT_FILE_LOADED: c_int = 8;
 pub const MPV_EVENT_VIDEO_RECONFIG: c_int = 17;
+pub const MPV_EVENT_PROPERTY_CHANGE: c_int = 22;
+
+// ── client.h: mpv_format (only the ones we use) ──────────────────────
+/// The property has no value right now; `mpv_event_property::data` is null.
+pub const MPV_FORMAT_NONE: c_int = 0;
+/// `data` is a `char **` for a set, and a `char *` inside an event.
+pub const MPV_FORMAT_STRING: c_int = 1;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -54,6 +64,17 @@ pub struct MpvEvent {
     pub data: *mut c_void,
 }
 
+/// `MpvEvent::data` for `MPV_EVENT_PROPERTY_CHANGE`.
+#[repr(C)]
+pub struct MpvEventProperty {
+    pub name: *const c_char,
+    pub format: c_int,
+    /// For `MPV_FORMAT_STRING`, a `*mut *mut c_char`; null when `format` is
+    /// `MPV_FORMAT_NONE`. Owned by libmpv and valid only until the next
+    /// `mpv_wait_event` call on this handle.
+    pub data: *mut c_void,
+}
+
 pub type MpvHandle = *mut c_void;
 pub type MpvRenderCtx = *mut c_void;
 pub type MpvRenderUpdateFn = unsafe extern "C" fn(cb_ctx: *mut c_void);
@@ -68,6 +89,13 @@ type FnWaitEvent = unsafe extern "C" fn(MpvHandle, c_double) -> *mut MpvEvent;
 type FnGetPropertyString = unsafe extern "C" fn(MpvHandle, *const c_char) -> *mut c_char;
 type FnSetPropertyString = unsafe extern "C" fn(MpvHandle, *const c_char, *const c_char) -> c_int;
 type FnFree = unsafe extern "C" fn(*mut c_void);
+// The three entry points client.h marks "Safe to be called from mpv render API
+// threads". Their synchronous counterparts above are not, and a render thread
+// that uses those can deadlock against the core; see `Player::observe_property`.
+type FnObserveProperty = unsafe extern "C" fn(MpvHandle, u64, *const c_char, c_int) -> c_int;
+type FnSetPropertyAsync =
+    unsafe extern "C" fn(MpvHandle, u64, *const c_char, c_int, *mut c_void) -> c_int;
+type FnCommandAsync = unsafe extern "C" fn(MpvHandle, u64, *mut *const c_char) -> c_int;
 
 type FnRenderCreate =
     unsafe extern "C" fn(*mut MpvRenderCtx, MpvHandle, *mut MpvRenderParam) -> c_int;
@@ -95,6 +123,9 @@ pub struct Lib {
     pub get_property_string: FnGetPropertyString,
     pub set_property_string: FnSetPropertyString,
     pub free: FnFree,
+    pub observe_property: FnObserveProperty,
+    pub set_property_async: FnSetPropertyAsync,
+    pub command_async: FnCommandAsync,
 
     pub render_create: FnRenderCreate,
     pub render_render: FnRenderRender,
@@ -137,6 +168,9 @@ impl Lib {
                 get_property_string: sym(&library, "mpv_get_property_string")?,
                 set_property_string: sym(&library, "mpv_set_property_string")?,
                 free: sym(&library, "mpv_free")?,
+                observe_property: sym(&library, "mpv_observe_property")?,
+                set_property_async: sym(&library, "mpv_set_property_async")?,
+                command_async: sym(&library, "mpv_command_async")?,
 
                 render_create: sym(&library, "mpv_render_context_create")?,
                 render_render: sym(&library, "mpv_render_context_render")?,

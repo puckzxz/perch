@@ -364,6 +364,24 @@ impl ImageCache {
         }
     }
 
+    /// How many images this run has fetched and indexed.
+    ///
+    /// For the CPU log, which wants to know whether a busy stretch was the
+    /// cache filling up. Grows with distinct URLs seen and never shrinks, so a
+    /// number that keeps climbing after the page has settled is a question
+    /// worth asking.
+    pub fn ready_len(&self) -> usize {
+        self.ready.lock().unwrap().len()
+    }
+
+    /// How many downloads are in flight right now.
+    ///
+    /// Should return to zero whenever the app is idle. One that does not is a
+    /// job that never completed and never released its slot.
+    pub fn inflight_len(&self) -> usize {
+        self.inflight.lock().unwrap().len()
+    }
+
     /// Take the paths that refreshes have superseded since the last call.
     ///
     /// Drains: each path is reported exactly once, so this is cheap enough to

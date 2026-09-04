@@ -99,13 +99,27 @@ pub struct DeviceCode {
 }
 
 /// Tokens plus the identity they belong to.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Session {
     pub access_token: String,
     pub refresh_token: String,
     pub expires_at: u64,
     pub user_id: String,
     pub login: String,
+}
+
+/// By hand, so a `{:?}` cannot put either token in a log. The identity is
+/// what a reader wants from it anyway.
+impl std::fmt::Debug for Session {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Session")
+            .field("access_token", &"<redacted>")
+            .field("refresh_token", &"<redacted>")
+            .field("expires_at", &self.expires_at)
+            .field("user_id", &self.user_id)
+            .field("login", &self.login)
+            .finish()
+    }
 }
 
 fn now_secs() -> u64 {
@@ -115,29 +129,47 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-fn agent() -> ureq::Agent {
-    ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(20)))
-        // Twitch puts the meaningful part of a failure in the body, not the
-        // status line: while the user has not typed the code yet, the device
-        // flow answers HTTP 400 with `authorization_pending`. Letting the
-        // status short-circuit the read turns that normal, expected state into
-        // a fatal error and sign-in gives up on the very first poll.
-        .http_status_as_error(false)
-        .build()
-        .into()
+/// The one HTTP agent every request here shares.
+///
+/// One rather than one per call, because ureq caches its TLS configuration -
+/// the parsed root store included - per agent. Building a fresh agent per
+/// request rebuilt that store and opened a fresh connection every time, for a
+/// worker that makes a request a minute for as long as the app is open.
+fn agent() -> &'static ureq::Agent {
+    static AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
+    AGENT.get_or_init(|| {
+        ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(20)))
+            // Twitch puts the meaningful part of a failure in the body, not the
+            // status line: while the user has not typed the code yet, the device
+            // flow answers HTTP 400 with `authorization_pending`. Letting the
+            // status short-circuit the read turns that normal, expected state
+            // into a fatal error and sign-in gives up on the very first poll.
+            .http_status_as_error(false)
+            .build()
+            .into()
+    })
 }
 
 /// Read a JSON body regardless of status, plus the status itself.
+///
+/// A server-side failure is reported as [`Error::Network`] rather than being
+/// parsed: Twitch's edge answers an outage with an HTML page, and reading that
+/// as JSON produced a [`Error::Shape`] that lost the status - so a 502 during
+/// sign-in looked like a malformed reply and was treated as terminal, where a
+/// transport error would have been retried.
 fn read_body(
     result: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
 ) -> Result<(u16, Value), Error> {
     let mut response = result.map_err(|e| Error::Network(e.to_string()))?;
     let status = response.status().as_u16();
+    if status >= 500 {
+        return Err(Error::Network(format!("Twitch answered HTTP {status}")));
+    }
     let json = response
         .body_mut()
         .read_json::<Value>()
-        .map_err(|e| Error::Shape(e.to_string()))?;
+        .map_err(|e| Error::Shape(format!("HTTP {status} with an unreadable body: {e}")))?;
     Ok((status, json))
 }
 
@@ -165,8 +197,8 @@ pub fn start_device_flow(client_id: &str) -> Result<DeviceCode, Error> {
         ));
     }
 
-    serde_json::from_value(json.clone())
-        .map_err(|_| Error::Shape(format!("device response was {json}")))
+    serde_json::from_value(json)
+        .map_err(|e| Error::Shape(format!("device response was missing a field: {e}")))
 }
 
 /// One poll of the token endpoint.
@@ -237,7 +269,7 @@ pub fn refresh(
     Ok(Session {
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token,
-        expires_at: now_secs() + tokens.expires_in,
+        expires_at: now_secs().saturating_add(tokens.expires_in),
         user_id: user_id.to_string(),
         login: login.to_string(),
     })
@@ -253,10 +285,13 @@ struct Tokens {
 /// Parse tokens out of a token-endpoint response. No network, so it cannot fail
 /// after the exchange has already happened.
 fn tokens_from_response(json: &Value) -> Result<Tokens, Error> {
+    // The body is deliberately not quoted in either error: the field that is
+    // present is a token, and an error message is the one string most likely
+    // to end up in a log.
     let access_token = json
         .get("access_token")
         .and_then(Value::as_str)
-        .ok_or_else(|| Error::Shape(format!("no access_token in {json}")))?
+        .ok_or_else(|| Error::Shape("token response had no access_token".into()))?
         .to_string();
     // Required, not optional. Defaulting this to an empty string persisted a
     // refresh token that cannot work, turning a malformed response into a
@@ -264,7 +299,7 @@ fn tokens_from_response(json: &Value) -> Result<Tokens, Error> {
     let refresh_token = json
         .get("refresh_token")
         .and_then(Value::as_str)
-        .ok_or_else(|| Error::Shape(format!("no refresh_token in {json}")))?
+        .ok_or_else(|| Error::Shape("token response had no refresh_token".into()))?
         .to_string();
     let expires_in = json
         .get("expires_in")
@@ -292,7 +327,7 @@ fn session_from_token_response(client_id: &str, json: &Value) -> Result<Session,
     Ok(Session {
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token,
-        expires_at: now_secs() + tokens.expires_in,
+        expires_at: now_secs().saturating_add(tokens.expires_in),
         user_id: user.0,
         login: user.1,
     })
@@ -301,6 +336,13 @@ fn session_from_token_response(client_id: &str, json: &Value) -> Result<Session,
 /// True when the token is expired or close enough that it should be renewed.
 pub fn needs_refresh(expires_at: u64) -> bool {
     now_secs() + REFRESH_MARGIN.as_secs() >= expires_at
+}
+
+/// Whether the access token has actually run out, as opposed to being due
+/// for renewal. A refresh that could not be *attempted* - the network was
+/// down - leaves a session that is still good for this long.
+pub fn has_expired(expires_at: u64) -> bool {
+    now_secs() >= expires_at
 }
 
 // ── Helix ────────────────────────────────────────────────────────────
@@ -391,49 +433,77 @@ pub fn thumbnail(template: &str, width: u32, height: u32) -> String {
         .replace("{height}", &height.to_string())
 }
 
-fn parse_streams(json: &Value) -> Vec<LiveStream> {
+/// Every Helix list answers as `{"data": [...]}`. This is the one place that
+/// knows so; each parser below says only what one entry means.
+fn entries(json: &Value) -> impl Iterator<Item = &Value> {
     json.get("data")
         .and_then(Value::as_array)
-        .map(|list| {
-            list.iter()
-                .filter_map(|entry| {
-                    let user_login = entry.get("user_login").and_then(Value::as_str)?;
-                    Some(LiveStream {
-                        user_login: user_login.to_string(),
-                        display_name: entry
-                            .get("user_name")
-                            .and_then(Value::as_str)
-                            .unwrap_or(user_login)
-                            .to_string(),
-                        title: entry
-                            .get("title")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_string(),
-                        game_name: entry
-                            .get("game_name")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_string(),
-                        viewer_count: entry
-                            .get("viewer_count")
-                            .and_then(Value::as_u64)
-                            .unwrap_or(0),
-                        thumbnail_url: entry
-                            .get("thumbnail_url")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_string(),
-                        started_at: entry
-                            .get("started_at")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_string(),
-                    })
-                })
-                .collect()
+        .into_iter()
+        .flatten()
+}
+
+/// A string field of an entry, absent or non-string reading as `None`.
+fn text<'a>(entry: &'a Value, key: &str) -> Option<&'a str> {
+    entry.get(key).and_then(Value::as_str)
+}
+
+/// A string field that may be missing, as an owned `String`.
+fn text_or_empty(entry: &Value, key: &str) -> String {
+    text(entry, key).unwrap_or_default().to_string()
+}
+
+fn parse_streams(json: &Value) -> Vec<LiveStream> {
+    entries(json)
+        .filter_map(|entry| {
+            let user_login = text(entry, "user_login")?;
+            Some(LiveStream {
+                user_login: user_login.to_string(),
+                display_name: text(entry, "user_name").unwrap_or(user_login).to_string(),
+                title: text_or_empty(entry, "title"),
+                game_name: text_or_empty(entry, "game_name"),
+                viewer_count: entry
+                    .get("viewer_count")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0),
+                thumbnail_url: text_or_empty(entry, "thumbnail_url"),
+                started_at: text_or_empty(entry, "started_at"),
+            })
         })
-        .unwrap_or_default()
+        .collect()
+}
+
+/// Walk one of the followed-list endpoints to its end.
+///
+/// Both endpoints paginate, both take the same query, and both have a natural
+/// end - you follow a fixed number of people - so the loop is shared and only
+/// the path and the parser differ. `MAX_FOLLOW_PAGES` bounds it regardless.
+fn walk_follow_pages<T>(
+    client_id: &str,
+    token: &str,
+    path: &str,
+    user_id: &str,
+    parse: fn(&Value) -> Vec<T>,
+) -> Result<Vec<T>, Error> {
+    let mut all: Vec<T> = Vec::new();
+    let mut cursor: Option<String> = None;
+
+    for _ in 0..MAX_FOLLOW_PAGES {
+        // Scoped so the borrow of `cursor` ends before it is reassigned.
+        let json = {
+            let mut query = vec![("user_id", user_id), ("first", PAGE_SIZE)];
+            if let Some(after) = &cursor {
+                query.push(("after", after.as_str()));
+            }
+            helix_get(client_id, token, path, &query)?
+        };
+        all.extend(parse(&json));
+
+        cursor = next_cursor(&json);
+        if cursor.is_none() {
+            break;
+        }
+    }
+    Ok(all)
 }
 
 /// Live channels the signed-in user follows, most viewers first.
@@ -447,26 +517,13 @@ pub fn followed_streams(
     token: &str,
     user_id: &str,
 ) -> Result<Vec<LiveStream>, Error> {
-    let mut streams: Vec<LiveStream> = Vec::new();
-    let mut cursor: Option<String> = None;
-
-    for _ in 0..MAX_FOLLOW_PAGES {
-        // Scoped so the borrow of `cursor` ends before it is reassigned.
-        let json = {
-            let mut query = vec![("user_id", user_id), ("first", PAGE_SIZE)];
-            if let Some(after) = &cursor {
-                query.push(("after", after.as_str()));
-            }
-            helix_get(client_id, token, "/streams/followed", &query)?
-        };
-        streams.extend(parse_streams(&json));
-
-        cursor = next_cursor(&json);
-        if cursor.is_none() {
-            break;
-        }
-    }
-
+    let mut streams = walk_follow_pages(
+        client_id,
+        token,
+        "/streams/followed",
+        user_id,
+        parse_streams,
+    )?;
     by_viewers(&mut streams);
     Ok(streams)
 }
@@ -511,46 +568,31 @@ pub struct FollowedChannel {
 }
 
 fn parse_followed_channels(json: &Value) -> Vec<FollowedChannel> {
-    json.get("data")
-        .and_then(Value::as_array)
-        .map(|list| {
-            list.iter()
-                .filter_map(|entry| {
-                    let login = entry.get("broadcaster_login").and_then(Value::as_str)?;
-                    Some(FollowedChannel {
-                        login: login.to_string(),
-                        display_name: entry
-                            .get("broadcaster_name")
-                            .and_then(Value::as_str)
-                            .filter(|name| !name.is_empty())
-                            .unwrap_or(login)
-                            .to_string(),
-                    })
-                })
-                .collect()
+    entries(json)
+        .filter_map(|entry| {
+            let login = text(entry, "broadcaster_login")?;
+            Some(FollowedChannel {
+                login: login.to_string(),
+                display_name: text(entry, "broadcaster_name")
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or(login)
+                    .to_string(),
+            })
         })
-        .unwrap_or_default()
+        .collect()
 }
 
 /// How many logins `/users` takes in one request. Helix's cap, not a choice.
 const USERS_PER_REQUEST: usize = 100;
 
 fn parse_profile_images(json: &Value) -> Vec<(String, String)> {
-    json.get("data")
-        .and_then(Value::as_array)
-        .map(|list| {
-            list.iter()
-                .filter_map(|entry| {
-                    let login = entry.get("login").and_then(Value::as_str)?;
-                    let image = entry
-                        .get("profile_image_url")
-                        .and_then(Value::as_str)
-                        .filter(|url| !url.is_empty())?;
-                    Some((login.to_string(), image.to_string()))
-                })
-                .collect()
+    entries(json)
+        .filter_map(|entry| {
+            let login = text(entry, "login")?;
+            let image = text(entry, "profile_image_url").filter(|url| !url.is_empty())?;
+            Some((login.to_string(), image.to_string()))
         })
-        .unwrap_or_default()
+        .collect()
 }
 
 /// Avatars for `logins`, as `(login, url)` pairs.
@@ -599,26 +641,13 @@ pub fn followed_channels(
     token: &str,
     user_id: &str,
 ) -> Result<Vec<FollowedChannel>, Error> {
-    let mut all: Vec<FollowedChannel> = Vec::new();
-    let mut cursor: Option<String> = None;
-
-    for _ in 0..MAX_FOLLOW_PAGES {
-        // Scoped so the borrow of `cursor` ends before it is reassigned.
-        let json = {
-            let mut query = vec![("user_id", user_id), ("first", PAGE_SIZE)];
-            if let Some(after) = &cursor {
-                query.push(("after", after.as_str()));
-            }
-            helix_get(client_id, token, "/channels/followed", &query)?
-        };
-        all.extend(parse_followed_channels(&json));
-
-        cursor = next_cursor(&json);
-        if cursor.is_none() {
-            break;
-        }
-    }
-
+    let mut all = walk_follow_pages(
+        client_id,
+        token,
+        "/channels/followed",
+        user_id,
+        parse_followed_channels,
+    )?;
     all.sort_by_key(|channel| channel.display_name.to_lowercase());
     Ok(all)
 }
@@ -752,47 +781,24 @@ pub fn streams_by_login(
 }
 
 fn parse_logins(json: &Value) -> Vec<String> {
-    json.get("data")
-        .and_then(Value::as_array)
-        .map(|list| {
-            list.iter()
-                .filter_map(|entry| {
-                    entry
-                        .get("broadcaster_login")
-                        .and_then(Value::as_str)
-                        .map(str::to_string)
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+    entries(json)
+        .filter_map(|entry| text(entry, "broadcaster_login").map(str::to_string))
+        .collect()
 }
 
 fn parse_categories(json: &Value) -> Vec<Category> {
-    json.get("data")
-        .and_then(Value::as_array)
-        .map(|list| {
-            list.iter()
-                .filter_map(|entry| {
-                    // A category with no id cannot be opened, so it is not worth
-                    // showing.
-                    let id = entry.get("id").and_then(Value::as_str)?;
-                    Some(Category {
-                        id: id.to_string(),
-                        name: entry
-                            .get("name")
-                            .and_then(Value::as_str)
-                            .unwrap_or(id)
-                            .to_string(),
-                        box_art_url: entry
-                            .get("box_art_url")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_string(),
-                    })
-                })
-                .collect()
+    entries(json)
+        .filter_map(|entry| {
+            // A category with no id cannot be opened, so it is not worth
+            // showing.
+            let id = text(entry, "id")?;
+            Some(Category {
+                id: id.to_string(),
+                name: text(entry, "name").unwrap_or(id).to_string(),
+                box_art_url: text_or_empty(entry, "box_art_url"),
+            })
         })
-        .unwrap_or_default()
+        .collect()
 }
 
 #[cfg(test)]

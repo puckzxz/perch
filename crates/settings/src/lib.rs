@@ -10,8 +10,30 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
+
+/// One writer at a time, process-wide.
+///
+/// Two threads write the settings file: the UI saves preferences, and the
+/// sign-in worker saves tokens as Twitch issues them. Each one reads the file
+/// back first to keep the other's fields, which is right, and is also a
+/// read-modify-write - so with nothing serialising them, a token save landing
+/// between the UI's read and its write would be overwritten by the *old*
+/// tokens the UI had just read, and a refresh token Twitch honours exactly
+/// once would be gone. Both writers share one temporary filename too, so two
+/// concurrent saves could also collide on the rename. Every path that writes
+/// the file holds this across its read and its write.
+static FILE_LOCK: Mutex<()> = Mutex::new(());
+
+/// Hold the write lock, surviving a poisoned mutex: a panic in another writer
+/// says nothing about the file, which every save rewrites whole.
+fn file_lock() -> std::sync::MutexGuard<'static, ()> {
+    FILE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 /// Which stream quality to pull.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,7 +60,7 @@ pub enum QualityPreference {
 /// - `oauth` is a proper Helix OAuth token obtained by device-code sign-in,
 ///   scoped to reading your follows. It cannot do what the cookie token does,
 ///   and the cookie token cannot call Helix.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Credentials {
     /// Twitch application client id, from dev.twitch.tv. Required for sign-in.
@@ -49,7 +71,24 @@ pub struct Credentials {
     pub oauth: Option<OAuthTokens>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// Written by hand so that a `{:?}` of anything holding credentials - which
+/// includes the whole of [`Settings`] - cannot put an account credential in a
+/// log. The client id is public by design and stays legible; the cookie is
+/// shown only as present or absent.
+impl std::fmt::Debug for Credentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Credentials")
+            .field("client_id", &self.client_id)
+            .field("auth_token", &self.auth_token.as_ref().map(|_| REDACTED))
+            .field("oauth", &self.oauth)
+            .finish()
+    }
+}
+
+/// What a secret looks like in debug output.
+const REDACTED: &str = "<redacted>";
+
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct OAuthTokens {
     pub access_token: String,
@@ -64,6 +103,19 @@ pub struct OAuthTokens {
     pub login: String,
 }
 
+/// See [`Credentials`]'s `Debug`: the tokens are the secret, the rest is not.
+impl std::fmt::Debug for OAuthTokens {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OAuthTokens")
+            .field("access_token", &REDACTED)
+            .field("refresh_token", &REDACTED)
+            .field("expires_at", &self.expires_at)
+            .field("user_id", &self.user_id)
+            .field("login", &self.login)
+            .finish()
+    }
+}
+
 /// What is remembered about one channel.
 ///
 /// A struct rather than a bare number because per-channel *quality* is the
@@ -75,6 +127,7 @@ pub struct ChannelPrefs {
     /// 0-100. `None` means nobody has ever set a level here, which has to stay
     /// distinguishable from `Some(0)` — a channel you deliberately muted should
     /// reopen muted, and one you have never opened should not.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub volume: Option<u8>,
     /// Whether this channel opens with its chat pane hidden.
     ///
@@ -86,6 +139,55 @@ pub struct ChannelPrefs {
     /// level.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub chat_hidden: bool,
+}
+
+impl ChannelPrefs {
+    /// Whether this entry remembers anything at all. An entry that does not is
+    /// dropped rather than written, so the file never fills with channels
+    /// that have nothing to say about themselves.
+    fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// Where the window was when it was last closed, so it comes back there.
+///
+/// Logical pixels, the same units gpui reports. `maximized` is kept apart from
+/// the bounds because a maximised window still has a restore size, and losing
+/// it would make un-maximising land somewhere arbitrary.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WindowPlacement {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub maximized: bool,
+}
+
+impl Default for WindowPlacement {
+    fn default() -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            width: 0.0,
+            height: 0.0,
+            maximized: false,
+        }
+    }
+}
+
+impl WindowPlacement {
+    /// Whether the size is one a window could actually be. A hand-edited file
+    /// can say anything, and a zero or negative size would open nothing.
+    pub fn is_usable(&self) -> bool {
+        self.width.is_finite()
+            && self.height.is_finite()
+            && self.x.is_finite()
+            && self.y.is_finite()
+            && self.width >= 320.0
+            && self.height >= 240.0
+    }
 }
 
 /// How a channel is identified in [`Settings::channel_prefs`].
@@ -157,6 +259,10 @@ pub struct Settings {
     /// the stream. Neither should have to say so twice.
     #[serde(default)]
     pub sidebar_collapsed: bool,
+    /// Where the window was last closed. `None` until it has been closed once,
+    /// in which case the app picks a size that fits the display.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window: Option<WindowPlacement>,
 }
 
 /// `#[serde(default)]` for a `bool` is `false`, and this one defaults to true —
@@ -182,6 +288,7 @@ impl Default for Settings {
             video_share: 0.0,
             miniplayer: true,
             sidebar_collapsed: false,
+            window: None,
         }
     }
 }
@@ -292,12 +399,27 @@ impl Settings {
     /// Deliberately not carried forward as a default the way a volume is — see
     /// [`ChannelPrefs::chat_hidden`].
     pub fn set_chat_hidden_for(&mut self, channel: &str, hidden: bool) -> bool {
-        let entry = self.channel_prefs.entry(channel_key(channel)).or_default();
-        if entry.chat_hidden == hidden {
+        // Checked before an entry exists, not after: `or_default` on a no-op
+        // used to leave an empty record behind, which the next save wrote out
+        // as a channel with nothing remembered about it.
+        if self.chat_hidden_for(channel) == hidden {
             return false;
         }
+        let key = channel_key(channel);
+        let entry = self.channel_prefs.entry(key.clone()).or_default();
         entry.chat_hidden = hidden;
+        if entry.is_empty() {
+            self.channel_prefs.remove(&key);
+        }
         true
+    }
+
+    /// Drop per-channel entries that remember nothing.
+    ///
+    /// Run on load and before every save, so a file written by an older build
+    /// that left such entries behind is cleaned on its way through.
+    fn prune_empty_prefs(&mut self) {
+        self.channel_prefs.retain(|_, prefs| !prefs.is_empty());
     }
 
     /// Load from `path`, returning defaults if the file does not exist yet.
@@ -326,17 +448,14 @@ impl Settings {
         // the file back first to keep the tokens another thread put there.
         let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
 
-        serde_json::from_str(text).map_err(|source| Error::Parse {
+        let mut settings: Self = serde_json::from_str(text).map_err(|source| Error::Parse {
             path: path.to_path_buf(),
             source,
-        })
+        })?;
+        settings.prune_empty_prefs();
+        Ok(settings)
     }
 
-    /// Write to `path`, creating parent directories as needed.
-    ///
-    /// Writes to a temporary file and renames, so an interrupted save cannot
-    /// leave truncated settings — which for a file holding credentials would
-    /// mean silently signing the user out.
     /// Save these settings, keeping whatever sign-in is already on disk.
     ///
     /// The UI holds a snapshot of `Settings` taken at launch, but the sign-in
@@ -349,9 +468,10 @@ impl Settings {
     /// Everything the UI owns is written as-is, so adding a field needs no
     /// change here. Only the field somebody else owns is named.
     pub fn save_preferences(&self, path: &Path) -> Result<(), Error> {
+        let _guard = file_lock();
         let mut out = self.clone();
         out.credentials.oauth = Self::load(path)?.credentials.oauth;
-        out.save(path)
+        out.write(path)
     }
 
     /// Save these settings and discard any stored sign-in.
@@ -360,12 +480,45 @@ impl Settings {
     /// useless. Dropping them turns the next sign-in into a clean prompt rather
     /// than a confusing "sign-in expired".
     pub fn save_forgetting_sign_in(&self, path: &Path) -> Result<(), Error> {
+        let _guard = file_lock();
         let mut out = self.clone();
         out.credentials.oauth = None;
-        out.save(path)
+        out.write(path)
     }
 
+    /// Record a sign-in, keeping everything else the file already says.
+    ///
+    /// The mirror image of [`save_preferences`](Self::save_preferences), for
+    /// the thread that owns the tokens and nothing else: it reads the file,
+    /// replaces the one field it owns, and writes it back, all under the same
+    /// lock the UI's saves take. Twitch refresh tokens are single-use, so this
+    /// has to land, and land intact, every time one is issued.
+    pub fn save_sign_in(path: &Path, oauth: Option<OAuthTokens>) -> Result<(), Error> {
+        let _guard = file_lock();
+        let mut settings = Self::load(path)?;
+        settings.credentials.oauth = oauth;
+        settings.write(path)
+    }
+
+    /// Write to `path` as-is, creating parent directories as needed.
+    ///
+    /// Everything in `self` wins, including the sign-in. That is right for a
+    /// test or a first write and wrong for the running app, whose two writers
+    /// each own different fields; they use the two `save_*` methods above.
     pub fn save(&self, path: &Path) -> Result<(), Error> {
+        let _guard = file_lock();
+        self.write(path)
+    }
+
+    /// The write itself, with the lock already held.
+    ///
+    /// Writes to a temporary file and renames, so an interrupted save cannot
+    /// leave truncated settings — which for a file holding credentials would
+    /// mean silently signing the user out.
+    fn write(&self, path: &Path) -> Result<(), Error> {
+        let mut out = self.clone();
+        out.prune_empty_prefs();
+        let this = &out;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|source| Error::Write {
                 path: parent.to_path_buf(),
@@ -373,7 +526,7 @@ impl Settings {
             })?;
         }
 
-        let text = serde_json::to_string_pretty(self).expect("settings are always serialisable");
+        let text = serde_json::to_string_pretty(this).expect("settings are always serialisable");
         let temp = path.with_extension("json.part");
         std::fs::write(&temp, text).map_err(|source| Error::Write {
             path: temp.clone(),
@@ -665,6 +818,155 @@ mod tests {
 
         let auto = serde_json::to_string(&QualityPreference::Auto).unwrap();
         assert!(auto.contains("auto"), "got {auto}");
+    }
+
+    /// Toggling chat off and back on again for a channel used to leave an
+    /// entry behind that remembered nothing, and the next save wrote it out as
+    /// `"volume": null`. The file is documented as hand-editable, and a record
+    /// with nothing in it is the kind of thing a reader stops to wonder about.
+    #[test]
+    fn a_toggle_that_changes_nothing_leaves_no_entry_behind() {
+        let mut settings = Settings::default();
+        assert!(!settings.set_chat_hidden_for("forsen", false));
+        assert!(
+            settings.channel_prefs.is_empty(),
+            "a no-op created an entry"
+        );
+
+        assert!(settings.set_chat_hidden_for("forsen", true));
+        assert!(settings.set_chat_hidden_for("forsen", false));
+        assert!(
+            settings.channel_prefs.is_empty(),
+            "hiding and unhiding left an empty entry"
+        );
+    }
+
+    #[test]
+    fn empty_entries_are_pruned_on_the_way_through() {
+        let path = temp_file("empty-prefs");
+        std::fs::write(
+            &path,
+            r#"{"channel_prefs":{"ghost":{"volume":null},"real":{"volume":30}}}"#,
+        )
+        .unwrap();
+
+        let loaded = Settings::load(&path).unwrap();
+        assert!(!loaded.channel_prefs.contains_key("ghost"));
+        assert_eq!(loaded.volume_for("real"), 30);
+
+        loaded.save(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("ghost"), "the empty entry came back: {text}");
+        assert!(
+            !text.contains("\"volume\": null"),
+            "a None level was written out: {text}"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The worker's save and the UI's save each keep the other's fields, and
+    /// neither may lose what the other wrote while it was in the middle of a
+    /// read-modify-write. Hammered from two threads rather than reasoned
+    /// about: with the lock removed this fails within a few hundred rounds.
+    #[test]
+    fn two_writers_never_lose_each_others_fields() {
+        let path = temp_file("two-writers");
+        let _ = std::fs::remove_file(&path);
+        Settings::default().save(&path).unwrap();
+
+        const ROUNDS: u8 = 200;
+        let ui = std::thread::spawn({
+            let path = path.clone();
+            move || {
+                let mut settings = Settings::default();
+                for round in 1..=ROUNDS {
+                    settings.volume = round;
+                    settings.save_preferences(&path).unwrap();
+                }
+            }
+        });
+        let worker = std::thread::spawn({
+            let path = path.clone();
+            move || {
+                for round in 1..=ROUNDS {
+                    let tokens = OAuthTokens {
+                        refresh_token: format!("refresh-{round}"),
+                        ..Default::default()
+                    };
+                    Settings::save_sign_in(&path, Some(tokens)).unwrap();
+                }
+            }
+        });
+        ui.join().unwrap();
+        worker.join().unwrap();
+
+        let after = Settings::load(&path).unwrap();
+        assert_eq!(after.volume, ROUNDS, "the UI's last save was lost");
+        assert_eq!(
+            after.credentials.oauth.map(|t| t.refresh_token),
+            Some(format!("refresh-{ROUNDS}")),
+            "the worker's last token was overwritten by an older one"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// One `dbg!` on a `Settings` must not put an account credential in the
+    /// log. The client id is public and may show; the tokens may not.
+    #[test]
+    fn debug_output_never_contains_a_secret() {
+        let settings = Settings {
+            credentials: Credentials {
+                client_id: Some("public-client-id".into()),
+                auth_token: Some("cookie-secret".into()),
+                oauth: Some(OAuthTokens {
+                    access_token: "access-secret".into(),
+                    refresh_token: "refresh-secret".into(),
+                    login: "someone".into(),
+                    ..Default::default()
+                }),
+            },
+            ..Default::default()
+        };
+        let text = format!("{settings:?}");
+        for secret in ["cookie-secret", "access-secret", "refresh-secret"] {
+            assert!(!text.contains(secret), "{secret} leaked into: {text}");
+        }
+        assert!(text.contains("public-client-id"));
+        assert!(text.contains("someone"));
+    }
+
+    #[test]
+    fn a_window_placement_round_trips_and_rejects_nonsense() {
+        let path = temp_file("window");
+        let settings = Settings {
+            window: Some(WindowPlacement {
+                x: 10.0,
+                y: 20.0,
+                width: 1280.0,
+                height: 720.0,
+                maximized: true,
+            }),
+            ..Default::default()
+        };
+        settings.save(&path).unwrap();
+        let loaded = Settings::load(&path).unwrap();
+        assert_eq!(loaded.window, settings.window);
+        assert!(loaded.window.unwrap().is_usable());
+
+        let tiny = WindowPlacement {
+            width: 10.0,
+            height: 10.0,
+            ..Default::default()
+        };
+        assert!(!tiny.is_usable());
+        let nan = WindowPlacement {
+            x: f32::NAN,
+            width: 800.0,
+            height: 600.0,
+            ..Default::default()
+        };
+        assert!(!nan.is_usable());
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

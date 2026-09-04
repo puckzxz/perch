@@ -50,8 +50,11 @@ pub const USER_AGENT: &str = concat!("perch/", env!("CARGO_PKG_VERSION"));
 ///
 /// Logins are lowercase ASCII, digits and underscores, up to 25 characters. The
 /// service rejects anything else with a 400, and a rejection costs a round trip
-/// we can see coming.
-fn is_login(channel: &str) -> bool {
+/// we can see coming. Public, and re-exported from the crate root, because it
+/// is the one definition of a valid login: the app checks what the command
+/// line hands it against this too, rather than letting `twitch.tv/foo bar`
+/// reach streamlink and come back as a failure nobody can read.
+pub fn is_login(channel: &str) -> bool {
     !channel.is_empty()
         && channel.len() <= 25
         && channel

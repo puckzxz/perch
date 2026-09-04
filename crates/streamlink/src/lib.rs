@@ -430,7 +430,24 @@ fn run(
     };
 
     let stdout = process.stdout.take();
-    let stderr = process.stderr.take();
+    // Drained as it arrives rather than read after exit. An anonymous pipe
+    // holds a few kilobytes, and a child that fills its stderr with warnings
+    // over a long session - streamlink logs every segment retry - blocks on the
+    // write once nobody is reading, and its HTTP output stalls with it. The
+    // thread keeps only the lines the exit report wants and hands them over
+    // once the pipe closes.
+    let stderr_lines = process.stderr.take().map(|stderr| {
+        std::thread::Builder::new()
+            .name("streamlink-stderr".into())
+            .spawn(move || {
+                BufReader::new(stderr)
+                    .lines()
+                    .map_while(Result::ok)
+                    .filter(|line| line.contains("error"))
+                    .collect::<Vec<_>>()
+            })
+            .ok()
+    });
     // This is the one that matters: the long-lived serving process, the one
     // found still running hours after perch was gone.
     job::track(&process);
@@ -475,16 +492,12 @@ fn run(
         return;
     }
 
-    // stdout closed: the child exited. Its stderr says why.
-    let reason = stderr
-        .map(|stderr| {
-            BufReader::new(stderr)
-                .lines()
-                .map_while(Result::ok)
-                .filter(|line| line.contains("error"))
-                .collect::<Vec<_>>()
-                .join("; ")
-        })
+    // stdout closed: the child exited. Its stderr says why. The drain thread
+    // ends when the child's stderr closes, which it has by now.
+    let reason = stderr_lines
+        .flatten()
+        .and_then(|drain| drain.join().ok())
+        .map(|lines| lines.join("; "))
         .filter(|text| !text.is_empty())
         .unwrap_or_else(|| "streamlink exited".to_string());
 

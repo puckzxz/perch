@@ -21,11 +21,29 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use futures::channel::mpsc;
+pub use history::is_login;
 pub use message::{ChatMessage, ChatNotice, IrcMessage, NoticeKind};
 
 const HOST: &str = "irc.chat.twitch.tv";
 const PORT: u16 = 6697;
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
+
+/// How long the socket may stay silent before we ask whether it is still there.
+///
+/// Twitch pings every five minutes or so, and a busy channel never goes quiet
+/// at all, so on a healthy connection this never fires. It exists for the
+/// connection that died without saying so: a laptop that slept, a NAT table
+/// that forgot us, a cable pulled. Nothing on the far side sends a reset for
+/// those, and a client that only ever writes in reply to the server's pings
+/// would sit in a blocking read forever with the pane quietly frozen. On
+/// timeout we send a PING of our own; a second silent stretch means dead.
+const IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// A session that lasted this long counts as having worked, so the reconnect
+/// backoff starts over rather than continuing from where the last outage
+/// left it. Without this, one bad night doubles every later reconnect for the
+/// life of the pane.
+const HEALTHY_SESSION: Duration = Duration::from_secs(60);
 
 /// Something worth showing in the chat pane.
 #[derive(Debug, Clone)]
@@ -55,8 +73,7 @@ pub enum ChatEvent {
 pub struct ChatClient {
     stop: Arc<AtomicBool>,
     /// Kept so `Drop` can unblock the reader: shutting the socket down makes the
-    /// blocking read return immediately, which a read timeout cannot do without
-    /// corrupting a partially-buffered line.
+    /// blocking read return immediately.
     socket: Arc<Mutex<Option<TcpStream>>>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -99,9 +116,13 @@ impl Drop for ChatClient {
         if let Some(sock) = self.socket.lock().unwrap().take() {
             let _ = sock.shutdown(std::net::Shutdown::Both);
         }
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
+        // Deliberately not joined. The shutdown above only reaches a worker
+        // that has a socket; one still inside the history request or the TCP
+        // connect has nothing to interrupt it, and this runs on the UI thread
+        // every time a pane closes. The worker tests `stop` between every
+        // phase and retires on its own; nothing it holds needs tearing down in
+        // order.
+        drop(self.thread.take());
     }
 }
 
@@ -127,6 +148,7 @@ fn run(
     let mut backoff = Duration::from_secs(1);
 
     while !stop.load(Ordering::Relaxed) {
+        let started = std::time::Instant::now();
         // A panic here would otherwise kill only this thread, leaving the UI
         // showing "connecting…" forever with the reason on a stderr nobody sees
         // in a windowed app. Surface it as a normal disconnect instead.
@@ -136,10 +158,15 @@ fn run(
         .unwrap_or_else(|_| Err("chat thread panicked".to_string()));
 
         match outcome {
-            Ok(()) => backoff = Duration::from_secs(1),
+            // Stopped, or nobody is listening any more. Either way there is
+            // no one to reconnect for.
+            Ok(()) => return,
             Err(reason) => {
                 if stop.load(Ordering::Relaxed) {
                     break;
+                }
+                if started.elapsed() >= HEALTHY_SESSION {
+                    backoff = Duration::from_secs(1);
                 }
                 let _ = tx.unbounded_send(ChatEvent::Disconnected { reason });
             }
@@ -237,6 +264,17 @@ fn anonymous_nick() -> String {
     format!("justinfan{n}")
 }
 
+/// Whether a read error is the idle timeout rather than a real failure.
+///
+/// Both kinds, because the platforms disagree: a timed-out `recv` is
+/// `TimedOut` on Windows and `WouldBlock` everywhere else.
+fn is_timeout(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+    )
+}
+
 /// One connection, from TCP handshake until the socket closes or errors.
 fn session(
     channel: &str,
@@ -246,6 +284,9 @@ fn session(
 ) -> Result<(), String> {
     let tcp = TcpStream::connect((HOST, PORT)).map_err(|e| format!("connect failed: {e}"))?;
     tcp.set_nodelay(true).ok();
+    // See `IDLE_TIMEOUT`. A timeout surfaces as an error from the read below,
+    // where it is told apart from a real failure.
+    tcp.set_read_timeout(Some(IDLE_TIMEOUT)).ok();
 
     // Publish a handle before blocking, so Drop can interrupt us.
     let shutdown_handle = tcp.try_clone().map_err(|e| format!("clone failed: {e}"))?;
@@ -278,21 +319,41 @@ fn session(
         .map_err(|e| format!("handshake flush failed: {e}"))?;
 
     let mut line = Vec::new();
+    // Whether the last read timed out with nothing arriving since. One silent
+    // stretch earns a PING; two in a row is a dead connection.
+    let mut pinged = false;
     loop {
         if stop.load(Ordering::Relaxed) {
             return Ok(());
         }
 
-        line.clear();
-        let read = reader
-            .read_until(b'\n', &mut line)
-            .map_err(|e| format!("read failed: {e}"))?;
+        // Cleared only after a whole line has been handled, never after a
+        // timeout: a timeout can land in the middle of a line, and whatever
+        // was read of it is sitting in `line` waiting for the rest.
+        let read = match reader.read_until(b'\n', &mut line) {
+            Ok(read) => read,
+            Err(e) if is_timeout(&e) => {
+                if pinged {
+                    return Err("no traffic for too long; the connection is probably dead".into());
+                }
+                pinged = true;
+                let stream = reader.get_mut();
+                stream
+                    .write_all(b"PING :perch\r\n")
+                    .and_then(|_| stream.flush())
+                    .map_err(|e| format!("ping failed: {e}"))?;
+                continue;
+            }
+            Err(e) => return Err(format!("read failed: {e}")),
+        };
         if read == 0 {
             return Err("server closed the connection".into());
         }
+        pinged = false;
 
         // Chat occasionally carries invalid UTF-8; lossy beats dropping the line.
-        let text = String::from_utf8_lossy(&line);
+        let text = String::from_utf8_lossy(&line).into_owned();
+        line.clear();
 
         // Set TWITCH_CHAT_DEBUG=1 to see the wire protocol. Invaluable when a
         // channel looks silent and you need to know whether that is the channel
@@ -316,21 +377,6 @@ fn session(
                     .flush()
                     .map_err(|e| format!("pong flush failed: {e}"))?;
             }
-            "PRIVMSG" => {
-                if let Some(chat) = ChatMessage::from_irc(&irc) {
-                    if tx
-                        .unbounded_send(ChatEvent::Message(Box::new(chat)))
-                        .is_err()
-                    {
-                        return Ok(()); // receiver gone; nobody is listening
-                    }
-                }
-            }
-            "CLEARCHAT" => {
-                let _ = tx.unbounded_send(ChatEvent::Cleared {
-                    login: irc.param(1).map(str::to_string),
-                });
-            }
             // 366 is the end of the name list, i.e. the join actually completed.
             "366" => {
                 let _ = tx.unbounded_send(ChatEvent::Connected {
@@ -345,6 +391,10 @@ fn session(
                 }
             }
             "RECONNECT" => return Err("server asked us to reconnect".into()),
+            // Everything that is content rather than protocol - PRIVMSG,
+            // USERNOTICE, CLEARCHAT - goes through the one function the
+            // backfill also uses, so a live line and a history line can never
+            // be read two different ways.
             _ => {
                 if let Some(event) = event_for(&irc) {
                     if tx.unbounded_send(event).is_err() {

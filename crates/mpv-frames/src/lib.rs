@@ -46,8 +46,11 @@ pub enum Error {
 pub struct Config {
     /// Play the audio track. Off for frame-dumping, on for a real player.
     pub audio: bool,
-    /// Allow hardware decoding. The software render path needs frames in system
-    /// memory, so enabling this makes mpv copy them back - usually a net loss.
+    /// Allow hardware decoding (`hwdec=auto-copy`). The software render path
+    /// needs frames in system memory, so mpv copies each decoded frame back;
+    /// measured over multi-minute runs the copy costs far less than decoding
+    /// on the CPU did, and `auto-copy` falls back to software on its own where
+    /// a codec or driver cannot do it.
     pub hwdec: bool,
     /// Playback volume, 0-100. mpv's own default is 100, which is startlingly
     /// loud for a stream that opens on its own.
@@ -74,6 +77,13 @@ pub enum Event {
     VideoReconfig,
     EndFile,
     Shutdown,
+    /// A property registered with [`Player::observe_property`] changed. `value`
+    /// is `None` while the property has no value at all - `width` before the
+    /// first frame decodes, for instance.
+    PropertyChange {
+        name: String,
+        value: Option<String>,
+    },
     Other(c_int),
 }
 
@@ -94,6 +104,19 @@ pub struct Player {
 
 // libmpv documents `mpv_handle` as thread-safe. The render context is not
 // re-entrant, so `Player` moves between threads but is not shared across them.
+//
+// There is a second rule, and it is the one that shapes this API. render.h
+// requires that the thread calling `mpv_render_context_render` "does not call
+// libmpv API functions other than the mpv_render_* functions, except APIs
+// which are declared as safe" - and client.h declares only the asynchronous
+// ones safe: `mpv_observe_property`, `mpv_set_property_async`,
+// `mpv_command_async`, and `mpv_wait_event` with a zero timeout. A synchronous
+// get or set from the render thread can deadlock against the core; mpv breaks
+// the deadlock with a timeout, degrades playback, and logs
+// "mpv_render_context_render() not being called or stuck". So everything a
+// render loop needs is offered in the safe shape: reads through
+// [`Player::observe_property`] plus [`Player::poll_events`], writes through the
+// async setters. [`Player::property`] remains for threads that never render.
 unsafe impl Send for Player {}
 
 impl Player {
@@ -283,6 +306,23 @@ impl Player {
                 ffi::MPV_EVENT_VIDEO_RECONFIG => Event::VideoReconfig,
                 ffi::MPV_EVENT_END_FILE => Event::EndFile,
                 ffi::MPV_EVENT_SHUTDOWN => Event::Shutdown,
+                // SAFETY: for this event id libmpv guarantees `data` points at
+                // an `mpv_event_property`, valid until the next `wait_event`
+                // call on this handle - which is the next loop iteration, and
+                // everything is copied out before then.
+                ffi::MPV_EVENT_PROPERTY_CHANGE => match unsafe { property_change(raw) } {
+                    Some(event) => event,
+                    None => continue,
+                },
+                // Replies to the async setters. The only thing in them worth
+                // having is a failure, and even that is only worth a line.
+                ffi::MPV_EVENT_SET_PROPERTY_REPLY | ffi::MPV_EVENT_COMMAND_REPLY => {
+                    let error = unsafe { (*raw).error };
+                    if error < 0 {
+                        eprintln!("mpv: async request failed: {}", self.lib.error_text(error));
+                    }
+                    continue;
+                }
                 other => Event::Other(other),
             };
             events.push(event);
@@ -290,36 +330,85 @@ impl Player {
         events
     }
 
-    /// Pause or resume.
+    /// Ask to be told, through [`poll_events`](Self::poll_events), whenever
+    /// `name` changes. Values arrive as strings, whatever the property's native
+    /// type, so the caller parses what it needs. mpv sends the current value
+    /// straight away, so a property that already has one is not missed.
+    ///
+    /// This plus `poll_events` is how a render thread reads a property. The
+    /// synchronous [`property`](Self::property) is not safe there; see the
+    /// note on `Send` above.
+    pub fn observe_property(&self, name: &str) -> Result<(), Error> {
+        let c_name = CString::new(name).map_err(|_| Error::InteriorNul)?;
+        let rc = unsafe {
+            (self.lib.observe_property)(self.mpv, 0, c_name.as_ptr(), ffi::MPV_FORMAT_STRING)
+        };
+        self.check(rc, "mpv_observe_property")
+    }
+
+    /// Pause or resume. Queued, not applied: mpv acts on it from its own
+    /// thread, and a failure comes back through [`poll_events`](Self::poll_events).
     ///
     /// On a live stream, pausing means falling behind: mpv stops consuming
     /// while the source keeps producing. Callers should seek back to the live
     /// edge on resume rather than leaving the viewer silently in the past.
     pub fn set_paused(&self, paused: bool) -> Result<(), Error> {
-        self.set_property("pause", if paused { "yes" } else { "no" })
+        self.set_property_async("pause", if paused { "yes" } else { "no" })
     }
 
-    /// Jump to the newest available point in a live stream.
+    /// Jump to the newest available point in a live stream. Queued, like
+    /// [`set_paused`](Self::set_paused).
     pub fn seek_to_live(&self) -> Result<(), Error> {
         // Equivalent to mpv's "seek 100 absolute-percent"; on a live stream the
         // end of the cache is the live edge.
-        self.command(&["seek", "100", "absolute-percent"])
+        self.command_async(&["seek", "100", "absolute-percent"])
     }
 
-    /// Change playback volume (0-100) while playing.
+    /// Change playback volume (0-100) while playing. Queued, like
+    /// [`set_paused`](Self::set_paused).
     pub fn set_volume(&self, percent: u8) -> Result<(), Error> {
-        self.set_property("volume", &percent.min(100).to_string())
+        self.set_property_async("volume", &percent.min(100).to_string())
     }
 
-    fn set_property(&self, name: &str, value: &str) -> Result<(), Error> {
+    /// Queue a property write. The only kind of write a render thread may do.
+    fn set_property_async(&self, name: &str, value: &str) -> Result<(), Error> {
         let c_name = CString::new(name).map_err(|_| Error::InteriorNul)?;
         let c_value = CString::new(value).map_err(|_| Error::InteriorNul)?;
-        let rc =
-            unsafe { (self.lib.set_property_string)(self.mpv, c_name.as_ptr(), c_value.as_ptr()) };
-        self.check(rc, "mpv_set_property_string")
+        // For MPV_FORMAT_STRING the data argument is a `char **`. mpv copies
+        // the string before returning, so the CString may drop after the call.
+        let mut value_ptr: *const c_char = c_value.as_ptr();
+        let rc = unsafe {
+            (self.lib.set_property_async)(
+                self.mpv,
+                0,
+                c_name.as_ptr(),
+                ffi::MPV_FORMAT_STRING,
+                &mut value_ptr as *mut *const c_char as *mut c_void,
+            )
+        };
+        self.check(rc, "mpv_set_property_async")
+    }
+
+    /// Queue a command. The only kind of command a render thread may issue.
+    fn command_async(&self, args: &[&str]) -> Result<(), Error> {
+        let owned: Vec<CString> = args
+            .iter()
+            .map(|a| CString::new(*a).map_err(|_| Error::InteriorNul))
+            .collect::<Result<_, _>>()?;
+        let mut argv: Vec<*const c_char> = owned.iter().map(|a| a.as_ptr()).collect();
+        argv.push(std::ptr::null());
+
+        // mpv copies the argument strings before returning.
+        let rc = unsafe { (self.lib.command_async)(self.mpv, 0, argv.as_mut_ptr()) };
+        self.check(rc, "mpv_command_async")
     }
 
     /// Read an mpv property as a string, e.g. `"width"`, `"video-codec"`.
+    ///
+    /// Synchronous, so it waits on mpv's core thread. **Not for the render
+    /// thread**: there it can deadlock against a core that is waiting on a
+    /// render, which mpv breaks with a timeout and a dropped frame. A render
+    /// loop uses [`observe_property`](Self::observe_property) instead.
     pub fn property(&self, name: &str) -> Option<String> {
         let c_name = CString::new(name).ok()?;
         let raw = unsafe { (self.lib.get_property_string)(self.mpv, c_name.as_ptr()) };
@@ -383,6 +472,37 @@ impl Drop for Player {
             self.mpv = std::ptr::null_mut();
         }
     }
+}
+
+/// Decode an `MPV_EVENT_PROPERTY_CHANGE` into an [`Event`], copying everything
+/// out of libmpv's buffers.
+///
+/// # Safety
+/// `raw` must be the event `mpv_wait_event` just returned, with that id, and no
+/// further `mpv_wait_event` call may have been made on the handle since.
+unsafe fn property_change(raw: *mut ffi::MpvEvent) -> Option<Event> {
+    let data = unsafe { (*raw).data } as *const ffi::MpvEventProperty;
+    if data.is_null() {
+        return None;
+    }
+    let property = unsafe { &*data };
+    if property.name.is_null() {
+        return None;
+    }
+    let name = unsafe { CStr::from_ptr(property.name) }
+        .to_string_lossy()
+        .into_owned();
+    let value = if property.format == ffi::MPV_FORMAT_STRING && !property.data.is_null() {
+        let text = unsafe { *(property.data as *const *const c_char) };
+        (!text.is_null()).then(|| {
+            unsafe { CStr::from_ptr(text) }
+                .to_string_lossy()
+                .into_owned()
+        })
+    } else {
+        None
+    };
+    Some(Event::PropertyChange { name, value })
 }
 
 /// An opaque alpha, as a pixel read natively as a `u32`.

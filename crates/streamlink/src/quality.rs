@@ -46,6 +46,13 @@ pub fn parse_quality(name: &str) -> Option<Quality> {
 
 /// Lower is better. Encodes the table above as a preference order.
 fn cost(source_height: u32, pane_height: u32) -> u32 {
+    // A pane with no height has no ratio to prefer. Treated as "smallest
+    // source wins" rather than dividing by it: `select` is public, and a
+    // caller that has not laid out yet should get an answer, not a panic on
+    // the supervisor thread that leaves the pane at "starting" forever.
+    if pane_height == 0 {
+        return 1000 + source_height;
+    }
     if source_height < pane_height {
         return 1000 + (pane_height - source_height); // upscaling: always worst
     }
@@ -143,6 +150,16 @@ mod tests {
 
     fn names(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// `select` is public and the app clamps its pane height before calling,
+    /// but the function has to stand on its own: a zero divides nothing, and
+    /// the cheapest rendition is the only sensible answer for a pane that has
+    /// no size yet.
+    #[test]
+    fn a_pane_with_no_height_gets_the_smallest_stream_not_a_panic() {
+        let picked = select(&names(&["1080p60", "720p60", "360p30"]), 0).unwrap();
+        assert_eq!(picked.name, "360p30");
     }
 
     const TWITCH: [&str; 8] = [
