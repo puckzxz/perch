@@ -75,16 +75,14 @@ const EMOTE_OVERHANG: f32 = (EMOTE_HEIGHT - theme::LINE_BODY) / 2.0;
 ///
 /// Twitch's `tmi-sent-ts` is when the *server* saw the message, which is what
 /// you want: it stays correct for a backlog and does not drift with our own
-/// processing. Falls back to now for rows we generate ourselves.
+/// processing. Falls back to now for rows we generate ourselves. Written the
+/// way the system writes a time - see [`crate::clock`] - so a US machine reads
+/// `11:41 PM` where a German one reads `23:41`.
 fn clock(sent_at: Option<u64>) -> SharedString {
     let when = sent_at
         .and_then(|ms| chrono::DateTime::from_timestamp_millis(ms as i64))
         .unwrap_or_else(chrono::Utc::now);
-    SharedString::from(
-        when.with_timezone(&chrono::Local)
-            .format("%H:%M")
-            .to_string(),
-    )
+    SharedString::from(crate::clock::stamp(when.with_timezone(&chrono::Local)))
 }
 
 #[derive(Clone)]
@@ -284,9 +282,12 @@ impl ChatView {
 
     fn apply(&mut self, event: ChatEvent) {
         match event {
-            ChatEvent::Connected { channel } => {
-                self.push(RowKind::Notice(format!("joined #{channel}").into()), None)
-            }
+            // "connected", not "joined #channel": the second is IRC's word for
+            // it, and nobody reading a chat pane is thinking about IRC.
+            ChatEvent::Connected { channel } => self.push(
+                RowKind::Notice(format!("connected to {channel}'s chat").into()),
+                None,
+            ),
             ChatEvent::RoomState { room_id } => self.emote_loader.load_channel(room_id),
             ChatEvent::Message(message) => {
                 let sent_at = message.sent_at;

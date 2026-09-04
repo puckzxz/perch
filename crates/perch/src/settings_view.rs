@@ -4,10 +4,14 @@
 //! two Twitch tokens do different jobs and are easy to confuse, so the panel
 //! says which is which rather than assuming anyone remembers.
 
-use gpui::{div, prelude::*, px, relative, Context, Entity, EventEmitter, SharedString, Window};
+use gpui::{
+    div, prelude::*, px, relative, Context, Entity, EventEmitter, ScrollHandle, SharedString,
+    Window,
+};
 use gpui_component::{
     button::{Button, ButtonVariants},
     input::{Input, InputState},
+    scroll::{Scrollbar, ScrollbarShow},
     select::{Select, SelectState},
     switch::Switch,
     IndexPath,
@@ -75,6 +79,8 @@ pub struct SettingsPanel {
     /// clicks and keeps no state of its own.
     miniplayer: bool,
     sign_in_status: SharedString,
+    /// The fields' scroll position, shared with the scrollbar drawn over them.
+    scroll: ScrollHandle,
 }
 
 impl EventEmitter<SettingsEvent> for SettingsPanel {}
@@ -86,10 +92,13 @@ impl SettingsPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        // Not masked. A client id is public by design - Twitch calls the
+        // application type "Public" and it goes in every request header - and
+        // hiding it behind dots made the one field a user has to paste
+        // correctly the one field they could not check.
         let client_id = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("Client ID from dev.twitch.tv")
-                .masked(true)
                 .default_value(settings.credentials.client_id.clone().unwrap_or_default())
         });
 
@@ -136,6 +145,7 @@ impl SettingsPanel {
             quality,
             history,
             sign_in_status,
+            scroll: ScrollHandle::new(),
         }
     }
 
@@ -214,10 +224,13 @@ impl SettingsPanel {
     /// chat are what somebody comes here to change; the keyboard listing is a
     /// reference and sits last.
     fn section(title: &'static str) -> impl IntoElement {
+        // Louder than the field labels it groups, not quieter: it used to be
+        // the dimmest text on the sheet, so the three subjects read as three
+        // more fields and the grouping did nothing.
         div()
-            .text_size(px(theme::TEXT_LABEL))
-            .font_weight(theme::weight_label())
-            .text_color(theme::text_dim())
+            .text_size(px(theme::TEXT_TITLE))
+            .font_weight(theme::weight_title())
+            .text_color(theme::text())
             .child(title)
     }
 
@@ -297,10 +310,18 @@ impl Render for SettingsPanel {
                     )
                     .child(
                         div()
+                    .flex_1()
+                    .min_h_0()
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
                     .id("settings-fields")
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
+                    .track_scroll(&self.scroll)
                     .flex()
                     .flex_col()
                     .gap(px(theme::GAP_SECTION))
@@ -310,7 +331,7 @@ impl Render for SettingsPanel {
                     .child(Self::field(
                         "Twitch Client ID",
                         "From an application you register at dev.twitch.tv. Set Client Type to Public; no secret is needed. Required to list your follows.",
-                        Input::new(&self.client_id).mask_toggle().cleanable(true),
+                        Input::new(&self.client_id).cleanable(true),
                     ))
                     .child(Self::field(
                         "auth-token cookie",
@@ -345,6 +366,13 @@ impl Render for SettingsPanel {
                         "Keyboard shortcuts",
                         "Player keys act on the pane you last pointed at. All of them stand aside while the cursor is in a box like this one.",
                         Self::shortcuts(),
+                    ))
+                    )
+                    // Always shown, not on hover: the sheet is taller than most
+                    // windows, and the keyboard section used to sit below the
+                    // fold with nothing on screen to say there was a fold.
+                    .child(div().absolute().inset_0().child(
+                        Scrollbar::vertical(&self.scroll).scrollbar_show(ScrollbarShow::Always),
                     ))
                     )
                     .child(

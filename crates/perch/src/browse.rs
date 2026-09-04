@@ -14,12 +14,14 @@ use chrono::{DateTime, Utc};
 use emotes::ImageCache;
 use gpui::{
     div, img, prelude::*, px, rgb, AnyElement, App, Context, ImgResourceLoader, Resource,
-    SharedString, Window,
+    ScrollHandle, SharedString, Window,
 };
+use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 use twitch_api::{Category, FollowedChannel, LiveStream};
 
 use crate::controls;
 use crate::motion;
+use crate::palette;
 use crate::theme;
 
 /// The narrowest a card is allowed to get before the grid drops a column.
@@ -247,10 +249,19 @@ pub fn uptime(started_at: &str) -> Option<String> {
 }
 
 pub fn format_viewers(count: u64) -> String {
-    if count >= 1_000_000 {
-        format!("{:.1}M", count as f64 / 1_000_000.0)
+    // Thresholds sit where the *rounded* value changes unit, not at the round
+    // number: 999,950 rounds to 1000.0 in thousands, and printing "1000.0k" is
+    // the kind of thing a viewer notices during exactly the events that draw
+    // that many people.
+    let millions = count as f64 / 1_000_000.0;
+    let thousands = count as f64 / 1_000.0;
+    // 999.95 thousand is what `{:.1}` rounds up to "1000.0", so that is where
+    // millions begin. Thousands begin at exactly a thousand: the unit below
+    // is a whole number, which does not round.
+    if thousands >= 999.95 {
+        format!("{millions:.1}M")
     } else if count >= 1_000 {
-        format!("{:.1}k", count as f64 / 1_000.0)
+        format!("{thousands:.1}k")
     } else {
         count.to_string()
     }
@@ -392,14 +403,7 @@ fn card<V: 'static>(
                         .font_weight(theme::weight_label())
                         .line_height(px(theme::LINE_TIGHT))
                         .text_color(rgb(0xffffff))
-                        .child(
-                            div()
-                                .flex_none()
-                                .w(px(6.))
-                                .h(px(6.))
-                                .rounded_full()
-                                .bg(theme::live()),
-                        )
+                        .child(controls::live_dot())
                         .child(SharedString::from(watching)),
                 )
                 .when(can_add, |thumb| {
@@ -410,6 +414,10 @@ fn card<V: 'static>(
                             .right(px(theme::GAP_TIGHT))
                             .opacity(0.0)
                             .group_hover("card", |style| style.opacity(1.0))
+                            .tooltip(|window, cx| {
+                                gpui_component::tooltip::Tooltip::new("Open beside what is playing")
+                                    .build(window, cx)
+                            })
                             .on_click(cx.listener(move |view, _event, window, cx| {
                                 // Without this the card underneath also fires
                                 // and replaces every open pane.
@@ -449,18 +457,59 @@ fn card<V: 'static>(
         )
 }
 
+/// The scroll positions of the browse page's lists, one per list.
+///
+/// Held by the owner rather than made per render, because a scroll handle is
+/// state: the offset lives in it, and a scrollbar has to read the same one the
+/// list writes. One per list rather than one shared, or switching tabs would
+/// carry the old list's offset onto the new one.
+#[derive(Default, Clone)]
+pub struct Scrolls {
+    pub following: ScrollHandle,
+    pub popular: ScrollHandle,
+    pub categories: ScrollHandle,
+    pub category: ScrollHandle,
+    pub search: ScrollHandle,
+}
+
 /// The scrolling body of a list. Separate from the rows inside it, so a search
 /// can stack two kinds of result in one scroll rather than two.
-fn scroller(id: &'static str) -> gpui::Stateful<gpui::Div> {
+///
+/// Returns the scroller and the scrollbar for it as two elements, because the
+/// scrollbar has to sit *over* the list in a `relative` parent rather than
+/// inside it, and only the caller knows what else goes in that parent.
+fn scroller(id: &'static str, scroll: &ScrollHandle) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
         .flex_1()
         .min_h_0()
         .overflow_y_scroll()
+        .track_scroll(scroll)
         .flex()
         .flex_col()
         .gap(px(theme::GAP_SECTION))
         .p(px(theme::PAGE_PAD))
+}
+
+/// A list and its scrollbar, stacked.
+///
+/// There used to be no scrollbar on any of these: the wheel worked and nothing
+/// said so, and on a page whose bottom half is a hundred offline follows the
+/// only sign of more was content cut at the edge.
+fn scrollable(list: impl IntoElement, scroll: &ScrollHandle) -> gpui::Div {
+    div()
+        .flex_1()
+        .min_h_0()
+        .relative()
+        .flex()
+        .flex_col()
+        .child(list)
+        .child(
+            div()
+                .absolute()
+                .inset_0()
+                .child(Scrollbar::vertical(scroll).scrollbar_show(ScrollbarShow::Hover)),
+        )
 }
 
 /// A wrapping row of cards.
@@ -506,22 +555,50 @@ fn offline_pill<V: 'static>(
 /// thing to scroll. Each heading disappears with its list, which is what keeps
 /// a fully-live follows list looking exactly as it did before offline channels
 /// existed.
+///
+/// `filter` narrows both lists as it is typed. It is the same subsequence
+/// match the palette uses, and it exists because the offline list is the
+/// longest thing in the app and the box beside it asks Twitch, not the app:
+/// finding someone you already follow had no path that did not involve
+/// scrolling a wall of names.
+#[allow(clippy::too_many_arguments)]
 fn following_view<V: 'static>(
     follows: &[LiveStream],
     offline: &[FollowedChannel],
+    filter: &str,
+    filter_box: AnyElement,
     width: f32,
     cache: &ImageCache,
     can_add: bool,
+    scroll: &ScrollHandle,
     on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + Clone + 'static,
     cx: &mut Context<V>,
 ) -> AnyElement {
-    let mut page = scroller("browse-grid");
+    let filter = filter.trim();
+    let live: Vec<LiveStream> = follows
+        .iter()
+        .filter(|stream| {
+            palette::matches(&stream.display_name, filter)
+                || palette::matches(&stream.user_login, filter)
+        })
+        .cloned()
+        .collect();
+    let offline: Vec<&FollowedChannel> = offline
+        .iter()
+        .filter(|channel| {
+            palette::matches(&channel.display_name, filter)
+                || palette::matches(&channel.login, filter)
+        })
+        .collect();
 
-    if !follows.is_empty() {
+    let mut page = scroller("browse-grid", scroll)
+        .child(div().flex_none().w(px(FILTER_WIDTH)).child(filter_box));
+
+    if !live.is_empty() {
         page = page
             .when(!offline.is_empty(), |page| page.child(heading("live")))
             .child(stream_row(
-                follows,
+                &live,
                 width,
                 cache,
                 can_add,
@@ -538,8 +615,15 @@ fn following_view<V: 'static>(
         page = page.child(heading("offline")).child(row);
     }
 
-    page.into_any_element()
+    if live.is_empty() && offline.is_empty() && !filter.is_empty() {
+        page = page.child(heading("nobody you follow matches that"));
+    }
+
+    scrollable(page, scroll).into_any_element()
 }
+
+/// The follows filter box. As wide as a name, not as wide as the page.
+const FILTER_WIDTH: f32 = 260.0;
 
 fn heading(text: &'static str) -> impl IntoElement {
     div()
@@ -603,10 +687,11 @@ fn stream_grid<V: 'static>(
     width: f32,
     cache: &ImageCache,
     can_add: bool,
+    scroll: &ScrollHandle,
     on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + Clone + 'static,
     cx: &mut Context<V>,
 ) -> AnyElement {
-    scroller(id)
+    let list = scroller(id, scroll)
         .child(stream_row(
             &streams.items,
             width,
@@ -615,8 +700,8 @@ fn stream_grid<V: 'static>(
             on_action.clone(),
             cx,
         ))
-        .children(load_more(streams.next.is_some(), loading, on_action, cx))
-        .into_any_element()
+        .children(load_more(streams.next.is_some(), loading, on_action, cx));
+    scrollable(list, scroll).into_any_element()
 }
 
 /// The row at the end of a paginated list.
@@ -664,12 +749,14 @@ fn load_more<V: 'static>(
 /// A live channel is directly watchable; a category is another click. Searching
 /// a streamer's name and having to scroll past twenty games to reach them is
 /// the wrong way round.
+#[allow(clippy::too_many_arguments)]
 fn search_view<V: 'static>(
     results: &SearchResults,
     discovery: &Discovery,
     width: f32,
     cache: &ImageCache,
     can_add: bool,
+    scroll: &ScrollHandle,
     on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + Clone + 'static,
     cx: &mut Context<V>,
 ) -> AnyElement {
@@ -680,7 +767,7 @@ fn search_view<V: 'static>(
         )
     } else {
         let shown = SEARCH_CATEGORY_LIMIT.min(results.categories.len());
-        scroller("search-results")
+        let list = scroller("search-results", scroll)
             .when(!results.streams.is_empty(), |list| {
                 list.child(heading("channels")).child(stream_row(
                     &results.streams,
@@ -699,8 +786,8 @@ fn search_view<V: 'static>(
                     on_action.clone(),
                     cx,
                 ))
-            })
-            .into_any_element()
+            });
+        scrollable(list, scroll).into_any_element()
     };
 
     div()
@@ -976,19 +1063,31 @@ fn browse_placeholder(discovery: &Discovery, empty: SharedString) -> AnyElement 
 pub fn page<V: 'static>(
     follows: &[LiveStream],
     offline: &[FollowedChannel],
+    filter: &str,
+    filter_box: AnyElement,
     discovery: &Discovery,
     sign_in: &SignIn,
     follows_loaded: bool,
     width: f32,
     cache: &Arc<ImageCache>,
     can_add: bool,
+    scrolls: &Scrolls,
     on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + Clone + 'static,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
     // Search and categories both take over the page rather than nesting inside
     // a tab, so there is only ever one thing to scroll.
     let body = if let Some(results) = &discovery.search {
-        search_view(results, discovery, width, cache, can_add, on_action, cx)
+        search_view(
+            results,
+            discovery,
+            width,
+            cache,
+            can_add,
+            &scrolls.search,
+            on_action,
+            cx,
+        )
     } else if let Some(category) = &discovery.open {
         let list = if discovery.streams.is_empty() {
             browse_placeholder(
@@ -1003,6 +1102,7 @@ pub fn page<V: 'static>(
                 width,
                 cache,
                 can_add,
+                &scrolls.category,
                 on_action.clone(),
                 cx,
             )
@@ -1033,9 +1133,18 @@ pub fn page<V: 'static>(
             Tab::Following if follows.is_empty() && offline.is_empty() => {
                 empty_state(sign_in, follows_loaded, on_action, cx)
             }
-            Tab::Following => {
-                following_view(follows, offline, width, cache, can_add, on_action, cx)
-            }
+            Tab::Following => following_view(
+                follows,
+                offline,
+                filter,
+                filter_box,
+                width,
+                cache,
+                can_add,
+                &scrolls.following,
+                on_action,
+                cx,
+            ),
             Tab::Popular if discovery.popular.is_empty() => browse_placeholder(
                 discovery,
                 "Twitch reported nothing live, which would be a first.".into(),
@@ -1047,27 +1156,30 @@ pub fn page<V: 'static>(
                 width,
                 cache,
                 can_add,
+                &scrolls.popular,
                 on_action,
                 cx,
             ),
             Tab::Categories if discovery.categories.is_empty() => {
                 browse_placeholder(discovery, "No categories came back.".into())
             }
-            Tab::Categories => scroller("categories-grid")
-                .child(category_row(
-                    &discovery.categories.items,
-                    width,
-                    cache,
-                    on_action.clone(),
-                    cx,
-                ))
-                .children(load_more(
-                    discovery.categories.next.is_some(),
-                    discovery.loading,
-                    on_action,
-                    cx,
-                ))
-                .into_any_element(),
+            Tab::Categories => {
+                let list = scroller("categories-grid", &scrolls.categories)
+                    .child(category_row(
+                        &discovery.categories.items,
+                        width,
+                        cache,
+                        on_action.clone(),
+                        cx,
+                    ))
+                    .children(load_more(
+                        discovery.categories.next.is_some(),
+                        discovery.loading,
+                        on_action,
+                        cx,
+                    ));
+                scrollable(list, &scrolls.categories).into_any_element()
+            }
         }
     };
 
@@ -1193,6 +1305,16 @@ mod tests {
         assert_eq!(format_viewers(999), "999");
         assert_eq!(format_viewers(1500), "1.5k");
         assert_eq!(format_viewers(2_400_000), "2.4M");
+    }
+
+    /// The unit changes where the rounded number would otherwise read as a
+    /// thousand of the smaller one.
+    #[test]
+    fn viewer_counts_never_print_a_thousand_of_the_smaller_unit() {
+        assert_eq!(format_viewers(999_949), "999.9k");
+        assert_eq!(format_viewers(999_950), "1.0M");
+        assert_eq!(format_viewers(999), "999");
+        assert_eq!(format_viewers(1_000), "1.0k");
     }
 
     #[test]

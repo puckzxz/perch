@@ -12,7 +12,7 @@
 //! every keystroke.
 
 use gpui::{div, prelude::*, px, Context, SharedString};
-use twitch_api::LiveStream;
+use twitch_api::{FollowedChannel, LiveStream};
 
 use crate::theme;
 
@@ -66,7 +66,10 @@ pub struct Entry {
 /// Not a fuzzy *score* — the list is already in an order that means something
 /// (live channels by viewers, then commands), and re-ranking it by how well a
 /// three-letter query matched would throw that away for no gain at this size.
-fn matches(haystack: &str, needle: &str) -> bool {
+///
+/// Public because the Following tab's filter uses the same test: one idea of
+/// what "matches" means, wherever the user types a few letters of a name.
+pub fn matches(haystack: &str, needle: &str) -> bool {
     if needle.is_empty() {
         return true;
     }
@@ -81,10 +84,16 @@ fn matches(haystack: &str, needle: &str) -> bool {
 ///
 /// Channels first and commands after, because the overwhelmingly common reason
 /// to open this is to go somewhere rather than to do something — and within the
-/// channels, the order the follows list is already in.
+/// channels, the order the follows list is already in. Offline follows come
+/// after the live ones and only once something has been typed: with an empty
+/// query they would be a hundred rows of people who are not streaming, but
+/// with a name typed they are the reason to open the palette at all — the
+/// offline list is the longest thing in the app and this is its only filter
+/// besides the one on the Following tab.
 pub fn entries(
     query: &str,
     follows: &[LiveStream],
+    offline: &[FollowedChannel],
     watching: &[String],
     can_add: bool,
 ) -> Vec<Entry> {
@@ -110,6 +119,19 @@ pub fn entries(
                 command: Command::Add(stream.user_login.clone()),
                 title: SharedString::from(format!("{} — add a pane", stream.display_name)),
                 kind: "add".into(),
+            });
+        }
+    }
+
+    if !query.is_empty() {
+        for channel in offline {
+            if !matches(&channel.display_name, query) && !matches(&channel.login, query) {
+                continue;
+            }
+            entries.push(Entry {
+                command: Command::Watch(channel.login.clone()),
+                title: SharedString::from(channel.display_name.clone()),
+                kind: "offline".into(),
             });
         }
     }
@@ -294,7 +316,7 @@ mod tests {
     #[test]
     fn channels_come_before_commands() {
         let follows = [stream("forsen", "Forsen")];
-        let entries = entries("", &follows, &[], true);
+        let entries = entries("", &follows, &[], &[], true);
 
         let first_command = entries
             .iter()
@@ -313,13 +335,13 @@ mod tests {
     fn adding_is_only_offered_when_something_is_already_open() {
         let follows = [stream("forsen", "Forsen")];
 
-        let alone = entries("", &follows, &[], true);
+        let alone = entries("", &follows, &[], &[], true);
         assert!(!alone.iter().any(|entry| entry.kind == "add"));
 
-        let beside = entries("", &follows, &["quin69".into()], true);
+        let beside = entries("", &follows, &[], &["quin69".into()], true);
         assert!(beside.iter().any(|entry| entry.kind == "add"));
 
-        let full = entries("", &follows, &["quin69".into()], false);
+        let full = entries("", &follows, &[], &["quin69".into()], false);
         assert!(
             !full.iter().any(|entry| entry.kind == "add"),
             "a fifth pane cannot be added, so it should not be offered"
@@ -331,7 +353,7 @@ mod tests {
     #[test]
     fn an_open_channel_says_so() {
         let follows = [stream("forsen", "Forsen")];
-        let entries = entries("", &follows, &["forsen".into()], true);
+        let entries = entries("", &follows, &[], &["forsen".into()], true);
         assert_eq!(entries[0].kind, "watching");
         assert_eq!(entries[0].command, Command::Watch("forsen".into()));
     }
@@ -339,7 +361,7 @@ mod tests {
     #[test]
     fn every_open_pane_can_be_closed_by_name() {
         let watching: Vec<String> = vec!["forsen".into(), "quin69".into()];
-        let entries = entries("close quin", &[], &watching, true);
+        let entries = entries("close quin", &[], &[], &watching, true);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].command, Command::Close(1));
     }
@@ -349,7 +371,34 @@ mod tests {
     #[test]
     fn a_channel_is_found_by_either_of_its_names() {
         let follows = [stream("kato_junichi0817", "加藤純一")];
-        assert_eq!(entries("kato", &follows, &[], false).len(), 1);
-        assert_eq!(entries("加藤", &follows, &[], false).len(), 1);
+        assert_eq!(entries("kato", &follows, &[], &[], false).len(), 1);
+        assert_eq!(entries("加藤", &follows, &[], &[], false).len(), 1);
+    }
+
+    /// The offline list is the one that actually needs a filter, so it is in
+    /// here — but only once something is typed, or an empty palette would be
+    /// a hundred people who are not streaming above the commands.
+    #[test]
+    fn offline_follows_appear_only_for_a_typed_query_and_after_live_ones() {
+        let follows = [stream("forsen", "Forsen")];
+        let offline = [FollowedChannel {
+            login: "fextralife".into(),
+            display_name: "Fextralife".into(),
+        }];
+
+        let blank = entries("", &follows, &offline, &[], false);
+        assert!(!blank.iter().any(|entry| entry.kind == "offline"));
+
+        let typed = entries("f", &follows, &offline, &[], false);
+        let live = typed
+            .iter()
+            .position(|entry| entry.kind == "watch")
+            .unwrap();
+        let off = typed
+            .iter()
+            .position(|entry| entry.kind == "offline")
+            .unwrap();
+        assert!(live < off, "an offline channel outranked a live one");
+        assert_eq!(typed[off].command, Command::Watch("fextralife".into()));
     }
 }

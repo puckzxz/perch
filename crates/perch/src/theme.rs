@@ -379,6 +379,10 @@ pub const VIDEO_SHARE_MAX: f32 = 0.8;
 /// 1px target is a game rather than a control.
 pub const DIVIDER_GRAB: f32 = 6.0;
 
+/// The live indicator's diameter. Small enough to read as a status mark
+/// beside a number rather than as a control.
+pub const LIVE_DOT: f32 = 6.0;
+
 /// Below this window aspect ratio the window is treated as portrait and chat
 /// moves under the video instead of beside it.
 pub const PORTRAIT_ASPECT: f32 = 1.1;

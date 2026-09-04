@@ -34,6 +34,9 @@ pub enum Variant {
     /// A control that is present but not being offered — close, in a header
     /// whose job is the channel's name.
     Quiet,
+    /// A control that destroys something. Drawn like `Quiet`, and turns the
+    /// colour of the thing it is about to do only under the pointer.
+    Destructive,
 }
 
 impl Variant {
@@ -41,7 +44,7 @@ impl Variant {
         match self {
             Variant::Pill | Variant::Primary => Some(theme::surface_raised()),
             Variant::Selected => Some(theme::accent_dim()),
-            Variant::OnVideo | Variant::Quiet => None,
+            Variant::OnVideo | Variant::Quiet | Variant::Destructive => None,
         }
     }
 
@@ -49,7 +52,16 @@ impl Variant {
         match self {
             Variant::Pill => theme::text_muted(),
             Variant::Selected | Variant::OnVideo | Variant::Primary => theme::text(),
-            Variant::Quiet => theme::text_dim(),
+            Variant::Quiet | Variant::Destructive => theme::text_dim(),
+        }
+    }
+
+    /// The label's colour under the pointer. One signal for a destructive
+    /// control, and the same lift to full text for everything else.
+    fn hover_foreground(self) -> gpui::Hsla {
+        match self {
+            Variant::Destructive => theme::danger(),
+            _ => theme::text(),
         }
     }
 }
@@ -83,8 +95,13 @@ pub fn pill(
         control = control.border_1().border_color(theme::accent());
     }
 
+    // One `hover` call, and only here. gpui's `hover` may be set once per
+    // element - a second call is a debug assertion, which is how a debug
+    // build with two panes open used to panic on the close button - so the
+    // variant decides what the pointer does rather than a caller adding to it.
+    let hover_text = variant.hover_foreground();
     control
-        .hover(|style| style.bg(theme::hover()).text_color(theme::text()))
+        .hover(move |style| style.bg(theme::hover()).text_color(hover_text))
         // Stronger than hover rather than a different colour, so a press reads
         // as more of the same gesture. On video there is no shadow or border to
         // deform, so this is the only channel a press has.
@@ -98,7 +115,40 @@ pub fn destructive(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,
 ) -> Stateful<gpui::Div> {
-    pill(id, label, Variant::Quiet).hover(|style| style.text_color(theme::danger()))
+    pill(id, label, Variant::Destructive)
+}
+
+/// A state, said in a word: `muted`, `paused`. Not a control - no pointer, no
+/// hover - so it reads as a fact about the pane rather than as a button that
+/// would change it. The controls that change it are on the video, and the
+/// keys are in the settings sheet.
+pub fn tag(label: impl Into<SharedString>) -> gpui::Div {
+    div()
+        .flex_none()
+        .px(px(theme::GAP_TIGHT))
+        .py(px(1.))
+        .rounded(px(theme::RADIUS))
+        .bg(theme::accent_dim())
+        .text_size(px(theme::TEXT_META))
+        .font_weight(theme::weight_label())
+        .line_height(px(theme::LINE_TIGHT))
+        .text_color(theme::text())
+        .child(label.into())
+}
+
+/// The dot that says "this number is of people watching right now".
+///
+/// One function rather than three copies: it sits beside the viewer count on
+/// a browse card, in a rail row and in a pane header, and it was drawn by
+/// hand in each — the same six pixels in the same red, three times, which is
+/// exactly the drift `theme.rs` opens by warning about.
+pub fn live_dot() -> gpui::Div {
+    div()
+        .flex_none()
+        .w(px(theme::LIVE_DOT))
+        .h(px(theme::LIVE_DOT))
+        .rounded_full()
+        .bg(theme::live())
 }
 
 /// A control that is not being offered right now: the Load more row while its
@@ -137,6 +187,7 @@ mod tests {
             (Variant::OnVideo, theme::player_bg()),
             (Variant::Primary, theme::surface_raised()),
             (Variant::Quiet, theme::surface()),
+            (Variant::Destructive, theme::surface()),
         ];
 
         for (variant, behind) in cases {

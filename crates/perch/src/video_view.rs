@@ -9,8 +9,8 @@
 use std::sync::Arc;
 
 use gpui::{
-    canvas, div, img, prelude::*, px, Animation, AnimationExt, Context, ElementId, Entity,
-    EventEmitter, Hsla, RenderImage, SharedString, Subscription, Task, Window,
+    canvas, div, img, prelude::*, px, Animation, AnimationExt, ClickEvent, Context, ElementId,
+    Entity, EventEmitter, Hsla, RenderImage, SharedString, Subscription, Task, Window,
 };
 use gpui_component::slider::{Slider, SliderEvent, SliderState};
 
@@ -231,6 +231,28 @@ impl VideoView {
         cx.notify();
     }
 
+    /// What the pane header says about this player. Muted and paused are the
+    /// two states that used to be invisible until you hovered the video - a
+    /// stream saved muted opened silent with nothing on screen to say why.
+    pub fn is_muted(&self) -> bool {
+        self.stream.volume() == 0
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.stream.is_paused()
+    }
+
+    /// Width over height of the stream itself, once a frame has decoded.
+    ///
+    /// The stream's shape, not the frame's size: the render size follows the
+    /// pane, so sizing the pane from it would be a feedback loop, but the
+    /// source's aspect is a fixed property of the broadcast.
+    pub fn source_aspect(&self) -> Option<f32> {
+        self.stream
+            .source_size()
+            .map(|(width, height)| width as f32 / height as f32)
+    }
+
     fn quality_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let mut menu = div()
             .absolute()
@@ -296,6 +318,12 @@ impl VideoView {
             .bottom_0()
             .left_0()
             .right_0()
+            // Clicks on the bar stay on the bar. Hit-testing is flat, so
+            // without this a click on `pause` would also reach the pane
+            // underneath, where a double-click now means fullscreen. The hover
+            // probe is a canvas and sees through it, so the bar still counts
+            // as "over the video" for the purpose of staying visible.
+            .occlude()
             .flex()
             .flex_row()
             .items_center()
@@ -432,19 +460,36 @@ impl Render for VideoView {
         .absolute()
         .size_full();
 
+        // A flex container for the same reason the pane around it is one:
+        // the frame's aspect ratio must size nothing. `img` writes the
+        // frame's ratio onto its style, and as a block child with a
+        // percentage height that ratio decided the height whenever the
+        // percentage could not resolve - which fed the next frame's size, and
+        // that frame's ratio, and so on. As a stretched flex item the image is
+        // the pane's size, whatever shape the frame it holds is.
         div()
             .relative()
             .size_full()
+            .flex()
+            .flex_col()
             .bg(backdrop)
             .id("video-pane")
             // Only here to wake a repaint. Its *value* is wrong during a drag,
             // so the probe above decides; but a paused stream sends no frames,
             // and without this nothing would ask the probe to run again.
             .on_hover(cx.listener(|_, _: &bool, _window, cx| cx.notify()))
+            // The gesture every player has. A single click does nothing on
+            // purpose - it is how a pane is made the active one, and pausing
+            // on a click would turn choosing a pane into stopping it.
+            .on_click(|event: &ClickEvent, window, _cx| {
+                if event.click_count() == 2 {
+                    window.toggle_fullscreen();
+                }
+            })
             .child(probe)
             // Fade the first frames in rather than cutting from black, which
             // makes a channel switch read as deliberate instead of a glitch.
-            .child(img(frame).size_full().with_animation(
+            .child(img(frame).flex_1().min_h_0().w_full().with_animation(
                 ElementId::from("video-fade-in"),
                 Animation::new(theme::MOTION_VIDEO),
                 |element, delta| element.opacity(delta),

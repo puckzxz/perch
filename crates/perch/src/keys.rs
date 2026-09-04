@@ -57,6 +57,8 @@ actions!(
         TogglePalette,
         /// Put the video and chat back to the sizes they are derived at.
         ResetLayout,
+        /// Take the window fullscreen, or bring it back.
+        ToggleFullscreen,
     ]
 );
 
@@ -138,6 +140,13 @@ fn bindings() -> Vec<KeyBinding> {
         // Only where the sizes exist. `secondary-0` is the reset gesture every
         // browser and editor already uses for the same kind of thing.
         KeyBinding::new("secondary-0", ResetLayout, Some(&watch)),
+        // Fullscreen. `f` is what every video player binds while watching,
+        // and it is a bare letter, so it is scoped to the watch page like the
+        // other bare letters. `f11` is the browser gesture and is safe on
+        // either page, so it is bound on both.
+        KeyBinding::new("f", ToggleFullscreen, Some(&watch)),
+        KeyBinding::new("f11", ToggleFullscreen, Some(&watch)),
+        KeyBinding::new("f11", ToggleFullscreen, Some(&browse)),
         KeyBinding::new("escape", ToggleSettings, Some(&modal)),
     ]
 }
@@ -194,11 +203,12 @@ macro_rules! secondary {
 /// way this table could still lie after the check below — the keystrokes
 /// normalise through `Keystroke::parse`, and the labels used to normalise
 /// through nothing at all.
-pub const SHORTCUTS: [(&[&str], &str, &str); 12] = [
+pub const SHORTCUTS: [(&[&str], &str, &str); 13] = [
     (&["space"], "Space", "Pause or resume"),
     (&["m"], "M", "Mute or unmute"),
     (&["c"], "C", "Show or hide this chat"),
     (&["b"], "B", "Show or hide the follows rail"),
+    (&["f", "f11"], "F / F11", "Fullscreen"),
     (&["up", "down"], "↑ / ↓", "Volume"),
     (&["secondary-w"], secondary!("W"), "Close this pane"),
     (&["escape"], "Esc", "Back to follows"),
@@ -220,7 +230,7 @@ mod tests {
     /// symptom is "the key does nothing", which is a poor thing to debug.
     #[test]
     fn every_binding_and_every_context_parses() {
-        assert_eq!(bindings().len(), 15);
+        assert_eq!(bindings().len(), 18);
         for context in [CONTEXT_WATCH, CONTEXT_BROWSE, CONTEXT_MODAL] {
             KeyContext::parse(context)
                 .unwrap_or_else(|e| panic!("{context} is not a key context: {e}"));

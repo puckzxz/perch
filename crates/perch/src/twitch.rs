@@ -199,8 +199,10 @@ fn interruptible_sleep(total: Duration, stop: &AtomicBool) -> bool {
 /// Persist a new session immediately, unless the service has been dropped.
 ///
 /// Twitch refresh tokens are single use, so a session that is obtained and not
-/// saved locks the user out on next launch. Settings are re-read first so this
-/// never clobbers an unrelated change made in the UI meanwhile.
+/// saved locks the user out on next launch. The write goes through
+/// `Settings::save_sign_in`, which re-reads the file under the same lock the
+/// UI's saves take, so it never clobbers a preference changed meanwhile and a
+/// preference save can never clobber it.
 ///
 /// The `stop` check is what makes the non-joining [`TwitchService::drop`] safe.
 /// A worker that is mid-request when its service is replaced — which is exactly
@@ -211,16 +213,27 @@ fn persist(settings_path: &Path, session: &Session, stop: &AtomicBool) -> Result
     if stop.load(Ordering::Relaxed) {
         return Ok(());
     }
-    let mut settings = Settings::load(settings_path).map_err(|e| e.to_string())?;
-    settings.credentials.oauth = Some(OAuthTokens {
+    let tokens = OAuthTokens {
         access_token: session.access_token.clone(),
         refresh_token: session.refresh_token.clone(),
         expires_at: session.expires_at,
         user_id: session.user_id.clone(),
         login: session.login.clone(),
-    });
-    settings.save(settings_path).map_err(|e| e.to_string())
+    };
+    Settings::save_sign_in(settings_path, Some(tokens)).map_err(|e| e.to_string())
 }
+
+/// How many times a refresh that never reached Twitch is retried at startup
+/// before the worker gives up for this launch, and how long it waits between.
+///
+/// Startup is the one place a refresh cannot simply be deferred to the next
+/// poll: there is no session yet to poll with. But the alternative to
+/// retrying - starting a new device flow - throws away a refresh token that a
+/// dropped packet has not spent, and forces the user back through twitch.tv
+/// for no reason. A few tries over a few seconds covers wifi coming up after
+/// a resume, which is when this happens.
+const STARTUP_REFRESH_ATTEMPTS: u32 = 3;
+const STARTUP_REFRESH_WAIT: Duration = Duration::from_secs(3);
 
 /// Get a usable session, signing in or refreshing as needed.
 fn establish_session(
@@ -232,32 +245,63 @@ fn establish_session(
     let settings = Settings::load(settings_path).ok()?;
 
     if let Some(stored) = settings.credentials.oauth.clone() {
+        let stored_session = Session {
+            access_token: stored.access_token.clone(),
+            refresh_token: stored.refresh_token.clone(),
+            expires_at: stored.expires_at,
+            user_id: stored.user_id.clone(),
+            login: stored.login.clone(),
+        };
         if !twitch_api::needs_refresh(stored.expires_at) {
-            return Some(Session {
-                access_token: stored.access_token,
-                refresh_token: stored.refresh_token,
-                expires_at: stored.expires_at,
-                user_id: stored.user_id,
-                login: stored.login,
-            });
+            return Some(stored_session);
         }
-        match twitch_api::refresh(
-            client_id,
-            &stored.refresh_token,
-            &stored.user_id,
-            &stored.login,
-        ) {
-            Ok(session) => {
-                if let Err(e) = persist(settings_path, &session, stop) {
-                    let _ = tx.unbounded_send(TwitchEvent::Error(format!(
-                        "signed in but could not save tokens: {e}"
-                    )));
+
+        let mut attempt = 0;
+        loop {
+            attempt += 1;
+            match twitch_api::refresh(
+                client_id,
+                &stored.refresh_token,
+                &stored.user_id,
+                &stored.login,
+            ) {
+                Ok(session) => {
+                    if let Err(e) = persist(settings_path, &session, stop) {
+                        let _ = tx.unbounded_send(TwitchEvent::Error(format!(
+                            "signed in but could not save tokens: {e}"
+                        )));
+                    }
+                    return Some(session);
                 }
-                return Some(session);
-            }
-            // A dead refresh token means starting over, not giving up.
-            Err(e) => {
-                let _ = tx.unbounded_send(TwitchEvent::Error(format!("sign-in expired: {e}")));
+                // The request never reached Twitch, or Twitch itself was down,
+                // so the refresh token is unspent and still good. Retry a few
+                // times; then, if the access token has life left, run on it
+                // and let the poll loop refresh later. Only a token that has
+                // actually run out ends the launch here - and even then with
+                // a message about the network, not a fresh device flow that
+                // would burn a token nothing has invalidated.
+                Err(twitch_api::Error::Network(reason)) => {
+                    eprintln!("refresh attempt {attempt}: {reason}");
+                    if attempt < STARTUP_REFRESH_ATTEMPTS {
+                        if !interruptible_sleep(STARTUP_REFRESH_WAIT, stop) {
+                            return None;
+                        }
+                        continue;
+                    }
+                    if !twitch_api::has_expired(stored.expires_at) {
+                        return Some(stored_session);
+                    }
+                    let _ = tx.unbounded_send(TwitchEvent::Error(format!(
+                        "could not reach Twitch to renew the sign-in: {reason}"
+                    )));
+                    return None;
+                }
+                // Twitch answered and said no: the refresh token is dead, and
+                // starting over is the only way forward.
+                Err(e) => {
+                    let _ = tx.unbounded_send(TwitchEvent::Error(format!("sign-in expired: {e}")));
+                    break;
+                }
             }
         }
     }
@@ -325,8 +369,13 @@ fn establish_session(
 
 /// Renew the access token if it is close to expiry.
 ///
-/// Returns whether the session is still usable; a failed refresh is terminal,
-/// because the refresh token it just spent is gone either way.
+/// Returns whether the session is still usable. A refresh Twitch *rejected* is
+/// terminal, because the refresh token is dead either way. A refresh that
+/// never got an answer is not: the token is unspent, the current access token
+/// is good for a while yet - renewal starts five minutes ahead of expiry - and
+/// the next poll will simply try again. Treating both alike meant one dropped
+/// packet signed the user out for the rest of the session, which is the same
+/// bad-wifi failure the post-exchange lookup used to have.
 fn keep_session_fresh(
     session: &mut Session,
     client_id: &str,
@@ -346,6 +395,10 @@ fn keep_session_fresh(
         Ok(fresh) => {
             let _ = persist(settings_path, &fresh, stop);
             *session = fresh;
+            true
+        }
+        Err(twitch_api::Error::Network(reason)) => {
+            eprintln!("refresh deferred: {reason}");
             true
         }
         Err(e) => {

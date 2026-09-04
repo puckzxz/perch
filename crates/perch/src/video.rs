@@ -19,7 +19,7 @@ use std::time::Duration;
 use futures::channel::mpsc;
 use gpui::RenderImage;
 use image::{Frame, RgbaImage};
-use mpv_frames::{Config, Player};
+use mpv_frames::{Config, Event, Player};
 use smallvec::smallvec;
 
 /// Upper bound on render size. 1440p is the highest Twitch tier, so anything
@@ -27,6 +27,40 @@ use smallvec::smallvec;
 /// this pipeline can do.
 pub const MAX_RENDER_WIDTH: u32 = 2560;
 pub const MAX_RENDER_HEIGHT: u32 = 1440;
+
+/// Whether to ask mpv to decode on the GPU. On, now that it has been measured.
+///
+/// The standing argument against it was that the software render path needs
+/// frames in system memory, so hardware decoding has to copy them back, and the
+/// copy was assumed to cost more than it saved. It does not. Measured on one
+/// 936p60 stream, two 3.5-minute runs of the same channel in the same window,
+/// steady state only, from `cpu_log`:
+///
+///     hwdec=no             146.6% of one core
+///     hwdec=d3d11va-copy    97.1%              -34%
+///
+///     worker (mpv decode)   54.9 -> 38.1
+///     (unnamed) (driver)    34.7 -> 11.2
+///     main (UI thread)      45.2 -> 35.5
+///     renders/s            119.9 -> 120.0      unchanged
+///
+/// The readback is real and shows up in `mpv-render`; it is simply much smaller
+/// than decoding the frame on the CPU. Note the driver threads fell furthest,
+/// which the readback argument did not predict at all.
+///
+/// It is quality-neutral, which is why it is worth taking: the same bitstream
+/// through a fixed-function decoder yields the same frames. `auto-copy` also
+/// falls back to software on its own when a codec or driver cannot do it, so
+/// the worst case is what this used to do unconditionally - and `video.rs` logs
+/// which one actually engaged, because asking is not getting.
+///
+/// `PERCH_HWDEC=0` turns it off, for a machine where the GPU decoder misbehaves.
+fn hwdec_requested() -> bool {
+    !matches!(
+        std::env::var("PERCH_HWDEC").as_deref(),
+        Ok("0") | Ok("off") | Ok("no")
+    )
+}
 
 fn pack_size(width: u32, height: u32) -> u64 {
     ((width as u64) << 32) | height as u64
@@ -73,6 +107,11 @@ pub struct VideoStream {
     /// event: if the user drags a slider, only the final value matters and
     /// intermediate ones can be dropped without anyone noticing.
     volume: Arc<AtomicU8>,
+    /// The stream's own resolution, packed like `target`, once mpv has decoded
+    /// a frame; zero until then. The UI reads its aspect to size a stacked
+    /// pane's video box, so a 4:3 or a vertical stream gets a box its shape
+    /// rather than a 16:9 one with bars inside it.
+    source: Arc<AtomicU64>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -93,6 +132,7 @@ impl VideoStream {
         let volume_level = Arc::new(AtomicU8::new(volume));
         let target = Arc::new(AtomicU64::new(pack_size(width, height)));
         let paused = Arc::new(AtomicBool::new(false));
+        let source_size = Arc::new(AtomicU64::new(0));
         let (mut tx, rx) = mpsc::channel::<()>(1);
 
         // One `ImageId` for the whole stream, minted here rather than per frame.
@@ -119,9 +159,11 @@ impl VideoStream {
                 let volume_level = volume_level.clone();
                 let target = target.clone();
                 let paused = paused.clone();
+                let source_size = source_size.clone();
                 move || {
                     let config = Config {
                         audio: true,
+                        hwdec: hwdec_requested(),
                         volume,
                         ..Config::default()
                     };
@@ -133,6 +175,27 @@ impl VideoStream {
                         }
                     };
 
+                    // Everything this loop wants to know about the stream
+                    // arrives as an event rather than being asked for. This is
+                    // the thread that calls `mpv_render_context_render`, and
+                    // libmpv's render.h forbids it any synchronous client call:
+                    // the core can be waiting on a render while the render
+                    // thread waits on the core, which mpv resolves with a
+                    // timeout and a dropped frame. Observing is the shape the
+                    // header declares safe, and it is cheaper besides - the
+                    // drop counter used to be polled once a second whether or
+                    // not it had moved.
+                    for name in [
+                        "width",
+                        "height",
+                        "hwdec-current",
+                        "decoder-frame-drop-count",
+                    ] {
+                        if let Err(e) = player.observe_property(name) {
+                            eprintln!("video: could not observe {name}: {e}");
+                        }
+                    }
+
                     // Source resolution, learned from mpv once the first frame
                     // decodes. Rendering above it means mpv upscales on the CPU,
                     // which measured at 117-196% of a core - far and away the
@@ -140,27 +203,85 @@ impl VideoStream {
                     // below source and letting the GPU stretch the last bit is
                     // effectively free.
                     let mut source: Option<(u32, u32)> = None;
+                    let (mut source_w, mut source_h) = (None, None);
                     let (mut current_w, mut current_h) = (width, height);
                     let mut applied_volume = volume;
                     let mut applied_pause = false;
+                    let mut last_drops = 0u64;
 
                     while !stop.load(Ordering::Relaxed) {
-                        // Apply between frames rather than mid-render, and only
-                        // when it actually changed.
-                        // Resize between frames. mpv scales to whatever size
-                        // it is asked for, so following the pane means never
-                        // paying to render pixels that get thrown away - and
-                        // never capping a 1440p stream at 720p either.
+                        for event in player.poll_events() {
+                            match event {
+                                Event::PropertyChange { name, value } => match name.as_str() {
+                                    "width" => source_w = value.and_then(|v| v.parse().ok()),
+                                    "height" => source_h = value.and_then(|v| v.parse().ok()),
+                                    // Asking for hardware decoding is not the
+                                    // same as getting it: `auto-copy` falls
+                                    // back to software whenever the codec, the
+                                    // driver or the build cannot do it, and it
+                                    // does so silently. Without this line a
+                                    // measurement of "hwdec on" could be a
+                                    // measurement of nothing having changed.
+                                    // mpv reports the property's current
+                                    // value on observing it, which before the
+                                    // first decode is no value at all; the
+                                    // real answer follows once a decoder is
+                                    // chosen, so an absent one is not news.
+                                    "hwdec-current" => {
+                                        if let Some(actual) = value {
+                                            eprintln!(
+                                                "video: hwdec requested={}, active={actual}",
+                                                hwdec_requested()
+                                            );
+                                            crate::cpu_log::note_hwdec(&actual);
+                                        }
+                                    }
+                                    // `decoder-frame-drop-count` is the one
+                                    // that means the machine could not keep
+                                    // up, which is the difference between a
+                                    // busy CPU and a picture that suffered.
+                                    // Published as this player's own delta,
+                                    // not its total: every pane has its own
+                                    // mpv counting from zero, so totals into
+                                    // one shared slot would subtract one
+                                    // stream's count from another's.
+                                    // `saturating_sub` because mpv resets the
+                                    // counter on a restart, and `seek_to_live`
+                                    // on unpause is a restart.
+                                    "decoder-frame-drop-count" => {
+                                        if let Some(total) =
+                                            value.and_then(|v| v.parse::<u64>().ok())
+                                        {
+                                            crate::cpu_log::note_dropped(
+                                                total.saturating_sub(last_drops),
+                                            );
+                                            last_drops = total;
+                                        }
+                                    }
+                                    _ => {}
+                                },
+                                Event::EndFile => eprintln!("video: mpv reached end of file"),
+                                Event::Shutdown => {
+                                    eprintln!("video: mpv shut down");
+                                    return;
+                                }
+                                _ => {}
+                            }
+                        }
                         if source.is_none() {
-                            let dimension =
-                                |key| player.property(key).and_then(|v| v.parse::<u32>().ok());
-                            if let (Some(w), Some(h)) = (dimension("width"), dimension("height")) {
+                            if let (Some(w), Some(h)) = (source_w, source_h) {
                                 if w > 0 && h > 0 {
                                     source = Some((w, h));
+                                    source_size.store(pack_size(w, h), Ordering::Relaxed);
+                                    eprintln!("video: source is {w}x{h}");
                                 }
                             }
                         }
 
+                        // Resize between frames. mpv scales to whatever size
+                        // it is asked for, so following the pane means never
+                        // paying to render pixels that get thrown away - and
+                        // never capping a 1440p stream at 720p either.
                         let (mut want_w, mut want_h) = unpack_size(target.load(Ordering::Relaxed));
                         if let Some((source_w, source_h)) = source {
                             want_w = want_w.min(source_w);
@@ -170,7 +291,15 @@ impl VideoStream {
                             current_w = want_w;
                             current_h = want_h;
                         }
+                        // What the CPU log needs to make two sessions
+                        // comparable: mpv scales to whatever the pane asks for,
+                        // so this is the largest single thing that moves the
+                        // cost between one run and the next.
+                        crate::cpu_log::note_render_size(current_w, current_h);
 
+                        // Apply between frames rather than mid-render, and only
+                        // when it actually changed. Both setters queue the
+                        // change for mpv's own thread; see `Player::set_paused`.
                         let want_pause = paused.load(Ordering::Relaxed);
                         if want_pause != applied_pause {
                             if !want_pause {
@@ -243,10 +372,20 @@ impl VideoStream {
                 target,
                 paused,
                 volume: volume_level,
+                source: source_size,
                 thread: Some(thread),
             },
             rx,
         ))
+    }
+
+    /// The stream's resolution, once known. Width over height is the shape a
+    /// pane should give its video box.
+    pub fn source_size(&self) -> Option<(u32, u32)> {
+        match unpack_size(self.source.load(Ordering::Relaxed)) {
+            (0, _) | (_, 0) => None,
+            size => Some(size),
+        }
     }
 
     /// A handle the UI can use to report the pane size each layout pass.
@@ -281,10 +420,14 @@ impl VideoStream {
 impl Drop for VideoStream {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(thread) = self.thread.take() {
-            // The worker checks `stop` between frames, so this returns within
-            // one wait_for_frame timeout.
-            let _ = thread.join();
-        }
+        // Deliberately not joined. Every drop site is on the UI thread - a pane
+        // closing, a quality switch, leaving the watch page with the miniplayer
+        // off - and the worker is inside `wait_for_frame` for up to its timeout
+        // and then inside `mpv_terminate_destroy`, which waits for mpv's own
+        // threads to wind down: the demuxer's network read, the audio output
+        // closing its device. A join here put all of that on the window's
+        // frame loop. The thread sees `stop` on its next pass, drops the
+        // player itself, and retires; nothing it holds is needed in order.
+        drop(self.thread.take());
     }
 }

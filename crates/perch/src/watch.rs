@@ -8,7 +8,7 @@
 
 use gpui::{
     canvas, div, prelude::*, px, Context, CursorStyle, ElementId, Entity, IntoElement, MouseButton,
-    MouseDownEvent, Pixels, SharedString, Size, Task, Window,
+    MouseDownEvent, Pixels, SharedString, Task, Window,
 };
 use streamlink::StreamSupervisor;
 
@@ -114,11 +114,15 @@ struct PaneLayout {
     portrait: bool,
     /// Beside: how wide chat is, with the video taking the rest.
     chat_width: f32,
-    /// Below: how tall the video is, with chat taking the rest. The two are
-    /// opposites on purpose — a tall window is tall because you want more chat,
-    /// not more letterboxing. Derived from a 16:9 box until somebody drags the
-    /// divider, after which it is their share of the cell.
-    video_height: f32,
+    /// The cell itself, so a stacked pane can size its video box from the
+    /// shape of its own stream — see [`layout::stacked_video_height`]. Below
+    /// the video, chat takes the rest: the two arrangements are opposites on
+    /// purpose, because a tall window is tall because you want more chat, not
+    /// more letterboxing.
+    cell_width: f32,
+    cell_height: f32,
+    /// A dragged share of the cell for the video, or zero to derive it.
+    video_share: f32,
     /// False when there is only one pane; closing the last one is what the
     /// page-level navigation is for.
     closable: bool,
@@ -137,27 +141,45 @@ struct PaneLayout {
 pub struct ResizeStart {
     pub origin: gpui::Point<Pixels>,
     pub portrait: bool,
+    /// Which pane's divider was pulled. The share that results applies to
+    /// every pane, but the drag has to start from where *this* pane's divider
+    /// is, and with the box sized from each stream's shape that differs.
+    pub index: usize,
 }
 
 /// The seam between video and chat, as something you can pull.
 ///
-/// Six pixels of grab area drawing a one-pixel line: a divider you can see is
-/// not the same thing as a divider you can hit, and the pane gap elsewhere is
-/// three pixels precisely because nothing is meant to grab *it*.
+/// Six pixels of grab area, and none of them in the layout: the strip sits
+/// astride the boundary, three pixels into the video and three into chat,
+/// so video and chat touch. It used to be six pixels of the grid background
+/// between them, which with the box sized to the picture was the only thing
+/// left separating the two. A divider you can see is not the same thing as a
+/// divider you can hit, and the pane gap elsewhere is three pixels precisely
+/// because nothing is meant to grab *it*.
 fn divider<V: 'static>(
     channel: &str,
+    index: usize,
     portrait: bool,
     on_resize: impl Fn(&mut V, ResizeStart, &mut Window, &mut Context<V>) + 'static,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
-    div()
+    let half = theme::DIVIDER_GRAB / 2.0;
+    let handle = div()
         .id(pane_id(channel, "divider"))
-        .flex_none()
+        .absolute()
         .map(|handle| {
             if portrait {
-                handle.w_full().h(px(theme::DIVIDER_GRAB))
+                handle
+                    .left_0()
+                    .right_0()
+                    .top(px(-half))
+                    .h(px(theme::DIVIDER_GRAB))
             } else {
-                handle.h_full().w(px(theme::DIVIDER_GRAB))
+                handle
+                    .top_0()
+                    .bottom_0()
+                    .left(px(-half))
+                    .w(px(theme::DIVIDER_GRAB))
             }
         })
         .cursor(if portrait {
@@ -175,12 +197,27 @@ fn divider<V: 'static>(
                     ResizeStart {
                         origin: event.position,
                         portrait,
+                        index,
                     },
                     window,
                     cx,
                 )
             }),
-        )
+        );
+
+    // Zero in the flow, so the two panes it separates meet. The grab strip is
+    // positioned off this and reaches into both.
+    div()
+        .flex_none()
+        .relative()
+        .map(|seam| {
+            if portrait {
+                seam.w_full().h(px(0.))
+            } else {
+                seam.h_full().w(px(0.))
+            }
+        })
+        .child(handle)
 }
 
 /// Everything true about a stream that is not playback: who it is, how many
@@ -204,15 +241,15 @@ fn chat_header<V: 'static>(
 
     // Both are absent for a channel opened by name that you do not follow:
     // the follows poll is where these numbers come from, and it only knows
-    // about channels you follow.
+    // about channels you follow. The same shape as the browse card's overlay,
+    // "358 · 8h 20m", and for the same reason: the live dot beside it already
+    // says what the first number counts, and a header 340px wide has no room
+    // to say it again in words once `muted` has to fit too.
     let meta = info
         .into_iter()
         .flat_map(|stream| {
             [
-                Some(format!(
-                    "{} watching",
-                    browse::format_viewers(stream.viewer_count)
-                )),
+                Some(browse::format_viewers(stream.viewer_count)),
                 browse::uptime(&stream.started_at),
             ]
         })
@@ -225,6 +262,20 @@ fn chat_header<V: 'static>(
     // saturated red beside its name while the video underneath said the channel
     // was not streaming.
     let playing = matches!(slot.state, StreamState::Playing(_));
+    // What the player is doing, read off the view rather than copied onto the
+    // slot, so there is one source. These used to be visible only while the
+    // pointer was over the video: a channel saved muted opened silent with
+    // nothing on screen to say so, and a paused pane looked like a stalled
+    // stream. The header is the one static place a pane has, so they go here.
+    // The quality does not: it is on the control bar, and the header has no
+    // room for a fourth thing.
+    let (muted, paused) = slot
+        .video()
+        .map(|view| {
+            let player = view.read(cx);
+            (player.is_muted(), player.is_paused())
+        })
+        .unwrap_or((false, false));
     let url = format!("https://twitch.tv/{}", slot.channel);
     let tooltip = SharedString::from(format!("Open twitch.tv/{}", slot.channel));
 
@@ -249,17 +300,10 @@ fn chat_header<V: 'static>(
             theme::border()
         })
         .when(playing, |header| {
-            header.child(
-                // The same dot the browse cards use, for the same reason: it
-                // says the numbers beside it are live rather than a playback
-                // position.
-                div()
-                    .flex_none()
-                    .w(px(6.))
-                    .h(px(6.))
-                    .rounded_full()
-                    .bg(theme::live()),
-            )
+            // The same dot the browse cards use, for the same reason: it
+            // says the numbers beside it are live rather than a playback
+            // position.
+            header.child(controls::live_dot())
         })
         .child(
             // Chat here is read-only by design. This is the way out of that:
@@ -281,14 +325,20 @@ fn chat_header<V: 'static>(
         )
         .when(!meta.is_empty(), |header| {
             header.child(
+                // `text_ellipsis` plus `line_clamp`, not `truncate`: see the
+                // handoff on why the latter clips mid-glyph in a flex row
+                // with no definite width, which is what this row is.
                 div()
                     .min_w_0()
-                    .truncate()
+                    .text_ellipsis()
+                    .line_clamp(1)
                     .text_size(px(theme::TEXT_META))
                     .text_color(theme::text_muted())
                     .child(SharedString::from(meta)),
             )
         })
+        .when(muted, |header| header.child(controls::tag("muted")))
+        .when(paused, |header| header.child(controls::tag("paused")))
         .child(div().flex_1())
         .when(closable, |header| {
             header.child(
@@ -321,8 +371,12 @@ fn pane<V: 'static>(
         (StreamState::Playing(view), _) => view.clone().into_any_element(),
         (_, Some(status)) => {
             let retryable = status.error;
+            // Title-sized: this is the only thing in a pane that can be a
+            // thousand pixels wide, and body text in the middle of it read as
+            // a caption on a picture that had not arrived rather than as the
+            // pane's own state.
             let label = div()
-                .text_size(px(theme::TEXT_BODY))
+                .text_size(px(theme::TEXT_TITLE))
                 .text_color(if status.error {
                     theme::danger()
                 } else {
@@ -391,6 +445,27 @@ fn pane<V: 'static>(
     .absolute()
     .size_full();
 
+    // Below the video, the box is the shape of the stream, so chat starts
+    // where the picture stops. 16:9 until the first frame says otherwise.
+    let aspect = slot
+        .video()
+        .and_then(|view| view.read(cx).source_aspect())
+        .unwrap_or(layout::VIDEO_ASPECT);
+    let video_height = layout::stacked_video_height(
+        layout.cell_width,
+        layout.cell_height,
+        aspect,
+        layout.video_share,
+    );
+
+    // A flex container, so the player inside it is a flex item whose height is
+    // the pane's height and nothing else. As a block, the player's `100%`
+    // height did not resolve while the pane was being measured, and it fell
+    // back to the aspect ratio gpui's `img` puts on its style from the frame
+    // it holds - the frame rendered for the *previous* layout. The probe then
+    // asked mpv for a frame that shape, which fixed the wrong height in
+    // place: a stacked pane after a rail toggle showed its picture at four
+    // fifths of the box, with black under it, until the app was restarted.
     let video_pane = div()
         .id(pane_id(&slot.channel, "video"))
         .map(|pane| {
@@ -400,13 +475,15 @@ fn pane<V: 'static>(
             if slot.chat_hidden {
                 pane.flex_1().min_w_0()
             } else if layout.portrait {
-                pane.flex_none().h(px(layout.video_height)).w_full()
+                pane.flex_none().h(px(video_height)).w_full()
             } else {
                 pane.flex_1().min_w_0()
             }
         })
         .min_h_0()
         .overflow_hidden()
+        .flex()
+        .flex_col()
         .bg(theme::player_bg())
         .relative()
         .on_hover(cx.listener(|_, _: &bool, _window, cx| cx.notify()))
@@ -468,13 +545,19 @@ fn pane<V: 'static>(
     let chat_pane = div()
         .flex()
         .flex_col()
-        .py(px(theme::GAP_TIGHT))
+        .pb(px(theme::GAP_TIGHT))
         .bg(theme::surface())
         .map(|pane| {
             if layout.portrait {
-                pane.flex_1().min_h_0().w_full()
+                // No padding above the header when it sits under the video:
+                // the picture ends and the channel's name begins, with the
+                // header's own bottom rule as the only line between them.
+                pane.flex_1().min_h_0().w_full().pt(px(0.))
             } else {
-                pane.flex_none().w(px(layout.chat_width)).h_full()
+                pane.flex_none()
+                    .w(px(layout.chat_width))
+                    .h_full()
+                    .pt(px(theme::GAP_TIGHT))
             }
         })
         .child(header)
@@ -488,17 +571,24 @@ fn pane<V: 'static>(
         }
     })
     .child(video_pane)
-    .child(divider(&slot.channel, layout.portrait, on_resize, cx))
+    .child(divider(
+        &slot.channel,
+        index,
+        layout.portrait,
+        on_resize,
+        cx,
+    ))
     .child(chat_pane)
     .into_any_element()
 }
 
-/// The whole watch page.
+/// The whole watch page, laid out in the room the `body` says it has. See
+/// [`layout::Body`] for why that is a type rather than the viewport.
 #[allow(clippy::too_many_arguments)]
 pub fn page<V: 'static>(
     slots: &[Slot],
     follows: &[LiveStream],
-    window_size: Size<Pixels>,
+    body: layout::Body,
     chat_width: f32,
     video_share: f32,
     active: Option<usize>,
@@ -509,20 +599,15 @@ pub fn page<V: 'static>(
     on_hover: impl Fn(&mut V, usize, bool, &mut Context<V>) + Clone + 'static,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
-    let width = f32::from(window_size.width);
-    let aspect = width / f32::from(window_size.height).max(1.0);
-    let (rows, cols) = layout::grid_shape(slots.len(), aspect);
-    let cell_height = f32::from(window_size.height) / rows as f32;
+    let (rows, cols) = layout::grid_shape(slots.len(), body.aspect());
     let cell = PaneLayout {
-        portrait: layout::cell_is_portrait(layout::cell_aspect(aspect, rows, cols)),
+        portrait: layout::cell_is_portrait(layout::cell_aspect(body.aspect(), rows, cols)),
         // Clamped here rather than where it is stored: settings is a file
         // anyone can hand-edit, and a nonsense width would hide the video.
         chat_width: chat_width.clamp(theme::CHAT_WIDTH_MIN, theme::CHAT_WIDTH_MAX),
-        video_height: if video_share > 0.0 {
-            cell_height * video_share.clamp(theme::VIDEO_SHARE_MIN, theme::VIDEO_SHARE_MAX)
-        } else {
-            layout::video_box_height(width / cols as f32)
-        },
+        cell_width: layout::cell_extent(body.width, cols),
+        cell_height: layout::cell_extent(body.height, rows),
+        video_share,
         closable: slots.len() > 1,
         mark_active: slots.len() > 1,
     };

@@ -85,6 +85,8 @@ App modules:
 | `assets.rs` | the icons `gpui-component` asks the host for |
 | `motion.rs` | the four animation shapes, and the state one of them needs |
 | `diagnostics.rs` | where stderr goes when there is no console |
+| `clock.rs` | the system's short time format, for chat stamps |
+| `cpu_log.rs` | what the CPU was doing, sampled every five seconds |
 
 **Threading model, used consistently:** anything blocking runs on a plain
 `std::thread` and reports through a `futures::channel::mpsc`, which the UI drains
@@ -205,6 +207,33 @@ audio, so it is wanted — but calling it on the UI thread stalls the whole GPUI
 frame loop. It runs on `video.rs`'s thread for that reason. A benchmark that
 reads exactly 16.66 ms is measuring this, not CPU.
 
+**The render thread may not call libmpv synchronously.** render.h requires that
+the thread calling `mpv_render_context_render` "does not call libmpv API
+functions other than the mpv_render_* functions, except APIs which are declared
+as safe", and client.h declares only the asynchronous ones safe:
+`mpv_observe_property`, `mpv_set_property_async`, `mpv_command_async`, and
+`mpv_wait_event` with a zero timeout. A synchronous get or set from that thread
+can deadlock against a core that is waiting on a render; mpv breaks it with a
+timeout, drops the frame, and logs "mpv_render_context_render() not being
+called or stuck". `video.rs` therefore reads `width`, `height`, `hwdec-current`
+and `decoder-frame-drop-count` by observing them and draining `poll_events`
+each pass, and `Player::set_paused`, `set_volume` and `seek_to_live` queue
+rather than apply. `Player::property` is still there for threads that never
+render, and its doc says so.
+
+**`img` sizes its own box from the frame, and the frame is sized from the box.**
+gpui's `img` writes the image's aspect ratio onto its style unconditionally,
+and taffy honours that ratio whenever a percentage height fails to resolve —
+which, for a block child measured inside a flex column, it does. So the player
+was as tall as its *width divided by the last frame's aspect*; the probe then
+asked mpv for a frame that shape; that frame's aspect set the same height
+again. A stacked pane after a rail toggle sat at four fifths of its box with
+black under it, for the life of the process, and looked perfectly right after a
+restart because the first frames are 1280×720. The pane and the player's root
+are flex containers now, so the image is a stretched flex item whose size is
+the pane's and nothing else. Do not put the frame back in a block; and if a
+video ever renders smaller than its box, suspect this before anything in mpv.
+
 **Never let mpv render more pixels than the source has.** CPU upscaling measured
 at 117–196% of a core — the most expensive thing this pipeline can do. Render
 size is clamped to the source resolution and the GPU stretches the last bit,
@@ -239,9 +268,22 @@ Measured on a Ryzen 9 5950X against live streams, release build. Cost tracks the
 An arbitrary downscale costs *more* than native despite fewer pixels. This is why
 `streamlink/quality.rs` prefers 1:1, then exact fractions, and never upscales.
 
-**Hardware decode makes it worse.** `hwdec=auto-copy` lost every test — 13.8%→18.4%
-of a core at 720p and 60→55 fps; 79.4%→92.1% at 1080p. The GPU→CPU readback costs
-more than the decode saves. Do not "optimise" by enabling it.
+**Hardware decode is on, and it was measured twice with opposite results.**
+An early benchmark had `hwdec=auto-copy` losing — 13.8%→18.4% of a core at 720p,
+79.4%→92.1% at 1080p — on the argument that the GPU→CPU readback costs more than
+the decode saves. A later pair of 3.5-minute steady-state runs on a 936p60
+stream, read from `cpu_log`, had it *winning* by a third: 146.6% → 97.1% of a
+core, with the driver threads falling furthest. The comment on
+`video::hwdec_requested` carries the numbers. It is quality-neutral — the same
+bitstream through a fixed-function decoder is the same frames — which is why it
+is worth taking, and `auto-copy` falls back to software on its own where a
+codec or driver cannot do it. The lesson is the method: a short A/B is not a
+measurement here; use the CSV over alternating multi-minute runs.
+`PERCH_HWDEC=0` turns it off on a machine whose decoder misbehaves.
+
+To repeat a measurement like it: `PERCH_CPU_LOG=1 run.cmd <channel>`, leave it
+for a few minutes, then again with the setting under test flipped, and compare
+steady-state rows of the CSV rather than a moment of each.
 
 **Always benchmark `--release`.** Debug builds are several times slower at the
 per-frame format conversion.
@@ -327,6 +369,16 @@ one field somebody else owns is named", so adding a UI field needs no change
 there. `save_forgetting_sign_in` is the deliberate exception, for when the
 client id changes and the tokens stop meaning anything. Both have tests, and the
 first one fails if you swap it back to a plain `save`.
+
+Re-reading was half the answer. Both writers are read-modify-write, and nothing
+ordered them: a token save landing between the UI's read and its write was
+overwritten by the tokens the UI had just read, which is the spent-refresh-token
+lock-out again by another route, and both used the same `.json.part` temporary
+name. Every write now holds a process-wide lock in the `settings` crate across
+its read and its write, and the worker saves through `Settings::save_sign_in`
+rather than through its own load-and-save. `two_writers_never_lose_each_others_fields`
+hammers the two from two threads; without the lock it fails within a few hundred
+rounds.
 
 ### GPUI / gpui-component
 
@@ -416,6 +468,46 @@ if you ever doubt it, verify it again rather than assuming.
 Debug builds keep their console on purpose (`#![cfg_attr(not(debug_assertions),
 windows_subsystem = "windows")]`), which is also the only place `--help` is
 readable.
+
+**`perch.cpu.csv`, beside it, is for the CPU questions — when asked for.**
+With `PERCH_CPU_LOG=1` in the environment, the app samples itself every five
+seconds into `%LOCALAPPDATA%\perch\perch.cpu.csv`. Unlike the stderr log it is
+appended to across runs rather than rotated per run — a restart in the middle
+of a day is ordinary, and the morning should not land in a file that the next
+restart throws away — and it rotates to a timestamped `perch.cpu.<stamp>.csv`
+only on passing 32 MiB or on its columns changing. Roughly 0.6 MB for a working
+day. The reason it exists is that "perch used 12%" is not something anyone can
+act on, and the spike worth explaining is never happening while you are looking
+at it; it is what the hardware-decode comparison was read from. It was on by
+default for a while and is opt-in now: a shipped app should not carry a Win32
+sampler and a file in AppData for people who will never read it. With it off,
+every hook it has in `render` and the video thread is one relaxed atomic access.
+Everything Win32 in it is behind `cfg(windows)`, constants and helpers
+included: the macOS leg runs clippy with `-D warnings`, and a constant only the
+Windows sampler reads is dead code there.
+
+Three columns do most of the work. `by_thread` attributes the time by *thread
+name*, which Windows keeps for anything Rust or libmpv named — so `main` is the
+UI thread, `mpv-render` is `video.rs`, `worker`/`demux`/`vo`/`core` are libmpv,
+`image-cache` is downloads. `renders_per_s` separates work from spinning: a
+static page repainting sixty times a second is a bug and looks identical to a
+busy one in a CPU number. And `child_pct` is streamlink and its python, because
+Task Manager folds a parent's children into its row — so a stream left playing
+as a browse thumbnail reads as perch using CPU when none of it is perch's.
+
+What it said the first time it ran, which is the baseline to compare against:
+
+| state | CPU (of one core) | renders/s |
+|---|---|---|
+| follows page, nothing playing | 0.3-2.5% | **0** |
+| follows page, one stream still playing | ~50% | 60 |
+| watch page, one stream | ~110% | 120 |
+
+The first row is the important one: gpui does not repaint a page that has not
+changed, so an idle perch is genuinely idle. Every bit of the rest is the
+*stream*, and going back to the follows page does not stop one — the pane
+becomes a muted thumbnail and mpv keeps decoding at full source resolution,
+because the render size follows the element but the decode does not.
 
 **A windowed app still gets console windows from its children.** streamlink is a
 console-subsystem program, so every one we spawn came with its own console — and
@@ -569,7 +661,17 @@ unconsidered.
 - **Controls come from `controls.rs`.** There were ten hand-rolled buttons in
   six shapes — the tokens were shared the whole time and the component was not,
   which is the same drift one file down. A control that needs a shape not on
-  that list is a new variant there, not an eleventh `div`.
+  that list is a new variant there, not an eleventh `div`. The same file owns
+  the two things that are not buttons but were drawn by hand in three places
+  each: `live_dot`, and `tag`, the passive `muted` / `paused` word in a pane
+  header.
+- **Layout reads a `layout::Body`, never the viewport.** The body is the window
+  less the rail when it is open, and it is a type made in one place —
+  `RootView::body` — so nothing laying out a page can be handed the viewport by
+  mistake. The watch grid was, once: with the rail out, every stacked pane
+  carried a 66px black band under its picture, because its 16:9 box was derived
+  from a cell wider than the one it was drawn in. A test in `layout.rs` keeps
+  the number.
 - **Sizes the user dragged are settings, not view state.** `chat_width` and
   `video_share` live in `settings.json`, and the drag writes them on mouse *up*
   rather than on every move — a drag is hundreds of events and each save is a
@@ -648,12 +750,25 @@ scope, app or user token) is the only public number. Do not go looking again.
 
 How a pane divides itself depends on its shape, and the two cases are
 deliberately opposites. Beside the video, chat gets a fixed width and the video
-takes the rest. Below it, the **video** gets a fixed 16:9 box and **chat** takes
-the rest — a window is tall because you want more chat, not more letterboxing.
-`layout::video_box_height` owns that, sized from a constant rather than from the
-stream: render size follows the pane, so sizing the pane from the frame would be
-a feedback loop. A test pins the invariant that the box can never fill the cell
-it stacks in.
+takes the rest. Below it, the **video** gets a box the shape of its stream and
+**chat** takes the rest — a window is tall because you want more chat, not more
+letterboxing. `layout::stacked_video_height` owns that. It is sized from the
+stream's *aspect*, which `VideoStream` publishes once the first frame decodes,
+and not from the frame's size: render size follows the pane, so a pane sized
+from the frame would be a feedback loop, but a broadcast's shape does not
+change with the window. 16:9 stands in until the stream has said, so most
+streams never move; a 4:3 or a vertical one reflows once. The box is capped at
+`VIDEO_SHARE_MAX` of the cell, so a vertical stream pillarboxes rather than
+pushing chat off the bottom, and a test pins that the box can never fill the
+cell it stacks in.
+
+The seam between video and chat takes no room. The divider's grab strip is
+absolutely positioned astride the boundary — half into the video, half into
+chat — off a zero-height (or zero-width) element in the flow, and the stacked
+chat pane has no padding above its header. Video ends, name begins, and the
+header's own bottom rule is the only line between them. The six pixels of grid
+background that used to sit there were, once the box matched the picture, the
+only gap left, and it read as one.
 
 Left-anchoring the pane controls put the first pane's close button underneath
 the page navigation, and since neither called `cx.stop_propagation()` a single
@@ -771,6 +886,15 @@ strips a leading byte-order mark, because every obvious way to edit
 was silent twice: the app started on defaults, *and* could no longer save,
 since every write reads the file back first to keep the tokens the worker put
 there.
+
+**The time is written the way the machine writes it.** `clock.rs` asks the OS
+for its short time pattern once — `GetLocaleInfoEx` on Windows, a short-style
+`CFDateFormatter` on macOS, a territory list from `LANG` elsewhere — and
+renders every stamp through one small formatter that reads both Windows' and
+ICU's grammars, with tests. A US machine reads `11:41 PM`, a German one
+`23:41`, a Japanese one `午後11:41`, and a short time format the user edited by
+hand in Region settings is honoured. Falls back to `HH:mm`, which is what chat
+always showed.
 
 **The time is said once a minute, not once a row.** It used to be a fixed 34px
 gutter down the left holding a stamp per row, which in a busy channel is fifteen
@@ -933,11 +1057,32 @@ Three more things worth keeping:
   so a page-scoped shortcut cannot fire through a modal and no binding has to
   remember to write `!Modal`.
 
-There is deliberately **no visual feedback** for pause, mute or volume. Each one
-announces itself through the thing it controls, so a flash of UI would only be
-saying what you already know. The shortcut list lives in the settings sheet and
+There is deliberately **no transient feedback** for pause, mute or volume. Each
+one announces itself through the thing it controls, so a flash of UI would only
+be saying what you already know. What there *is* now is a standing one: the
+pane header carries `muted` and `paused` tags, read off the `VideoView` at
+render time. Those used to be visible only while the pointer was over the
+video, so a channel saved muted opened silent with nothing on screen to say so.
+The quality is deliberately not there — it is on the control bar, and a 340px
+header with a name, a count, an uptime, a tag and `close` in it has no room for
+a fifth thing; the count reads `358 · 8h 20m` beside the live dot, the card's
+shape, for the same reason. The shortcut list lives in the settings sheet and
 is read from `keys::SHORTCUTS`, beside the bindings, so a documented key is a
 bound one.
+
+**Fullscreen** is `f` on the watch page, `F11` on either, and a double-click on
+the video. The double-click lives on the pane's root element; the control bar
+over it is `.occlude()`d so a double-click on `pause` does not also reach it.
+A single click deliberately does nothing there — it is how a pane is made the
+active one, and pausing on a click would turn choosing a pane into stopping it.
+
+**The window remembers where it was.** `Settings::window` is written from
+`on_window_should_close` with the platform's restore bounds, so a maximised or
+fullscreen window is saved as the size it would un-maximise to. On open it is
+used only if some display still intersects it — a monitor unplugged since is
+the common way to lose a window — and otherwise the default is centred and
+fitted to the primary display, which the old fixed 1600×920 was not: it opened
+with its bottom edge off a laptop screen.
 
 ### What deliberately does not move
 
@@ -1064,32 +1209,30 @@ the environment variable that overrides the search.
 
 ## What to build next
 
-Nothing here is agreed. The four items that were, plus chat backfill, are built.
-Ranked by what would be noticed, roughly:
+Nothing here is agreed. The four items that were, plus chat backfill, the
+follows filter and window placement, are built. Ranked by what would be
+noticed, roughly:
 
-1. **Filtering a list in memory.** The offline follows list is now the longest
-   thing on the page and has no filter, no sort and no way to collapse it. The
-   search box beside it searches *Twitch*, which is a different question.
-
-   The palette is now the second thing that is not that question — it filters
-   live follows in memory and already has the matcher, the row and the keyboard
-   path. What it does not have is the offline list, which is the one that
-   actually needs filtering. Feeding `palette::entries` the offline follows, and
-   giving the browse page a filter that shares the same `matches`, is most of
-   this item.
-2. **Stream metadata for channels you do not follow.** The chat header's viewer
+1. **Stream metadata for channels you do not follow.** The chat header's viewer
    count and uptime come from the follows poll, so they are blank for anything
    opened from popular, from search, or by name. `GET /helix/streams?user_login=…`
    per open channel would fill it.
-3. **Window size and position persistence.** `Settings` already takes new fields
-   for free; gpui reports the bounds.
-4. **Badges in the chat gutter** — sub, mod, VIP. The tags already arrive and
+2. **A stable order for the rail and the grid.** Both re-sort by viewers on every
+   poll, so a row can move under the pointer while a menu is open. Keeping the
+   order a channel arrived in for the session, or animating the move, are the
+   two answers; neither is free.
+3. **Badges in the chat gutter** — sub, mod, VIP. The tags already arrive and
    are parsed into the map; nothing reads them.
-5. **Reply context lines.** `reply-parent-*` tags arrive too.
-6. **Highlight rules** that wash the row background rather than colouring a
+4. **Reply context lines.** `reply-parent-*` tags arrive too.
+5. **Highlight rules** that wash the row background rather than colouring a
    word. The wash already exists for events.
-7. **Rebindable keys.** `keys::bindings` is a plain `Vec<KeyBinding>` built from
+6. **Rebindable keys.** `keys::bindings` is a plain `Vec<KeyBinding>` built from
    constants; the work is a UI and a settings shape, not a mechanism.
+7. **Sign-out.** There is no way to clear a bad token except editing the field.
+8. **The auth-token cookie off argv.** It is documented as a tradeoff, but a
+   per-spawn `--config` file with a user-only ACL, deleted once streamlink has
+   started, would take it out of the process list at the cost of one more file
+   on disk. Not done here because it changes a documented decision.
 
 **Known to be out of reach**, so nobody re-derives it:
 
@@ -1154,9 +1297,9 @@ None of these is being worked on; all of them are real.
 7. **Orphaned streamlink on a hard crash.** A Windows job object would close it.
 8. **Never tested on a vertical monitor.** The layout derives portrait grids and
    stacks chat below video, the logic is unit-tested, but nobody has seen it.
-9. **The offline follows list has no filter and no cap.** Someone following
-    several hundred channels gets several hundred names. See "what to build
-    next" — this is the first thing on it for that reason.
+9. **The offline follows list has no cap.** Someone following several hundred
+    channels gets several hundred names. There is a filter now, on the tab and
+    in the palette, so they can be found; the wall is still a wall.
 10. **A volume drag writes `settings.json` per pixel.** Pre-existing: every
     `SliderEvent::Change` is a full read-modify-write of the file, and there are
     a hundred of them in one drag. `set_volume_for` returns whether anything
@@ -1173,16 +1316,19 @@ None of these is being worked on; all of them are real.
 12. **Shortcuts are not rebindable**, and `Esc` does not close the video quality
     menu — that menu is hand-rolled rather than a gpui-component popup, so it
     carries no key context of its own.
-13. **The settings sheet and the palette scroll with no visible scrollbar.**
-    Both are plain `overflow_y_scroll`, so the only sign there is more below is
-    content cut at the boundary. The wheel works; nothing says so.
+13. **The palette scrolls with no visible scrollbar.** It is a window of eight
+    rows around the selection, so arrowing scrolls it; the wheel works and
+    nothing says so. The settings sheet, the browse lists and the rail now draw
+    gpui-component's `Scrollbar` over a tracked `ScrollHandle`.
 14. **The rail lists live channels only.** Offline follows are on the browse
-    page and nowhere else, which is the same gap as limit 9 seen from the other
-    side.
+    page and in the palette, which is the same gap as limit 9 seen from the
+    other side.
 
 ## Things not to redo
 
-- Do not enable hardware decode "for performance".
+- Do not turn hardware decode off "for performance", and do not turn any
+  video setting on or off on the strength of one short A/B. See the
+  performance section for how the same option measured a loss and then a win.
 - Do not let mpv upscale.
 - Do not reach for mpv's `profile=fast` or `dither=no` to cut the render cost.
   Dithering is a `vo=gpu` shader stage and is not in the software render path at
@@ -1215,13 +1361,31 @@ None of these is being worked on; all of them are real.
 - Do not answer `Request::Follows` in `serve`, which cannot reset the poll timer.
 - Do not report a failed follows poll as `TwitchEvent::Error`; the UI reads that
   as "signed out".
+- Do not size a video's container from a percentage height in a block parent.
+  `img` carries the frame's aspect ratio and taffy will use it the moment the
+  percentage cannot resolve, which then decides the next frame's size. Flex
+  container, stretched item; see the video trap.
+- Do not call `.hover()` on a control from `controls.rs` a second time. gpui
+  allows one hover style per element and asserts on the second in a debug
+  build, so a debug build with two panes open panicked on the close button.
+  A different pointer behaviour is a new `Variant`, which is what
+  `Destructive` is.
 - Do not let anything overhang its line without checking what is directly above
   and below it — inside a wrapped message that is another line, not padding.
 - Do not `join()` a worker thread from a `Drop` that runs on the UI thread.
-  Both supervisors are dropped from click handlers, and neither `stop` flag nor
-  a killed child reaches a thread that is inside a network read — so the join
-  froze the window for as long as that read took. Set the flag, kill what you
-  can, and let the thread retire on its own.
+  All four workers — the two supervisors, the mpv render thread and the chat
+  client — are dropped from click handlers, and neither a `stop` flag nor a
+  killed child reaches a thread that is inside a network read, a TCP connect,
+  or `mpv_terminate_destroy` — so a join froze the window for as long as that
+  took. Set the flag, kill or shut down what you can, and let the thread retire
+  on its own. Every one of them tests `stop` between phases for exactly this.
+- Do not call `Player::property`, or any synchronous libmpv function, from the
+  render thread. Observe the property and read it from `poll_events`; see the
+  video trap on the render-thread rule.
+- Do not leave a socket read without a timeout. The chat socket has an idle
+  timeout and sends its own `PING` on the first silent stretch, because a
+  connection that died without a reset — a sleep, a NAT table — otherwise
+  parks the reader forever and the pane simply stops.
 - Do not use `.output()` or `.status()` on a child something else may need to
   kill; both own the `Child` internally, so there is no handle to reach it by.
   See `streamlink::run_tracked`.

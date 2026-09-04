@@ -92,6 +92,7 @@ video, which is no use when you are not holding the mouse.
 | `Ctrl+,` | Settings |
 | `Ctrl+K` | Command palette |
 | `Ctrl+0` | Reset the pane sizes |
+| `F` / `F11` | Fullscreen, and back |
 
 On macOS every `Ctrl` on this page is `⌘` — the bindings are declared on gpui's
 `secondary` modifier, which is cmd there and ctrl everywhere else, so the two
@@ -102,7 +103,14 @@ Player keys act on the pane you last pointed at, or last clicked — clicking
 anywhere in a pane, video or chat, makes it the one the keyboard is talking to,
 and with more than one pane open its header is underlined to say so. All of them
 stand aside while the cursor is in a text box. The same list is in the settings
-sheet.
+sheet. Double-clicking the video is fullscreen too.
+
+The header above each chat says `muted` or `paused` when either is true, so a
+channel that opens silent says so without the pointer having to be on the
+video.
+
+The window opens where it was last closed, at the size it was, as long as that
+is still on a display; the first time, it is sized to fit the screen.
 
 The seam between video and chat can be dragged, in either arrangement, and the
 size is remembered. `Ctrl+0` puts both back to what the layout would have
@@ -148,7 +156,8 @@ announcements appear as their own rows rather than being dropped.
 
 The time is shown once a minute, as a break between messages, rather than once
 per row — in a channel where fifteen messages share a minute, a column of
-identical timestamps is not a ruler. The channel's name in the pane header opens
+identical timestamps is not a ruler. It is written the way your system writes a
+time, twelve-hour or twenty-four, in your language. The channel's name in the pane header opens
 it on twitch.tv, which is the way out of a chat you cannot type in.
 
 A pane also opens with the last hundred messages from *before* you joined, so
@@ -171,6 +180,11 @@ way.
 
 The list refreshes itself every minute. `Ctrl+R`, or the pill in the header,
 asks again now — for whichever list is on screen, not just follows.
+
+The box at the top of the Following tab filters both lists as you type, live
+and offline, by the same few-letters-of-a-name match the palette uses. It is
+the opposite of the search box in the header: that one asks Twitch, this one
+asks the app, and nothing typed here leaves it.
 
 Cards are as wide as the window allows: the grid takes the room it has and
 divides it, rather than leaving whatever a fixed width could not use as a gutter
@@ -199,7 +213,8 @@ the right of it; the rail belongs to the window.
 `Ctrl+K` — a channel to open, a pane to close, a page to go to, typed rather
 than aimed at. It filters what the app already knows, so it costs nothing and
 runs on every keystroke; the search box in the header is the one that asks
-Twitch. `qb` finds QuickyBaby.
+Twitch. `qb` finds QuickyBaby. Offline follows are in it too, once you have
+typed something: opening one is the way to read a chat whose stream is off.
 
 ## Settings
 

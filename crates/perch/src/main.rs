@@ -15,7 +15,9 @@ mod assets;
 mod browse;
 mod chat;
 mod chat_text;
+mod clock;
 mod controls;
+mod cpu_log;
 mod diagnostics;
 mod keys;
 mod layout;
@@ -39,12 +41,14 @@ use browse::{Action, Discovery, SearchResults, SignIn, Tab};
 use chat::ChatView;
 use emotes::ImageCache;
 use gpui::{
-    div, prelude::*, px, size, AnyView, App, Application, Bounds, Context, ElementId, Entity,
-    FocusHandle, KeyDownEvent, MouseButton, MouseMoveEvent, MouseUpEvent, SharedString,
-    Subscription, Task, TitlebarOptions, Window, WindowBounds, WindowOptions,
+    div, point, prelude::*, px, size, AnyView, App, Application, Bounds, Context, ElementId,
+    Entity, FocusHandle, KeyDownEvent, MouseButton, MouseMoveEvent, MouseUpEvent, Pixels,
+    ScrollHandle, SharedString, Size, Subscription, Task, TitlebarOptions, Window, WindowBounds,
+    WindowOptions,
 };
 use gpui_component::input::{Input, InputEvent, InputState};
-use settings::{QualityPreference, Settings};
+use layout::Body;
+use settings::{QualityPreference, Settings, WindowPlacement};
 use settings_view::{SettingsEvent, SettingsPanel};
 use streamlink::{StreamEvent, StreamOptions, StreamSupervisor};
 use twitch::{Request, TwitchEvent, TwitchService};
@@ -68,6 +72,15 @@ const TOAST_LIFETIME: Duration = Duration::from_secs(8);
 /// the room: render size follows the element, so a stream shown this big decodes
 /// into a buffer this big.
 const MINI_WIDTH: f32 = 96.0;
+
+/// The window the app opens with when it has never been closed, before being
+/// fitted to the display it lands on.
+const DEFAULT_WINDOW: Size<Pixels> = size(px(1600.), px(920.));
+
+/// How much of a display the default window may take. Not all of it: a window
+/// that opens exactly the size of the screen reads as a maximised one that has
+/// forgotten its chrome.
+const DEFAULT_WINDOW_SHARE: f32 = 0.9;
 
 /// Emotes and thumbnails are reproducible, so they live in the platform's
 /// cache directory rather than roaming with settings.
@@ -158,6 +171,13 @@ struct RootView {
     /// Everything the browse page shows besides your follows.
     discovery: Discovery,
     search: Entity<InputState>,
+    /// The Following tab's filter. Typed into, never sent anywhere: it narrows
+    /// the two lists already on the page with the palette's own matcher.
+    filter: Entity<InputState>,
+    /// Scroll positions for the browse lists and the rail, held here so the
+    /// scrollbars drawn over them read the same state the lists write.
+    scrolls: browse::Scrolls,
+    rail_scroll: ScrollHandle,
     twitch: TwitchService,
     _twitch_pump: Task<()>,
 
@@ -215,6 +235,7 @@ impl RootView {
     fn new(
         channels: Vec<String>,
         volume_override: Option<u8>,
+        warnings: Vec<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -224,8 +245,18 @@ impl RootView {
             Settings::default()
         });
 
-        let (cache, mut cache_ready) =
-            ImageCache::new(image_cache_dir()).expect("failed to open image cache");
+        // A cache directory that cannot be created is not a reason to have no
+        // window. This runs before there is one, so a panic here was a release
+        // build that silently never appeared; the temp directory is the last
+        // resort, as it is for the path itself.
+        let (cache, mut cache_ready) = match ImageCache::new(image_cache_dir()) {
+            Ok(opened) => opened,
+            Err(e) => {
+                eprintln!("image cache: {e}; using the temp directory instead");
+                ImageCache::new(std::env::temp_dir().join(APP_NAME).join("images"))
+                    .expect("failed to open an image cache even in the temp directory")
+            }
+        };
         let cache = Arc::new(cache);
 
         // One pump for every image consumer. Repainting the root repaints its
@@ -253,6 +284,16 @@ impl RootView {
             if matches!(event, InputEvent::PressEnter { .. }) {
                 let query = state.read(cx).value().trim().to_string();
                 this.run_search(query, cx);
+            }
+        })
+        .detach();
+
+        // The opposite of the search box: every keystroke, and nothing leaves
+        // the app. See `browse::following_view`.
+        let filter = cx.new(|cx| InputState::new(window, cx).placeholder("filter your follows"));
+        cx.subscribe(&filter, |_: &mut RootView, _, event, cx| {
+            if matches!(event, InputEvent::Change) {
+                cx.notify();
             }
         })
         .detach();
@@ -291,6 +332,9 @@ impl RootView {
             sign_in: SignIn::Connecting,
             discovery: Discovery::default(),
             search,
+            filter,
+            scrolls: browse::Scrolls::default(),
+            rail_scroll: ScrollHandle::new(),
             twitch: service,
             _twitch_pump: twitch_pump,
             active: None,
@@ -318,7 +362,46 @@ impl RootView {
         for (index, channel) in channels.into_iter().take(MAX_PANES).enumerate() {
             view.open_channel(channel, index == 0, window, cx);
         }
+        // Anything the command line could not use. Said here, in the window,
+        // because a release build has no console for it to have been said in.
+        for warning in warnings {
+            view.toast(warning, cx);
+        }
         view
+    }
+
+    /// Write the preferences down, and say so on screen if that fails.
+    ///
+    /// One place rather than eight copies of the same `if let Err`, and a toast
+    /// rather than a log line: a release build's stderr is a file nobody is
+    /// watching, and a save that fails silently is a preference that comes back
+    /// on the next launch with no explanation.
+    fn save_settings(&mut self, cx: &mut Context<Self>) {
+        if let Err(e) = self.settings.save_preferences(&self.settings_path) {
+            eprintln!("settings: could not save: {e}");
+            self.toast(format!("could not save settings: {e}"), cx);
+        }
+    }
+
+    /// Whether "open beside what is playing" is an offer worth making: only
+    /// when something is playing, and there is room for another.
+    ///
+    /// The palette already made this distinction; the cards and the rail did
+    /// not, and offered `+ add` on an empty watch page, where it did exactly
+    /// what a click on the card did.
+    fn can_add(&self) -> bool {
+        !self.slots.is_empty() && self.slots.len() < MAX_PANES
+    }
+
+    /// The room the page body has: the window, less the rail when it is open.
+    /// The one place a [`Body`] is made; see the type for why.
+    fn body(&self, window: &Window) -> Body {
+        let rail = if self.settings.sidebar_collapsed {
+            0.0
+        } else {
+            sidebar::WIDTH
+        };
+        Body::of(window.viewport_size(), rail)
     }
 
     // ── Keyboard ─────────────────────────────────────────────────────
@@ -414,9 +497,7 @@ impl RootView {
 
         let channel = self.slots[index].channel.clone();
         if self.settings.set_chat_hidden_for(&channel, hidden) {
-            if let Err(e) = self.settings.save_preferences(&self.settings_path) {
-                eprintln!("settings: could not save: {e}");
-            }
+            self.save_settings(cx);
         }
         cx.notify();
     }
@@ -468,8 +549,9 @@ impl RootView {
         palette::entries(
             self.palette_input.read(cx).value().as_ref(),
             &self.follows,
+            &self.offline,
             &watching,
-            self.slots.len() < MAX_PANES,
+            self.can_add(),
         )
     }
 
@@ -571,6 +653,15 @@ impl RootView {
         cx.notify();
     }
 
+    fn on_toggle_fullscreen(
+        &mut self,
+        _: &keys::ToggleFullscreen,
+        window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        window.toggle_fullscreen();
+    }
+
     /// Put the video and chat back to the sizes they are derived at.
     fn on_reset_layout(
         &mut self,
@@ -581,9 +672,7 @@ impl RootView {
         let defaults = Settings::default();
         self.settings.chat_width = defaults.chat_width;
         self.settings.video_share = defaults.video_share;
-        if let Err(e) = self.settings.save_preferences(&self.settings_path) {
-            eprintln!("settings: could not save: {e}");
-        }
+        self.save_settings(cx);
         cx.notify();
     }
 
@@ -1041,9 +1130,7 @@ impl RootView {
         // reopens it automatically.
         if let Some(first) = self.slots.first() {
             self.settings.last_channel = Some(first.channel.clone());
-            if let Err(e) = self.settings.save_preferences(&self.settings_path) {
-                eprintln!("settings: could not save: {e}");
-            }
+            self.save_settings(cx);
         }
     }
 
@@ -1069,9 +1156,9 @@ impl RootView {
         // physical pixels. With several panes the window is shared, so each one
         // asks for proportionally less.
         let scale = window.scale_factor();
-        let aspect = window_aspect(window);
-        let (rows, _) = layout::grid_shape(self.slots.len().max(1), aspect);
-        let pane_height = (f32::from(window.viewport_size().height) * scale / rows as f32)
+        let body = self.body(window);
+        let (rows, _) = layout::grid_shape(self.slots.len().max(1), body.aspect());
+        let pane_height = (body.height * scale / rows as f32)
             .round()
             .clamp(180.0, video::MAX_RENDER_HEIGHT as f32) as u32;
 
@@ -1141,11 +1228,7 @@ impl RootView {
                                     // change per pixel, and each one of these
                                     // is a full read-modify-write of the file.
                                     if this.settings.set_volume_for(&owner, *volume) {
-                                        if let Err(e) =
-                                            this.settings.save_preferences(&this.settings_path)
-                                        {
-                                            eprintln!("settings: could not save: {e}");
-                                        }
+                                        this.save_settings(cx);
                                     }
                                     cx.notify();
                                 }
@@ -1264,6 +1347,7 @@ impl RootView {
                         };
                         if let Err(e) = saved {
                             eprintln!("settings: could not save: {e}");
+                            this.toast(format!("could not save settings: {e}"), cx);
                         }
                         this.settings_panel = None;
 
@@ -1311,32 +1395,38 @@ impl RootView {
     }
 
     /// Remember where a divider drag began.
-    fn start_resize(&mut self, start: ResizeStart, window: &mut Window, _cx: &mut Context<Self>) {
+    fn start_resize(&mut self, start: ResizeStart, window: &mut Window, cx: &mut Context<Self>) {
         self.resize = Some(Resize {
             start,
             chat_width: self.settings.chat_width,
-            video_share: self.effective_video_share(window),
+            video_share: self.effective_video_share(start.index, window, cx),
         });
     }
 
-    /// What share of a stacked cell the video has right now.
+    /// What share of a stacked cell the video has right now, in pane `index`.
     ///
     /// A drag has to start from what is on screen, and until somebody has
-    /// dragged one there is no stored share — only the 16:9 box the layout
-    /// derives. Reading it back means the first pull moves from where the
-    /// divider actually is rather than jumping to a default.
-    fn effective_video_share(&self, window: &Window) -> f32 {
+    /// dragged one there is no stored share — only the box the layout derives
+    /// from that pane's stream. Reading it back means the first pull moves from
+    /// where the divider actually is rather than jumping to a default.
+    fn effective_video_share(&self, index: usize, window: &Window, cx: &App) -> f32 {
         if self.settings.video_share > 0.0 {
             return self.settings.video_share;
         }
-        let height = f32::from(window.viewport_size().height);
-        let (rows, cols) = layout::grid_shape(self.slots.len().max(1), window_aspect(window));
-        let cell_height = height / rows as f32;
+        let body = self.body(window);
+        let (rows, cols) = layout::grid_shape(self.slots.len().max(1), body.aspect());
+        let cell_height = layout::cell_extent(body.height, rows);
         if cell_height <= 0.0 {
             return theme::VIDEO_SHARE_MIN;
         }
-        let cell_width = self.body_width(window) / cols as f32;
-        (layout::video_box_height(cell_width) / cell_height)
+        let cell_width = layout::cell_extent(body.width, cols);
+        let aspect = self
+            .slots
+            .get(index)
+            .and_then(|slot| slot.video())
+            .and_then(|view| view.read(cx).source_aspect())
+            .unwrap_or(layout::VIDEO_ASPECT);
+        (layout::stacked_video_height(cell_width, cell_height, aspect, 0.0) / cell_height)
             .clamp(theme::VIDEO_SHARE_MIN, theme::VIDEO_SHARE_MAX)
     }
 
@@ -1352,8 +1442,9 @@ impl RootView {
         };
 
         if resize.start.portrait {
-            let rows = layout::grid_shape(self.slots.len().max(1), window_aspect(window)).0;
-            let cell_height = f32::from(window.viewport_size().height) / rows as f32;
+            let body = self.body(window);
+            let rows = layout::grid_shape(self.slots.len().max(1), body.aspect()).0;
+            let cell_height = layout::cell_extent(body.height, rows);
             if cell_height <= 0.0 {
                 return;
             }
@@ -1377,18 +1468,14 @@ impl RootView {
         if self.resize.take().is_none() {
             return;
         }
-        if let Err(e) = self.settings.save_preferences(&self.settings_path) {
-            eprintln!("settings: could not save: {e}");
-        }
+        self.save_settings(cx);
         cx.notify();
     }
 
     /// Fold the follows rail away, or bring it back, and remember which.
     fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
         self.settings.sidebar_collapsed = !self.settings.sidebar_collapsed;
-        if let Err(e) = self.settings.save_preferences(&self.settings_path) {
-            eprintln!("settings: could not save: {e}");
-        }
+        self.save_settings(cx);
         cx.notify();
     }
 
@@ -1399,25 +1486,14 @@ impl RootView {
             &self.follows,
             &self.avatars,
             &watching,
-            self.slots.len() < MAX_PANES,
+            self.can_add(),
             self.settings.sidebar_collapsed,
             &self.cache,
+            &self.rail_scroll,
             |this: &mut RootView, _window, cx| this.toggle_sidebar(cx),
             |this: &mut RootView, action, window, cx| this.on_browse_action(action, window, cx),
             cx,
         )
-    }
-
-    /// How much width the page body actually has, which is not the window's
-    /// once the rail is open — the browse grid divides this to decide how many
-    /// cards fit across.
-    fn body_width(&self, window: &Window) -> f32 {
-        let width = f32::from(window.viewport_size().width);
-        if self.settings.sidebar_collapsed {
-            width
-        } else {
-            width - sidebar::WIDTH
-        }
     }
 
     // ── Chrome ───────────────────────────────────────────────────────
@@ -1552,6 +1628,15 @@ impl RootView {
 
         for (index, slot) in self.slots.iter().enumerate() {
             let id = ElementId::from(SharedString::from(format!("mini-{}", slot.channel)));
+            // The name as the channel writes it, when the follows poll knows
+            // it; the login is what the rest of the app keys on, and it is
+            // all a channel opened by name has.
+            let name = self
+                .follows
+                .iter()
+                .find(|stream| stream.user_login == slot.channel)
+                .map(|stream| stream.display_name.clone())
+                .unwrap_or_else(|| slot.channel.clone());
             let mut entry = div()
                 .id(id)
                 .flex()
@@ -1588,7 +1673,7 @@ impl RootView {
                             .font_weight(theme::weight_label())
                             .line_height(px(theme::LINE_TIGHT))
                             .text_color(theme::text())
-                            .child(SharedString::from(slot.channel.clone())),
+                            .child(SharedString::from(name)),
                     )
                     .child(
                         div()
@@ -1599,8 +1684,10 @@ impl RootView {
                     ),
             );
 
+            // The same word the pane header uses, and the same size: a lone
+            // `×` was a target a few pixels wide beside a thumbnail.
             bar = bar.child(div().flex().flex_row().items_center().child(entry).child(
-                controls::destructive(("mini-close", index), "×").on_click(cx.listener(
+                controls::destructive(("mini-close", index), "close").on_click(cx.listener(
                     move |this: &mut Self, _event, _window, cx| this.close_slot(index, cx),
                 )),
             ));
@@ -1614,11 +1701,11 @@ impl RootView {
                     cx,
                     |this, _w, cx| this.go_watch(cx),
                 ))
-                .child(
-                    self.pill("mini-stop", "stop all".into(), cx, |this, _w, cx| {
-                        this.stop_all(cx)
-                    }),
-                ),
+                // Styled as what it is. It used to be a twin of the pill beside
+                // it, and the two read as two ways of going somewhere.
+                .child(controls::destructive("mini-stop", "stop all").on_click(
+                    cx.listener(|this: &mut Self, _event, _window, cx| this.stop_all(cx)),
+                )),
         )
     }
 
@@ -1703,7 +1790,7 @@ impl RootView {
                 |this, window, cx| this.toggle_settings(window, cx),
             ));
 
-        let width = self.body_width(window);
+        let width = self.body(window).width;
 
         div()
             .size_full()
@@ -1722,12 +1809,15 @@ impl RootView {
                     .child(browse::page(
                         &self.follows,
                         &self.offline,
+                        self.filter.read(cx).value().as_ref(),
+                        Input::new(&self.filter).cleanable(true).into_any_element(),
                         &self.discovery,
                         &self.sign_in,
                         self.follows_loaded,
                         width,
                         &self.cache,
-                        self.slots.len() < MAX_PANES,
+                        self.can_add(),
+                        &self.scrolls,
                         |this: &mut RootView, action, window, cx| {
                             this.on_browse_action(action, window, cx)
                         },
@@ -1745,7 +1835,7 @@ impl RootView {
             .child(watch::page(
                 &self.slots,
                 &self.follows,
-                window.viewport_size(),
+                self.body(window),
                 self.settings.chat_width,
                 self.settings.video_share,
                 self.active_slot(),
@@ -1840,15 +1930,29 @@ impl RootView {
     }
 }
 
-/// Window width divided by height, guarding against a zero-height window during
-/// a minimise.
-fn window_aspect(window: &Window) -> f32 {
-    let size = window.viewport_size();
-    f32::from(size.width) / f32::from(size.height).max(1.0)
-}
-
 impl Render for RootView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Publish what this frame is, for the CPU log, when there is one. It is
+        // here rather than at every state change because a frame is the unit
+        // the sampler is trying to explain. Guarded because the two cache
+        // counts each take a lock, which is more than a diagnostic that is off
+        // should cost a frame.
+        if cpu_log::active() {
+            cpu_log::note_frame(
+                match self.page {
+                    Page::Browse => cpu_log::Page::Browse,
+                    Page::Watch => cpu_log::Page::Watch,
+                },
+                self.slots.len(),
+                self.slots
+                    .iter()
+                    .filter(|slot| matches!(slot.state, StreamState::Playing(_)))
+                    .count(),
+                self.cache.ready_len(),
+                self.cache.inflight_len(),
+            );
+        }
+
         // First, before anything builds a card. A preview that has been replaced
         // has to be released while nothing is asking for it any more, and this
         // whole function runs before any element it returns lays itself out.
@@ -1884,6 +1988,7 @@ impl Render for RootView {
             .on_action(cx.listener(Self::on_toggle_sidebar))
             .on_action(cx.listener(Self::on_toggle_palette))
             .on_action(cx.listener(Self::on_reset_layout))
+            .on_action(cx.listener(Self::on_toggle_fullscreen))
             .on_key_down(cx.listener(Self::on_palette_key))
             // A divider drag is followed here rather than on the handle: the
             // pointer leaves a six-pixel target on the first frame of any pull
@@ -1909,6 +2014,66 @@ impl Render for RootView {
     }
 }
 
+/// Where to open the window: where it was last closed, if that is still on
+/// a display, or else centred on the primary display at a size that fits it.
+///
+/// The fixed default this replaces was larger than a laptop's screen, and the
+/// platform's answer to that is a window with its bottom edge off the display.
+fn initial_window_bounds(placement: Option<WindowPlacement>, cx: &App) -> WindowBounds {
+    if let Some(saved) = placement {
+        let bounds = Bounds {
+            origin: point(px(saved.x), px(saved.y)),
+            size: size(px(saved.width), px(saved.height)),
+        };
+        // Only if some display still holds it: a window last closed on a
+        // monitor that has since been unplugged would open where nobody can
+        // reach it.
+        let visible = cx
+            .displays()
+            .iter()
+            .any(|display| display.bounds().intersects(&bounds));
+        if visible {
+            return if saved.maximized {
+                WindowBounds::Maximized(bounds)
+            } else {
+                WindowBounds::Windowed(bounds)
+            };
+        }
+    }
+
+    let fitted = match cx.primary_display() {
+        Some(display) => {
+            let room = display.bounds().size;
+            size(
+                DEFAULT_WINDOW.width.min(room.width * DEFAULT_WINDOW_SHARE),
+                DEFAULT_WINDOW
+                    .height
+                    .min(room.height * DEFAULT_WINDOW_SHARE),
+            )
+        }
+        None => DEFAULT_WINDOW,
+    };
+    WindowBounds::Windowed(Bounds::centered(None, fitted, cx))
+}
+
+/// What to remember about a window that is closing.
+fn placement_of(bounds: WindowBounds) -> WindowPlacement {
+    let (rect, maximized) = match bounds {
+        WindowBounds::Windowed(rect) => (rect, false),
+        WindowBounds::Maximized(rect) => (rect, true),
+        // The restore size, and not fullscreen: a window that opens fullscreen
+        // with no chrome is a window somebody has to remember a key to escape.
+        WindowBounds::Fullscreen(rect) => (rect, false),
+    };
+    WindowPlacement {
+        x: f32::from(rect.origin.x),
+        y: f32::from(rect.origin.y),
+        width: f32::from(rect.size.width),
+        height: f32::from(rect.size.height),
+        maximized,
+    }
+}
+
 fn main() {
     // Before anything that could go wrong: a windowed build has no console, so
     // stderr must be pointed somewhere first or the first failure is silent.
@@ -1916,19 +2081,26 @@ fn main() {
     if !cfg!(debug_assertions) {
         let _ = diagnostics::capture_stderr();
     }
+    // After stderr, so the path it reports has somewhere to be written. Opt-in
+    // by environment variable in any build; a debug build's numbers are not
+    // worth much, but the switch is the same one.
+    if let Some(path) = cpu_log::start() {
+        eprintln!("cpu log: {}", path.display());
+    }
 
     let mut args = std::env::args().skip(1);
     let mut channels: Vec<String> = Vec::new();
     let mut volume = None;
+    // What could not be used, to be said in the window. A release build has
+    // no console, so anything only printed here is never seen.
+    let mut warnings: Vec<String> = Vec::new();
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--volume" => {
-                volume = args
-                    .next()
-                    .and_then(|v| v.parse::<u8>().ok())
-                    .map(|v| v.min(100))
-            }
+            "--volume" => match args.next().and_then(|v| v.parse::<u8>().ok()) {
+                Some(level) => volume = Some(level.min(100)),
+                None => warnings.push("--volume needs a number from 0 to 100; ignored".into()),
+            },
             "--help" | "-h" => {
                 eprintln!("usage: {APP_NAME} [channel...] [--volume 0-100]");
                 eprintln!();
@@ -1943,9 +2115,31 @@ fn main() {
                 );
                 std::process::exit(0);
             }
-            other => channels.push(other.trim_start_matches('#').to_string()),
+            // Anything else that looks like an option is a mistake worth
+            // naming, rather than a channel called `--foo` that streamlink
+            // fails on a few seconds later with a message about a URL.
+            flag if flag.starts_with('-') => {
+                warnings.push(format!("unknown option {flag}; ignored"));
+            }
+            other => {
+                // Normalised the way every other path in the app normalises a
+                // channel, and checked against the one definition of a login.
+                let channel = settings::channel_key(other);
+                if twitch_chat::is_login(&channel) {
+                    channels.push(channel);
+                } else {
+                    warnings.push(format!("{other:?} is not a Twitch channel name; skipped"));
+                }
+            }
         }
     }
+
+    // Where the window was last closed, read before the app exists so the
+    // window can open there rather than open elsewhere and jump.
+    let placement = Settings::load(&settings::default_path(APP_NAME))
+        .ok()
+        .and_then(|settings| settings.window)
+        .filter(WindowPlacement::is_usable);
 
     // The assets are the widget library's icons; see `assets`. Without them
     // every chevron, eye and clear button in the app renders as nothing, and
@@ -1962,9 +2156,8 @@ fn main() {
             // last, and these bindings are the ones that must stand aside.
             keys::init(cx);
 
-            let bounds = Bounds::centered(None, size(px(1600.), px(920.)), cx);
             let options = WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                window_bounds: Some(initial_window_bounds(placement, cx)),
                 titlebar: Some(TitlebarOptions {
                     title: Some(APP_NAME.into()),
                     ..Default::default()
@@ -1973,7 +2166,27 @@ fn main() {
             };
 
             cx.open_window(options, |window, cx| {
-                let root = cx.new(|cx| RootView::new(channels.clone(), volume, window, cx));
+                let root = cx.new(|cx| {
+                    RootView::new(channels.clone(), volume, warnings.clone(), window, cx)
+                });
+
+                // Remember where the window was, on the way out. The platform
+                // reports the restore bounds for a maximised or fullscreen
+                // window, so what is saved is always a size that can be
+                // opened windowed.
+                window.on_window_should_close(cx, {
+                    let root = root.downgrade();
+                    move |window, cx| {
+                        let placement = placement_of(window.window_bounds());
+                        root.update(cx, |this, cx| {
+                            this.settings.window = Some(placement);
+                            this.save_settings(cx);
+                        })
+                        .ok();
+                        true
+                    }
+                });
+
                 // Root is required as the window's first child so overlay layers
                 // have somewhere to render.
                 cx.new(|cx| gpui_component::Root::new(AnyView::from(root), window, cx))

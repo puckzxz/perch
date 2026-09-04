@@ -21,7 +21,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use emotes::ImageCache;
-use gpui::{div, img, prelude::*, px, Context, SharedString};
+use gpui::{div, img, prelude::*, px, Context, ScrollHandle, SharedString};
+use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 use twitch_api::LiveStream;
 
 use crate::browse::{format_viewers, Action};
@@ -145,14 +146,7 @@ fn row<V: 'static>(
                 .when(can_add, |count| {
                     count.group_hover("rail-row", |style| style.invisible())
                 })
-                .child(
-                    div()
-                        .flex_none()
-                        .w(px(6.))
-                        .h(px(6.))
-                        .rounded_full()
-                        .bg(theme::live()),
-                )
+                .child(controls::live_dot())
                 .child(
                     div()
                         .text_size(px(theme::TEXT_META))
@@ -168,6 +162,10 @@ fn row<V: 'static>(
                     .right(px(theme::PANEL_PAD))
                     .invisible()
                     .group_hover("rail-row", |style| style.visible())
+                    .tooltip(|window, cx| {
+                        gpui_component::tooltip::Tooltip::new("Open beside what is playing")
+                            .build(window, cx)
+                    })
                     .on_click(cx.listener(move |view, _event, window, cx| {
                         // Without this the row underneath also fires and
                         // replaces every open pane with this one.
@@ -191,6 +189,7 @@ pub fn rail<V: 'static>(
     can_add: bool,
     collapsed: bool,
     cache: &Arc<ImageCache>,
+    scroll: &ScrollHandle,
     on_toggle: impl Fn(&mut V, &mut gpui::Window, &mut Context<V>) + 'static,
     on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + Clone + 'static,
     cx: &mut Context<V>,
@@ -218,6 +217,9 @@ pub fn rail<V: 'static>(
         )
         .child(
             controls::pill("sidebar-collapse", "←", controls::Variant::Quiet)
+                .tooltip(|window, cx| {
+                    gpui_component::tooltip::Tooltip::new("Hide the rail (B)").build(window, cx)
+                })
                 .on_click(cx.listener(move |view, _event, window, cx| on_toggle(view, window, cx))),
         );
 
@@ -228,6 +230,7 @@ pub fn rail<V: 'static>(
         .flex_1()
         .min_h_0()
         .overflow_y_scroll()
+        .track_scroll(scroll)
         .flex()
         .flex_col()
         .px(px(theme::GAP_TIGHT))
@@ -269,7 +272,20 @@ pub fn rail<V: 'static>(
             .border_r_1()
             .border_color(theme::border())
             .child(header)
-            .child(list),
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .child(list)
+                    .child(
+                        div().absolute().inset_0().child(
+                            Scrollbar::vertical(scroll).scrollbar_show(ScrollbarShow::Hover),
+                        ),
+                    ),
+            ),
     )
 }
 
@@ -282,5 +298,8 @@ pub fn expand<V: 'static>(
     cx: &mut Context<V>,
 ) -> impl IntoElement {
     controls::pill("sidebar-expand", "→", controls::Variant::Pill)
+        .tooltip(|window, cx| {
+            gpui_component::tooltip::Tooltip::new("Show who is live (B)").build(window, cx)
+        })
         .on_click(cx.listener(move |view, _event, window, cx| on_toggle(view, window, cx)))
 }
