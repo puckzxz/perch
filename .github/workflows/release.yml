@@ -42,6 +42,28 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # A tag is a claim about a version, and the binary stamps its own from
+      # Cargo.toml: `winresource` on Windows, the bundle's plist on macOS, and
+      # the chat `User-Agent` on both. A `v0.3.0` tag on a `0.2.1` manifest
+      # would ship a bundle that calls itself 0.2.1, so the two are compared
+      # before anything is built.
+      - name: Tag matches version
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          version=$(cargo pkgid -p perch | sed 's/.*[#@]//')
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "tag $GITHUB_REF_NAME does not match perch $version in Cargo.toml"
+            exit 1
+          fi
+
+      # The tests, on the runner that is about to build the release. CI runs
+      # them on every push, but a tag is not a push to main - it can be cut
+      # from any commit - and a release built from an untested tree is the
+      # one kind of build that cannot be quietly rebuilt.
+      - name: Tests
+        run: cargo test --workspace --locked
+
       # `--locked` for the same reason CI uses it: a release should be built
       # from the dependency versions that were tested, not from whatever has
       # been published since.
@@ -106,6 +128,28 @@ jobs:
           cargo --version
 
       - uses: Swatinem/rust-cache@v2
+
+      # A tag is a claim about a version, and the binary stamps its own from
+      # Cargo.toml: `winresource` on Windows, the bundle's plist on macOS, and
+      # the chat `User-Agent` on both. A `v0.3.0` tag on a `0.2.1` manifest
+      # would ship a bundle that calls itself 0.2.1, so the two are compared
+      # before anything is built.
+      - name: Tag matches version
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          version=$(cargo pkgid -p perch | sed 's/.*[#@]//')
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "tag $GITHUB_REF_NAME does not match perch $version in Cargo.toml"
+            exit 1
+          fi
+
+      # The tests, on the runner that is about to build the release. CI runs
+      # them on every push, but a tag is not a push to main - it can be cut
+      # from any commit - and a release built from an untested tree is the
+      # one kind of build that cannot be quietly rebuilt.
+      - name: Tests
+        run: cargo test --workspace --locked
 
       # Both slices are pinned to the same deployment target so the
       # `LSMinimumSystemVersion` the bundle claims is true of the whole binary.

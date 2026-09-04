@@ -7,3 +7,7 @@
 # `git add` that appears to succeed and does nothing is a bad half hour.
 /out
 /out_twitch
+
+# A copy of `%LOCALAPPDATA%\perch\perch.cpu.csv` brought into the tree to look
+# at. Useful beside the code while measuring, never something to commit.
+/perch.cpu*.csv

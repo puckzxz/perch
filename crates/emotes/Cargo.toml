@@ -9,6 +9,6 @@ publish.workspace = true
 description = "Twitch emote resolution and a disk-backed image cache."
 
 [dependencies]
-futures = "0.3"
-ureq = { version = "3", features = ["json"] }
-serde_json = "1"
+futures.workspace = true
+ureq.workspace = true
+serde_json.workspace = true

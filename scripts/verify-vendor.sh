@@ -178,8 +178,19 @@ fi
 # leak back and the grep still green. The setter and the consumer both have to
 # be named. This matters most right after someone runs `--update`, which
 # rewrites the patch from whatever the tree is and never reaches this block.
+#
+# Comments are stripped before the search. A hunk commented out with `//` still
+# contains its literal, so a plain grep would have called it present - which is
+# the opposite of what "present rather than merely commented" means. Only
+# whole-line and trailing `//` comments are removed; a `//` inside a string
+# literal would be a false negative here, and none of the strings below has one.
+#
+# `grep` without `-q`, deliberately: `-q` exits on the first match, and on a
+# file the size of window.rs that closes the pipe while sed is still writing,
+# so under `pipefail` the pipeline reports sed's SIGPIPE as a failure of a
+# check that had in fact passed.
 needs() { # file, literal string, what that string makes the file do
-  grep -qF "$2" "$VENDOR/$1" || fail "$VENDOR/$1 no longer $3"
+  sed 's|//.*$||' "$VENDOR/$1" | grep -F -- "$2" > /dev/null     || fail "$VENDOR/$1 no longer $3"
 }
 
 for f in "${PATCHED[@]}"; do

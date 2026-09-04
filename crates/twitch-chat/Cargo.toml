@@ -9,15 +9,15 @@ publish.workspace = true
 description = "Read-only Twitch chat over anonymous IRC."
 
 [dependencies]
-futures = "0.3"
-serde_json = "1"
+futures.workspace = true
+serde_json.workspace = true
 # Pin our own provider choice. The app also links rustls via gpui's tree, and
 # Cargo unifies features across the graph - with both ring and aws_lc_rs on,
 # rustls refuses to pick one and panics at ClientConfig::builder().
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
-webpki-roots = "0.26"
+webpki-roots = "1"
 # Only for the chat-history backfill; the IRC connection itself is hand-rolled.
-ureq = { version = "3", features = ["json"] }
+ureq.workspace = true
 
 [dev-dependencies]
 futures-timer = "3"

@@ -9,7 +9,7 @@ publish.workspace = true
 description = "Twitch device-code sign-in, followed streams, and browsing."
 
 [dependencies]
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
-ureq = { version = "3", features = ["json"] }
+ureq.workspace = true

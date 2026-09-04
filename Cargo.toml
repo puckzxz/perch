@@ -35,9 +35,16 @@ repository = "https://github.com/puckzxz/perch"
 # on. Saying so here is what stops a stray `cargo publish` from being possible.
 publish = false
 
+# Shared dependencies, declared once. A crate says `futures.workspace = true`
+# rather than naming a version, so the seven crates cannot drift onto seven
+# subtly different versions or feature sets of the same thing.
 [workspace.dependencies]
+futures = "0.3"
 libloading = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 thiserror = "2"
+ureq = { version = "3", features = ["json"] }
 
 # gpui is vendored, and this is the only reason why.
 #
