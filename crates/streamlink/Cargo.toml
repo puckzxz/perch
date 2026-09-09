@@ -11,6 +11,7 @@ description = "Supervise streamlink as a headless Twitch byte source."
 [dependencies]
 futures.workspace = true
 serde_json.workspace = true
+ureq.workspace = true
 
 # Job objects, so a streamlink child cannot outlive perch even when perch dies
 # without running destructors. See `src/job.rs`.

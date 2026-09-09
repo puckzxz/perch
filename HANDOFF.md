@@ -50,7 +50,8 @@ did not take that path.
 ```
 crates/
   mpv-frames    libmpv loaded at runtime, software render to BGRA
-  streamlink    supervises streamlink as a headless Twitch byte source
+  streamlink    supervises streamlink as a headless Twitch byte source, and
+                resolves a recording and reads its playlist
   twitch-chat   read-only chat over anonymous IRC, plus the history backfill
   twitch-api    device-code sign-in, follows, top streams, categories, search
   emotes        Twitch/FFZ/BTTV/7TV resolution + disk image cache
@@ -68,10 +69,13 @@ App modules:
 |---|---|
 | `main.rs` | shell: `RootView`, pages, stream slots, navigation |
 | `browse.rs` | the picker page: following, popular, categories, search |
+| `channel_page.rs` | one channel's past broadcasts, and when each was |
 | `watch.rs` | the grid of panes; `Slot` lives here |
 | `layout.rs` | derives grid shape from window aspect (pure, tested) |
 | `video_view.rs` | player element + overlay controls |
+| `seek_bar.rs` | the bar on a recording, and the arithmetic behind it |
 | `video.rs` | render thread; owns the mpv `Player` |
+| `vod.rs` | positions a recording by rewriting its playlist; the keeper for one still growing |
 | `chat.rs` | chat pane: rows, emotes, scrollback |
 | `chat_text.rs` | what a word in a message is — link, mention or plain (pure, tested) |
 | `settings_view.rs` | settings sheet |
@@ -252,6 +256,92 @@ No id means no per-element frame state and nothing ever asks for the next frame.
 GIF in one row and a 1-frame PNG in another share state and GPUI indexes the PNG
 with the GIF's frame number, which panics. `examples/gif_animation.rs` renders
 the same GIF with and without an id as a regression check.
+
+### Recordings
+
+A past broadcast is the one source the app positions itself, and the reason is
+in the player, not the app.
+
+**ffmpeg's HLS demuxer cannot seek a fragmented-MP4 playlist, in the libmpv
+builds people have.** Twitch keeps two kinds of recording: transport-stream
+playlists (`.ts` segments, `forsen` for one) and, for every channel on its
+newer encoding path — most large ones — fragmented MP4 (`#EXT-X-MAP` with
+`init-0.mp4`, then `.mp4` segments). Seeking the first works. Seeking the
+second leaves mpv in `seeking=yes` for good with no packets delivered, and
+`seek` in any precision, `start=`, hardware decode on or off and the cache on
+or off all measured the same on the mpv.net build (mpv 0.37, early 2024). What
+*does* work is a playlist whose first segment holds the target, with a `start`
+inside that first segment. So `vod.rs` positions a recording by rewriting:
+`streamlink::playlist` reads the playlist once, on the resolve worker, and it
+arrives in `StreamEvent::Ready`; each seek writes a playlist that starts at the
+segment holding the target, with absolute URLs and the init segment, and
+reloads the player on it — `Player::load`, which is `loadfile <file> replace
+start=<within>`. The player, its render context and its atlas tile all stay. A
+reposition lands in about a second, which is what a native seek cost on the
+`.ts` kind, so both kinds go the same way on purpose: one path, one set of
+tests.
+
+Three things that took finding:
+
+- **mpv reads a local `.m3u8` as one of its own playlists** — a list of files
+  to play one after another — and never hands it to the HLS demuxer, so the
+  recording arrived as thousands of ten-second entries and the first ended with
+  reason `Redirect`. `demuxer=lavf` forces ffmpeg's demuxer. And ffmpeg refuses
+  to follow a local file to the network unless told: `protocol_whitelist` on
+  `demuxer-lavf-o`, whose value has commas in it inside an option that is a
+  comma-separated list, so it is quoted with mpv's `%N%` length prefix.
+  `Recording::mpv_options` builds both.
+- **The demuxer keeps the playlist file open, and Windows will not rename over
+  an open file.** Every reposition writes a new file, `<video>-<quality>-<n>.m3u8`
+  under the temp directory, and deletes the previous one once `FileLoaded` says
+  the new one is in; anything still held is retried at the next reposition and
+  at teardown.
+- **A broadcast still being recorded is a playlist with no end marker that grows
+  by a segment every ten seconds.** ffmpeg re-reads such a playlist when it
+  runs out of segments, and it re-reads a *file* too. So the keeper thread
+  fetches the playlist once per segment and *appends* what is new to the file
+  the player is reading — appending never disturbs what the demuxer has read —
+  and appends `#EXT-X-ENDLIST` when Twitch does, after which the player reaches
+  the end the ordinary way and the pane says "finished". `live_start_index=0`
+  keeps the demuxer from starting three segments from the end of a playlist
+  with no end marker, which is its default for anything live. And the
+  rewritten playlist says `#EXT-X-PLAYLIST-TYPE:EVENT` while it grows, as
+  Twitch's does: ffmpeg treats an unfinished playlist as unseekable unless it
+  is an EVENT one, and an unseekable playlist silently drops the start offset,
+  so every jump landed on a ten-second boundary until the tag went in.
+
+A reposition is known to have landed by mpv's `path` property changing to the
+new file — not by the first `MPV_EVENT_FILE_LOADED`, which with two quick
+repositions can belong to a file that has already been replaced, and would
+have positions read against the wrong base for a moment.
+
+The position the bar shows is `base + time-pos`, where `base` is the seconds
+before the current file's first segment and `time-pos` is per file, rebased to
+zero by mpv. Between a reload and `FileLoaded`, `time-pos` still belongs to the
+old file and is ignored; the target is stored the moment the seek is asked for,
+so the bar does not sit on the old position while the player reopens. mpv's
+`duration` is not read at all — it is the length of the file being read. The
+length comes from the playlist (`vod::Extent`), grown by the keeper, and the
+bar's extent adds the seconds since the keeper last said, so a growing
+recording's end moves smoothly rather than in ten-second steps.
+
+The replaced file's end arrives as `MPV_EVENT_END_FILE` with reason `Stop`,
+which `Stopped::from_end` already ignores — the same reason a closing pane
+sees. `Eof` is the only end that finishes a recording, and the pane reads it
+as "finished" rather than "ended the stream" by looking at what it was playing.
+
+`mpv-frames` deliberately has no `seek`. `seek_to_live` is the percent seek for
+the live edge; an absolute one was added for recordings and removed when the
+measurement above came in, because a command nothing can use is a trap.
+
+**Why not streamlink's relay for a recording.** Its server answers one GET with
+a body that never ends, ignores `Range` and sends no `Content-Length`, so a
+seek would be a process restart. And the `--stream-url` rule is about ad
+filtering in *live* playlists: a recording's playlist has no stitched ads —
+checked tag by tag across 2,150 segments and four more samples. Without the
+auth-token cookie, Twitch's playback token caps a recording at 1080p
+(`AUTHZ_NOT_LOGGED_IN` for the 1440p and 4K tiers) and refuses
+subscriber-only ones; the cookie the settings already hold lifts both, and did.
 
 ### Performance
 
@@ -1236,25 +1326,50 @@ Nothing here is agreed. The four items that were, plus chat backfill, the
 follows filter and window placement, are built. Ranked by what would be
 noticed, roughly:
 
-1. **Stream metadata for channels in none of the lists.** The chat header now
+1. **Chat replay for a recording.** Twitch has no Helix endpoint. The
+   website's own GQL query `VideoCommentsByOffsetOrCursor` (persisted hash
+   `b70a3591ff0f4e0313d126c6a1502d79a1c02baebb288227c582044aa76adf6a`) answers
+   anonymously by `contentOffsetSeconds`: about 55 comments a page, each with
+   login, display name, colour (nullable), text fragments carrying emote ids
+   and character ranges — the same character-index convention as the IRC
+   `emotes` tag — and `createdAt`. Cursor paging fails Twitch's integrity check
+   on the web Client-ID (`kimne78kx3ncx6brgo4mv6wki5h1ko`) and works on the
+   mobile one (`kd1unb4b3q4t58fwlpcbzcbnm76a8fp`), which TwitchDownloader has
+   used since May 2023; re-asking by the last offset and dropping duplicates by
+   id is a gap-free fallback, measured. Offsets past the end answer "service
+   error". Replay exists about thirty seconds behind live for a broadcast
+   still going. The shape: a replay module beside `twitch_chat::history`, a
+   thread that polls the pane's position and keeps a minute of comments ahead,
+   a clear-and-refetch on a seek; `Slot.chat` is already an `Option` and
+   `ChatView` needs a source enum. Archives only — a highlight's offsets mean
+   nothing.
+2. **Rewind a live stream.** A "from the start" control on a live pane that
+   opens the in-progress archive in place. The archive is in the channel's
+   page already; the shortcut is the work.
+3. **Remember where a recording was stopped**, per video, and resume there.
+   `Slot::resume_at` is the seam.
+4. **Buffered range and muted-audio spans on the seek bar**, from
+   `demuxer-cache-time` and the `-muted` segments a playlist names.
+5. **Highlights and uploads** on the channel page, as a second list.
+6. **Stream metadata for channels in none of the lists.** The chat header now
    reads from every live list the app holds, so a pane opened from popular, a
    category or a search carries its numbers, title and game. A channel opened by
    name still carries none: nothing has ever fetched it. `GET
    /helix/streams?user_login=…` per open channel would fill it, and would also
    keep a title that changes mid-stream honest, which the snapshot does not.
-2. **A stable order for the rail and the grid.** Both re-sort by viewers on every
+7. **A stable order for the rail and the grid.** Both re-sort by viewers on every
    poll, so a row can move under the pointer while a menu is open. Keeping the
    order a channel arrived in for the session, or animating the move, are the
    two answers; neither is free.
-3. **Badges in the chat gutter** — sub, mod, VIP. The tags already arrive and
+8. **Badges in the chat gutter** — sub, mod, VIP. The tags already arrive and
    are parsed into the map; nothing reads them.
-4. **Reply context lines.** `reply-parent-*` tags arrive too.
-5. **Highlight rules** that wash the row background rather than colouring a
-   word. The wash already exists for events.
-6. **Rebindable keys.** `keys::bindings` is a plain `Vec<KeyBinding>` built from
-   constants; the work is a UI and a settings shape, not a mechanism.
-7. **Sign-out.** There is no way to clear a bad token except editing the field.
-8. **The auth-token cookie off argv.** It is documented as a tradeoff, but a
+9. **Reply context lines.** `reply-parent-*` tags arrive too.
+10. **Highlight rules** that wash the row background rather than colouring a
+    word. The wash already exists for events.
+11. **Rebindable keys.** `keys::bindings` is a plain `Vec<KeyBinding>` built
+    from constants; the work is a UI and a settings shape, not a mechanism.
+12. **Sign-out.** There is no way to clear a bad token except editing the field.
+13. **The auth-token cookie off argv.** It is documented as a tradeoff, but a
    per-spawn `--config` file with a user-only ACL, deleted once streamlink has
    started, would take it out of the process list at the cost of one more file
    on disk. Not done here because it changes a documented decision.
@@ -1348,6 +1463,15 @@ None of these is being worked on; all of them are real.
 14. **The rail lists live channels only.** Offline follows are on the browse
     page and in the palette, which is the same gap as limit 9 seen from the
     other side.
+15. **A recording has no chat.** Its pane opens with chat hidden and `C` says
+    so. The replay is the first item under "What to build next".
+16. **A recording's thumbnail is 320x180**, the one size Twitch serves for a
+    video, scaled up onto a card that is wider than that.
+17. **A jump inside a recording takes about a second**, because it is a reopen
+    rather than a seek — see the Recordings trap for why that is the only
+    kind that works — and while a recording is still being made a viewer who
+    has caught up with the edge waits up to ten seconds for the next segment,
+    which is what the live pane is for.
 
 ## Things not to redo
 
@@ -1365,7 +1489,14 @@ None of these is being worked on; all of them are real.
   `scale=bilinear` on its own measured *slower* than the default.
 - Do not derive control visibility from `group_hover` or from `on_hover`'s value.
 - Do not key animated-image element ids on position.
-- Do not use `--stream-url` to skip streamlink's pipeline.
+- Do not use `--stream-url` to skip streamlink's pipeline for a *live* stream.
+  A recording is resolved that way on purpose, and reads its playlist itself;
+  see the Recordings trap.
+- Do not hand mpv a recording's playlist URL and `seek` it. It works on a
+  transport-stream recording and never on a fragmented-MP4 one, and the second
+  kind is most channels. Reposition by rewriting the playlist, as `vod.rs` does.
+- Do not rename or rewrite a playlist the player is reading. Write a new file
+  for a reposition; append for growth.
 - Do not add tokio; use a thread plus an mpsc pump.
 - Do not put a repeating animation on a state that can persist.
 - Do not assume an overlay blocks input because it covers something; use

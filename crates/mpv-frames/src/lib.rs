@@ -436,6 +436,20 @@ impl Player {
         self.command_async(&["seek", "100", "absolute-percent"])
     }
 
+    /// Replace what is playing with `url`, starting `start_secs` into it.
+    /// Queued, like [`set_paused`](Self::set_paused).
+    ///
+    /// The whole player stays: the render context, the decoder's setup, the
+    /// audio device. Only the file changes, which is what makes this the way
+    /// to reposition a source that cannot be seeked in place. There is
+    /// deliberately no `seek` here: the one source with a position, a Twitch
+    /// recording, is the one the demuxer cannot seek — `perch::vod` says why —
+    /// and a command nothing can use is a trap for the next reader.
+    pub fn load(&self, url: &str, start_secs: f64) -> Result<(), Error> {
+        let start = format!("start={:.3}", start_secs.max(0.0));
+        self.command_async(&["loadfile", url, "replace", &start])
+    }
+
     /// Change playback volume (0-100) while playing. Queued, like
     /// [`set_paused`](Self::set_paused).
     pub fn set_volume(&self, percent: u8) -> Result<(), Error> {

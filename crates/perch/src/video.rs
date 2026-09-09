@@ -21,6 +21,10 @@ use gpui::RenderImage;
 use image::{Frame, RgbaImage};
 use mpv_frames::{Config, EndReason, Event, Player};
 use smallvec::smallvec;
+use streamlink::Playlist;
+
+use crate::seek_bar::Timeline;
+use crate::vod::{Extent, Recording};
 
 /// Upper bound on render size. 1440p is the highest Twitch tier, so anything
 /// beyond this is scaling up, which measured as the single most expensive thing
@@ -62,12 +66,44 @@ fn hwdec_requested() -> bool {
     )
 }
 
+fn to_millis(secs: f64) -> u64 {
+    (secs.max(0.0) * 1000.0).round() as u64
+}
+
+fn from_millis(millis: u64) -> f64 {
+    millis as f64 / 1000.0
+}
+
 fn pack_size(width: u32, height: u32) -> u64 {
     ((width as u64) << 32) | height as u64
 }
 
 fn unpack_size(packed: u64) -> (u32, u32) {
     ((packed >> 32) as u32, packed as u32)
+}
+
+/// What a stream plays, which decides what a pause means and whether there
+/// is a position to report.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Playback {
+    /// A broadcast as it happens, served on loopback by streamlink. Resuming
+    /// from a pause jumps back to the live edge, and there is no position
+    /// worth reporting.
+    Live { url: String },
+    /// A recording: its playlist, already read, and how far in to open it.
+    /// Position and length are reported, seeks are taken, and a pause is only
+    /// a pause.
+    ///
+    /// The player is never handed the playlist's URL. Its demuxer cannot seek
+    /// the fragmented-MP4 playlists Twitch keeps for most large channels, so
+    /// the app positions the recording itself, by rewriting the playlist and
+    /// reopening — see `vod`, and `streamlink::playlist` for the full story.
+    /// `label` names the files that takes.
+    Vod {
+        playlist: Playlist,
+        start_at: f64,
+        label: String,
+    },
 }
 
 /// Why a stream stopped producing frames.
@@ -91,6 +127,10 @@ impl Stopped {
     /// it. `Stopped` is what this player being torn down looks like from
     /// inside its own render loop, and a pane that is closing does not need
     /// telling. An unknown reason is left alone on client.h's own advice.
+    ///
+    /// For a recording, `Ended` is not news of a broadcast finishing but of
+    /// the recording reaching its end — the same event, read by the pane
+    /// according to what it was playing.
     fn from_end(reason: EndReason, error: Option<String>) -> Option<Self> {
         match reason {
             EndReason::Eof => Some(Self::Ended),
@@ -152,20 +192,34 @@ pub struct VideoStream {
     /// pane's video box, so a 4:3 or a vertical stream gets a box its shape
     /// rather than a 16:9 one with bars inside it.
     source: Arc<AtomicU64>,
+    /// Seconds into a recording, in milliseconds, as mpv last reported them —
+    /// counted from the start of the recording, not of the file the player
+    /// happens to be reading. Only ever written for [`Playback::Vod`]; a live
+    /// stream has no position anybody wants.
+    position: Arc<AtomicU64>,
+    /// A seek the UI has asked for and the render thread has not yet applied.
+    ///
+    /// A slot rather than a queue, like volume: only the last target matters,
+    /// and a scrub that lands twice in one frame should not seek twice.
+    seek: Arc<Mutex<Option<f64>>>,
+    /// Whether this is a broadcast as it happens.
+    live: bool,
+    /// A recording's length, for the seek bar; `None` on a live stream.
+    extent: Option<Extent>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl VideoStream {
-    /// Start playing `url`, rendering frames at `width` x `height`.
+    /// Start playing `playback`, rendering frames at `width` x `height`.
     ///
     /// Returns the stream plus a channel that fires once per new frame. The
     /// channel carries no data - the frame itself lives in the slot, so a
     /// missed notification just means the UI coalesces two frames into one.
     pub fn start(
-        url: String,
         width: u32,
         height: u32,
         volume: u8,
+        playback: Playback,
     ) -> anyhow::Result<(Self, mpsc::Receiver<()>)> {
         let latest: Arc<Mutex<Option<Arc<RenderImage>>>> = Arc::new(Mutex::new(None));
         let stop = Arc::new(AtomicBool::new(false));
@@ -174,6 +228,13 @@ impl VideoStream {
         let paused = Arc::new(AtomicBool::new(false));
         let source_size = Arc::new(AtomicU64::new(0));
         let stopped: Arc<Mutex<Option<Stopped>>> = Arc::new(Mutex::new(None));
+        let position = Arc::new(AtomicU64::new(0));
+        let seek: Arc<Mutex<Option<f64>>> = Arc::new(Mutex::new(None));
+        let live = matches!(playback, Playback::Live { .. });
+        let extent = match &playback {
+            Playback::Live { .. } => None,
+            Playback::Vod { playlist, .. } => Some(Extent::new(playlist)),
+        };
         let (mut tx, rx) = mpsc::channel::<()>(1);
 
         // One `ImageId` for the whole stream, minted here rather than per frame.
@@ -202,20 +263,56 @@ impl VideoStream {
                 let paused = paused.clone();
                 let source_size = source_size.clone();
                 let stopped = stopped.clone();
+                let position = position.clone();
+                let seek = seek.clone();
+                let extent = extent.clone();
                 move || {
+                    // What to open, and how. A recording is opened on a
+                    // playlist of the app's own making; see `vod`.
+                    let (url, extra, mut recording) = match playback {
+                        Playback::Live { url } => (url, Vec::new(), None),
+                        Playback::Vod {
+                            playlist,
+                            start_at,
+                            label,
+                        } => {
+                            let extent = extent.expect("a recording has an extent");
+                            match Recording::open(playlist, &label, start_at, extent) {
+                                Ok((recording, path, within)) => {
+                                    let mut extra = Recording::mpv_options();
+                                    extra.push(("start".to_string(), format!("{within:.3}")));
+                                    (path.to_string_lossy().into_owned(), extra, Some(recording))
+                                }
+                                Err(e) => {
+                                    eprintln!("video: could not write the playlist: {e}");
+                                    *stopped.lock().unwrap() = Some(Stopped::Failed(format!(
+                                        "could not write the playlist: {e}"
+                                    )));
+                                    let _ = tx.try_send(());
+                                    return;
+                                }
+                            }
+                        }
+                    };
                     let config = Config {
                         audio: true,
                         hwdec: hwdec_requested(),
                         volume,
-                        ..Config::default()
+                        extra,
                     };
                     let player = match Player::open_with(&url, config) {
                         Ok(p) => p,
                         Err(e) => {
                             eprintln!("video: could not open {url}: {e}");
+                            if let Some(recording) = recording {
+                                recording.finish();
+                            }
                             return;
                         }
                     };
+                    if let Some(recording) = &recording {
+                        recording.keep_growing(stop.clone());
+                    }
 
                     // Everything this loop wants to know about the stream
                     // arrives as an event rather than being asked for. This is
@@ -237,6 +334,22 @@ impl VideoStream {
                             eprintln!("video: could not observe {name}: {e}");
                         }
                     }
+                    // Only a recording has a position worth the traffic:
+                    // `time-pos` changes on every frame, and a live pane
+                    // would pay for sixty strings a second to learn nothing.
+                    // mpv's `duration` is deliberately not read: it is the
+                    // length of the file the player is reading, which starts
+                    // wherever the last reposition put it, so the seek bar
+                    // takes its length from the playlist — see `vod::Extent`.
+                    if recording.is_some() {
+                        // `path` is how a reposition learns its file has
+                        // taken over — see `Recording::now_playing`.
+                        for name in ["time-pos", "path"] {
+                            if let Err(e) = player.observe_property(name) {
+                                eprintln!("video: could not observe {name}: {e}");
+                            }
+                        }
+                    }
 
                     // Source resolution, learned from mpv once the first frame
                     // decodes. Rendering above it means mpv upscales on the CPU,
@@ -251,12 +364,32 @@ impl VideoStream {
                     let mut applied_pause = false;
                     let mut last_drops = 0u64;
 
-                    while !stop.load(Ordering::Relaxed) {
+                    'frames: while !stop.load(Ordering::Relaxed) {
                         for event in player.poll_events() {
                             match event {
                                 Event::PropertyChange { name, value } => match name.as_str() {
                                     "width" => source_w = value.and_then(|v| v.parse().ok()),
                                     "height" => source_h = value.and_then(|v| v.parse().ok()),
+                                    // Where a recording is: the player's
+                                    // position in its file, plus where in the
+                                    // recording that file starts. Stored as
+                                    // whole milliseconds: an atomic cannot
+                                    // hold an `f64` and nothing reads finer.
+                                    "time-pos" => {
+                                        let secs = value.and_then(|v| v.parse::<f64>().ok());
+                                        if let (Some(secs), Some(recording)) = (secs, &recording) {
+                                            if let Some(at) = recording.position(secs) {
+                                                position.store(to_millis(at), Ordering::Relaxed);
+                                            }
+                                        }
+                                    }
+                                    "path" => {
+                                        if let (Some(path), Some(recording)) =
+                                            (value, &mut recording)
+                                        {
+                                            recording.now_playing(&path);
+                                        }
+                                    }
                                     // Asking for hardware decoding is not the
                                     // same as getting it: `auto-copy` falls
                                     // back to software whenever the codec, the
@@ -315,16 +448,16 @@ impl VideoStream {
                                         eprintln!("video: stream stopped: {reason:?}");
                                         *stopped.lock().unwrap() = Some(reason);
                                         let _ = tx.try_send(());
-                                        // Nothing more will decode. Returning
+                                        // Nothing more will decode. Leaving
                                         // tears mpv down here rather than
-                                        // leaving a loop waiting on frames
-                                        // that cannot arrive.
-                                        return;
+                                        // waiting on frames that cannot
+                                        // arrive.
+                                        break 'frames;
                                     }
                                 }
                                 Event::Shutdown => {
                                     eprintln!("video: mpv shut down");
-                                    return;
+                                    break 'frames;
                                 }
                                 _ => {}
                             }
@@ -363,16 +496,32 @@ impl VideoStream {
                         // change for mpv's own thread; see `Player::set_paused`.
                         let want_pause = paused.load(Ordering::Relaxed);
                         if want_pause != applied_pause {
-                            if !want_pause {
+                            if !want_pause && live {
                                 // Resuming from a pause on a live stream would
                                 // otherwise continue from where it stopped,
-                                // leaving the viewer permanently behind.
+                                // leaving the viewer permanently behind. On a
+                                // recording, where it stopped is the point.
                                 let _ = player.seek_to_live();
                             }
                             if let Err(e) = player.set_paused(want_pause) {
                                 eprintln!("video: could not pause: {e}");
                             }
                             applied_pause = want_pause;
+                        }
+
+                        // A seek, taken between frames like everything else.
+                        // Taken out from under the lock before the work: the
+                        // UI writes the slot from a click handler, and a
+                        // reposition writes a file.
+                        let wanted_seek = seek.lock().unwrap().take();
+                        if let (Some(secs), Some(recording)) = (wanted_seek, &mut recording) {
+                            // Said now rather than when the new file reports
+                            // its first position, so the bar does not sit on
+                            // the old one while the player reopens.
+                            position.store(to_millis(secs), Ordering::Relaxed);
+                            if let Err(e) = recording.reposition(&player, secs) {
+                                eprintln!("video: could not reposition: {e}");
+                            }
                         }
 
                         let wanted = volume_level.load(Ordering::Relaxed);
@@ -423,6 +572,13 @@ impl VideoStream {
                         // wake yet; it will see this frame when it gets there.
                         let _ = tx.try_send(());
                     }
+
+                    // The player first: its demuxer holds the playlist it is
+                    // reading, and the file cannot go until it lets go.
+                    drop(player);
+                    if let Some(recording) = recording {
+                        recording.finish();
+                    }
                 }
             })?;
 
@@ -435,10 +591,36 @@ impl VideoStream {
                 volume: volume_level,
                 stopped,
                 source: source_size,
+                position,
+                seek,
+                live,
+                extent,
                 thread: Some(thread),
             },
             rx,
         ))
+    }
+
+    /// How long the recording is, for the seek bar. `None` on a live stream,
+    /// which is also what hides the bar.
+    pub fn timeline(&self) -> Option<Timeline> {
+        self.extent.as_ref().map(Extent::timeline)
+    }
+
+    /// Seconds into a recording, as mpv last reported. Zero on a live stream,
+    /// which reports none.
+    pub fn position(&self) -> f64 {
+        from_millis(self.position.load(Ordering::Relaxed))
+    }
+
+    /// Ask a recording to jump to `secs`. Applied between frames, like volume;
+    /// a second request before the first is applied replaces it. Ignored on a
+    /// live stream, which has nowhere to go.
+    pub fn seek_to(&self, secs: f64) {
+        if self.live {
+            return;
+        }
+        *self.seek.lock().unwrap() = Some(secs.max(0.0));
     }
 
     /// The stream's resolution, once known. Width over height is the shape a

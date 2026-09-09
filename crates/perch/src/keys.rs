@@ -59,6 +59,10 @@ actions!(
         ResetLayout,
         /// Take the window fullscreen, or bring it back.
         ToggleFullscreen,
+        /// Skip back in a past broadcast.
+        SeekBack,
+        /// Skip ahead in a past broadcast.
+        SeekForward,
     ]
 );
 
@@ -67,6 +71,10 @@ actions!(
 /// Coarse on purpose: the slider is where a precise level is set, and a step
 /// too small to hear turns one press into five.
 pub const VOLUME_STEP: i16 = 5;
+
+/// How far one press moves a past broadcast, in seconds. Ten is what every
+/// player binds the arrows to; the bar is there for anything larger.
+pub const SEEK_STEP: f64 = 10.0;
 
 // The identifiers a context is built from, and that a predicate tests for.
 //
@@ -120,6 +128,10 @@ fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("c", ToggleChat, Some(&watch)),
         KeyBinding::new("up", VolumeUp, Some(&watch)),
         KeyBinding::new("down", VolumeDown, Some(&watch)),
+        // Sideways is time, the way up and down are volume. On a live pane
+        // there is nowhere to go and the press does nothing.
+        KeyBinding::new("left", SeekBack, Some(&watch)),
+        KeyBinding::new("right", SeekForward, Some(&watch)),
         KeyBinding::new("secondary-w", ClosePane, Some(&watch)),
         KeyBinding::new("escape", GoBrowse, Some(&watch)),
         // The rail is on both pages, so its key is too — twice rather than in
@@ -203,13 +215,14 @@ macro_rules! secondary {
 /// way this table could still lie after the check below — the keystrokes
 /// normalise through `Keystroke::parse`, and the labels used to normalise
 /// through nothing at all.
-pub const SHORTCUTS: [(&[&str], &str, &str); 13] = [
+pub const SHORTCUTS: [(&[&str], &str, &str); 14] = [
     (&["space"], "Space", "Pause or resume"),
     (&["m"], "M", "Mute or unmute"),
     (&["c"], "C", "Show or hide this chat"),
     (&["b"], "B", "Show or hide the follows rail"),
     (&["f", "f11"], "F / F11", "Fullscreen"),
     (&["up", "down"], "↑ / ↓", "Volume"),
+    (&["left", "right"], "← / →", "Skip 10 s in a past broadcast"),
     (&["secondary-w"], secondary!("W"), "Close this pane"),
     (&["escape"], "Esc", "Back to follows"),
     (&["secondary-f"], secondary!("F"), "Search"),
@@ -230,7 +243,7 @@ mod tests {
     /// symptom is "the key does nothing", which is a poor thing to debug.
     #[test]
     fn every_binding_and_every_context_parses() {
-        assert_eq!(bindings().len(), 18);
+        assert_eq!(bindings().len(), 20);
         for context in [CONTEXT_WATCH, CONTEXT_BROWSE, CONTEXT_MODAL] {
             KeyContext::parse(context)
                 .unwrap_or_else(|e| panic!("{context} is not a key context: {e}"));

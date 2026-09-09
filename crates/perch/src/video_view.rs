@@ -9,13 +9,15 @@
 use std::sync::Arc;
 
 use gpui::{
-    canvas, div, img, prelude::*, px, Animation, AnimationExt, ClickEvent, Context, ElementId,
-    Entity, EventEmitter, Hsla, RenderImage, SharedString, Subscription, Task, Window,
+    canvas, div, img, prelude::*, px, Animation, AnimationExt, Bounds, ClickEvent, Context,
+    ElementId, Entity, EventEmitter, Hsla, Pixels, RenderImage, SharedString, Subscription, Task,
+    Window,
 };
 use gpui_component::slider::{Slider, SliderEvent, SliderState};
 
 use crate::controls;
 use crate::motion;
+use crate::seek_bar;
 use crate::theme;
 use crate::video::{Stopped, VideoStream};
 
@@ -78,6 +80,13 @@ pub struct VideoView {
     background: bool,
     /// Volume to restore when coming back to the foreground.
     volume_before_background: u8,
+    /// A scrub in progress: where along the bar the pointer has dragged the
+    /// thumb. The seek happens when it lets go — see `seek_bar` for why not
+    /// on every move.
+    scrub: Option<f32>,
+    /// Where the seek bar's track was laid out last frame, so a scrub can
+    /// follow the pointer after it has left the track.
+    track: Option<Bounds<Pixels>>,
     _pump: Task<()>,
     /// Keeps the release hook alive; see [`VideoView::from_stream`].
     _release: Subscription,
@@ -155,9 +164,63 @@ impl VideoView {
             controls: motion::Fade::hidden(),
             background: false,
             volume_before_background: volume,
+            scrub: None,
+            track: None,
             _pump: pump,
             _release: release,
         }
+    }
+
+    /// Seconds into the recording, for whoever restarts this player and wants
+    /// the new one to pick up where this one was. Zero on a live stream.
+    pub fn position(&self) -> f64 {
+        self.stream.position()
+    }
+
+    /// Skip a recording by `delta` seconds, clamped to its length. Does
+    /// nothing on a live stream, which has nowhere to go.
+    pub fn seek_by(&mut self, delta: f64, cx: &mut Context<Self>) {
+        let Some(timeline) = self.stream.timeline() else {
+            return;
+        };
+        let position = self.stream.position();
+        let target = (position + delta).clamp(0.0, timeline.extent(position));
+        self.stream.seek_to(target);
+        cx.notify();
+    }
+
+    /// The pointer went down on the seek bar at `fraction` of its length.
+    fn begin_scrub(&mut self, fraction: f32, cx: &mut Context<Self>) {
+        self.scrub = Some(fraction);
+        self.sync_controls();
+        cx.notify();
+    }
+
+    /// The pointer let go, wherever it is: seek to where the scrub got to.
+    fn end_scrub(&mut self, cx: &mut Context<Self>) {
+        let Some(fraction) = self.scrub.take() else {
+            return;
+        };
+        if let Some(timeline) = self.stream.timeline() {
+            let extent = timeline.extent(self.stream.position());
+            self.stream.seek_to(fraction as f64 * extent);
+        }
+        self.sync_controls();
+        cx.notify();
+    }
+
+    /// Follow the pointer while a scrub is running, from the probe. Returns
+    /// whether the thumb moved.
+    fn follow_scrub(&mut self, pointer: Pixels) -> bool {
+        let (Some(_), Some(track)) = (self.scrub, self.track) else {
+            return false;
+        };
+        let fraction = seek_bar::fraction_at(&track, pointer);
+        if self.scrub == Some(fraction) {
+            return false;
+        }
+        self.scrub = Some(fraction);
+        true
     }
 
     /// Set volume without writing back to the slider, which is already where
@@ -225,7 +288,10 @@ impl VideoView {
     /// It stays up while the quality menu is open even after the pointer
     /// leaves, or reaching for an option would dismiss the menu on the way.
     fn sync_controls(&mut self) -> bool {
-        let visible = !self.background && (self.hovered || self.quality_menu_open);
+        // And while the thumb is held, wherever the pointer has dragged it:
+        // a bar that faded out mid-scrub would take the thumb with it.
+        let visible =
+            !self.background && (self.hovered || self.quality_menu_open || self.scrub.is_some());
         self.controls.set(visible)
     }
 
@@ -322,10 +388,34 @@ impl VideoView {
         )
     }
 
-    fn control_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let volume = self.stream.volume();
-        let paused = self.stream.is_paused();
+    /// The seek bar, on a recording. A live stream has no timeline and gets
+    /// nothing here, so its control bar is exactly what it was.
+    fn seek_row(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        let timeline = self.stream.timeline()?;
+        let position = self.stream.position();
+        let extent = timeline.extent(position);
+        // While the thumb is held the left-hand time follows it rather than
+        // the playhead: that is the number the scrub is choosing.
+        let shown = self
+            .scrub
+            .map(|fraction| fraction as f64 * extent)
+            .unwrap_or(position);
+        let state = seek_bar::State {
+            played: (position / extent) as f32,
+            scrub: self.scrub,
+            position: seek_bar::timecode(shown).into(),
+            extent: seek_bar::timecode(extent).into(),
+        };
+        Some(seek_bar::element(
+            state,
+            |this: &mut Self, fraction, _window, cx| this.begin_scrub(fraction, cx),
+            |this: &mut Self, _window, cx| this.end_scrub(cx),
+            |this: &mut Self, bounds| this.track = Some(bounds),
+            cx,
+        ))
+    }
 
+    fn control_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .absolute()
             .bottom_0()
@@ -338,14 +428,28 @@ impl VideoView {
             // as "over the video" for the purpose of staying visible.
             .occlude()
             .flex()
-            .flex_row()
-            .items_center()
+            .flex_col()
             .gap(px(theme::GAP_TIGHT))
             .px(px(theme::PANEL_PAD))
             .py(px(theme::GAP_TIGHT))
             // Sits over live video, so it carries its own contrast rather than
             // relying on whatever happens to be on screen behind it.
             .bg(theme::overlay())
+            .children(self.seek_row(cx))
+            .child(self.button_row(cx))
+    }
+
+    /// Pause, mute, volume and quality: the row every stream has.
+    fn button_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let volume = self.stream.volume();
+        let paused = self.stream.is_paused();
+
+        div()
+            .w_full()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(theme::GAP_TIGHT))
             .child(
                 controls::pill(
                     "pause",
@@ -450,6 +554,13 @@ impl Render for VideoView {
         // does hover. Without the first the buffer stays at its initial size and
         // a 1440p stream is downscaled before it ever reaches the window; see
         // `hovered` for why the second is measured here rather than reported.
+        // A scrub follows the pointer from here too, and needs the probe to
+        // keep running: a paused recording sends no frames, and nothing else
+        // would repaint while the thumb is being dragged across it.
+        if self.scrub.is_some() {
+            window.request_animation_frame();
+        }
+
         let stream_size = self.stream.size_handle();
         let this = cx.entity().downgrade();
         let probe = canvas(
@@ -459,10 +570,12 @@ impl Render for VideoView {
                 let height = (f32::from(bounds.size.height) * scale).round() as u32;
                 stream_size.request(width, height);
 
-                let inside =
-                    window.is_window_hovered() && bounds.contains(&window.mouse_position());
+                let pointer = window.mouse_position();
+                let inside = window.is_window_hovered() && bounds.contains(&pointer);
                 this.update(cx, |view: &mut Self, cx| {
-                    if view.set_hovered(inside) {
+                    let hovered = view.set_hovered(inside);
+                    let scrubbed = view.follow_scrub(pointer.x);
+                    if hovered || scrubbed {
                         cx.notify();
                     }
                 })

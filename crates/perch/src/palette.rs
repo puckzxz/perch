@@ -40,6 +40,12 @@ pub enum Command {
     Add(String),
     /// Close the pane at this index.
     Close(usize),
+    /// Look at a channel's past broadcasts.
+    Videos {
+        login: String,
+        display_name: String,
+        user_id: Option<String>,
+    },
     GoBrowse,
     GoWatch,
     StopAll,
@@ -132,6 +138,33 @@ pub fn entries(
                 command: Command::Watch(channel.login.clone()),
                 title: SharedString::from(channel.display_name.clone()),
                 kind: "offline".into(),
+            });
+        }
+
+        // Everyone's past broadcasts, live or not, after the rows that open
+        // them now. Only once something is typed, for the same reason the
+        // offline rows wait: with nothing typed this would be a second row
+        // for every channel above the commands.
+        let past = follows
+            .iter()
+            .map(|stream| (&stream.user_login, &stream.display_name, &stream.user_id))
+            .chain(
+                offline
+                    .iter()
+                    .map(|channel| (&channel.login, &channel.display_name, &channel.user_id)),
+            );
+        for (login, display_name, user_id) in past {
+            if !matches(display_name, query) && !matches(login, query) {
+                continue;
+            }
+            entries.push(Entry {
+                command: Command::Videos {
+                    login: login.clone(),
+                    display_name: display_name.clone(),
+                    user_id: Some(user_id.clone()).filter(|id| !id.is_empty()),
+                },
+                title: SharedString::from(format!("{display_name} — past broadcasts")),
+                kind: "videos".into(),
             });
         }
     }
@@ -287,6 +320,7 @@ mod tests {
     fn stream(login: &str, name: &str) -> LiveStream {
         LiveStream {
             user_login: login.into(),
+            user_id: String::new(),
             display_name: name.into(),
             title: String::new(),
             game_name: String::new(),
@@ -371,8 +405,10 @@ mod tests {
     #[test]
     fn a_channel_is_found_by_either_of_its_names() {
         let follows = [stream("kato_junichi0817", "加藤純一")];
-        assert_eq!(entries("kato", &follows, &[], &[], false).len(), 1);
-        assert_eq!(entries("加藤", &follows, &[], &[], false).len(), 1);
+        let by_login = entries("kato", &follows, &[], &[], false);
+        assert_eq!(by_login.iter().filter(|e| e.kind == "watch").count(), 1);
+        let by_name = entries("加藤", &follows, &[], &[], false);
+        assert_eq!(by_name.iter().filter(|e| e.kind == "watch").count(), 1);
     }
 
     /// The offline list is the one that actually needs a filter, so it is in
@@ -383,6 +419,7 @@ mod tests {
         let follows = [stream("forsen", "Forsen")];
         let offline = [FollowedChannel {
             login: "fextralife".into(),
+            user_id: "9".into(),
             display_name: "Fextralife".into(),
         }];
 
@@ -400,5 +437,53 @@ mod tests {
             .unwrap();
         assert!(live < off, "an offline channel outranked a live one");
         assert_eq!(typed[off].command, Command::Watch("fextralife".into()));
+    }
+
+    /// Past broadcasts are offered for everyone, after the rows that open a
+    /// channel now, and only once something is typed. An id the list already
+    /// had rides along; an empty one is nothing rather than an empty string.
+    #[test]
+    fn past_broadcasts_are_offered_for_live_and_offline_alike_once_typed() {
+        let follows = [stream("forsen", "Forsen")];
+        let offline = [FollowedChannel {
+            login: "fextralife".into(),
+            user_id: "9".into(),
+            display_name: "Fextralife".into(),
+        }];
+
+        let blank = entries("", &follows, &offline, &[], false);
+        assert!(!blank.iter().any(|entry| entry.kind == "videos"));
+
+        let typed = entries("f", &follows, &offline, &[], false);
+        let videos: Vec<&Entry> = typed
+            .iter()
+            .filter(|entry| entry.kind == "videos")
+            .collect();
+        assert_eq!(videos.len(), 2);
+        assert_eq!(
+            videos[0].command,
+            Command::Videos {
+                login: "forsen".into(),
+                display_name: "Forsen".into(),
+                user_id: None,
+            }
+        );
+        assert_eq!(
+            videos[1].command,
+            Command::Videos {
+                login: "fextralife".into(),
+                display_name: "Fextralife".into(),
+                user_id: Some("9".into()),
+            }
+        );
+        let last_now = typed
+            .iter()
+            .rposition(|entry| entry.kind == "watch" || entry.kind == "offline")
+            .unwrap();
+        let first_past = typed
+            .iter()
+            .position(|entry| entry.kind == "videos")
+            .unwrap();
+        assert!(last_now < first_past, "a recording outranked a channel");
     }
 }

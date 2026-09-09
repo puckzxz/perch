@@ -11,8 +11,21 @@
 //! window does not leave streamlink running. That covers every teardown perch
 //! runs itself; [`job`] covers the ones it does not get to run, where the
 //! process dies without destructors and would otherwise strand streamlink.
+//!
+//! A **past broadcast** is the one case that does not go through the relay,
+//! and it is worth being precise about why, because it looks like the shortcut
+//! above. The relay is a pipe: it answers one GET with a body that never ends,
+//! ignores `Range`, and sends no `Content-Length`, so a player cannot seek in
+//! it — and a seek bar is the whole point of a recording. The ad filter is not
+//! at stake either: Twitch stitches ads into *live* playlists only; a video's
+//! playlist is a plain list of segments on a CDN, checked tag by tag. So for a
+//! video streamlink is asked only to resolve the URL — the same JSON probe the
+//! live path runs first, which names every quality and the direct playlist
+//! for each — and the player opens that playlist itself. Nothing is left
+//! running once it has answered.
 
 mod job;
+pub mod playlist;
 pub mod quality;
 
 use std::io::{BufRead, BufReader, Read};
@@ -23,6 +36,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use futures::channel::mpsc;
+pub use playlist::Playlist;
 pub use quality::Quality;
 
 /// Progress of one channel's stream.
@@ -30,13 +44,17 @@ pub use quality::Quality;
 pub enum StreamEvent {
     /// Asking Twitch which qualities exist.
     Resolving,
-    /// Serving on loopback and ready to play.
+    /// Ready to play. For a channel, `url` is the loopback relay; for a
+    /// video it is Twitch's own playlist for the chosen quality, already read
+    /// into `playlist`, which the player positions from — see [`playlist`].
     Ready {
         url: String,
         quality: String,
         /// Everything this channel offers right now, so the UI can present a
         /// switcher without asking Twitch again.
         available: Vec<String>,
+        /// The video's playlist; `None` for a live stream.
+        playlist: Option<Playlist>,
     },
     /// The channel is not broadcasting.
     Offline,
@@ -206,8 +224,21 @@ impl StreamOptions {
     }
 }
 
-/// Shared arguments for both the quality probe and the serving run.
-fn twitch_args(channel: &str, options: &StreamOptions) -> Vec<String> {
+/// The twitch.tv path for a channel's live stream.
+fn channel_target(channel: &str) -> String {
+    format!("twitch.tv/{channel}")
+}
+
+/// The twitch.tv path for a video, which streamlink's plugin matches on
+/// `/videos/<id>`.
+fn video_target(video_id: &str) -> String {
+    format!("twitch.tv/videos/{video_id}")
+}
+
+/// Shared arguments for the quality probe and the serving run, for a channel
+/// or a video alike. `target` is one of [`channel_target`] or
+/// [`video_target`].
+fn twitch_args(target: &str, options: &StreamOptions) -> Vec<String> {
     let mut args = vec![
         // Twitch's higher tiers are HEVC/AV1 via Enhanced Broadcasting, and
         // streamlink filters to h264 unless told otherwise, which silently hides
@@ -235,22 +266,28 @@ fn twitch_args(channel: &str, options: &StreamOptions) -> Vec<String> {
         args.push(format!("Authorization=OAuth {token}"));
     }
 
-    args.push(format!("twitch.tv/{channel}"));
+    args.push(target.to_string());
     args
 }
 
-/// Which qualities the channel currently offers, newest info from Twitch.
+/// Every stream `target` offers right now, as `(quality name, playlist URL)`,
+/// newest info from Twitch. Empty when there is nothing to play: a channel
+/// that is offline, or a video that has expired or been deleted — streamlink
+/// words both as "no playable streams".
 ///
-/// This is the slow half of opening a channel — a full Twitch HLS resolve, with
-/// no timeout of its own — so the child goes in `slot` and a teardown can end it.
-fn list_qualities(
+/// This is the slow half of opening anything — a full Twitch HLS resolve, with
+/// no timeout of its own — so the child goes in `slot` and a teardown can end
+/// it. The URL beside each name is what a video plays from directly; the live
+/// path ignores it, because a live playlist played outside streamlink's own
+/// pipeline brings the ads back.
+fn list_streams(
     binary: &PathBuf,
-    channel: &str,
+    target: &str,
     options: &StreamOptions,
     slot: &ChildSlot,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<(String, String)>, String> {
     let mut args = vec!["--json".to_string()];
-    args.extend(twitch_args(channel, options));
+    args.extend(twitch_args(target, options));
 
     let mut probe = command(binary);
     probe.args(&args);
@@ -259,9 +296,14 @@ fn list_qualities(
 
     let json: serde_json::Value = serde_json::from_slice(&stdout)
         .map_err(|e| format!("streamlink returned unreadable JSON: {e}"))?;
+    streams_from_json(&json)
+}
 
+/// The `streams` map of a `--json` answer, or the error it carries instead.
+///
+/// Apart so it can be tested against a captured answer without streamlink.
+fn streams_from_json(json: &serde_json::Value) -> Result<Vec<(String, String)>, String> {
     if let Some(error) = json.get("error").and_then(|e| e.as_str()) {
-        // streamlink words the offline case as "no playable streams".
         if error.contains("No playable streams") {
             return Ok(Vec::new());
         }
@@ -271,8 +313,53 @@ fn list_qualities(
     Ok(json
         .get("streams")
         .and_then(|s| s.as_object())
-        .map(|streams| streams.keys().cloned().collect())
+        .map(|streams| {
+            streams
+                .iter()
+                .map(|(name, stream)| {
+                    let url = stream
+                        .get("url")
+                        .and_then(|url| url.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    (name.clone(), url)
+                })
+                .collect()
+        })
         .unwrap_or_default())
+}
+
+/// The names from [`list_streams`], which is all the live path wants.
+fn list_qualities(
+    binary: &PathBuf,
+    target: &str,
+    options: &StreamOptions,
+    slot: &ChildSlot,
+) -> Result<Vec<String>, String> {
+    Ok(list_streams(binary, target, options, slot)?
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect())
+}
+
+/// Only real resolutions, highest first; "best"/"worst"/"audio_only" are
+/// aliases and would just be duplicates in a menu.
+fn playable_names(available: &[String]) -> Vec<String> {
+    let mut list: Vec<(u32, String)> = available
+        .iter()
+        .filter_map(|name| quality::parse_quality(name).map(|q| (q.height, name.clone())))
+        .collect();
+    list.sort_by_key(|(height, _)| std::cmp::Reverse(*height));
+    list.into_iter().map(|(_, name)| name).collect()
+}
+
+/// The quality to play, from what is on offer, the saved preference and the
+/// pane's size.
+fn choose(available: &[String], options: &StreamOptions, pane_height: u32) -> Option<Quality> {
+    match &options.quality {
+        Some(preference) => quality::select_named(available, preference, pane_height),
+        None => quality::select(available, pane_height),
+    }
 }
 
 impl StreamSupervisor {
@@ -293,6 +380,43 @@ impl StreamSupervisor {
                 let stop = stop.clone();
                 let child = child.clone();
                 move || run(channel, pane_height, options, tx, stop, child)
+            })
+            .expect("failed to spawn streamlink supervisor");
+
+        (
+            Self {
+                stop,
+                child,
+                thread: Some(thread),
+            },
+            rx,
+        )
+    }
+}
+
+impl StreamSupervisor {
+    /// Resolve the video `video_id`, pick a quality suited to a pane
+    /// `pane_height` tall, and report the playlist URL to play it from.
+    ///
+    /// Unlike [`start`](Self::start) nothing is served: the `Ready` event's
+    /// URL is Twitch's own playlist for that quality, which the player opens
+    /// directly, and the worker retires as soon as it has said so. See the
+    /// module doc for why a video does not go through the relay.
+    pub fn start_video(
+        video_id: String,
+        pane_height: u32,
+        options: StreamOptions,
+    ) -> (Self, mpsc::UnboundedReceiver<StreamEvent>) {
+        let (tx, rx) = mpsc::unbounded();
+        let stop = Arc::new(AtomicBool::new(false));
+        let child: ChildSlot = Arc::new(Mutex::new(None));
+
+        let thread = std::thread::Builder::new()
+            .name("streamlink-video".into())
+            .spawn({
+                let stop = stop.clone();
+                let child = child.clone();
+                move || resolve_video(video_id, pane_height, options, tx, stop, child)
             })
             .expect("failed to spawn streamlink supervisor");
 
@@ -353,7 +477,8 @@ fn run(
 
     let _ = tx.unbounded_send(StreamEvent::Resolving);
 
-    let available = match list_qualities(&binary, &channel, &options, &child_slot) {
+    let target = channel_target(&channel);
+    let available = match list_qualities(&binary, &target, &options, &child_slot) {
         Ok(list) => list,
         Err(reason) => {
             let _ = tx.unbounded_send(StreamEvent::Failed { reason });
@@ -368,22 +493,8 @@ fn run(
         return;
     }
 
-    // Only real resolutions; "best"/"worst"/"audio_only" are aliases and
-    // would just be duplicates in a menu.
-    let playable: Vec<String> = {
-        let mut list: Vec<(u32, String)> = available
-            .iter()
-            .filter_map(|name| quality::parse_quality(name).map(|q| (q.height, name.clone())))
-            .collect();
-        list.sort_by_key(|(height, _)| std::cmp::Reverse(*height));
-        list.into_iter().map(|(_, name)| name).collect()
-    };
-
-    let resolved = match &options.quality {
-        Some(preference) => quality::select_named(&available, preference, pane_height),
-        None => quality::select(&available, pane_height),
-    };
-    let Some(chosen) = resolved else {
+    let playable = playable_names(&available);
+    let Some(chosen) = choose(&available, &options, pane_height) else {
         let _ = tx.unbounded_send(StreamEvent::Failed {
             reason: format!("no video qualities offered (got {available:?})"),
         });
@@ -410,7 +521,7 @@ fn run(
         "127.0.0.1".to_string(),
         "--twitch-low-latency".to_string(),
     ];
-    args.extend(twitch_args(&channel, &options));
+    args.extend(twitch_args(&target, &options));
     args.push(chosen.name.clone());
 
     let spawned = command(&binary)
@@ -482,6 +593,7 @@ fn run(
                     url: url.clone(),
                     quality: chosen.name.clone(),
                     available: playable.clone(),
+                    playlist: None,
                 });
             }
         }
@@ -505,5 +617,159 @@ fn run(
         let _ = tx.unbounded_send(StreamEvent::Offline);
     } else {
         let _ = tx.unbounded_send(StreamEvent::Failed { reason });
+    }
+}
+
+/// The worker behind [`StreamSupervisor::start_video`]: one probe, one
+/// answer, and done.
+fn resolve_video(
+    video_id: String,
+    pane_height: u32,
+    options: StreamOptions,
+    tx: mpsc::UnboundedSender<StreamEvent>,
+    stop: Arc<AtomicBool>,
+    child_slot: ChildSlot,
+) {
+    let Some(binary) = find_binary(&child_slot) else {
+        let _ = tx.unbounded_send(StreamEvent::Failed {
+            reason: "streamlink not found. Install it, or set STREAMLINK_PATH.".into(),
+        });
+        return;
+    };
+    if stop.load(Ordering::Relaxed) {
+        return;
+    }
+
+    let _ = tx.unbounded_send(StreamEvent::Resolving);
+
+    let target = video_target(&video_id);
+    let streams = match list_streams(&binary, &target, &options, &child_slot) {
+        Ok(list) => list,
+        Err(reason) => {
+            let _ = tx.unbounded_send(StreamEvent::Failed { reason });
+            return;
+        }
+    };
+    if stop.load(Ordering::Relaxed) {
+        return;
+    }
+    // "No playable streams", for a video, means it has expired, been deleted,
+    // or is for subscribers and there is no auth-token to say so with. The
+    // event keeps the live path's name; the pane words it for a video.
+    if streams.is_empty() {
+        let _ = tx.unbounded_send(StreamEvent::Offline);
+        return;
+    }
+
+    let available: Vec<String> = streams.iter().map(|(name, _)| name.clone()).collect();
+    let playable = playable_names(&available);
+    let Some(chosen) = choose(&available, &options, pane_height) else {
+        let _ = tx.unbounded_send(StreamEvent::Failed {
+            reason: format!("no video qualities offered (got {available:?})"),
+        });
+        return;
+    };
+    let Some((_, url)) = streams.iter().find(|(name, _)| *name == chosen.name) else {
+        let _ = tx.unbounded_send(StreamEvent::Failed {
+            reason: format!("streamlink named {} but gave it no URL", chosen.name),
+        });
+        return;
+    };
+
+    // The playlist itself, read here on the worker rather than by the
+    // player: the app positions a recording by rewriting it. See `playlist`.
+    let playlist = match playlist::fetch(url) {
+        Ok(playlist) => playlist,
+        Err(reason) => {
+            let _ = tx.unbounded_send(StreamEvent::Failed {
+                reason: format!("could not read the recording's playlist: {reason}"),
+            });
+            return;
+        }
+    };
+    if stop.load(Ordering::Relaxed) {
+        return;
+    }
+
+    let _ = tx.unbounded_send(StreamEvent::Ready {
+        url: url.clone(),
+        quality: chosen.name.clone(),
+        available: playable,
+        playlist: Some(playlist),
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A `--json` answer for a video, cut down from a captured one. What
+    /// matters is the shape: a map of quality names, each with the playlist
+    /// the player will open, and the alias entries the menu must not show.
+    const VIDEO: &str = r#"{
+      "plugin": "twitch",
+      "metadata": {"id": "2868644730", "author": "forsen", "title": "Games and shit!"},
+      "streams": {
+        "audio": {"type": "hls", "url": "https://cdn.test/v/audio_only/index-muted-X.m3u8"},
+        "160p": {"type": "hls", "url": "https://cdn.test/v/160p30/index-muted-X.m3u8"},
+        "720p60": {"type": "hls", "url": "https://cdn.test/v/720p60/index-muted-X.m3u8"},
+        "1080p60": {"type": "hls", "url": "https://cdn.test/v/chunked/index-muted-X.m3u8"},
+        "worst": {"type": "hls", "url": "https://cdn.test/v/160p30/index-muted-X.m3u8"},
+        "best": {"type": "hls", "url": "https://cdn.test/v/chunked/index-muted-X.m3u8"}
+      }
+    }"#;
+
+    #[test]
+    fn a_video_answer_names_every_quality_and_its_playlist() {
+        let json: serde_json::Value = serde_json::from_str(VIDEO).unwrap();
+        let streams = streams_from_json(&json).unwrap();
+        // In whatever order the JSON map came back in; the app sorts by
+        // height itself, so the order here is not a promise.
+        let mut names: Vec<&str> = streams.iter().map(|(name, _)| name.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(
+            names,
+            ["1080p60", "160p", "720p60", "audio", "best", "worst"]
+        );
+
+        let (_, url) = streams.iter().find(|(name, _)| name == "720p60").unwrap();
+        assert_eq!(url, "https://cdn.test/v/720p60/index-muted-X.m3u8");
+
+        // A video names its qualities without the frame rate a live stream
+        // carries, and calls its audio track "audio": neither is a picture.
+        let available: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+        assert_eq!(playable_names(&available), ["1080p60", "720p60", "160p"]);
+        assert_eq!(
+            choose(&available, &StreamOptions::default(), 720)
+                .unwrap()
+                .name,
+            "720p60"
+        );
+    }
+
+    /// The same words for an expired video as for a channel that is off, so
+    /// the caller has to know which it asked about.
+    #[test]
+    fn nothing_playable_is_empty_not_an_error() {
+        let json: serde_json::Value = serde_json::from_str(
+            r#"{"error": "No playable streams found on this URL: https://www.twitch.tv/videos/1"}"#,
+        )
+        .unwrap();
+        assert_eq!(streams_from_json(&json).unwrap(), Vec::new());
+
+        let other: serde_json::Value =
+            serde_json::from_str(r#"{"error": "Unable to open URL: timeout"}"#).unwrap();
+        assert_eq!(
+            streams_from_json(&other).unwrap_err(),
+            "Unable to open URL: timeout"
+        );
+    }
+
+    #[test]
+    fn a_channel_and_a_video_are_different_paths_on_twitch() {
+        assert_eq!(channel_target("forsen"), "twitch.tv/forsen");
+        assert_eq!(video_target("2868644730"), "twitch.tv/videos/2868644730");
+        let args = twitch_args(&video_target("1"), &StreamOptions::default());
+        assert_eq!(args.last().map(String::as_str), Some("twitch.tv/videos/1"));
     }
 }

@@ -85,6 +85,7 @@ video, which is no use when you are not holding the mouse.
 | `C` | Show or hide this pane's chat |
 | `B` | Show or hide the follows rail |
 | `↑` `↓` | Volume |
+| `←` `→` | Skip ten seconds in a past broadcast |
 | `Ctrl+W` | Close this pane |
 | `Esc` | Back to follows |
 | `Ctrl+F` | Search |
@@ -182,9 +183,9 @@ scroll past it.
 
 ## Follows
 
-Live channels first, as cards; everyone else you follow below as names. An
-offline channel still opens — the video says so, but its chat connects either
-way.
+Live channels first, as cards; everyone else you follow below as names. A name
+opens the channel's page — its past broadcasts, and a control for its chat,
+which connects whether or not anyone is streaming.
 
 The list refreshes itself every minute. `Ctrl+R`, or the pill in the header,
 asks again now — for whichever list is on screen, not just follows.
@@ -223,7 +224,29 @@ the right of it; the rail belongs to the window.
 than aimed at. It filters what the app already knows, so it costs nothing and
 runs on every keystroke; the search box in the header is the one that asks
 Twitch. `qb` finds QuickyBaby. Offline follows are in it too, once you have
-typed something: opening one is the way to read a chat whose stream is off.
+typed something, and so is every channel's page of past broadcasts.
+
+## Past broadcasts
+
+Every channel has a page of what it broadcast before: click an offline name on
+the Following tab, the **past broadcasts** control that appears on a live card,
+or the palette's row for it. The recordings are cards like the streams are, with
+the length where a stream's card has its viewer count, and how long ago it was
+underneath. One still being recorded carries the live dot and says how long it
+has been going so far; it can be watched from the start while the stream is on.
+
+A recording plays in an ordinary pane, with a seek bar above the controls. Click
+the bar or drag its thumb; `←` and `→` skip ten seconds. A jump takes a second
+or so, because the player is reopened at the new place rather than seeked —
+the reason is the player's and `HANDOFF.md` has it. The header says `replay`,
+names the broadcast, and opens it on twitch.tv; when the recording ends the pane
+says so and offers to start over. A channel's live stream and one of its
+recordings can be open side by side.
+
+There is no chat on a recording yet. Twitch's picture for a recording comes at
+one small size, so it is soft on a wide card. And without the auth-token cookie
+Twitch caps recordings at 1080p, as it does for anyone not signed in on the
+website; with it, whatever was broadcast.
 
 ## Settings
 

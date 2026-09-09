@@ -400,6 +400,9 @@ fn current_user(client_id: &str, token: &str) -> Result<(String, String), Error>
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveStream {
     pub user_login: String,
+    /// Helix's id for the channel. Kept because the endpoints that list a
+    /// channel's videos take ids and nothing else; see [`videos`].
+    pub user_id: String,
     pub display_name: String,
     pub title: String,
     pub game_name: String,
@@ -458,6 +461,7 @@ fn parse_streams(json: &Value) -> Vec<LiveStream> {
             let user_login = text(entry, "user_login")?;
             Some(LiveStream {
                 user_login: user_login.to_string(),
+                user_id: text_or_empty(entry, "user_id"),
                 display_name: text(entry, "user_name").unwrap_or(user_login).to_string(),
                 title: text_or_empty(entry, "title"),
                 game_name: text_or_empty(entry, "game_name"),
@@ -564,6 +568,8 @@ fn next_cursor(json: &Value) -> Option<String> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FollowedChannel {
     pub login: String,
+    /// See [`LiveStream::user_id`].
+    pub user_id: String,
     pub display_name: String,
 }
 
@@ -573,6 +579,7 @@ fn parse_followed_channels(json: &Value) -> Vec<FollowedChannel> {
             let login = text(entry, "broadcaster_login")?;
             Some(FollowedChannel {
                 login: login.to_string(),
+                user_id: text_or_empty(entry, "broadcaster_id"),
                 display_name: text(entry, "broadcaster_name")
                     .filter(|name| !name.is_empty())
                     .unwrap_or(login)
@@ -650,6 +657,206 @@ pub fn followed_channels(
     )?;
     all.sort_by_key(|channel| channel.display_name.to_lowercase());
     Ok(all)
+}
+
+/// `(id, display name)` for one login, or `None` if no such channel exists.
+///
+/// The one place a login is turned into an id. Every list the app already
+/// parses carries ids of its own, so this is only for a channel that came from
+/// nowhere — typed into the palette, or named on the command line — when it
+/// needs an endpoint that takes ids only, which [`videos`] does.
+pub fn user_id_for(
+    client_id: &str,
+    token: &str,
+    login: &str,
+) -> Result<Option<(String, String)>, Error> {
+    let json = helix_get(client_id, token, "/users", &[("login", login)])?;
+    let found = entries(&json).find_map(|entry| {
+        let id = text(entry, "id")?;
+        let name = text(entry, "display_name")
+            .filter(|name| !name.is_empty())
+            .unwrap_or(login);
+        Some((id.to_string(), name.to_string()))
+    });
+    Ok(found)
+}
+
+// ── Videos ───────────────────────────────────────────────────────────
+
+/// What kind of video a channel keeps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VideoKind {
+    /// A recording of a broadcast, kept for a week or two months depending on
+    /// the channel's standing. The only kind whose chat can be replayed.
+    Archive,
+    Highlight,
+    Upload,
+    /// A kind Twitch has since invented.
+    Other,
+}
+
+impl VideoKind {
+    fn parse(text: &str) -> Self {
+        match text {
+            "archive" => Self::Archive,
+            "highlight" => Self::Highlight,
+            "upload" => Self::Upload,
+            _ => Self::Other,
+        }
+    }
+}
+
+/// A stretch of a video whose audio Twitch has muted, in seconds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MutedSegment {
+    pub offset_secs: u64,
+    pub duration_secs: u64,
+}
+
+/// One of a channel's videos.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Video {
+    pub id: String,
+    /// The broadcast this is a recording of; `None` for a highlight or an
+    /// upload.
+    pub stream_id: Option<String>,
+    pub user_id: String,
+    pub user_login: String,
+    pub user_name: String,
+    pub title: String,
+    /// RFC 3339. For an archive, when the broadcast started.
+    pub created_at: String,
+    /// Helix writes this as `6h26m14s`; see [`parse_duration`]. For a
+    /// broadcast still being recorded it is the length at the time of asking.
+    pub length_secs: u64,
+    /// Template with `%{width}`/`%{height}`; use [`thumbnail`] with
+    /// [`VIDEO_THUMBNAIL`]. Twitch serves exactly one size for a video and
+    /// answers any other with a 404.
+    pub thumbnail_url: String,
+    pub view_count: u64,
+    pub kind: VideoKind,
+    pub muted_segments: Vec<MutedSegment>,
+}
+
+/// The one thumbnail size Twitch serves for a video, as `(width, height)`.
+///
+/// The reference says so in as many words: "${width} must be 320 and ${height}
+/// must be 180". A card wider than that scales the picture up, which is soft
+/// but not wrong; asking for a larger one is a broken image.
+pub const VIDEO_THUMBNAIL: (u32, u32) = (320, 180);
+
+/// Seconds in a Helix duration: `6h26m14s`, `3m21s`, `45s`.
+///
+/// Helix calls the format ISO 8601, which it is not — an ISO duration starts
+/// with `PT` — so this reads the grammar Twitch actually writes: a run of
+/// digits followed by `h`, `m` or `s`, each at most once and in that order,
+/// and nothing else. Anything outside it is `None` rather than a guess, since
+/// the number decides how long a seek bar is.
+pub fn parse_duration(text: &str) -> Option<u64> {
+    let mut total = 0u64;
+    let mut digits = String::new();
+    // How far along `h`, `m`, `s` the text has got, so a unit cannot repeat
+    // or come out of order.
+    let mut reached = 0u8;
+
+    for c in text.chars() {
+        if c.is_ascii_digit() {
+            digits.push(c);
+            continue;
+        }
+        let (rank, factor) = match c {
+            'h' => (1, 3600),
+            'm' => (2, 60),
+            's' => (3, 1),
+            _ => return None,
+        };
+        if digits.is_empty() || rank <= reached {
+            return None;
+        }
+        let value: u64 = digits.parse().ok()?;
+        total = total.checked_add(value.checked_mul(factor)?)?;
+        digits.clear();
+        reached = rank;
+    }
+
+    // Digits with no unit, or no units at all, are not a duration.
+    if !digits.is_empty() || reached == 0 {
+        return None;
+    }
+    Some(total)
+}
+
+fn parse_videos(json: &Value) -> Vec<Video> {
+    entries(json)
+        .filter_map(|entry| {
+            // Without an id there is nothing to play.
+            let id = text(entry, "id")?;
+            let user_login = text_or_empty(entry, "user_login");
+            let user_name = text(entry, "user_name")
+                .filter(|name| !name.is_empty())
+                .unwrap_or(&user_login)
+                .to_string();
+            let muted_segments = entry
+                .get("muted_segments")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|segment| {
+                    Some(MutedSegment {
+                        offset_secs: segment.get("offset")?.as_u64()?,
+                        duration_secs: segment.get("duration")?.as_u64()?,
+                    })
+                })
+                .collect();
+            Some(Video {
+                id: id.to_string(),
+                stream_id: text(entry, "stream_id").map(str::to_string),
+                user_id: text_or_empty(entry, "user_id"),
+                user_login,
+                user_name,
+                title: text_or_empty(entry, "title"),
+                created_at: text_or_empty(entry, "created_at"),
+                length_secs: text(entry, "duration")
+                    .and_then(parse_duration)
+                    .unwrap_or(0),
+                thumbnail_url: text_or_empty(entry, "thumbnail_url"),
+                view_count: entry.get("view_count").and_then(Value::as_u64).unwrap_or(0),
+                kind: VideoKind::parse(text(entry, "type").unwrap_or_default()),
+                muted_segments,
+            })
+        })
+        .collect()
+}
+
+/// A channel's past broadcasts, newest first, a page at a time.
+///
+/// Archives only. Highlights and uploads play through the same path, but a
+/// highlight is cut from ranges of a broadcast and its offsets mean nothing to
+/// a chat replay, so neither is listed. Helix takes a user id here and nothing
+/// else; a login goes through [`user_id_for`] first. Needs no scope, only a
+/// token. Paged the way the browse lists are — see [`Page`] — because a
+/// partner keeps two months of daily broadcasts, and a hundred at a time is
+/// Twitch's cap.
+pub fn videos(
+    client_id: &str,
+    token: &str,
+    user_id: &str,
+    after: Option<&str>,
+) -> Result<Page<Video>, Error> {
+    let mut query = vec![
+        ("user_id", user_id),
+        ("type", "archive"),
+        ("sort", "time"),
+        ("first", PAGE_SIZE),
+    ];
+    if let Some(cursor) = after {
+        query.push(("after", cursor));
+    }
+    let json = helix_get(client_id, token, "/videos", &query)?;
+    Ok(Page {
+        items: parse_videos(&json),
+        next: next_cursor(&json),
+    })
 }
 
 // ── Browsing ─────────────────────────────────────────────────────────
@@ -934,6 +1141,7 @@ mod tests {
         let channels = parse_followed_channels(&json);
         assert_eq!(channels.len(), 2);
         assert_eq!(channels[0].login, "forsen");
+        assert_eq!(channels[0].user_id, "1");
         assert_eq!(channels[1].display_name, "TheBurntPeanut");
     }
 
@@ -1047,7 +1255,7 @@ mod tests {
     fn parses_a_followed_streams_payload() {
         let json: Value = serde_json::from_str(
             r#"{"data":[
-                {"user_login":"alice","user_name":"Alice","title":"hi",
+                {"user_login":"alice","user_id":"77","user_name":"Alice","title":"hi",
                  "game_name":"Chess","viewer_count":12,
                  "thumbnail_url":"https://cdn.test/a-{width}x{height}.jpg",
                  "started_at":"2026-08-25T10:00:00Z"}
@@ -1058,6 +1266,7 @@ mod tests {
         let streams = parse_streams(&json);
         assert_eq!(streams.len(), 1);
         assert_eq!(streams[0].user_login, "alice");
+        assert_eq!(streams[0].user_id, "77");
         assert_eq!(streams[0].display_name, "Alice");
         assert_eq!(streams[0].viewer_count, 12);
     }
@@ -1113,6 +1322,103 @@ mod tests {
             classify_token_error("invalid client"),
             Error::Api(_)
         ));
+    }
+
+    /// The grammar Twitch actually writes, and the things near it that are
+    /// not durations. A wrong number here is a seek bar of the wrong length.
+    #[test]
+    fn reads_helix_durations_and_nothing_else() {
+        assert_eq!(parse_duration("6h26m14s"), Some(6 * 3600 + 26 * 60 + 14));
+        assert_eq!(parse_duration("3m21s"), Some(201));
+        assert_eq!(parse_duration("45s"), Some(45));
+        assert_eq!(parse_duration("2h"), Some(7200));
+        assert_eq!(parse_duration("1h5s"), Some(3605));
+
+        assert_eq!(parse_duration(""), None);
+        assert_eq!(parse_duration("14"), None, "digits with no unit");
+        assert_eq!(parse_duration("h"), None, "a unit with no digits");
+        assert_eq!(parse_duration("14s3m"), None, "out of order");
+        assert_eq!(parse_duration("1h1h"), None, "repeated");
+        assert_eq!(parse_duration("PT1H"), None, "the ISO form Helix claims");
+        assert_eq!(parse_duration("1h 2m"), None, "a space");
+    }
+
+    /// The reference's own example, plus the two things a real list has that
+    /// it does not show: a muted stretch, and a broadcast still being recorded
+    /// wearing Twitch's placeholder thumbnail.
+    #[test]
+    fn parses_a_videos_payload() {
+        let json: Value = serde_json::from_str(
+            r#"{"data":[
+                 {"id":"335921245","stream_id":null,"user_id":"141981764",
+                  "user_login":"twitchdev","user_name":"TwitchDev",
+                  "title":"Twitch Developers 101","description":"...",
+                  "created_at":"2018-11-14T21:30:18Z","published_at":"2018-11-14T22:04:30Z",
+                  "url":"https://www.twitch.tv/videos/335921245",
+                  "thumbnail_url":"https://static-cdn.jtvnw.net/cf_vods/x/thumb/index-0000000000-%{width}x%{height}.jpg",
+                  "viewable":"public","view_count":1863062,"language":"en",
+                  "type":"upload","duration":"3m21s","muted_segments":null},
+                 {"id":"2868644730","stream_id":"318576165606","user_id":"22484632",
+                  "user_login":"forsen","user_name":"forsen","title":"Games and shit!",
+                  "created_at":"2026-09-08T13:01:58Z","thumbnail_url":"https://cdn/x-%{width}x%{height}.jpg",
+                  "view_count":12,"type":"archive","duration":"5h58m17s",
+                  "muted_segments":[{"duration":180,"offset":3240}]},
+                 {"id":"2868715967","stream_id":"320241612508","user_id":"71092938",
+                  "user_login":"xqc","user_name":"","title":"","created_at":"2026-09-08T14:59:16Z",
+                  "thumbnail_url":"https://vod-secure.twitch.tv/_404/404_processing_%{width}x%{height}.png",
+                  "type":"archive","duration":"12h49m37s"},
+                 {"title":"no id, not playable"}
+               ],"pagination":{"cursor":"next"}}"#,
+        )
+        .unwrap();
+
+        let videos = parse_videos(&json);
+        assert_eq!(videos.len(), 3, "the entry with no id should be gone");
+
+        let upload = &videos[0];
+        assert_eq!(upload.kind, VideoKind::Upload);
+        assert_eq!(upload.stream_id, None);
+        assert_eq!(upload.length_secs, 201);
+        assert_eq!(upload.view_count, 1863062);
+        assert!(upload.muted_segments.is_empty(), "null is no segments");
+        assert_eq!(
+            thumbnail(&upload.thumbnail_url, VIDEO_THUMBNAIL.0, VIDEO_THUMBNAIL.1),
+            "https://static-cdn.jtvnw.net/cf_vods/x/thumb/index-0000000000-320x180.jpg"
+        );
+
+        let archive = &videos[1];
+        assert_eq!(archive.kind, VideoKind::Archive);
+        assert_eq!(archive.stream_id.as_deref(), Some("318576165606"));
+        assert_eq!(archive.length_secs, 5 * 3600 + 58 * 60 + 17);
+        assert_eq!(
+            archive.muted_segments,
+            vec![MutedSegment {
+                offset_secs: 3240,
+                duration_secs: 180
+            }]
+        );
+
+        // A name Twitch sends empty falls back to the login, as everywhere.
+        let recording = &videos[2];
+        assert_eq!(recording.user_name, "xqc");
+        assert_eq!(recording.length_secs, 12 * 3600 + 49 * 60 + 37);
+        assert_eq!(next_cursor(&json).as_deref(), Some("next"));
+    }
+
+    #[test]
+    fn a_users_lookup_reads_the_first_match_or_nothing() {
+        // Shape-only: `user_id_for` needs the network, so what is checked is
+        // the parse it shares with everything else — an entry without an id
+        // is no answer.
+        let json: Value = serde_json::from_str(
+            r#"{"data":[{"id":"22484632","login":"forsen","display_name":"forsen"}]}"#,
+        )
+        .unwrap();
+        let found = entries(&json).find_map(|entry| text(entry, "id").map(str::to_string));
+        assert_eq!(found.as_deref(), Some("22484632"));
+
+        let none: Value = serde_json::from_str(r#"{"data":[]}"#).unwrap();
+        assert!(entries(&none).next().is_none());
     }
 
     #[test]

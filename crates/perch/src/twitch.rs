@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 
 use futures::channel::mpsc;
 use settings::{OAuthTokens, Settings};
-use twitch_api::{Category, FollowedChannel, LiveStream, Session};
+use twitch_api::{Category, FollowedChannel, LiveStream, Session, Video};
 
 /// How often to re-ask Twitch who is live.
 const POLL_INTERVAL: Duration = Duration::from_secs(60);
@@ -47,6 +47,13 @@ pub enum Request {
     },
     /// Categories and live channels matching a name.
     Search(String),
+    /// A channel's past broadcasts. `user_id` is what Helix lists them by;
+    /// a channel that arrived with a name alone has it looked up first.
+    Videos {
+        login: String,
+        user_id: Option<String>,
+        after: Option<String>,
+    },
 }
 
 /// A page of a browse list, and what the UI should do with it.
@@ -109,6 +116,13 @@ pub enum TwitchEvent {
         query: String,
         categories: Vec<Category>,
         streams: Vec<LiveStream>,
+    },
+    /// A page of one channel's past broadcasts, with the id they were listed
+    /// by so the next page need not look it up again.
+    Videos {
+        login: String,
+        user_id: String,
+        videos: Listing<Video>,
     },
     /// Sign-in itself failed, so nothing works.
     Error(String),
@@ -435,6 +449,11 @@ fn serve(
             )
         }
         Request::Search(query) => search(client_id, token, query),
+        Request::Videos {
+            login,
+            user_id,
+            after,
+        } => channel_videos(client_id, token, login, user_id, after),
     };
 
     let _ = tx.unbounded_send(result.unwrap_or_else(|e| TwitchEvent::BrowseError(e.to_string())));
@@ -455,6 +474,30 @@ fn search(client_id: &str, token: &str, query: String) -> Result<TwitchEvent, tw
         query,
         categories,
         streams,
+    })
+}
+
+/// One channel's past broadcasts, looking its id up first when the caller
+/// had only a name — the palette and the command line know channels by login,
+/// and Helix lists videos by id alone.
+fn channel_videos(
+    client_id: &str,
+    token: &str,
+    login: String,
+    user_id: Option<String>,
+    after: Option<String>,
+) -> Result<TwitchEvent, twitch_api::Error> {
+    let user_id = match user_id {
+        Some(id) => id,
+        None => twitch_api::user_id_for(client_id, token, &login)?
+            .map(|(id, _)| id)
+            .ok_or_else(|| twitch_api::Error::Api(format!("there is no channel called {login}")))?,
+    };
+    let page = twitch_api::videos(client_id, token, &user_id, after.as_deref())?;
+    Ok(TwitchEvent::Videos {
+        login,
+        user_id,
+        videos: Listing::from(page, after.is_some()),
     })
 }
 

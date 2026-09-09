@@ -12,9 +12,10 @@ use gpui::{
 };
 use streamlink::StreamSupervisor;
 
-use twitch_api::LiveStream;
+use twitch_api::{LiveStream, Video};
 
 use crate::browse;
+use crate::channel_page;
 use crate::chat::ChatView;
 use crate::controls;
 use crate::layout;
@@ -26,7 +27,7 @@ use crate::video_view::VideoView;
 /// being worth it.
 pub const MAX_PANES: usize = 4;
 
-/// Element ids inside a pane identify its **channel**, never its position.
+/// Element ids inside a pane identify its **key**, never its position.
 ///
 /// Closing a pane reindexes every pane after it. Position-keyed ids make the
 /// survivor inherit the closed pane's element state - including whether GPUI
@@ -34,8 +35,16 @@ pub const MAX_PANES: usize = 4;
 /// *changes*, a stale `true` means the header never returns until the pointer
 /// leaves the pane and comes back. Same lesson as the animated-emote ids: the
 /// id has to name the thing, not the slot it happens to be in.
-fn pane_id(channel: &str, role: &str) -> ElementId {
-    ElementId::Name(SharedString::from(format!("pane-{role}-{channel}")))
+fn pane_id(key: &str, role: &str) -> ElementId {
+    ElementId::Name(SharedString::from(format!("pane-{role}-{key}")))
+}
+
+/// What a pane is playing.
+pub enum Source {
+    /// A channel, as it broadcasts.
+    Live,
+    /// One of a channel's past broadcasts.
+    Video(Box<Video>),
 }
 
 pub enum StreamState {
@@ -55,12 +64,27 @@ pub enum StreamState {
 /// Dropping a slot stops its streamlink (the supervisor) and its mpv (the
 /// view), so removing a pane needs no explicit teardown.
 pub struct Slot {
+    /// What identifies this pane: the login for a live stream, or
+    /// [`Slot::video_key`] for a recording. Element ids, the active pane and
+    /// every lookup use this — never the position, see [`pane_id`], and never
+    /// the login alone, so a channel's stream and one of its recordings can be
+    /// open side by side.
+    pub key: String,
+    /// The channel, whether live or recorded: what volume and hidden chat are
+    /// remembered against, and whose name the header carries.
     pub channel: String,
+    pub source: Source,
     /// A quality picked from this pane's controls, overriding the saved
     /// preference until the pane closes.
     pub quality_override: Option<String>,
     pub state: StreamState,
-    pub chat: Entity<ChatView>,
+    /// The chat beside the video. `None` for a recording, whose chat would be
+    /// a replay of what was said at the moment on screen, and that is a later
+    /// change; for now a recording is picture alone.
+    pub chat: Option<Entity<ChatView>>,
+    /// Where a recording picks up when its player is started again: after a
+    /// quality change, or from the top once it has finished.
+    pub resume_at: f64,
     pub supervisor: Option<StreamSupervisor>,
     pub pump: Option<Task<()>>,
     /// Whether the pointer is over this pane's video, measured rather than
@@ -81,6 +105,33 @@ impl Slot {
             _ => None,
         }
     }
+
+    /// The key a recording's pane gets. Prefixed so it can never collide with
+    /// a login, which is letters, digits and underscores.
+    pub fn video_key(video_id: &str) -> String {
+        format!("vod:{video_id}")
+    }
+
+    pub fn is_live(&self) -> bool {
+        matches!(self.source, Source::Live)
+    }
+
+    pub fn recording(&self) -> Option<&Video> {
+        match &self.source {
+            Source::Video(video) => Some(video),
+            Source::Live => None,
+        }
+    }
+
+    /// What the palette calls this pane. The login for a stream, which is
+    /// what the palette matches "watching" against; a recording says so, so
+    /// two panes on one channel read as two things.
+    pub fn label(&self) -> String {
+        match &self.source {
+            Source::Live => self.channel.clone(),
+            Source::Video(_) => format!("{} (replay)", self.channel),
+        }
+    }
 }
 
 /// What a pane shows in place of a picture.
@@ -91,11 +142,12 @@ struct Status {
     /// still and be read.
     working: bool,
     error: bool,
-    /// Whether there is anything to do about it. Not the same as `error`: a
-    /// stream that ended is not a fault, and asking for it again is still the
-    /// one useful move — a channel that dropped out comes back, and one that
-    /// is really finished says so through the offline state.
-    retry: bool,
+    /// Whether there is anything to do about it, and what the control says.
+    /// Not the same as `error`: a stream that ended is not a fault, and asking
+    /// for it again is still the one useful move — a channel that dropped out
+    /// comes back, and one that is really finished says so through the
+    /// offline state. A recording that has finished offers to start over.
+    retry: Option<&'static str>,
 }
 
 fn status_message(slot: &Slot) -> Option<Status> {
@@ -106,24 +158,41 @@ fn status_message(slot: &Slot) -> Option<Status> {
         text,
         working: true,
         error: false,
-        retry: false,
+        retry: None,
     };
-    let over = |text: SharedString| Status {
+    let over = |text: SharedString, again: &'static str| Status {
         text,
         working: false,
         error: false,
-        retry: true,
+        retry: Some(again),
     };
+    // The same events, read for what was playing. streamlink says "no
+    // playable streams" both for a channel that is off and for a recording
+    // that has expired, and mpv's end of file is a broadcast finishing or a
+    // recording reaching its end; only the pane knows which it asked for.
+    let recording = !slot.is_live();
     match &slot.state {
         StreamState::Playing(_) => None,
+        StreamState::Starting if recording => Some(waiting_on_it("opening the recording…".into())),
         StreamState::Starting => Some(waiting_on_it("starting stream…".into())),
-        StreamState::Offline => Some(over(format!("{} is offline", slot.channel).into())),
-        StreamState::Ended => Some(over(format!("{} ended the stream", slot.channel).into())),
+        StreamState::Offline if recording => Some(over(
+            "this recording is no longer available".into(),
+            "try again",
+        )),
+        StreamState::Offline => Some(over(
+            format!("{} is offline", slot.channel).into(),
+            "try again",
+        )),
+        StreamState::Ended if recording => Some(over("finished".into(), "watch again")),
+        StreamState::Ended => Some(over(
+            format!("{} ended the stream", slot.channel).into(),
+            "try again",
+        )),
         StreamState::Failed(reason) => Some(Status {
             text: reason.clone(),
             working: false,
             error: true,
-            retry: true,
+            retry: Some("try again"),
         }),
     }
 }
@@ -179,7 +248,7 @@ pub struct ResizeStart {
 /// divider you can hit, and the pane gap elsewhere is three pixels precisely
 /// because nothing is meant to grab *it*.
 fn divider<V: 'static>(
-    channel: &str,
+    key: &str,
     index: usize,
     portrait: bool,
     on_resize: impl Fn(&mut V, ResizeStart, &mut Window, &mut Context<V>) + 'static,
@@ -187,7 +256,7 @@ fn divider<V: 'static>(
 ) -> impl IntoElement {
     let half = theme::DIVIDER_GRAB / 2.0;
     let handle = div()
-        .id(pane_id(channel, "divider"))
+        .id(pane_id(key, "divider"))
         .absolute()
         .map(|handle| {
             if portrait {
@@ -257,8 +326,10 @@ fn chat_header<V: 'static>(
     on_close: impl Fn(&mut V, usize, &mut Window, &mut Context<V>) + 'static,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
-    let name = info
-        .map(|stream| stream.display_name.clone())
+    let recording = slot.recording();
+    let name = recording
+        .map(|video| video.user_name.clone())
+        .or_else(|| info.map(|stream| stream.display_name.clone()))
         .unwrap_or_else(|| slot.channel.clone());
 
     // Both are absent for a channel opened by name that you do not follow:
@@ -288,12 +359,24 @@ fn chat_header<V: 'static>(
     // A title is routinely longer than that line, so the whole of it — and the
     // game under it — is a hover away, through the same builder the browse
     // cards use.
-    let about: Vec<SharedString> = info
-        .into_iter()
-        .flat_map(|stream| [stream.title.clone(), stream.game_name.clone()])
-        .map(SharedString::from)
-        .filter(|text| !text.trim().is_empty())
-        .collect();
+    //
+    // For a recording the second line is its title and when it was, in place
+    // of a live stream's title and game: the game is not something Helix
+    // says about a video, and the date is what tells two recordings apart.
+    let about: Vec<SharedString> = match recording {
+        Some(video) => vec![
+            video.title.clone(),
+            channel_page::describe(video, chrono::Utc::now()),
+        ],
+        None => info
+            .into_iter()
+            .flat_map(|stream| [stream.title.clone(), stream.game_name.clone()])
+            .collect(),
+    }
+    .into_iter()
+    .map(SharedString::from)
+    .filter(|text| !text.trim().is_empty())
+    .collect();
     let about_line = about
         .iter()
         .map(SharedString::as_ref)
@@ -303,8 +386,9 @@ fn chat_header<V: 'static>(
     // Whether this pane is showing a picture, which is not the same as whether
     // it exists: an offline or failed pane used to draw the app's only
     // saturated red beside its name while the video underneath said the channel
-    // was not streaming.
-    let playing = matches!(slot.state, StreamState::Playing(_));
+    // was not streaming. A recording never gets the dot: nothing about it is
+    // happening now.
+    let playing = matches!(slot.state, StreamState::Playing(_)) && slot.is_live();
     // A stream that has finished takes its live numbers with it. They come
     // from a list that will not know for up to a minute, and an uptime that
     // goes on counting beside "ended the stream" is the same lie the frozen
@@ -324,8 +408,18 @@ fn chat_header<V: 'static>(
             (player.is_muted(), player.is_paused())
         })
         .unwrap_or((false, false));
-    let url = format!("https://twitch.tv/{}", slot.channel);
-    let tooltip = SharedString::from(format!("Open twitch.tv/{}", slot.channel));
+    // The name opens what the pane is playing: the channel, or this one
+    // recording.
+    let (url, tooltip) = match recording {
+        Some(video) => (
+            format!("https://twitch.tv/videos/{}", video.id),
+            SharedString::from("Open this broadcast on twitch.tv"),
+        ),
+        None => (
+            format!("https://twitch.tv/{}", slot.channel),
+            SharedString::from(format!("Open twitch.tv/{}", slot.channel)),
+        ),
+    };
 
     div()
         .flex_none()
@@ -367,7 +461,7 @@ fn chat_header<V: 'static>(
                     // the one thing the app deliberately cannot do, one click from the
                     // name of the channel you would be saying it in.
                     div()
-                        .id(pane_id(&slot.channel, "open"))
+                        .id(pane_id(&slot.key, "open"))
                         .flex_none()
                         .text_size(px(theme::TEXT_BODY))
                         .font_weight(theme::weight_title())
@@ -380,6 +474,12 @@ fn chat_header<V: 'static>(
                         .on_click(cx.listener(move |_, _event, _window, cx| cx.open_url(&url)))
                         .child(SharedString::from(name)),
                 )
+                // Said where `muted` and `paused` are said, and for the same
+                // reason: it is a fact about the pane that the picture alone
+                // does not carry.
+                .when(recording.is_some(), |header| {
+                    header.child(controls::tag("replay"))
+                })
                 .when(!ended && !meta.is_empty(), |header| {
                     header.child(
                         // `text_ellipsis` plus `line_clamp`, not `truncate`:
@@ -400,7 +500,7 @@ fn chat_header<V: 'static>(
                 .child(div().flex_1())
                 .when(closable, |header| {
                     header.child(
-                        controls::destructive(pane_id(&slot.channel, "close"), "close").on_click(
+                        controls::destructive(pane_id(&slot.key, "close"), "close").on_click(
                             cx.listener(move |view, _event, window, cx| {
                                 on_close(view, index, window, cx)
                             }),
@@ -414,7 +514,7 @@ fn chat_header<V: 'static>(
                 // column, where a definite width is what the measure pass
                 // needs before it will ellipsise at all.
                 div()
-                    .id(pane_id(&slot.channel, "about"))
+                    .id(pane_id(&slot.key, "about"))
                     .w_full()
                     .text_ellipsis()
                     .line_clamp(1)
@@ -448,7 +548,7 @@ fn pane<V: 'static>(
     let video = match (&slot.state, status_message(slot)) {
         (StreamState::Playing(view), _) => view.clone().into_any_element(),
         (_, Some(status)) => {
-            let retryable = status.retry;
+            let retry = status.retry;
             // Title-sized: this is the only thing in a pane that can be a
             // thousand pixels wide, and body text in the middle of it read as
             // a caption on a picture that had not arrived rather than as the
@@ -473,18 +573,18 @@ fn pane<V: 'static>(
                 // error would be both irritating and a repaint that never
                 // stops.
                 .child(if status.working {
-                    motion::waiting(pane_id(&slot.channel, "status"), label).into_any_element()
+                    motion::waiting(pane_id(&slot.key, "status"), label).into_any_element()
                 } else {
                     label.into_any_element()
                 })
                 // Every state that is not going anywhere on its own gets
                 // this, and until it existed the only way to ask again was to
                 // close the pane and open the channel a second time.
-                .when(retryable, |pane| {
+                .when_some(retry, |pane, again| {
                     pane.child(
                         controls::pill(
-                            pane_id(&slot.channel, "retry"),
-                            "try again",
+                            pane_id(&slot.key, "retry"),
+                            again,
                             controls::Variant::Primary,
                         )
                         .on_click(cx.listener(
@@ -544,13 +644,16 @@ fn pane<V: 'static>(
     // asked mpv for a frame that shape, which fixed the wrong height in
     // place: a stacked pane after a rail toggle showed its picture at four
     // fifths of the box, with black under it, until the app was restarted.
+    // A recording has no chat to show yet, which lays out the way hidden
+    // chat does: the header strip, and the picture under it.
+    let chatless = slot.chat_hidden || slot.chat.is_none();
     let video_pane = div()
-        .id(pane_id(&slot.channel, "video"))
+        .id(pane_id(&slot.key, "video"))
         .map(|pane| {
             // With chat hidden the video is the whole cell, so it stops being
             // sized against chat and simply takes what is left under the
             // header.
-            if slot.chat_hidden {
+            if chatless {
                 pane.flex_1().min_w_0()
             } else if layout.portrait {
                 pane.flex_none().h(px(video_height)).w_full()
@@ -590,7 +693,7 @@ fn pane<V: 'static>(
         cx.listener(move |view, _event, _window, cx| on_activate(view, index, cx)),
     );
 
-    if slot.chat_hidden {
+    if chatless {
         // A column whatever the grid shape, because the only thing left beside
         // the video is the header strip.
         //
@@ -639,7 +742,7 @@ fn pane<V: 'static>(
             }
         })
         .child(header)
-        .child(div().flex_1().min_h_0().child(slot.chat.clone()));
+        .child(div().flex_1().min_h_0().children(slot.chat.clone()));
 
     cell.map(|cell| {
         if layout.portrait {
@@ -649,13 +752,7 @@ fn pane<V: 'static>(
         }
     })
     .child(video_pane)
-    .child(divider(
-        &slot.channel,
-        index,
-        layout.portrait,
-        on_resize,
-        cx,
-    ))
+    .child(divider(&slot.key, index, layout.portrait, on_resize, cx))
     .child(chat_pane)
     .into_any_element()
 }

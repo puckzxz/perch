@@ -17,8 +17,9 @@ use gpui::{
     ScrollHandle, SharedString, Stateful, Window,
 };
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
-use twitch_api::{Category, FollowedChannel, LiveStream};
+use twitch_api::{Category, FollowedChannel, LiveStream, Video};
 
+use crate::channel_page;
 use crate::controls;
 use crate::motion;
 use crate::palette;
@@ -31,9 +32,9 @@ use crate::theme;
 /// a 300px card left 306px of nothing, one card short of a fifth column. The
 /// grid now takes the width it has and divides it, so the slack goes into the
 /// cards instead of beside them.
-const CARD_MIN: f32 = 260.0;
+pub(crate) const CARD_MIN: f32 = 260.0;
 /// And the widest, so a card on an ultrawide does not become a poster.
-const CARD_MAX: f32 = 380.0;
+pub(crate) const CARD_MAX: f32 = 380.0;
 const THUMBNAIL_WIDTH: u32 = 440;
 const THUMBNAIL_HEIGHT: u32 = 248;
 
@@ -110,6 +111,9 @@ pub struct Discovery {
     pub open: Option<Category>,
     /// Set while showing search results, which also take over the page.
     pub search: Option<SearchResults>,
+    /// Set while looking at one channel's past broadcasts, which take over
+    /// the page the way a category does. See `channel_page`.
+    pub channel: Option<ChannelPage>,
     /// Streams within [`open`](Self::open).
     pub streams: Listing<LiveStream>,
     /// A request is in flight. One at a time, so one flag is enough.
@@ -117,6 +121,17 @@ pub struct Discovery {
     /// A browse request failed. Deliberately separate from `SignIn::Error`:
     /// the session is fine, and blanking the whole page would say otherwise.
     pub error: Option<SharedString>,
+}
+
+/// One channel's page: who, and their past broadcasts so far.
+pub struct ChannelPage {
+    pub login: String,
+    pub display_name: String,
+    /// Helix's id for the channel, which is what its videos are listed by.
+    /// `None` until the worker has looked it up for a channel that arrived
+    /// with a name alone.
+    pub user_id: Option<String>,
+    pub videos: Listing<Video>,
 }
 
 /// A list that arrives a page at a time.
@@ -193,6 +208,19 @@ pub enum Action {
     OpenCategory(Category),
     CloseCategory,
     CloseSearch,
+    /// Look at a channel's past broadcasts. The id rides along when the list
+    /// this came from had it, and is looked up when it did not.
+    OpenChannel {
+        login: String,
+        display_name: String,
+        user_id: Option<String>,
+    },
+    CloseChannel,
+    /// Play this recording alone, or beside whatever is already playing.
+    /// Boxed because a video is a dozen strings and every other action is a
+    /// name.
+    WatchVideo(Box<Video>),
+    AddVideo(Box<Video>),
     /// Open the settings sheet. Only the not-signed-in state raises this: it is
     /// the one empty state whose instruction is "open settings", and telling
     /// somebody where a button is instead of giving them the button is the sort
@@ -281,7 +309,10 @@ pub fn format_viewers(count: u64) -> String {
 /// is: every line built this way is a line that may have been cut, and the one
 /// that most often is — the title — is the one worth reading in full. It costs
 /// an id, which is why this takes one.
-fn one_line(id: impl Into<gpui::ElementId>, text: impl Into<SharedString>) -> Stateful<gpui::Div> {
+pub(crate) fn one_line(
+    id: impl Into<gpui::ElementId>,
+    text: impl Into<SharedString>,
+) -> Stateful<gpui::Div> {
     let text = text.into();
     div()
         .id(id.into())
@@ -341,9 +372,15 @@ fn card<V: 'static>(
     cx: &mut Context<V>,
 ) -> impl IntoElement {
     let on_click = on_action.clone();
-    let on_add = on_action;
+    let on_add = on_action.clone();
+    let on_videos = on_action;
     let login = stream.user_login.clone();
     let add_login = stream.user_login.clone();
+    let channel = Action::OpenChannel {
+        login: stream.user_login.clone(),
+        display_name: stream.display_name.clone(),
+        user_id: Some(stream.user_id.clone()).filter(|id| !id.is_empty()),
+    };
     let thumbnail = cache.get_or_request_fresh(
         &twitch_api::thumbnail(&stream.thumbnail_url, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT),
         THUMBNAIL_MAX_AGE,
@@ -419,6 +456,26 @@ fn card<V: 'static>(
                         .child(controls::live_dot())
                         .child(SharedString::from(watching)),
                 )
+                // The other thing a channel has besides the stream on its
+                // card: what it broadcast before. Revealed the way `+ add`
+                // is, on the opposite corner, so a card at rest is still a
+                // picture.
+                .child(
+                    controls::pill(
+                        ("card-videos", index),
+                        "past broadcasts",
+                        controls::Variant::Pill,
+                    )
+                    .absolute()
+                    .top(px(theme::GAP_TIGHT))
+                    .left(px(theme::GAP_TIGHT))
+                    .opacity(0.0)
+                    .group_hover("card", |style| style.opacity(1.0))
+                    .on_click(cx.listener(move |view, _event, window, cx| {
+                        cx.stop_propagation();
+                        on_videos(view, channel.clone(), window, cx)
+                    })),
+                )
                 .when(can_add, |thumb| {
                     thumb.child(
                         controls::pill(("add-stream", index), "+ add", controls::Variant::Pill)
@@ -480,6 +537,7 @@ pub struct Scrolls {
     pub categories: ScrollHandle,
     pub category: ScrollHandle,
     pub search: ScrollHandle,
+    pub channel: ScrollHandle,
 }
 
 /// The scrolling body of a list. Separate from the rows inside it, so a search
@@ -488,7 +546,7 @@ pub struct Scrolls {
 /// Returns the scroller and the scrollbar for it as two elements, because the
 /// scrollbar has to sit *over* the list in a `relative` parent rather than
 /// inside it, and only the caller knows what else goes in that parent.
-fn scroller(id: &'static str, scroll: &ScrollHandle) -> gpui::Stateful<gpui::Div> {
+pub(crate) fn scroller(id: &'static str, scroll: &ScrollHandle) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
         .flex_1()
@@ -506,7 +564,7 @@ fn scroller(id: &'static str, scroll: &ScrollHandle) -> gpui::Stateful<gpui::Div
 /// There used to be no scrollbar on any of these: the wheel worked and nothing
 /// said so, and on a page whose bottom half is a hundred offline follows the
 /// only sign of more was content cut at the edge.
-fn scrollable(list: impl IntoElement, scroll: &ScrollHandle) -> gpui::Div {
+pub(crate) fn scrollable(list: impl IntoElement, scroll: &ScrollHandle) -> gpui::Div {
     div()
         .flex_1()
         .min_h_0()
@@ -523,7 +581,7 @@ fn scrollable(list: impl IntoElement, scroll: &ScrollHandle) -> gpui::Div {
 }
 
 /// A wrapping row of cards.
-fn wrap_row(gap: f32) -> gpui::Div {
+pub(crate) fn wrap_row(gap: f32) -> gpui::Div {
     div()
         .flex()
         .flex_row()
@@ -540,23 +598,29 @@ fn wrap_row(gap: f32) -> gpui::Div {
 /// about the channel. Names also pack: a hundred follows is five rows here and
 /// a wall of identical grey rectangles as cards.
 ///
-/// Clicking one still opens it. The video pane says "offline", but the *chat*
-/// connects either way, which is the reason to go there.
+/// Clicking one opens the channel's page: what it broadcast before, which is
+/// the thing an offline channel has. Its chat used to be what a click opened
+/// — it connects whether or not anyone is streaming — and it is still one
+/// click away, from that page's bar.
 fn offline_pill<V: 'static>(
     index: usize,
     channel: &FollowedChannel,
     on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + 'static,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
-    let login = channel.login.clone();
+    let action = Action::OpenChannel {
+        login: channel.login.clone(),
+        display_name: channel.display_name.clone(),
+        user_id: Some(channel.user_id.clone()).filter(|id| !id.is_empty()),
+    };
     controls::pill(
         ("offline-follow", index),
         SharedString::from(channel.display_name.clone()),
         controls::Variant::Pill,
     )
-    .on_click(cx.listener(move |view, _event, window, cx| {
-        on_action(view, Action::Watch(login.clone()), window, cx)
-    }))
+    .on_click(
+        cx.listener(move |view, _event, window, cx| on_action(view, action.clone(), window, cx)),
+    )
 }
 
 /// The Following tab: who is live, then who is not.
@@ -635,7 +699,7 @@ fn following_view<V: 'static>(
 /// The follows filter box. As wide as a name, not as wide as the page.
 const FILTER_WIDTH: f32 = 260.0;
 
-fn heading(text: &'static str) -> impl IntoElement {
+pub(crate) fn heading(text: &'static str) -> impl IntoElement {
     div()
         .text_size(px(theme::TEXT_LABEL))
         .font_weight(theme::weight_label())
@@ -721,7 +785,7 @@ fn stream_grid<V: 'static>(
 /// growing while you scroll spends that on your way past rather than on your
 /// say-so. It is also inside the scroller, so reaching it *is* the gesture of
 /// having got to the end.
-fn load_more<V: 'static>(
+pub(crate) fn load_more<V: 'static>(
     more: bool,
     loading: bool,
     on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + 'static,
@@ -810,6 +874,7 @@ fn search_view<V: 'static>(
             "← back",
             results.query.clone(),
             Action::CloseSearch,
+            None,
             on_action,
             cx,
         ))
@@ -870,12 +935,14 @@ fn category_card<V: 'static>(
 }
 
 /// A line above a list that has taken over the page, saying where you are and
-/// how to leave.
-fn context_bar<V: 'static>(
+/// how to leave. `trailing` is one more control on the right, for a page that
+/// has one other thing to offer.
+pub(crate) fn context_bar<V: 'static>(
     id: &'static str,
     back: &'static str,
     title: SharedString,
     action: Action,
+    trailing: Option<AnyElement>,
     on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + 'static,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
@@ -902,6 +969,8 @@ fn context_bar<V: 'static>(
                 .text_color(theme::text())
                 .child(title),
         )
+        .child(div().flex_1())
+        .children(trailing)
 }
 
 /// Waiting for the user to authorise the app.
@@ -1051,7 +1120,7 @@ fn empty_state<V: 'static>(
 }
 
 /// What a browse list shows when it has nothing in it yet.
-fn browse_placeholder(discovery: &Discovery, empty: SharedString) -> AnyElement {
+pub(crate) fn browse_placeholder(discovery: &Discovery, empty: SharedString) -> AnyElement {
     if let Some(reason) = &discovery.error {
         return notice("Could not reach Twitch".into(), reason.clone(), true).into_any_element();
     }
@@ -1081,12 +1150,25 @@ pub fn page<V: 'static>(
     cache: &Arc<ImageCache>,
     can_add: bool,
     scrolls: &Scrolls,
+    channel_live: bool,
     on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + Clone + 'static,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
-    // Search and categories both take over the page rather than nesting inside
-    // a tab, so there is only ever one thing to scroll.
-    let body = if let Some(results) = &discovery.search {
+    // Search, categories and a channel all take over the page rather than
+    // nesting inside a tab, so there is only ever one thing to scroll.
+    let body = if let Some(channel) = &discovery.channel {
+        channel_page::view(
+            channel,
+            discovery,
+            channel_live,
+            width,
+            cache,
+            can_add,
+            &scrolls.channel,
+            on_action,
+            cx,
+        )
+    } else if let Some(results) = &discovery.search {
         search_view(
             results,
             discovery,
@@ -1127,6 +1209,7 @@ pub fn page<V: 'static>(
                 "← categories",
                 SharedString::from(category.name.clone()),
                 Action::CloseCategory,
+                None,
                 on_action,
                 cx,
             ))

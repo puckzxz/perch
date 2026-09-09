@@ -13,6 +13,7 @@
 
 mod assets;
 mod browse;
+mod channel_page;
 mod chat;
 mod chat_text;
 mod clock;
@@ -23,12 +24,14 @@ mod keys;
 mod layout;
 mod motion;
 mod palette;
+mod seek_bar;
 mod settings_view;
 mod sidebar;
 mod theme;
 mod twitch;
 mod video;
 mod video_view;
+mod vod;
 mod watch;
 mod widget_theme;
 
@@ -37,7 +40,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use browse::{Action, Discovery, SearchResults, SignIn, Tab};
+use browse::{Action, ChannelPage, Discovery, SearchResults, SignIn, Tab};
 use chat::ChatView;
 use emotes::ImageCache;
 use gpui::{
@@ -52,10 +55,10 @@ use settings::{QualityPreference, Settings, WindowPlacement};
 use settings_view::{SettingsEvent, SettingsPanel};
 use streamlink::{StreamEvent, StreamOptions, StreamSupervisor};
 use twitch::{Request, TwitchEvent, TwitchService};
-use twitch_api::{FollowedChannel, LiveStream};
-use video::{Stopped, VideoStream};
+use twitch_api::{FollowedChannel, LiveStream, Video};
+use video::{Playback, Stopped, VideoStream};
 use video_view::{VideoEvent, VideoView};
-use watch::{ResizeStart, Slot, StreamState, MAX_PANES};
+use watch::{ResizeStart, Slot, Source, StreamState, MAX_PANES};
 
 pub const APP_NAME: &str = "perch";
 
@@ -181,10 +184,10 @@ struct RootView {
     twitch: TwitchService,
     _twitch_pump: Task<()>,
 
-    /// Which pane the player shortcuts act on, held as a channel rather than
-    /// an index: closing a pane reindexes every pane after it, and a stored
-    /// index would quietly start acting on somebody else — the same trap that
-    /// keys pane element ids on the channel.
+    /// Which pane the player shortcuts act on, held as a pane's key rather
+    /// than an index: closing a pane reindexes every pane after it, and a
+    /// stored index would quietly start acting on somebody else — the same
+    /// trap that keys pane element ids on the key.
     active: Option<String>,
     /// Focus lives on the root and stays there. GPUI derives the whole key
     /// dispatch path from what is focused, and with nothing focused the context
@@ -239,6 +242,9 @@ impl RootView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        // Playlists an earlier run left behind; see `vod::sweep_scratch`.
+        vod::sweep_scratch();
+
         let settings_path = settings::default_path(APP_NAME);
         let settings = Settings::load(&settings_path).unwrap_or_else(|e| {
             eprintln!("settings: {e}; using defaults");
@@ -478,6 +484,27 @@ impl RootView {
         }
     }
 
+    fn on_seek_back(&mut self, _: &keys::SeekBack, _window: &mut Window, cx: &mut Context<Self>) {
+        self.seek_by(-keys::SEEK_STEP, cx);
+    }
+
+    fn on_seek_forward(
+        &mut self,
+        _: &keys::SeekForward,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.seek_by(keys::SEEK_STEP, cx);
+    }
+
+    /// Skip the active pane's recording. A live pane ignores it: there is
+    /// nowhere to go.
+    fn seek_by(&mut self, delta: f64, cx: &mut Context<Self>) {
+        if let Some(view) = self.active_video() {
+            view.update(cx, |video, cx| video.seek_by(delta, cx));
+        }
+    }
+
     /// Show or hide the active pane's chat, and remember it for that channel.
     ///
     /// Per pane rather than per app: the whole watch page is built on panes
@@ -492,6 +519,12 @@ impl RootView {
         let Some(index) = self.active_slot() else {
             return;
         };
+        // A recording has no chat to show yet. Say so, rather than toggling
+        // a pane that would come up empty.
+        if self.slots[index].chat.is_none() {
+            self.toast("no chat on a past broadcast yet", cx);
+            return;
+        }
         let hidden = !self.slots[index].chat_hidden;
         self.slots[index].chat_hidden = hidden;
 
@@ -545,7 +578,7 @@ impl RootView {
     /// view already owns, and holding a copy would mean keeping it in step with
     /// a follows poll, a pane closing and every keystroke.
     fn palette_entries(&self, cx: &App) -> Vec<palette::Entry> {
-        let watching: Vec<String> = self.slots.iter().map(|slot| slot.channel.clone()).collect();
+        let watching: Vec<String> = self.slots.iter().map(Slot::label).collect();
         palette::entries(
             self.palette_input.read(cx).value().as_ref(),
             &self.follows,
@@ -643,6 +676,11 @@ impl RootView {
             palette::Command::Watch(channel) => self.open_channel(channel, true, window, cx),
             palette::Command::Add(channel) => self.open_channel(channel, false, window, cx),
             palette::Command::Close(index) => self.close_slot(index, cx),
+            palette::Command::Videos {
+                login,
+                display_name,
+                user_id,
+            } => self.open_channel_page(login, display_name, user_id, cx),
             palette::Command::GoBrowse => self.go_browse(cx),
             palette::Command::GoWatch => self.go_watch(cx),
             palette::Command::StopAll => self.stop_all(cx),
@@ -801,6 +839,24 @@ impl RootView {
                 }
                 self.discovery.loading = false;
             }
+            TwitchEvent::Videos {
+                login,
+                user_id,
+                videos,
+            } => {
+                // Same guard as a category: a reply for a channel the user
+                // has already left must not repopulate the page behind them.
+                if let Some(page) = self
+                    .discovery
+                    .channel
+                    .as_mut()
+                    .filter(|page| page.login == login)
+                {
+                    page.user_id = Some(user_id);
+                    page.videos.absorb(videos.items, videos.next, videos.append);
+                }
+                self.discovery.loading = false;
+            }
             TwitchEvent::BrowseError(reason) => {
                 self.discovery.error = Some(reason.into());
                 self.discovery.loading = false;
@@ -857,6 +913,15 @@ impl RootView {
     /// and kept forever, which is right for a page you glance at and wrong for
     /// one you have had open all evening.
     fn refresh(&mut self, cx: &mut Context<Self>) {
+        if let Some(page) = &self.discovery.channel {
+            self.fetch(Request::Videos {
+                login: page.login.clone(),
+                user_id: page.user_id.clone(),
+                after: None,
+            });
+            cx.notify();
+            return;
+        }
         if let Some(results) = &self.discovery.search {
             let query = results.query.to_string();
             self.run_search(query, cx);
@@ -900,6 +965,7 @@ impl RootView {
         self.discovery.tab = tab;
         self.discovery.open = None;
         self.discovery.search = None;
+        self.discovery.channel = None;
         self.discovery.error = None;
         self.fill_tab();
         cx.notify();
@@ -917,6 +983,7 @@ impl RootView {
         // Seeded with the query before the answer arrives, so the page can say
         // what it is waiting for and can recognise a stale reply when it lands.
         self.discovery.open = None;
+        self.discovery.channel = None;
         self.discovery.search = Some(SearchResults {
             query: query.clone().into(),
             ..Default::default()
@@ -931,6 +998,7 @@ impl RootView {
             Action::Add(channel) => self.open_channel(channel, false, window, cx),
             Action::OpenCategory(category) => {
                 self.discovery.search = None;
+                self.discovery.channel = None;
                 self.discovery.streams.clear();
                 self.discovery.open = Some(category.clone());
                 self.fetch(Request::Category {
@@ -952,7 +1020,51 @@ impl RootView {
             }
             Action::LoadMore => self.load_more(cx),
             Action::OpenSettings => self.toggle_settings(window, cx),
+            Action::OpenChannel {
+                login,
+                display_name,
+                user_id,
+            } => self.open_channel_page(login, display_name, user_id, cx),
+            Action::CloseChannel => {
+                self.discovery.channel = None;
+                self.discovery.error = None;
+                cx.notify();
+            }
+            Action::WatchVideo(video) => self.open_video(*video, true, window, cx),
+            Action::AddVideo(video) => self.open_video(*video, false, window, cx),
         }
+    }
+
+    /// Look at a channel's past broadcasts.
+    ///
+    /// Takes over the browse page the way a category does, and gets there
+    /// from the watch page the way the back control does, so whatever is
+    /// playing is treated as leaving the watch page always treats it.
+    fn open_channel_page(
+        &mut self,
+        login: String,
+        display_name: String,
+        user_id: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.page == Page::Watch {
+            self.go_browse(cx);
+        }
+        self.discovery.search = None;
+        self.discovery.open = None;
+        self.discovery.streams.clear();
+        self.discovery.channel = Some(ChannelPage {
+            login: login.clone(),
+            display_name,
+            user_id: user_id.clone(),
+            videos: browse::Listing::default(),
+        });
+        self.fetch(Request::Videos {
+            login,
+            user_id,
+            after: None,
+        });
+        cx.notify();
     }
 
     /// Ask for the next page of whichever list is on screen.
@@ -971,7 +1083,13 @@ impl RootView {
             return;
         }
 
-        let request = if let Some(category) = self.discovery.open.clone() {
+        let request = if let Some(page) = &self.discovery.channel {
+            page.videos.next.clone().map(|after| Request::Videos {
+                login: page.login.clone(),
+                user_id: page.user_id.clone(),
+                after: Some(after),
+            })
+        } else if let Some(category) = self.discovery.open.clone() {
             self.discovery
                 .streams
                 .next
@@ -1069,8 +1187,10 @@ impl RootView {
 
     // ── Streams ──────────────────────────────────────────────────────
 
-    fn slot_index(&self, channel: &str) -> Option<usize> {
-        self.slots.iter().position(|slot| slot.channel == channel)
+    /// The pane with this key: a login for a live stream, or
+    /// [`Slot::video_key`] for a recording.
+    fn slot_index(&self, key: &str) -> Option<usize> {
+        self.slots.iter().position(|slot| slot.key == key)
     }
 
     /// Open `channel`. With `solo`, it becomes the only pane; otherwise it is
@@ -1112,10 +1232,13 @@ impl RootView {
             )
         });
         self.slots.push(Slot {
+            key: channel.clone(),
             channel: channel.clone(),
+            source: Source::Live,
             quality_override: None,
             state: StreamState::Starting,
-            chat,
+            chat: Some(chat),
+            resume_at: 0.0,
             supervisor: None,
             pump: None,
             hovered: false,
@@ -1128,17 +1251,72 @@ impl RootView {
 
         // A record of what was last watched, even though launch no longer
         // reopens it automatically.
-        if let Some(first) = self.slots.first() {
+        if let Some(first) = self.slots.first().filter(|slot| slot.is_live()) {
             self.settings.last_channel = Some(first.channel.clone());
             self.save_settings(cx);
         }
     }
 
+    /// Open a recording. With `solo`, it becomes the only pane; otherwise it
+    /// is added alongside whatever is already playing.
+    ///
+    /// The mirror of [`open_channel`](Self::open_channel), keyed by the video
+    /// rather than the channel — a channel's stream and one of its recordings
+    /// are two panes, not one. No chat: that would be a replay of what was
+    /// said at the moment on screen, which is a later change, so for now the
+    /// pane is the picture and its header.
+    fn open_video(
+        &mut self,
+        video: Video,
+        solo: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.page = Page::Watch;
+        let key = Slot::video_key(&video.id);
+
+        if self.slot_index(&key).is_some() {
+            if solo {
+                self.slots.retain(|slot| slot.key == key);
+            }
+            self.set_background(false, cx);
+            cx.notify();
+            return;
+        }
+
+        if solo {
+            self.slots.clear();
+        } else if self.slots.len() >= MAX_PANES {
+            self.toast(format!("already watching {MAX_PANES} streams"), cx);
+            return;
+        }
+
+        let channel = video.user_login.clone();
+        self.slots.push(Slot {
+            key: key.clone(),
+            channel,
+            source: Source::Video(Box::new(video)),
+            quality_override: None,
+            state: StreamState::Starting,
+            chat: None,
+            resume_at: 0.0,
+            supervisor: None,
+            pump: None,
+            hovered: false,
+            chat_hidden: true,
+        });
+
+        self.active = Some(key.clone());
+        self.start_stream(key, window, cx);
+        self.set_background(false, cx);
+    }
+
     /// Start, or restart, streamlink for an existing slot.
-    fn start_stream(&mut self, channel: String, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(index) = self.slot_index(&channel) else {
+    fn start_stream(&mut self, key: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(index) = self.slot_index(&key) else {
             return;
         };
+        let channel = self.slots[index].channel.clone();
 
         let quality = self.slots[index]
             .quality_override
@@ -1162,8 +1340,14 @@ impl RootView {
             .round()
             .clamp(180.0, video::MAX_RENDER_HEIGHT as f32) as u32;
 
-        let (supervisor, mut events) =
-            StreamSupervisor::start(channel.clone(), pane_height, options);
+        // A recording is only resolved: streamlink names the playlist and
+        // retires, and the player opens it itself. See the streamlink crate.
+        let (supervisor, mut events) = match &self.slots[index].source {
+            Source::Live => StreamSupervisor::start(channel.clone(), pane_height, options),
+            Source::Video(video) => {
+                StreamSupervisor::start_video(video.id.clone(), pane_height, options)
+            }
+        };
         // Read once, here, and frozen into the pump: the pane it belongs to
         // may not start for several seconds, and adjusting a *different* pane
         // in the meantime must not follow it in.
@@ -1174,9 +1358,9 @@ impl RootView {
         let pump = cx.spawn_in(window, async move |this, cx| {
             use futures::StreamExt as _;
             while let Some(event) = events.next().await {
-                let channel = channel.clone();
+                let key = key.clone();
                 let ok = this.update_in(cx, |this: &mut RootView, window, cx| {
-                    this.apply_stream_event(&channel, event, volume, window, cx)
+                    this.apply_stream_event(&key, event, volume, window, cx)
                 });
                 if ok.is_err() {
                     break;
@@ -1190,15 +1374,15 @@ impl RootView {
 
     fn apply_stream_event(
         &mut self,
-        channel: &str,
+        key: &str,
         event: StreamEvent,
         volume: u8,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Look the slot up by channel rather than by a captured index: panes
+        // Look the slot up by key rather than by a captured index: panes
         // close while streams are still starting, and an index would go stale.
-        let Some(index) = self.slot_index(channel) else {
+        let Some(index) = self.slot_index(key) else {
             return;
         };
 
@@ -1208,14 +1392,31 @@ impl RootView {
                 url,
                 quality,
                 available,
+                playlist,
             } => {
-                match VideoStream::start(url, RENDER_WIDTH, RENDER_HEIGHT, volume) {
+                // What the player is handed: the relay for a live stream, or
+                // the recording's playlist and where to open it.
+                let playback = match (&self.slots[index].source, playlist) {
+                    (Source::Video(video), Some(playlist)) => Playback::Vod {
+                        playlist,
+                        start_at: self.slots[index].resume_at,
+                        label: format!("{}-{quality}", video.id),
+                    },
+                    (Source::Video(_), None) => {
+                        self.slots[index].state =
+                            StreamState::Failed("the recording came without a playlist".into());
+                        cx.notify();
+                        return;
+                    }
+                    (Source::Live, _) => Playback::Live { url },
+                };
+                match VideoStream::start(RENDER_WIDTH, RENDER_HEIGHT, volume, playback) {
                     Ok((stream, frames)) => {
                         let label = SharedString::from(quality);
                         let view = cx.new(|cx| {
                             VideoView::from_stream(stream, frames, label, available, window, cx)
                         });
-                        let owner = channel.to_string();
+                        let owner = key.to_string();
                         cx.subscribe_in(
                             &view,
                             window,
@@ -1234,6 +1435,13 @@ impl RootView {
                                 }
                                 VideoEvent::QualityRequested(name) => {
                                     if let Some(index) = this.slot_index(&owner) {
+                                        // A recording picks up where it was,
+                                        // not from the top.
+                                        let position = this.slots[index]
+                                            .video()
+                                            .map(|view| view.read(cx).position())
+                                            .unwrap_or(0.0);
+                                        this.slots[index].resume_at = position;
                                         this.slots[index].quality_override = Some(name.clone());
                                         this.slots[index].state = StreamState::Starting;
                                         this.start_stream(owner.clone(), window, cx);
@@ -1294,9 +1502,18 @@ impl RootView {
     /// nothing will replace it, so leaving it there is the bug this exists to
     /// fix — a finished stream looked exactly like a paused one. The pane keeps
     /// its chat, which is where people say goodnight.
-    fn stream_stopped(&mut self, channel: &str, reason: Stopped, cx: &mut Context<Self>) {
-        let Some(index) = self.slot_index(channel) else {
+    fn stream_stopped(&mut self, key: &str, reason: Stopped, cx: &mut Context<Self>) {
+        let Some(index) = self.slot_index(key) else {
             return;
+        };
+        // Where "watch again" and "try again" start a recording from: the
+        // top once it has finished, and where it got to when it failed.
+        self.slots[index].resume_at = match reason {
+            Stopped::Ended => 0.0,
+            Stopped::Failed(_) => self.slots[index]
+                .video()
+                .map(|view| view.read(cx).position())
+                .unwrap_or(0.0),
         };
         // streamlink outlives the stream it was serving: its external HTTP
         // server runs in the continuous mode by default, so it sits waiting
@@ -1539,7 +1756,14 @@ impl RootView {
 
     /// The rail, and everything it needs to know about what is already open.
     fn follows_rail(&mut self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let watching: Vec<String> = self.slots.iter().map(|slot| slot.channel.clone()).collect();
+        // Live panes only: a recording open beside the rail does not make
+        // its channel's row "watching".
+        let watching: Vec<String> = self
+            .slots
+            .iter()
+            .filter(|slot| slot.is_live())
+            .map(|slot| slot.channel.clone())
+            .collect();
         sidebar::rail(
             &self.follows,
             &self.avatars,
@@ -1685,15 +1909,20 @@ impl RootView {
             .border_color(theme::border());
 
         for (index, slot) in self.slots.iter().enumerate() {
-            let id = ElementId::from(SharedString::from(format!("mini-{}", slot.channel)));
+            let id = ElementId::from(SharedString::from(format!("mini-{}", slot.key)));
             // The name as the channel writes it, when the follows poll knows
             // it; the login is what the rest of the app keys on, and it is
-            // all a channel opened by name has.
-            let name = self
-                .follows
-                .iter()
-                .find(|stream| stream.user_login == slot.channel)
-                .map(|stream| stream.display_name.clone())
+            // all a channel opened by name has. A recording carries its
+            // channel's name with it.
+            let name = slot
+                .recording()
+                .map(|video| video.user_name.clone())
+                .or_else(|| {
+                    self.follows
+                        .iter()
+                        .find(|stream| stream.user_login == slot.channel)
+                        .map(|stream| stream.display_name.clone())
+                })
                 .unwrap_or_else(|| slot.channel.clone());
             let mut entry = div()
                 .id(id)
@@ -1849,6 +2078,13 @@ impl RootView {
             ));
 
         let width = self.body(window).width;
+        // Whether the channel whose page is open is on right now, which is
+        // what its bar offers beside the recordings: the stream, or the chat.
+        let channel_live = self
+            .discovery
+            .channel
+            .as_ref()
+            .is_some_and(|page| self.stream_info(&page.login).is_some());
 
         div()
             .size_full()
@@ -1876,6 +2112,7 @@ impl RootView {
                         &self.cache,
                         self.can_add(),
                         &self.scrolls,
+                        channel_live,
                         |this: &mut RootView, action, window, cx| {
                             this.on_browse_action(action, window, cx)
                         },
@@ -1892,7 +2129,15 @@ impl RootView {
         let info: Vec<Option<&LiveStream>> = self
             .slots
             .iter()
-            .map(|slot| self.stream_info(&slot.channel))
+            .map(|slot| {
+                // A recording's header speaks for the recording; the live
+                // numbers would be about a different broadcast.
+                if slot.is_live() {
+                    self.stream_info(&slot.channel)
+                } else {
+                    None
+                }
+            })
             .collect();
         let grid = div()
             .flex_1()
@@ -1911,17 +2156,16 @@ impl RootView {
                         return;
                     };
                     slot.state = StreamState::Starting;
-                    let channel = slot.channel.clone();
-                    this.start_stream(channel, window, cx);
+                    let key = slot.key.clone();
+                    this.start_stream(key, window, cx);
                     cx.notify();
                 },
                 |this: &mut RootView, index, cx| {
-                    let Some(channel) = this.slots.get(index).map(|slot| slot.channel.clone())
-                    else {
+                    let Some(key) = this.slots.get(index).map(|slot| slot.key.clone()) else {
                         return;
                     };
-                    if this.active.as_deref() != Some(channel.as_str()) {
-                        this.active = Some(channel);
+                    if this.active.as_deref() != Some(key.as_str()) {
+                        this.active = Some(key);
                         cx.notify();
                     }
                 },
@@ -1938,7 +2182,7 @@ impl RootView {
                     // window entirely, and the pane you last looked at is the
                     // one you meant.
                     if hovered {
-                        this.active = this.slots.get(index).map(|slot| slot.channel.clone());
+                        this.active = this.slots.get(index).map(|slot| slot.key.clone());
                     }
                     let over_video = this.slots.iter().any(|slot| slot.hovered);
                     this.nav.set(over_video);
@@ -2046,6 +2290,8 @@ impl Render for RootView {
             .on_action(cx.listener(Self::on_toggle_chat))
             .on_action(cx.listener(Self::on_volume_up))
             .on_action(cx.listener(Self::on_volume_down))
+            .on_action(cx.listener(Self::on_seek_back))
+            .on_action(cx.listener(Self::on_seek_forward))
             .on_action(cx.listener(Self::on_close_pane))
             .on_action(cx.listener(Self::on_go_browse))
             .on_action(cx.listener(Self::on_toggle_settings))

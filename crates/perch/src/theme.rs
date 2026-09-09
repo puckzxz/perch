@@ -158,6 +158,14 @@ pub fn border() -> Hsla {
     rgb(0x24242c).into()
 }
 
+/// The seek bar's rail: the part of a recording not yet played. It sits on
+/// the control bar's overlay, over live video, so it is a wash rather than a
+/// colour of its own, and a stronger one than a divider because a four-pixel
+/// line has to survive whatever the picture is doing behind it.
+pub fn seek_rail() -> Hsla {
+    rgba(0xffffff40).into()
+}
+
 /// Hairlines within a pane, e.g. between chat messages. Deliberately fainter
 /// than `border`, since separating peers needs less weight than separating
 /// regions.
@@ -378,6 +386,13 @@ pub const VIDEO_SHARE_MAX: f32 = 0.8;
 /// The grab area of a pane divider. Wider than the line it draws, because a
 /// 1px target is a game rather than a control.
 pub const DIVIDER_GRAB: f32 = 6.0;
+
+/// The seek bar's rail, its thumb, and the strip that takes the pointer. A
+/// four-pixel line is not a target, so the hit area is taller than the bar it
+/// holds, with the rail centred in it.
+pub const SEEK_RAIL: f32 = 4.0;
+pub const SEEK_THUMB: f32 = 12.0;
+pub const SEEK_HIT: f32 = 18.0;
 
 /// The live indicator's diameter. Small enough to read as a status mark
 /// beside a number rather than as a control.
