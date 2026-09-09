@@ -41,7 +41,12 @@ fn pane_id(channel: &str, role: &str) -> ElementId {
 pub enum StreamState {
     Starting,
     Playing(Entity<VideoView>),
+    /// The channel was not broadcasting when the pane opened.
     Offline,
+    /// It was, and then it stopped. Distinct from [`Offline`](Self::Offline)
+    /// because the two are different news: one is a channel you could not
+    /// watch, the other is one you were watching until a moment ago.
+    Ended,
     Failed(SharedString),
 }
 
@@ -86,23 +91,40 @@ struct Status {
     /// still and be read.
     working: bool,
     error: bool,
+    /// Whether there is anything to do about it. Not the same as `error`: a
+    /// stream that ended is not a fault, and asking for it again is still the
+    /// one useful move — a channel that dropped out comes back, and one that
+    /// is really finished says so through the offline state.
+    retry: bool,
 }
 
 fn status_message(slot: &Slot) -> Option<Status> {
-    let status = |text: SharedString, working, error| Status {
+    // Spelled out per state rather than through a four-argument constructor.
+    // Three of the four fields are booleans, and `(false, false, true)` at a
+    // call site says nothing about which state is which.
+    let waiting_on_it = |text: SharedString| Status {
         text,
-        working,
-        error,
+        working: true,
+        error: false,
+        retry: false,
+    };
+    let over = |text: SharedString| Status {
+        text,
+        working: false,
+        error: false,
+        retry: true,
     };
     match &slot.state {
         StreamState::Playing(_) => None,
-        StreamState::Starting => Some(status("starting stream…".into(), true, false)),
-        StreamState::Offline => Some(status(
-            format!("{} is offline", slot.channel).into(),
-            false,
-            false,
-        )),
-        StreamState::Failed(reason) => Some(status(reason.clone(), false, true)),
+        StreamState::Starting => Some(waiting_on_it("starting stream…".into())),
+        StreamState::Offline => Some(over(format!("{} is offline", slot.channel).into())),
+        StreamState::Ended => Some(over(format!("{} ended the stream", slot.channel).into())),
+        StreamState::Failed(reason) => Some(Status {
+            text: reason.clone(),
+            working: false,
+            error: true,
+            retry: true,
+        }),
     }
 }
 
@@ -257,11 +279,37 @@ fn chat_header<V: 'static>(
         .collect::<Vec<_>>()
         .join(" · ");
 
+    // What is actually on, which this header has never said: it knew who you
+    // were watching and how many others were, and not a word about what they
+    // were doing. The title and the game share one line, joined like `meta`
+    // above, rather than taking one each — a pane header is 340px wide, and a
+    // row of chrome here costs a row of chat in every pane on the page.
+    //
+    // A title is routinely longer than that line, so the whole of it — and the
+    // game under it — is a hover away, through the same builder the browse
+    // cards use.
+    let about: Vec<SharedString> = info
+        .into_iter()
+        .flat_map(|stream| [stream.title.clone(), stream.game_name.clone()])
+        .map(SharedString::from)
+        .filter(|text| !text.trim().is_empty())
+        .collect();
+    let about_line = about
+        .iter()
+        .map(SharedString::as_ref)
+        .collect::<Vec<_>>()
+        .join(" · ");
+
     // Whether this pane is showing a picture, which is not the same as whether
     // it exists: an offline or failed pane used to draw the app's only
     // saturated red beside its name while the video underneath said the channel
     // was not streaming.
     let playing = matches!(slot.state, StreamState::Playing(_));
+    // A stream that has finished takes its live numbers with it. They come
+    // from a list that will not know for up to a minute, and an uptime that
+    // goes on counting beside "ended the stream" is the same lie the frozen
+    // last frame used to tell.
+    let ended = matches!(slot.state, StreamState::Ended);
     // What the player is doing, read off the view rather than copied onto the
     // slot, so there is one source. These used to be visible only while the
     // pointer was over the video: a channel saved muted opened silent with
@@ -283,9 +331,11 @@ fn chat_header<V: 'static>(
         .flex_none()
         .w_full()
         .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(theme::GAP_TIGHT))
+        // A column now, because what is on is a line of its own under who is
+        // on. It does not fit beside them: the first row is already the name,
+        // the numbers, `muted`, `paused` and the close button.
+        .flex_col()
+        .gap(px(theme::GAP_WORD))
         .px(px(theme::ROW_PAD_X))
         .pb(px(theme::GAP_TIGHT))
         .border_b_1()
@@ -299,52 +349,80 @@ fn chat_header<V: 'static>(
         } else {
             theme::border()
         })
-        .when(playing, |header| {
-            // The same dot the browse cards use, for the same reason: it
-            // says the numbers beside it are live rather than a playback
-            // position.
-            header.child(controls::live_dot())
-        })
         .child(
-            // Chat here is read-only by design. This is the way out of that:
-            // the one thing the app deliberately cannot do, one click from the
-            // name of the channel you would be saying it in.
             div()
-                .id(pane_id(&slot.channel, "open"))
-                .flex_none()
-                .text_size(px(theme::TEXT_BODY))
-                .font_weight(theme::weight_title())
-                .text_color(theme::text())
-                .cursor_pointer()
-                .hover(|style| style.text_color(theme::accent()))
-                .tooltip(move |window, cx| {
-                    gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+                .w_full()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(theme::GAP_TIGHT))
+                .when(playing, |header| {
+                    // The same dot the browse cards use, for the same reason:
+                    // it says the numbers beside it are live rather than a
+                    // playback position.
+                    header.child(controls::live_dot())
                 })
-                .on_click(cx.listener(move |_, _event, _window, cx| cx.open_url(&url)))
-                .child(SharedString::from(name)),
+                .child(
+                    // Chat here is read-only by design. This is the way out of that:
+                    // the one thing the app deliberately cannot do, one click from the
+                    // name of the channel you would be saying it in.
+                    div()
+                        .id(pane_id(&slot.channel, "open"))
+                        .flex_none()
+                        .text_size(px(theme::TEXT_BODY))
+                        .font_weight(theme::weight_title())
+                        .text_color(theme::text())
+                        .cursor_pointer()
+                        .hover(|style| style.text_color(theme::accent()))
+                        .tooltip(move |window, cx| {
+                            gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
+                        })
+                        .on_click(cx.listener(move |_, _event, _window, cx| cx.open_url(&url)))
+                        .child(SharedString::from(name)),
+                )
+                .when(!ended && !meta.is_empty(), |header| {
+                    header.child(
+                        // `text_ellipsis` plus `line_clamp`, not `truncate`:
+                        // see the handoff on why the latter clips mid-glyph in
+                        // a flex row with no definite width, which is what this
+                        // row is.
+                        div()
+                            .min_w_0()
+                            .text_ellipsis()
+                            .line_clamp(1)
+                            .text_size(px(theme::TEXT_META))
+                            .text_color(theme::text_muted())
+                            .child(SharedString::from(meta)),
+                    )
+                })
+                .when(muted, |header| header.child(controls::tag("muted")))
+                .when(paused, |header| header.child(controls::tag("paused")))
+                .child(div().flex_1())
+                .when(closable, |header| {
+                    header.child(
+                        controls::destructive(pane_id(&slot.channel, "close"), "close").on_click(
+                            cx.listener(move |view, _event, window, cx| {
+                                on_close(view, index, window, cx)
+                            }),
+                        ),
+                    )
+                }),
         )
-        .when(!meta.is_empty(), |header| {
+        .when(!about.is_empty(), |header| {
             header.child(
-                // `text_ellipsis` plus `line_clamp`, not `truncate`: see the
-                // handoff on why the latter clips mid-glyph in a flex row
-                // with no definite width, which is what this row is.
+                // `w_full`, not `min_w_0`: this one is a child of a flex
+                // column, where a definite width is what the measure pass
+                // needs before it will ellipsise at all.
                 div()
-                    .min_w_0()
+                    .id(pane_id(&slot.channel, "about"))
+                    .w_full()
                     .text_ellipsis()
                     .line_clamp(1)
                     .text_size(px(theme::TEXT_META))
-                    .text_color(theme::text_muted())
-                    .child(SharedString::from(meta)),
-            )
-        })
-        .when(muted, |header| header.child(controls::tag("muted")))
-        .when(paused, |header| header.child(controls::tag("paused")))
-        .child(div().flex_1())
-        .when(closable, |header| {
-            header.child(
-                controls::destructive(pane_id(&slot.channel, "close"), "close").on_click(
-                    cx.listener(move |view, _event, window, cx| on_close(view, index, window, cx)),
-                ),
+                    .line_height(px(theme::LINE_TIGHT))
+                    .text_color(theme::text_dim())
+                    .tooltip(controls::full_text(about))
+                    .child(SharedString::from(about_line)),
             )
         })
 }
@@ -370,7 +448,7 @@ fn pane<V: 'static>(
     let video = match (&slot.state, status_message(slot)) {
         (StreamState::Playing(view), _) => view.clone().into_any_element(),
         (_, Some(status)) => {
-            let retryable = status.error;
+            let retryable = status.retry;
             // Title-sized: this is the only thing in a pane that can be a
             // thousand pixels wide, and body text in the middle of it read as
             // a caption on a picture that had not arrived rather than as the
@@ -399,9 +477,9 @@ fn pane<V: 'static>(
                 } else {
                     label.into_any_element()
                 })
-                // A stream that failed to start is the one pane state with
-                // something to do about it, and until now the only way to do it
-                // was to close the pane and open the channel again.
+                // Every state that is not going anywhere on its own gets
+                // this, and until it existed the only way to ask again was to
+                // close the pane and open the channel a second time.
                 .when(retryable, |pane| {
                     pane.child(
                         controls::pill(
@@ -584,10 +662,15 @@ fn pane<V: 'static>(
 
 /// The whole watch page, laid out in the room the `body` says it has. See
 /// [`layout::Body`] for why that is a type rather than the viewport.
+///
+/// `info` is what the app knows about each slot, in the same order — see
+/// `RootView::stream_info`. `None` for a channel opened by name that appears
+/// in none of the lists it has fetched, which is the one case a pane header
+/// has nothing to say beyond the name.
 #[allow(clippy::too_many_arguments)]
 pub fn page<V: 'static>(
     slots: &[Slot],
-    follows: &[LiveStream],
+    info: &[Option<&LiveStream>],
     body: layout::Body,
     chat_width: f32,
     video_share: f32,
@@ -631,13 +714,10 @@ pub fn page<V: 'static>(
             let Some(slot) = slots.get(index) else {
                 continue;
             };
-            let info = follows
-                .iter()
-                .find(|stream| stream.user_login == slot.channel);
             line = line.child(pane(
                 index,
                 slot,
-                info,
+                info.get(index).copied().flatten(),
                 cell,
                 active == Some(index),
                 on_close.clone(),

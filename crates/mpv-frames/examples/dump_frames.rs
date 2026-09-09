@@ -201,8 +201,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         for event in player.poll_events() {
             match event {
-                Event::EndFile => {
-                    eprintln!("mpv reported end-of-file (bad URL, or the stream ended)");
+                Event::EndFile { reason, error } => {
+                    let detail = error.unwrap_or_else(|| format!("{reason:?}"));
+                    eprintln!("mpv stopped playing: {detail} (bad URL, or the stream ended)");
                     if saved == 0 {
                         std::process::exit(1);
                     }

@@ -317,6 +317,17 @@ with `--stream-url` and playing it elsewhere brings the ads back. Hence
 (1440p, 4K) are silently absent from the quality list — they ride on HEVC/AV1 and
 streamlink filters to h264 by default.
 
+**streamlink does not exit when the stream ends.**
+`--player-external-http-continuous` defaults to `yes`, so when a broadcast
+finishes streamlink closes the HTTP response and goes back to waiting for the
+next request — forever, holding a process and a port. Its supervisor sends
+nothing, because nothing happened to it. The only signal that the stream is over
+is mpv's `MPV_EVENT_END_FILE`, which is why `mpv-frames` decodes that event's
+`reason` and `video.rs` publishes it: without that the pane kept its last frame
+on screen and a finished stream was indistinguishable from a paused one.
+`RootView::stream_stopped` drops the supervisor, which is what kills the
+process that is still waiting.
+
 ### The two Twitch tokens
 
 Unrelated credentials, easy to confuse, documented in `settings::Credentials`:
@@ -722,7 +733,12 @@ there. The split:
   actually showing a picture*, the channel name — which opens twitch.tv, the
   way out of a chat that is read-only by design — viewer count, uptime, and the
   pane's close control. With more than one pane its bottom border marks the one
-  the keyboard is talking to.
+  the keyboard is talking to. Under that row, what is actually on: the title and
+  the game, joined the way the numbers above them are, clamped to one line, with
+  the whole of both a hover away through `controls::full_text`. The live numbers
+  go when the stream ends — they come from a list that will not know for another
+  minute, and an uptime still counting beside "ended the stream" is the same lie
+  the frozen last frame used to tell.
 - **Over the video**, hover-revealed only: the playback bar (pause, mute,
   volume, quality), and in the top-left the "← follows" pill plus, when the rail
   is folded away, the control that brings it back. Point at the video and they
@@ -733,11 +749,18 @@ pointer in chat does not keep it on screen. An earlier arrangement put the
 channel name and close over the video at the pane's top-right; that is gone, and
 with it the collision that let one click both close a pane and navigate away.
 
-Viewer count and uptime come from the follows poll — the same `LiveStream` the
-browse cards use, looked up by login at render time rather than copied onto the
-`Slot`, so there is one source and it cannot go stale. A channel you opened by
-name but do not follow has no entry, and the header correctly shows neither.
-Filling that gap needs a `GET /helix/streams?user_login=…` per channel.
+Everything in the header but the name comes from a `LiveStream` — the same
+record the browse cards use — looked up by login at render time rather than
+copied onto the `Slot`, so there is one source and it cannot go stale.
+`RootView::stream_info` walks every live list the app holds, follows first and
+then popular, the open category and the last search, because a pane opened from
+Popular used to have no numbers and no title at all: the panes most likely to be
+somebody you had never watched before were the ones the header said least about.
+Resolved once per pane per frame in `watch_page`, not per pane inside the page,
+which would be the same walk four times over. A channel opened purely by name —
+the palette, the command line — appears in none of those lists, and the header
+correctly shows the name alone. Filling *that* gap needs a
+`GET /helix/streams?user_login=…` per channel.
 
 **There is no chatter count to be had.** The old
 `tmi.twitch.tv/group/user/<channel>/chatters` was shut down on 3 April 2023 and
@@ -1213,10 +1236,12 @@ Nothing here is agreed. The four items that were, plus chat backfill, the
 follows filter and window placement, are built. Ranked by what would be
 noticed, roughly:
 
-1. **Stream metadata for channels you do not follow.** The chat header's viewer
-   count and uptime come from the follows poll, so they are blank for anything
-   opened from popular, from search, or by name. `GET /helix/streams?user_login=…`
-   per open channel would fill it.
+1. **Stream metadata for channels in none of the lists.** The chat header now
+   reads from every live list the app holds, so a pane opened from popular, a
+   category or a search carries its numbers, title and game. A channel opened by
+   name still carries none: nothing has ever fetched it. `GET
+   /helix/streams?user_login=…` per open channel would fill it, and would also
+   keep a title that changes mid-stream honest, which the snapshot does not.
 2. **A stable order for the rail and the grid.** Both re-sort by viewers on every
    poll, so a row can move under the pointer while a menu is open. Keeping the
    order a channel arrived in for the session, or animating the move, are the
@@ -1397,6 +1422,14 @@ None of these is being worked on; all of them are real.
   `overflow_hidden` and eats its own padding on the way out. `text_ellipsis()`
   plus `line_clamp(1)` takes the wrapping path, where the width is known. Both
   were built and looked at; only the second one truncates.
+- Do not size a tooltip with `max_w`, or with a width on the tooltip itself.
+  Same rule as above, one layer further out: a tooltip is laid out against
+  `AvailableSpace::min_size()`, so there is no definite width to wrap against
+  and a long title renders as one line most of the way across the display. A
+  width on `gpui_component::tooltip::Tooltip` does not help either — it lands on
+  the library's own flex row, and the text inside is still measured at max
+  content. The width has to go on the container the text is a child of; see
+  `controls::full_text`, where all three were built and only the third wrapped.
 - Do not put a `flex_wrap` row of `min_w_0` children directly inside a flex
   column. gpui sizes it from its own content, and a line that can shrink to
   nothing measures one character wide — so it wraps one letter per line and

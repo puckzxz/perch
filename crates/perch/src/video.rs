@@ -19,7 +19,7 @@ use std::time::Duration;
 use futures::channel::mpsc;
 use gpui::RenderImage;
 use image::{Frame, RgbaImage};
-use mpv_frames::{Config, Event, Player};
+use mpv_frames::{Config, EndReason, Event, Player};
 use smallvec::smallvec;
 
 /// Upper bound on render size. 1440p is the highest Twitch tier, so anything
@@ -70,6 +70,39 @@ fn unpack_size(packed: u64) -> (u32, u32) {
     ((packed >> 32) as u32, packed as u32)
 }
 
+/// Why a stream stopped producing frames.
+///
+/// Live video has no natural end, so either of these means the pane is now
+/// showing a still: whatever is on screen is the last frame that arrived, and
+/// nothing will replace it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Stopped {
+    /// The source ran out, which for a broadcast means it is over.
+    Ended,
+    /// Playback failed, in mpv's own words.
+    Failed(String),
+}
+
+impl Stopped {
+    /// What one of mpv's end-of-file reasons means for a live stream, or
+    /// `None` for the ones that are not the stream stopping.
+    ///
+    /// A redirect is a playlist being expanded and playback continues through
+    /// it. `Stopped` is what this player being torn down looks like from
+    /// inside its own render loop, and a pane that is closing does not need
+    /// telling. An unknown reason is left alone on client.h's own advice.
+    fn from_end(reason: EndReason, error: Option<String>) -> Option<Self> {
+        match reason {
+            EndReason::Eof => Some(Self::Ended),
+            // mpv only fills in `error` for this reason, and not always.
+            EndReason::Error => Some(Self::Failed(
+                error.unwrap_or_else(|| "playback stopped".to_string()),
+            )),
+            EndReason::Stopped | EndReason::Redirect | EndReason::Unknown(_) => None,
+        }
+    }
+}
+
 /// A cloneable way to ask a running stream to render at a different size.
 ///
 /// Handed to the UI so a layout pass can report the pane's real size without
@@ -107,6 +140,13 @@ pub struct VideoStream {
     /// event: if the user drags a slider, only the final value matters and
     /// intermediate ones can be dropped without anyone noticing.
     volume: Arc<AtomicU8>,
+    /// Set once, when the stream stops for good; see [`Stopped`].
+    ///
+    /// A slot rather than a channel of its own, and read on the same wake the
+    /// frames use: the UI is already listening there, and one more `try_send`
+    /// after the slot is filled means the next wake it receives - whether this
+    /// one or the frame already queued ahead of it - finds the answer.
+    stopped: Arc<Mutex<Option<Stopped>>>,
     /// The stream's own resolution, packed like `target`, once mpv has decoded
     /// a frame; zero until then. The UI reads its aspect to size a stacked
     /// pane's video box, so a 4:3 or a vertical stream gets a box its shape
@@ -133,6 +173,7 @@ impl VideoStream {
         let target = Arc::new(AtomicU64::new(pack_size(width, height)));
         let paused = Arc::new(AtomicBool::new(false));
         let source_size = Arc::new(AtomicU64::new(0));
+        let stopped: Arc<Mutex<Option<Stopped>>> = Arc::new(Mutex::new(None));
         let (mut tx, rx) = mpsc::channel::<()>(1);
 
         // One `ImageId` for the whole stream, minted here rather than per frame.
@@ -160,6 +201,7 @@ impl VideoStream {
                 let target = target.clone();
                 let paused = paused.clone();
                 let source_size = source_size.clone();
+                let stopped = stopped.clone();
                 move || {
                     let config = Config {
                         audio: true,
@@ -260,7 +302,26 @@ impl VideoStream {
                                     }
                                     _ => {}
                                 },
-                                Event::EndFile => eprintln!("video: mpv reached end of file"),
+                                // The one place the end of a broadcast is
+                                // visible. streamlink's external HTTP server
+                                // runs in its continuous mode, so it stays up
+                                // waiting for the next request rather than
+                                // exiting when the stream ends - which means
+                                // its supervisor reports nothing, and without
+                                // this the last frame simply stays on screen
+                                // and reads as a pause.
+                                Event::EndFile { reason, error } => {
+                                    if let Some(reason) = Stopped::from_end(reason, error) {
+                                        eprintln!("video: stream stopped: {reason:?}");
+                                        *stopped.lock().unwrap() = Some(reason);
+                                        let _ = tx.try_send(());
+                                        // Nothing more will decode. Returning
+                                        // tears mpv down here rather than
+                                        // leaving a loop waiting on frames
+                                        // that cannot arrive.
+                                        return;
+                                    }
+                                }
                                 Event::Shutdown => {
                                     eprintln!("video: mpv shut down");
                                     return;
@@ -372,6 +433,7 @@ impl VideoStream {
                 target,
                 paused,
                 volume: volume_level,
+                stopped,
                 source: source_size,
                 thread: Some(thread),
             },
@@ -411,6 +473,11 @@ impl VideoStream {
         self.volume.load(Ordering::Relaxed)
     }
 
+    /// Why the stream stopped, if it has, taken so it is reported once.
+    pub fn take_stopped(&self) -> Option<Stopped> {
+        self.stopped.lock().unwrap().take()
+    }
+
     /// The newest frame, if one has arrived.
     pub fn latest_frame(&self) -> Option<Arc<RenderImage>> {
         self.latest.lock().unwrap().clone()
@@ -429,5 +496,37 @@ impl Drop for VideoStream {
         // frame loop. The thread sees `stop` on its next pass, drops the
         // player itself, and retires; nothing it holds is needed in order.
         drop(self.thread.take());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The reason is the whole point of reading mpv's end-of-file event: a
+    /// pane closing produces one too, and reporting that as the broadcast
+    /// ending would put "ended the stream" on a pane the user just closed.
+    #[test]
+    fn only_a_real_stop_ends_the_stream() {
+        assert_eq!(
+            Stopped::from_end(EndReason::Eof, None),
+            Some(Stopped::Ended)
+        );
+        assert_eq!(
+            Stopped::from_end(EndReason::Error, Some("loading failed".into())),
+            Some(Stopped::Failed("loading failed".into()))
+        );
+        // mpv promises the text only when it has one.
+        assert!(matches!(
+            Stopped::from_end(EndReason::Error, None),
+            Some(Stopped::Failed(_))
+        ));
+        for quiet in [
+            EndReason::Stopped,
+            EndReason::Redirect,
+            EndReason::Unknown(9),
+        ] {
+            assert_eq!(Stopped::from_end(quiet, None), None, "{quiet:?}");
+        }
     }
 }

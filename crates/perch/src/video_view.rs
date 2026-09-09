@@ -17,7 +17,7 @@ use gpui_component::slider::{Slider, SliderEvent, SliderState};
 use crate::controls;
 use crate::motion;
 use crate::theme;
-use crate::video::VideoStream;
+use crate::video::{Stopped, VideoStream};
 
 /// Where the quality menu rests above the control bar, and how far below that
 /// it starts when opening.
@@ -30,6 +30,10 @@ pub enum VideoEvent {
     /// The user picked a different quality. Switching means restarting
     /// streamlink, so the root handles it rather than the player.
     QualityRequested(String),
+    /// The stream stopped and will not resume. The root handles it because
+    /// what is left to do - retire this player, take streamlink down with it,
+    /// and say so in the pane - is all outside the player.
+    Stopped(Stopped),
 }
 
 pub struct VideoView {
@@ -95,7 +99,16 @@ impl VideoView {
         let pump = cx.spawn_in(window, async move |this, cx| {
             use futures::StreamExt as _;
             while frames.next().await.is_some() {
-                if this.update(cx, |_, cx| cx.notify()).is_err() {
+                // The same wake carries both: a new frame to draw, and - once
+                // - the news that there will not be another. See
+                // `VideoStream::stopped`.
+                let alive = this.update(cx, |this, cx| {
+                    if let Some(reason) = this.stream.take_stopped() {
+                        cx.emit(VideoEvent::Stopped(reason));
+                    }
+                    cx.notify();
+                });
+                if alive.is_err() {
                     break;
                 }
             }

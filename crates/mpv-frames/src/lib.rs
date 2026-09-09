@@ -70,12 +70,51 @@ impl Default for Config {
     }
 }
 
+/// Why mpv stopped playing the current file, from `mpv_end_file_reason`.
+///
+/// The distinction this exists to draw is [`Eof`](Self::Eof) — which on a live
+/// stream is the broadcast ending — from the reasons that are just a player
+/// being taken down, which arrive with the same event id while a pane closes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EndReason {
+    /// The source ran out.
+    Eof,
+    /// Stopped from outside: a playlist control, the quit command, shutdown.
+    Stopped,
+    /// Playback aborted. `Event::EndFile::error` carries mpv's description.
+    Error,
+    /// A playlist entry was replaced by its contents; playback continues.
+    Redirect,
+    /// A reason this build of libmpv has and this one does not. client.h asks
+    /// that these be treated as unknown rather than folded into a known one.
+    Unknown(c_int),
+}
+
+impl EndReason {
+    fn from_raw(reason: c_int) -> Self {
+        match reason {
+            ffi::MPV_END_FILE_REASON_EOF => Self::Eof,
+            ffi::MPV_END_FILE_REASON_STOP | ffi::MPV_END_FILE_REASON_QUIT => Self::Stopped,
+            ffi::MPV_END_FILE_REASON_ERROR => Self::Error,
+            ffi::MPV_END_FILE_REASON_REDIRECT => Self::Redirect,
+            other => Self::Unknown(other),
+        }
+    }
+}
+
 /// Something that happened inside mpv since the last poll.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
     FileLoaded,
     VideoReconfig,
-    EndFile,
+    /// Playback of the current file stopped. `reason` is what makes this
+    /// worth acting on: the end of a live stream and a teardown arrive as
+    /// the same event id.
+    EndFile {
+        reason: EndReason,
+        /// mpv's own words, when `reason` is [`EndReason::Error`].
+        error: Option<String>,
+    },
     Shutdown,
     /// A property registered with [`Player::observe_property`] changed. `value`
     /// is `None` while the property has no value at all - `width` before the
@@ -304,7 +343,10 @@ impl Player {
                 ffi::MPV_EVENT_NONE => break,
                 ffi::MPV_EVENT_FILE_LOADED => Event::FileLoaded,
                 ffi::MPV_EVENT_VIDEO_RECONFIG => Event::VideoReconfig,
-                ffi::MPV_EVENT_END_FILE => Event::EndFile,
+                // SAFETY: as for the property change below - libmpv
+                // guarantees `data` for this id, valid until the next
+                // `wait_event` on this handle.
+                ffi::MPV_EVENT_END_FILE => unsafe { self.end_file(raw) },
                 ffi::MPV_EVENT_SHUTDOWN => Event::Shutdown,
                 // SAFETY: for this event id libmpv guarantees `data` points at
                 // an `mpv_event_property`, valid until the next `wait_event`
@@ -328,6 +370,36 @@ impl Player {
             events.push(event);
         }
         events
+    }
+
+    /// Decode an `MPV_EVENT_END_FILE` into an [`Event`], copying mpv's error
+    /// text out before the next `wait_event` invalidates it.
+    ///
+    /// A method rather than a free function like [`property_change`], because
+    /// only `mpv_error_string` can name the error code, and that lives on the
+    /// loaded library.
+    ///
+    /// # Safety
+    /// `raw` must be the event `mpv_wait_event` just returned, with that id,
+    /// and no further `mpv_wait_event` call may have been made on the handle
+    /// since.
+    unsafe fn end_file(&self, raw: *mut ffi::MpvEvent) -> Event {
+        let data = unsafe { (*raw).data } as *const ffi::MpvEventEndFile;
+        // Older libmpv sent this event with no payload at all. Treating that
+        // as the end of the source is the reading that keeps a pane honest:
+        // whatever the reason, mpv has stopped and the picture is frozen.
+        let Some(end) = (unsafe { data.as_ref() }) else {
+            return Event::EndFile {
+                reason: EndReason::Eof,
+                error: None,
+            };
+        };
+        let reason = EndReason::from_raw(end.reason);
+        Event::EndFile {
+            reason,
+            error: (reason == EndReason::Error && end.error < 0)
+                .then(|| self.lib.error_text(end.error)),
+        }
     }
 
     /// Ask to be told, through [`poll_events`](Self::poll_events), whenever

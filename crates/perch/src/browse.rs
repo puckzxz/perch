@@ -14,7 +14,7 @@ use chrono::{DateTime, Utc};
 use emotes::ImageCache;
 use gpui::{
     div, img, prelude::*, px, rgb, AnyElement, App, Context, ImgResourceLoader, Resource,
-    ScrollHandle, SharedString, Window,
+    ScrollHandle, SharedString, Stateful, Window,
 };
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 use twitch_api::{Category, FollowedChannel, LiveStream};
@@ -267,7 +267,8 @@ pub fn format_viewers(count: u64) -> String {
     }
 }
 
-/// Text that gets one line and an ellipsis if it does not fit.
+/// Text that gets one line and an ellipsis if it does not fit, and gives up
+/// the rest of itself when the pointer rests on it.
 ///
 /// Not `.truncate()`, which is what this used to be and which quietly does not
 /// work here: gpui only ellipsises when the measure pass has a definite width,
@@ -275,8 +276,20 @@ pub fn format_viewers(count: u64) -> String {
 /// through the middle of a letter at the card's edge, eating its own padding on
 /// the way out. `line_clamp` takes the wrapping path instead, where the width
 /// is known, and stops after one line.
-fn one_line() -> gpui::Div {
-    div().w_full().text_ellipsis().line_clamp(1)
+///
+/// The tooltip is here rather than on the three call sites because the cutting
+/// is: every line built this way is a line that may have been cut, and the one
+/// that most often is — the title — is the one worth reading in full. It costs
+/// an id, which is why this takes one.
+fn one_line(id: impl Into<gpui::ElementId>, text: impl Into<SharedString>) -> Stateful<gpui::Div> {
+    let text = text.into();
+    div()
+        .id(id.into())
+        .w_full()
+        .text_ellipsis()
+        .line_clamp(1)
+        .tooltip(controls::full_text([text.clone()]))
+        .child(text)
 }
 
 /// Release the decoded previews that refreshes have replaced.
@@ -434,25 +447,22 @@ fn card<V: 'static>(
                 .gap(px(theme::GAP_TIGHT))
                 .p(px(theme::PANEL_PAD))
                 .child(
-                    one_line()
+                    one_line(("card-name", index), stream.display_name.clone())
                         .text_size(px(theme::TEXT_BODY))
                         .font_weight(theme::weight_title())
-                        .text_color(theme::text())
-                        .child(SharedString::from(stream.display_name.clone())),
+                        .text_color(theme::text()),
                 )
                 .child(
-                    one_line()
+                    one_line(("card-title", index), stream.title.clone())
                         .text_size(px(theme::TEXT_META))
                         .line_height(px(theme::LINE_TIGHT))
-                        .text_color(theme::text_muted())
-                        .child(SharedString::from(stream.title.clone())),
+                        .text_color(theme::text_muted()),
                 )
                 .child(
-                    one_line()
+                    one_line(("card-game", index), stream.game_name.clone())
                         .text_size(px(theme::TEXT_META))
                         .line_height(px(theme::LINE_TIGHT))
-                        .text_color(theme::text_dim())
-                        .child(SharedString::from(stream.game_name.clone())),
+                        .text_color(theme::text_dim()),
                 ),
         )
 }
@@ -848,11 +858,10 @@ fn category_card<V: 'static>(
         .child(cover)
         .child(
             div().p(px(theme::PANEL_PAD)).child(
-                one_line()
+                one_line(("category-name", index), category.name.clone())
                     .text_size(px(theme::TEXT_BODY))
                     .font_weight(theme::weight_title())
-                    .text_color(theme::text())
-                    .child(SharedString::from(category.name.clone())),
+                    .text_color(theme::text()),
             ),
         )
         .on_click(cx.listener(move |view, _event, window, cx| {

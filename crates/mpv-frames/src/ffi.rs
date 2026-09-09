@@ -36,6 +36,18 @@ pub const MPV_EVENT_FILE_LOADED: c_int = 8;
 pub const MPV_EVENT_VIDEO_RECONFIG: c_int = 17;
 pub const MPV_EVENT_PROPERTY_CHANGE: c_int = 22;
 
+// ── client.h: mpv_end_file_reason ────────────────────────────────────
+/// The source ran out. On a live stream served over HTTP, the broadcast ended.
+pub const MPV_END_FILE_REASON_EOF: c_int = 0;
+/// Stopped from outside, by a playlist control.
+pub const MPV_END_FILE_REASON_STOP: c_int = 2;
+/// Stopped by the quit command, or by the player shutting down.
+pub const MPV_END_FILE_REASON_QUIT: c_int = 3;
+/// Playback aborted; `MpvEventEndFile::error` says roughly why.
+pub const MPV_END_FILE_REASON_ERROR: c_int = 4;
+/// The entry was a playlist, and its contents replaced it.
+pub const MPV_END_FILE_REASON_REDIRECT: c_int = 5;
+
 // ── client.h: mpv_format (only the ones we use) ──────────────────────
 /// The property has no value right now; `mpv_event_property::data` is null.
 pub const MPV_FORMAT_NONE: c_int = 0;
@@ -62,6 +74,24 @@ pub struct MpvEvent {
     pub error: c_int,
     pub reply_userdata: u64,
     pub data: *mut c_void,
+}
+
+/// `MpvEvent::data` for `MPV_EVENT_END_FILE`.
+///
+/// Only the first two fields are read, but the whole struct is transcribed:
+/// the layout is what makes reading them sound, and a short struct would be a
+/// silent lie about it the day something wants `playlist_entry_id`.
+#[repr(C)]
+pub struct MpvEventEndFile {
+    /// One of the `MPV_END_FILE_REASON_*` values. client.h says to treat an
+    /// unknown one as unknown rather than as any of them.
+    pub reason: c_int,
+    /// A negative `MPV_ERROR_*` when `reason` is
+    /// [`MPV_END_FILE_REASON_ERROR`], and zero otherwise.
+    pub error: c_int,
+    pub playlist_entry_id: i64,
+    pub playlist_insert_id: i64,
+    pub playlist_insert_num_entries: c_int,
 }
 
 /// `MpvEvent::data` for `MPV_EVENT_PROPERTY_CHANGE`.

@@ -121,6 +121,14 @@ for the game stays that way without saying anything about the next one. The
 header keeps its place above the video, so a pane without chat still has its
 name and its close button.
 
+Above chat, each pane says who is on, how many are watching, how long they have
+been going, and what they are doing — the stream's title and its game, on a line
+of their own. Both are cut to fit; rest the pointer on them for the whole thing.
+
+When a stream ends the pane says so, and offers to try again. It does not simply
+stop on its last frame, which is indistinguishable from a pause. Chat stays
+connected either way, which is where the goodnights are.
+
 ### Requirements
 
 - **streamlink** on `PATH`, or `STREAMLINK_PATH` pointing at it.
@@ -189,7 +197,8 @@ asks the app, and nothing typed here leaves it.
 Cards are as wide as the window allows: the grid takes the room it has and
 divides it, rather than leaving whatever a fixed width could not use as a gutter
 down one side. Viewer count and uptime sit on the thumbnail; the name, title and
-game are underneath.
+game are underneath, each on one line and cut with an ellipsis where it does not
+fit. Resting the pointer on one shows the whole of it.
 
 Whatever is playing while you browse keeps playing, muted, in a bar along the
 bottom — each stream with its own close button, and one control back to

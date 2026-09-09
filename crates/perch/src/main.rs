@@ -53,7 +53,7 @@ use settings_view::{SettingsEvent, SettingsPanel};
 use streamlink::{StreamEvent, StreamOptions, StreamSupervisor};
 use twitch::{Request, TwitchEvent, TwitchService};
 use twitch_api::{FollowedChannel, LiveStream};
-use video::VideoStream;
+use video::{Stopped, VideoStream};
 use video_view::{VideoEvent, VideoView};
 use watch::{ResizeStart, Slot, StreamState, MAX_PANES};
 
@@ -1240,6 +1240,9 @@ impl RootView {
                                         cx.notify();
                                     }
                                 }
+                                VideoEvent::Stopped(reason) => {
+                                    this.stream_stopped(&owner, reason.clone(), cx)
+                                }
                             },
                         )
                         .detach();
@@ -1253,6 +1256,61 @@ impl RootView {
                 self.slots[index].state = StreamState::Failed(reason.into())
             }
         }
+        cx.notify();
+    }
+
+    /// Everything the app currently knows about a channel it is watching.
+    ///
+    /// Every live list it has fetched, not just your follows. The follows poll
+    /// used to be the only source, so a pane opened from Popular, from inside
+    /// a category or from a search had no viewer count and no title — the very
+    /// panes most likely to be somebody you had never watched before. Follows
+    /// come first because that list is the one kept fresh by a poll.
+    ///
+    /// This is a snapshot, not a subscription: a title changed mid-stream is
+    /// wrong here until whichever list it came from is fetched again.
+    fn stream_info(&self, channel: &str) -> Option<&LiveStream> {
+        let search = self
+            .discovery
+            .search
+            .as_ref()
+            .map(|results| results.streams.as_slice())
+            .unwrap_or_default();
+        [
+            self.follows.as_slice(),
+            self.discovery.popular.items.as_slice(),
+            self.discovery.streams.items.as_slice(),
+            search,
+        ]
+        .into_iter()
+        .flatten()
+        .find(|stream| stream.user_login == channel)
+    }
+
+    /// A playing stream stopped on its own: the broadcast ended, or mpv gave
+    /// up on it.
+    ///
+    /// Retiring the player is the point. Its last frame is still on screen and
+    /// nothing will replace it, so leaving it there is the bug this exists to
+    /// fix — a finished stream looked exactly like a paused one. The pane keeps
+    /// its chat, which is where people say goodnight.
+    fn stream_stopped(&mut self, channel: &str, reason: Stopped, cx: &mut Context<Self>) {
+        let Some(index) = self.slot_index(channel) else {
+            return;
+        };
+        // streamlink outlives the stream it was serving: its external HTTP
+        // server runs in the continuous mode by default, so it sits waiting
+        // for another request that is never coming, holding a process and a
+        // port. Dropping the supervisor kills it; dropping the pump stops
+        // listening to a worker that has nothing left to say. `try again`
+        // starts both again.
+        self.slots[index].supervisor = None;
+        self.slots[index].pump = None;
+        // Replacing the state drops the player, and with it the frozen frame.
+        self.slots[index].state = match reason {
+            Stopped::Ended => StreamState::Ended,
+            Stopped::Failed(message) => StreamState::Failed(message.into()),
+        };
         cx.notify();
     }
 
@@ -1828,13 +1886,21 @@ impl RootView {
     }
 
     fn watch_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Resolved here, for the panes on screen only: `stream_info` walks
+        // every list the app holds, and doing that per pane per frame inside
+        // the page would be the same walk four times over.
+        let info: Vec<Option<&LiveStream>> = self
+            .slots
+            .iter()
+            .map(|slot| self.stream_info(&slot.channel))
+            .collect();
         let grid = div()
             .flex_1()
             .min_w_0()
             .relative()
             .child(watch::page(
                 &self.slots,
-                &self.follows,
+                &info,
                 self.body(window),
                 self.settings.chat_width,
                 self.settings.video_share,

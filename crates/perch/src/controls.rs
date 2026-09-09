@@ -12,9 +12,69 @@
 //! does. Anything that needs a shape not on this list is a new variant here
 //! rather than a tenth `div`.
 
-use gpui::{div, prelude::*, px, ElementId, SharedString, Stateful};
+use gpui::{div, prelude::*, px, AnyView, App, ElementId, SharedString, Stateful, Window};
 
 use crate::theme;
+
+/// How wide a tooltip carrying full text is.
+///
+/// A width, not a maximum, and it goes on the text's own container rather than
+/// on the tooltip: gpui wraps only where the measure pass has a definite width,
+/// a tooltip is laid out against `AvailableSpace::min_size()`, and a width on
+/// the tooltip's outer box does not reach the text through the library's own
+/// flex row. Both other spellings were built and looked at — each drew a
+/// ninety-character title as one line running most of the way across a 4K
+/// window.
+///
+/// Roughly a card's text column, so a title reads at the width it was written
+/// under. Fixed rather than fitted to the text, because it cannot be: measuring
+/// a string needs the font, and a tooltip that is a different width every time
+/// is its own kind of noise.
+const TOOLTIP_WIDTH: f32 = 300.0;
+
+/// The whole of something a line had to cut short.
+///
+/// Titles are clamped to one line everywhere they appear, because a card is
+/// only so wide and a pane header is narrower — and the half of a title that
+/// did not fit is often the half that says what the stream is. This is the
+/// way to the rest of it, and there is one of them so that hovering a title on
+/// a browse card and hovering one in a pane header do the same thing.
+///
+/// Later lines are quieter than the first, which is what makes a title and the
+/// game under it read as one thing and its footnote rather than as two facts.
+/// Empty ones are dropped: a channel with no game set would otherwise get a
+/// blank row.
+pub fn full_text(
+    lines: impl IntoIterator<Item = SharedString>,
+) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
+    let lines: Vec<SharedString> = lines
+        .into_iter()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+
+    move |window, cx| {
+        let lines = lines.clone();
+        gpui_component::tooltip::Tooltip::element(move |_, _| {
+            div()
+                .w(px(TOOLTIP_WIDTH))
+                .flex()
+                .flex_col()
+                .gap(px(theme::GAP_WORD))
+                .children(lines.iter().enumerate().map(|(row, line)| {
+                    div()
+                        .text_size(px(theme::TEXT_META))
+                        .line_height(px(theme::LINE_TIGHT))
+                        .text_color(if row == 0 {
+                            theme::text()
+                        } else {
+                            theme::text_dim()
+                        })
+                        .child(line.clone())
+                }))
+        })
+        .build(window, cx)
+    }
+}
 
 /// What a control is *for*, which is what decides how it looks.
 #[derive(Clone, Copy, PartialEq, Eq)]
