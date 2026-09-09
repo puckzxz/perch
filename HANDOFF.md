@@ -52,7 +52,8 @@ crates/
   mpv-frames    libmpv loaded at runtime, software render to BGRA
   streamlink    supervises streamlink as a headless Twitch byte source, and
                 resolves a recording and reads its playlist
-  twitch-chat   read-only chat over anonymous IRC, plus the history backfill
+  twitch-chat   read-only chat over anonymous IRC, the history backfill, and
+                the replay of a recording's chat
   twitch-api    device-code sign-in, follows, top streams, categories, search
   emotes        Twitch/FFZ/BTTV/7TV resolution + disk image cache
   settings      persisted user settings
@@ -1128,6 +1129,76 @@ the cost of a missing arm is a row that is not tinted, not a dropped event.
 An announcement has no sentence at all and is nothing but body, which is why
 `ChatNotice` has both halves optional and why a notice with neither is dropped.
 
+**A recording's chat is replayed from Twitch's own query.** There is no Helix
+endpoint for it. `twitch_chat::replay` asks `POST https://gql.twitch.tv/gql`
+for the persisted query `VideoCommentsByOffsetOrCursor` (sha256
+`b70a3591ff0f4e0313d126c6a1502d79a1c02baebb288227c582044aa76adf6a`) — by
+`contentOffsetSeconds` for the first page and by `cursor` for the rest — with
+the mobile Client-ID `kd1unb4b3q4t58fwlpcbzcbnm76a8fp`. The website's own id
+(`kimne78kx3ncx6brgo4mv6wki5h1ko`) fails Twitch's integrity check on every
+cursor page (`IntegrityCheckFailed`); the mobile one is what TwitchDownloader's
+chat downloader has used since May 2023, and should it ever gain the same
+check, asking again by the last comment's offset and dropping duplicates by id
+is gap-free — the page for offset N starts a few seconds before N, measured —
+and is what `Source::next` falls back to. A page is fifty-odd comments spanning
+a few seconds of a busy chat, sorted by `createdAt`; `first` is capped at 100
+and does not enlarge one. Thirty requests back to back answered in about 0.3 s
+each with no throttling and no rate-limit headers; the replay keeps one in
+flight and paces refills at two a second regardless. An offset past the end
+answers `comments: null` beside a "service error", a highlight or an upload an
+empty list, and a bad id `video: null`. Replay exists for a broadcast still
+being recorded, about thirty seconds behind live. If the hash or the id ever
+stops working, the pane shows one notice row and the picture keeps playing;
+`crates/twitch-chat/src/fixtures/video-comments.json` is a page as Twitch sent
+it on 9 September 2026, trimmed, and is what the parser is tested against.
+
+**Emote positions in a replay count UTF-8 bytes.** `emote.from` and the range
+inside `emote.id` (`emoteID;from;to`) are byte indices: after `🎣 ` they say 5
+where the IRC tag says 2. They are not read. The `emotes` tag the pane already
+understands is built by counting characters across the fragments, and a test
+in each crate holds it to an emoji — one that the tag is built right, one that
+`emotes::tokenize` reads it back to the same place. A sub notice arrives as a
+plain comment — Twitch's sentence followed by the note, `source: CHAT`, no
+marker — and renders as one. A deleted account leaves a null `commenter`, and
+the comment is skipped.
+
+**A replay is scheduled, not streamed.** The thread reads the pane's position
+ten times a second, keeps a minute of comments ahead of it, and emits each as
+`ChatEvent::Message` when the position passes it. Twitch keeps offsets to the
+second, so a busy second's fifty lines are spread evenly across it rather than
+landing as a block on the tick — `Schedule::release`, which also counts the
+lines of that second already said, so a page that adds more does not bunch up
+what is left. A seek is a discontinuity: the position moved back by more than
+a second, or forward by more than the time that passed plus two. It reloads —
+the buffer goes, the twenty seconds before the target are fetched (at most
+three pages, then one ask at the target itself) — and only then does the pane
+get `ChatEvent::Reset` followed by that backlog, so a seek swaps one
+conversation for another rather than blanking the pane for the round trip. A
+pause is not a seek: the position simply stops. Once the comments run out the
+thread asks again every ten seconds from the last offset, which is how the
+replay of a broadcast still being recorded grows.
+
+**The position is the pane's, not the player's.** `video::PositionHandle` is
+made in `open_video`, lives on `Source::Video`, and is handed to every
+`VideoStream` the pane starts, so a quality change — a new player — carries
+the position across and the replay sees playback continue rather than a jump.
+"Watch again" starts a player at zero, which the replay reads as a seek back
+and reloads from the start. `VideoStream::start` writes the start position
+into the handle at once, so neither the bar nor the replay sits on the last
+player's position for the seconds a player takes to open.
+
+**Two events only a replay sends, and one that means something else.**
+`ChatEvent::Reset` clears the rows and keeps the colour map — same chat, same
+people. `ChatEvent::Unavailable` is one notice row — "no chat replay for this
+broadcast", or a video that is not on Twitch — after which the thread retires.
+`Connected` is the join on a live pane and puts a row in it; for a replay it is
+the buffer being ready, puts no row (a row stamped with today would draw a
+time break between two of last Tuesday's minutes), and is what turns an empty
+pane's pulsing "loading chat replay…" into a still "nothing said here yet". A
+request that fails says "chat replay interrupted: … — retrying" once per
+streak and backs off to thirty seconds; the pill at the bottom of a scrolled
+replay says "newest", since nothing about it is live.
+
 ### Keyboard
 
 There was no key handling at all until late on, and adding it is mostly about
@@ -1323,53 +1394,36 @@ the environment variable that overrides the search.
 ## What to build next
 
 Nothing here is agreed. The four items that were, plus chat backfill, the
-follows filter and window placement, are built. Ranked by what would be
-noticed, roughly:
+follows filter, window placement, past broadcasts and their chat replay, are
+built. Ranked by what would be noticed, roughly:
 
-1. **Chat replay for a recording.** Twitch has no Helix endpoint. The
-   website's own GQL query `VideoCommentsByOffsetOrCursor` (persisted hash
-   `b70a3591ff0f4e0313d126c6a1502d79a1c02baebb288227c582044aa76adf6a`) answers
-   anonymously by `contentOffsetSeconds`: about 55 comments a page, each with
-   login, display name, colour (nullable), text fragments carrying emote ids
-   and character ranges — the same character-index convention as the IRC
-   `emotes` tag — and `createdAt`. Cursor paging fails Twitch's integrity check
-   on the web Client-ID (`kimne78kx3ncx6brgo4mv6wki5h1ko`) and works on the
-   mobile one (`kd1unb4b3q4t58fwlpcbzcbnm76a8fp`), which TwitchDownloader has
-   used since May 2023; re-asking by the last offset and dropping duplicates by
-   id is a gap-free fallback, measured. Offsets past the end answer "service
-   error". Replay exists about thirty seconds behind live for a broadcast
-   still going. The shape: a replay module beside `twitch_chat::history`, a
-   thread that polls the pane's position and keeps a minute of comments ahead,
-   a clear-and-refetch on a seek; `Slot.chat` is already an `Option` and
-   `ChatView` needs a source enum. Archives only — a highlight's offsets mean
-   nothing.
-2. **Rewind a live stream.** A "from the start" control on a live pane that
+1. **Rewind a live stream.** A "from the start" control on a live pane that
    opens the in-progress archive in place. The archive is in the channel's
    page already; the shortcut is the work.
-3. **Remember where a recording was stopped**, per video, and resume there.
+2. **Remember where a recording was stopped**, per video, and resume there.
    `Slot::resume_at` is the seam.
-4. **Buffered range and muted-audio spans on the seek bar**, from
+3. **Buffered range and muted-audio spans on the seek bar**, from
    `demuxer-cache-time` and the `-muted` segments a playlist names.
-5. **Highlights and uploads** on the channel page, as a second list.
-6. **Stream metadata for channels in none of the lists.** The chat header now
+4. **Highlights and uploads** on the channel page, as a second list.
+5. **Stream metadata for channels in none of the lists.** The chat header now
    reads from every live list the app holds, so a pane opened from popular, a
    category or a search carries its numbers, title and game. A channel opened by
    name still carries none: nothing has ever fetched it. `GET
    /helix/streams?user_login=…` per open channel would fill it, and would also
    keep a title that changes mid-stream honest, which the snapshot does not.
-7. **A stable order for the rail and the grid.** Both re-sort by viewers on every
+6. **A stable order for the rail and the grid.** Both re-sort by viewers on every
    poll, so a row can move under the pointer while a menu is open. Keeping the
    order a channel arrived in for the session, or animating the move, are the
    two answers; neither is free.
-8. **Badges in the chat gutter** — sub, mod, VIP. The tags already arrive and
+7. **Badges in the chat gutter** — sub, mod, VIP. The tags already arrive and
    are parsed into the map; nothing reads them.
-9. **Reply context lines.** `reply-parent-*` tags arrive too.
-10. **Highlight rules** that wash the row background rather than colouring a
+8. **Reply context lines.** `reply-parent-*` tags arrive too.
+9. **Highlight rules** that wash the row background rather than colouring a
     word. The wash already exists for events.
-11. **Rebindable keys.** `keys::bindings` is a plain `Vec<KeyBinding>` built
+10. **Rebindable keys.** `keys::bindings` is a plain `Vec<KeyBinding>` built
     from constants; the work is a UI and a settings shape, not a mechanism.
-12. **Sign-out.** There is no way to clear a bad token except editing the field.
-13. **The auth-token cookie off argv.** It is documented as a tradeoff, but a
+11. **Sign-out.** There is no way to clear a bad token except editing the field.
+12. **The auth-token cookie off argv.** It is documented as a tradeoff, but a
    per-spawn `--config` file with a user-only ACL, deleted once streamlink has
    started, would take it out of the process list at the cost of one more file
    on disk. Not done here because it changes a documented decision.
@@ -1463,15 +1517,21 @@ None of these is being worked on; all of them are real.
 14. **The rail lists live channels only.** Offline follows are on the browse
     page and in the palette, which is the same gap as limit 9 seen from the
     other side.
-15. **A recording has no chat.** Its pane opens with chat hidden and `C` says
-    so. The replay is the first item under "What to build next".
-16. **A recording's thumbnail is 320x180**, the one size Twitch serves for a
+15. **A recording's thumbnail is 320x180**, the one size Twitch serves for a
     video, scaled up onto a card that is wider than that.
-17. **A jump inside a recording takes about a second**, because it is a reopen
+16. **A jump inside a recording takes about a second**, because it is a reopen
     rather than a seek — see the Recordings trap for why that is the only
     kind that works — and while a recording is still being made a viewer who
     has caught up with the edge waits up to ten seconds for the next segment,
     which is what the live pane is for.
+17. **Chat replay rides an unpublished Twitch query** and a Client-ID that is
+    not the app's own — see the Chat section. There is no sanctioned
+    alternative; the website itself has no other path, and TwitchDownloader
+    has depended on the same hash and id since 2023. If either stops working
+    the pane shows one notice row and the video keeps playing. And the replay
+    of a broadcast still being recorded runs about thirty seconds behind live,
+    so a viewer who has caught up with the edge sees no chat there; the live
+    pane is for that.
 
 ## Things not to redo
 

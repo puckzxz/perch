@@ -21,6 +21,7 @@ use crate::controls;
 use crate::layout;
 use crate::motion;
 use crate::theme;
+use crate::video::PositionHandle;
 use crate::video_view::VideoView;
 
 /// Beyond this, panes are too small to read chat in and the CPU cost stops
@@ -44,7 +45,13 @@ pub enum Source {
     /// A channel, as it broadcasts.
     Live,
     /// One of a channel's past broadcasts.
-    Video(Box<Video>),
+    Video {
+        video: Box<Video>,
+        /// Where in it the pane is. The pane's rather than the player's, so
+        /// it outlives a quality change, and so the chat replay can follow
+        /// it from the moment the pane opens — see [`PositionHandle`].
+        position: PositionHandle,
+    },
 }
 
 pub enum StreamState {
@@ -78,9 +85,10 @@ pub struct Slot {
     /// preference until the pane closes.
     pub quality_override: Option<String>,
     pub state: StreamState,
-    /// The chat beside the video. `None` for a recording, whose chat would be
-    /// a replay of what was said at the moment on screen, and that is a later
-    /// change; for now a recording is picture alone.
+    /// The chat beside the video: live, or replayed against where the
+    /// recording is. `None` only for a video whose chat cannot be replayed —
+    /// a highlight is cut from ranges of a broadcast, so its offsets mean
+    /// nothing — which the app does not list today.
     pub chat: Option<Entity<ChatView>>,
     /// Where a recording picks up when its player is started again: after a
     /// quality change, or from the top once it has finished.
@@ -118,7 +126,7 @@ impl Slot {
 
     pub fn recording(&self) -> Option<&Video> {
         match &self.source {
-            Source::Video(video) => Some(video),
+            Source::Video { video, .. } => Some(video),
             Source::Live => None,
         }
     }
@@ -129,7 +137,7 @@ impl Slot {
     pub fn label(&self) -> String {
         match &self.source {
             Source::Live => self.channel.clone(),
-            Source::Video(_) => format!("{} (replay)", self.channel),
+            Source::Video { .. } => format!("{} (replay)", self.channel),
         }
     }
 }
@@ -644,8 +652,8 @@ fn pane<V: 'static>(
     // asked mpv for a frame that shape, which fixed the wrong height in
     // place: a stacked pane after a rail toggle showed its picture at four
     // fifths of the box, with black under it, until the app was restarted.
-    // A recording has no chat to show yet, which lays out the way hidden
-    // chat does: the header strip, and the picture under it.
+    // A pane with no chat to show lays out the way hidden chat does: the
+    // header strip, and the picture under it.
     let chatless = slot.chat_hidden || slot.chat.is_none();
     let video_pane = div()
         .id(pane_id(&slot.key, "video"))

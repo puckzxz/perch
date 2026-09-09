@@ -17,11 +17,16 @@ settings = { path = "../settings" }
 gpui = "0.2.2"
 gpui-component = "0.5.1"
 anyhow = "1"
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+chrono.workspace = true
 futures.workspace = true
 # Must match gpui's own versions so RenderImage accepts our Frame.
 image = { version = "0.25", default-features = false }
 smallvec = "1"
+
+# Only for the test that holds a replayed comment's emote tag to what the
+# tokenizer reads: the app itself never parses JSON.
+[dev-dependencies]
+serde_json.workspace = true
 
 # Only for `dup2` in `diagnostics`, which has no std equivalent.
 [target.'cfg(unix)'.dependencies]

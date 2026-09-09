@@ -44,6 +44,9 @@ libloading = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+# Without its default features: `oldtime` and `wasmbind` are dead weight here,
+# and `clock` is the half that reads the system time.
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 ureq = { version = "3", features = ["json"] }
 
 # gpui is vendored, and this is the only reason why.

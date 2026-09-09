@@ -41,7 +41,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use browse::{Action, ChannelPage, Discovery, SearchResults, SignIn, Tab};
-use chat::ChatView;
+use chat::{ChatView, Feed};
 use emotes::ImageCache;
 use gpui::{
     div, point, prelude::*, px, size, AnyView, App, Application, Bounds, Context, ElementId,
@@ -55,8 +55,8 @@ use settings::{QualityPreference, Settings, WindowPlacement};
 use settings_view::{SettingsEvent, SettingsPanel};
 use streamlink::{StreamEvent, StreamOptions, StreamSupervisor};
 use twitch::{Request, TwitchEvent, TwitchService};
-use twitch_api::{FollowedChannel, LiveStream, Video};
-use video::{Playback, Stopped, VideoStream};
+use twitch_api::{FollowedChannel, LiveStream, Video, VideoKind};
+use video::{Playback, PositionHandle, Stopped, VideoStream};
 use video_view::{VideoEvent, VideoView};
 use watch::{ResizeStart, Slot, Source, StreamState, MAX_PANES};
 
@@ -519,10 +519,10 @@ impl RootView {
         let Some(index) = self.active_slot() else {
             return;
         };
-        // A recording has no chat to show yet. Say so, rather than toggling
+        // A video whose chat cannot be replayed. Say so, rather than toggling
         // a pane that would come up empty.
         if self.slots[index].chat.is_none() {
-            self.toast("no chat on a past broadcast yet", cx);
+            self.toast("no chat replay for this video", cx);
             return;
         }
         let hidden = !self.slots[index].chat_hidden;
@@ -1224,8 +1224,10 @@ impl RootView {
 
         let chat = cx.new(|cx| {
             ChatView::new(
-                channel.clone(),
-                self.settings.chat_history,
+                Feed::Live {
+                    channel: channel.clone(),
+                    history: self.settings.chat_history,
+                },
                 self.cache.clone(),
                 window,
                 cx,
@@ -1262,9 +1264,10 @@ impl RootView {
     ///
     /// The mirror of [`open_channel`](Self::open_channel), keyed by the video
     /// rather than the channel — a channel's stream and one of its recordings
-    /// are two panes, not one. No chat: that would be a replay of what was
-    /// said at the moment on screen, which is a later change, so for now the
-    /// pane is the picture and its header.
+    /// are two panes, not one. Its chat is the replay of what was said at the
+    /// moment on screen, following the pane's position from the moment it
+    /// opens, so the pane fills with the first seconds of chat while the
+    /// player is still being resolved.
     fn open_video(
         &mut self,
         video: Video,
@@ -1292,18 +1295,42 @@ impl RootView {
         }
 
         let channel = video.user_login.clone();
+        let position = PositionHandle::new();
+        // Archives only. A highlight is cut from ranges of a broadcast, so
+        // its offsets mean nothing to a replay; the app lists none today, and
+        // one that arrives plays as picture alone.
+        let chat = matches!(video.kind, VideoKind::Archive).then(|| {
+            cx.new(|cx| {
+                ChatView::new(
+                    Feed::Replay {
+                        video_id: video.id.clone(),
+                        channel: channel.clone(),
+                        room_id: video.user_id.clone(),
+                        position: position.clone(),
+                    },
+                    self.cache.clone(),
+                    window,
+                    cx,
+                )
+            })
+        });
         self.slots.push(Slot {
             key: key.clone(),
-            channel,
-            source: Source::Video(Box::new(video)),
+            channel: channel.clone(),
+            source: Source::Video {
+                video: Box::new(video),
+                position,
+            },
             quality_override: None,
             state: StreamState::Starting,
-            chat: None,
+            chat,
             resume_at: 0.0,
             supervisor: None,
             pump: None,
             hovered: false,
-            chat_hidden: true,
+            // Remembered against the channel, like a live pane's: hiding
+            // chat is a statement about the streamer, not the broadcast.
+            chat_hidden: self.settings.chat_hidden_for(&channel),
         });
 
         self.active = Some(key.clone());
@@ -1344,7 +1371,7 @@ impl RootView {
         // retires, and the player opens it itself. See the streamlink crate.
         let (supervisor, mut events) = match &self.slots[index].source {
             Source::Live => StreamSupervisor::start(channel.clone(), pane_height, options),
-            Source::Video(video) => {
+            Source::Video { video, .. } => {
                 StreamSupervisor::start_video(video.id.clone(), pane_height, options)
             }
         };
@@ -1397,12 +1424,13 @@ impl RootView {
                 // What the player is handed: the relay for a live stream, or
                 // the recording's playlist and where to open it.
                 let playback = match (&self.slots[index].source, playlist) {
-                    (Source::Video(video), Some(playlist)) => Playback::Vod {
+                    (Source::Video { video, position }, Some(playlist)) => Playback::Vod {
                         playlist,
                         start_at: self.slots[index].resume_at,
                         label: format!("{}-{quality}", video.id),
+                        position: position.clone(),
                     },
-                    (Source::Video(_), None) => {
+                    (Source::Video { .. }, None) => {
                         self.slots[index].state =
                             StreamState::Failed("the recording came without a playlist".into());
                         cx.notify();

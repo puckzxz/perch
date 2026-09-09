@@ -4088,6 +4088,7 @@ dependencies = [
  "image",
  "libc",
  "mpv-frames",
+ "serde_json",
  "settings",
  "smallvec",
  "streamlink",
@@ -6332,6 +6333,7 @@ dependencies = [
 name = "twitch-chat"
 version = "0.2.1"
 dependencies = [
+ "chrono",
  "futures",
  "futures-timer",
  "rustls",

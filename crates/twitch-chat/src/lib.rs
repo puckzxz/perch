@@ -1,4 +1,4 @@
-//! Read-only Twitch chat over IRC.
+//! Read-only Twitch chat over IRC, and the replay of a recording's chat.
 //!
 //! Twitch allows anonymous connections: log in as `justinfan<digits>` with no
 //! password and you get a read-only feed of any public channel. That means chat
@@ -9,10 +9,15 @@
 //! how video works and avoiding an executor seam with GPUI. Chat volume is low
 //! enough that a thread parked on a socket read costs nothing.
 //!
+//! A recording's chat comes from somewhere else entirely — see [`replay`] —
+//! but arrives through the same [`ChatEvent`]s, so a pane cannot tell which
+//! it is reading.
+//!
 //! No UI types appear in this crate's API.
 
 pub mod history;
 pub mod message;
+pub mod replay;
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
@@ -23,6 +28,7 @@ use std::time::{Duration, SystemTime};
 use futures::channel::mpsc;
 pub use history::is_login;
 pub use message::{ChatMessage, ChatNotice, IrcMessage, NoticeKind};
+pub use replay::Replay;
 
 const HOST: &str = "irc.chat.twitch.tv";
 const PORT: u16 = 6697;
@@ -46,8 +52,16 @@ const IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 const HEALTHY_SESSION: Duration = Duration::from_secs(60);
 
 /// Something worth showing in the chat pane.
+///
+/// One vocabulary for both sources. A live channel sends these off its
+/// socket; a recording's replay sends them from a buffer as the picture
+/// reaches each one, and two of them — [`Reset`](Self::Reset) and
+/// [`Unavailable`](Self::Unavailable) — only a replay ever sends.
 #[derive(Debug, Clone)]
 pub enum ChatEvent {
+    /// The source is up. Live, that is the join completing; for a replay,
+    /// that the comments around the position have been fetched and the pane
+    /// has everything there is to show for now, even if that is nothing.
     Connected {
         channel: String,
     },
@@ -64,7 +78,18 @@ pub enum ChatEvent {
     Cleared {
         login: Option<String>,
     },
+    /// The source failed and is being retried; for a replay, a request that
+    /// Twitch or the network did not answer.
     Disconnected {
+        reason: String,
+    },
+    /// The recording was repositioned: everything shown so far belongs to
+    /// another moment, and what follows starts over from the new one, its
+    /// backlog first. Never sent for a live channel.
+    Reset,
+    /// There will be nothing more from this source: the recording keeps no
+    /// chat, or is not on Twitch. Said once, in words meant for the pane.
+    Unavailable {
         reason: String,
     },
 }

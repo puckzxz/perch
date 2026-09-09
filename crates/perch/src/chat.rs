@@ -17,12 +17,13 @@ use gpui::{
 };
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 
-use twitch_chat::{ChatClient, ChatEvent, ChatMessage, ChatNotice, NoticeKind};
+use twitch_chat::{ChatClient, ChatEvent, ChatMessage, ChatNotice, NoticeKind, Replay};
 
 use crate::chat_text::{self, Kind};
 use crate::controls;
 use crate::motion;
 use crate::theme;
+use crate::video::PositionHandle;
 
 /// Emote names are worth showing on hover: half of chat is emotes, and knowing
 /// what one is called is the difference between reading a message and guessing.
@@ -134,10 +135,40 @@ struct Row {
     seq: u64,
 }
 
+/// Where a pane's messages come from.
+pub enum Feed {
+    /// A channel's chat as it happens, opening with `history` lines from
+    /// before — see [`twitch_chat::history`] for where they come from and
+    /// what asking costs; zero opens an empty pane.
+    Live { channel: String, history: usize },
+    /// The chat of a recording, replayed against where the recording is.
+    /// `room_id` is the channel's numeric id, for its third-party emotes.
+    Replay {
+        video_id: String,
+        channel: String,
+        room_id: String,
+        position: PositionHandle,
+    },
+}
+
+/// The thread behind a feed, held only so that dropping the view stops it.
+enum Link {
+    Live { _client: ChatClient },
+    Replay { _replay: Replay },
+}
+
 pub struct ChatView {
     rows: Vec<Row>,
     /// What to say while the pane is still empty. Formatted once.
-    channel: SharedString,
+    waiting: SharedString,
+    /// Whether this is a recording's chat rather than a channel's. The rows
+    /// are the same; what the pane says about itself is not.
+    replay: bool,
+    /// Whether the source has said it is up — see [`ChatEvent::Connected`].
+    /// Live, that puts a row in the pane, so the empty state is over; a
+    /// replay says nothing, and this is how an empty pane knows to stop
+    /// saying it is loading.
+    loaded: bool,
     /// Login to chat colour, filled in as people talk.
     ///
     /// Lets an `@mention` be drawn in the colour of the person it refers to,
@@ -173,23 +204,36 @@ pub struct ChatView {
     /// Name lookups for FFZ / BTTV / 7TV emotes, filled in as they load.
     emote_sets: EmoteSets,
     emote_loader: EmoteLoader,
-    _client: ChatClient,
+    _link: Link,
     _pump: Task<()>,
     _emote_pump: Task<()>,
 }
 
 impl ChatView {
-    /// `history` is how many messages from before now to open with; zero joins
-    /// an empty pane. See [`twitch_chat::history`] for where they come from and
-    /// what asking costs.
     pub fn new(
-        channel: String,
-        history: usize,
+        feed: Feed,
         cache: Arc<ImageCache>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let (client, mut events) = ChatClient::connect(&channel, history);
+        let (link, mut events, waiting, replay) = match feed {
+            Feed::Live { channel, history } => {
+                let (client, events) = ChatClient::connect(&channel, history);
+                let waiting = format!("connecting to #{channel}…");
+                (Link::Live { _client: client }, events, waiting, false)
+            }
+            Feed::Replay {
+                video_id,
+                channel,
+                room_id,
+                position,
+            } => {
+                let (replay, events) =
+                    Replay::start(video_id, channel, room_id, move || position.get());
+                let waiting = "loading chat replay…".to_string();
+                (Link::Replay { _replay: replay }, events, waiting, true)
+            }
+        };
 
         let pump = cx.spawn_in(window, async move |this, cx| {
             use futures::StreamExt as _;
@@ -264,7 +308,9 @@ impl ChatView {
 
         Self {
             rows: Vec::new(),
-            channel: SharedString::from(format!("connecting to #{channel}…")),
+            waiting: SharedString::from(waiting),
+            replay,
+            loaded: false,
             colors: std::collections::HashMap::new(),
             striped: false,
             next_seq: 0,
@@ -274,7 +320,7 @@ impl ChatView {
             _release: release,
             emote_sets,
             emote_loader,
-            _client: client,
+            _link: link,
             _pump: pump,
             _emote_pump: emote_pump,
         }
@@ -284,10 +330,21 @@ impl ChatView {
         match event {
             // "connected", not "joined #channel": the second is IRC's word for
             // it, and nobody reading a chat pane is thinking about IRC.
-            ChatEvent::Connected { channel } => self.push(
-                RowKind::Notice(format!("connected to {channel}'s chat").into()),
-                None,
-            ),
+            //
+            // Not a row on a replay. A live join is a moment in the log, and
+            // the row wears the time it happened; a replay's "connected" is
+            // its buffer being ready, which is not a moment in a chat that
+            // was said last Tuesday, and a row stamped with today would draw
+            // a break between two of Tuesday's minutes.
+            ChatEvent::Connected { channel } => {
+                self.loaded = true;
+                if !self.replay {
+                    self.push(
+                        RowKind::Notice(format!("connected to {channel}'s chat").into()),
+                        None,
+                    );
+                }
+            }
             ChatEvent::RoomState { room_id } => self.emote_loader.load_channel(room_id),
             ChatEvent::Message(message) => {
                 let sent_at = message.sent_at;
@@ -310,10 +367,27 @@ impl ChatView {
                 };
                 self.push(RowKind::Notice(text.into()), None);
             }
-            ChatEvent::Disconnected { reason } => self.push(
-                RowKind::Notice(format!("disconnected: {reason} — retrying").into()),
-                None,
-            ),
+            ChatEvent::Disconnected { reason } => {
+                let text = if self.replay {
+                    format!("chat replay interrupted: {reason} — retrying")
+                } else {
+                    format!("disconnected: {reason} — retrying")
+                };
+                self.push(RowKind::Notice(text.into()), None);
+            }
+            // The recording was repositioned. What is on screen was said
+            // around a moment the picture has left; the backlog for the new
+            // one follows on the same channel, so the pane is never both.
+            // The colours stay: it is the same chat, and the people in it
+            // have not changed.
+            ChatEvent::Reset => {
+                let count = self.rows.len();
+                self.rows.clear();
+                self.list.splice(0..count, 0);
+                self.striped = false;
+                self.loaded = false;
+            }
+            ChatEvent::Unavailable { reason } => self.push(RowKind::Notice(reason.into()), None),
         }
     }
 
@@ -778,23 +852,30 @@ impl Render for ChatView {
                     })),
             )
             .when(self.rows.is_empty(), |pane| {
-                pane.child(
-                    div()
-                        .absolute()
-                        .inset_0()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .text_size(px(theme::TEXT_META))
-                        .text_color(theme::text_dim())
-                        // Safe to pulse: this state always ends, either at the
-                        // join or at the first disconnect notice, and both put
-                        // a row in the list.
-                        .child(motion::waiting(
-                            "chat-connecting",
-                            div().child(self.channel.clone()),
-                        )),
-                )
+                let caption = div()
+                    .absolute()
+                    .inset_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_size(px(theme::TEXT_META))
+                    .text_color(theme::text_dim());
+                // A replay whose buffer is ready and empty is not loading: it
+                // is a quiet stretch of the broadcast, or its start, and the
+                // next message is on its way at the recording's own pace.
+                // Said plainly, and still, because that can last a while.
+                if self.replay && self.loaded {
+                    pane.child(caption.child("nothing said here yet"))
+                } else {
+                    // Safe to pulse: this state always ends, either at the
+                    // join or at the first disconnect notice, and both put
+                    // a row in the list — or, on a replay, at the buffer
+                    // being ready, which takes this branch away.
+                    pane.child(caption.child(motion::waiting(
+                        "chat-connecting",
+                        div().child(self.waiting.clone()),
+                    )))
+                }
             })
             .when(!at_live, |pane| {
                 pane.child(
@@ -809,7 +890,14 @@ impl Render for ChatView {
                         .child(
                             controls::pill(
                                 "chat-follow-live",
-                                "↓ jump to live",
+                                // Nothing about a replay is live; the
+                                // bottom of its pane is what has been said
+                                // so far.
+                                if self.replay {
+                                    "↓ newest"
+                                } else {
+                                    "↓ jump to live"
+                                },
                                 controls::Variant::Primary,
                             )
                             // Sits over messages, so it has to swallow the
@@ -822,5 +910,44 @@ impl Render for ChatView {
                         ),
                 )
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use emotes::{tokenize, Token};
+    use twitch_chat::replay::parse_page;
+
+    /// The tag a replay builds is read by the tokenizer the live pane uses,
+    /// and the two have to agree on what an index counts: characters. The
+    /// positions Twitch sends in the same answer count bytes, and would put
+    /// `Kappa` three characters late after an emoji.
+    #[test]
+    fn a_replayed_emote_lands_where_the_tokenizer_looks() {
+        let body = serde_json::json!([{ "data": { "video": { "id": "1", "comments": {
+            "edges": [{ "cursor": "c", "node": {
+                "id": "x", "contentOffsetSeconds": 7,
+                "commenter": { "id": "1", "login": "fisher", "displayName": "Fisher" },
+                "createdAt": "2026-09-08T14:01:56Z",
+                "message": { "fragments": [
+                    { "emote": null, "text": "🎣 " },
+                    { "emote": { "id": "25;5;9", "emoteID": "25", "from": 5 }, "text": "Kappa" },
+                    { "emote": null, "text": " nice" }
+                ], "userColor": null }
+            }}],
+            "pageInfo": { "hasNextPage": false }
+        }}}}]);
+        let page = parse_page(&body).unwrap();
+        let message = &page.comments[0].message;
+        let tokens = tokenize(&message.text, message.emotes.as_deref(), false);
+        let names: Vec<String> = tokens
+            .iter()
+            .map(|token| match token {
+                Token::Text(text) => format!("T:{text}"),
+                Token::Emote(emote) => format!("E:{}", emote.name),
+            })
+            .collect();
+        assert_eq!(names, ["T:🎣 ", "E:Kappa", "T: nice"]);
+        assert!(matches!(&tokens[1], Token::Emote(emote) if emote.url.contains("/25/")));
     }
 }

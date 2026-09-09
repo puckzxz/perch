@@ -6,11 +6,13 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true
-description = "Read-only Twitch chat over anonymous IRC."
+description = "Read-only Twitch chat over anonymous IRC, and the replay of a recording's chat."
 
 [dependencies]
 futures.workspace = true
 serde_json.workspace = true
+# Only to read the timestamps a chat replay carries, which are RFC 3339.
+chrono.workspace = true
 # Pin our own provider choice. The app also links rustls via gpui's tree, and
 # Cargo unifies features across the graph - with both ring and aws_lc_rs on,
 # rustls refuses to pick one and panics at ClientConfig::builder().

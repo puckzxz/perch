@@ -161,7 +161,9 @@ connected either way, which is where the goodnights are.
 Read-only, over anonymous IRC — no account, no token. Messages carry their
 emotes (Twitch, FFZ, BTTV and 7TV), links are clickable, `@mentions` are drawn
 in the colour of whoever is being addressed, and subs, gifts, raids and
-announcements appear as their own rows rather than being dropped.
+announcements appear as their own rows rather than being dropped. A past
+broadcast gets the same pane, replaying what was said as the picture reaches
+it — see [Past broadcasts](#past-broadcasts).
 
 The time is shown once a minute, as a break between messages, rather than once
 per row — in a channel where fifteen messages share a minute, a column of
@@ -243,10 +245,18 @@ names the broadcast, and opens it on twitch.tv; when the recording ends the pane
 says so and offers to start over. A channel's live stream and one of its
 recordings can be open side by side.
 
-There is no chat on a recording yet. Twitch's picture for a recording comes at
-one small size, so it is soft on a wide card. And without the auth-token cookie
-Twitch caps recordings at 1080p, as it does for anyone not signed in on the
-website; with it, whatever was broadcast.
+The chat plays back beside it: what was being said at the moment on screen,
+from Twitch's own copy of it, with the same emotes, links and colours as a live
+pane and the time breaks reading the broadcast's own clock. Jump somewhere else
+and the pane swaps to the conversation around the new moment, starting a little
+before it, so you land mid-chat rather than in a blank. `C` hides it, and that
+is remembered per channel the way it is for a live pane. A broadcast still being
+recorded has its replay too, running about thirty seconds behind live.
+
+Twitch's picture for a recording comes at one small size, so it is soft on a
+wide card. And without the auth-token cookie Twitch caps recordings at 1080p,
+as it does for anyone not signed in on the website; with it, whatever was
+broadcast.
 
 ## Settings
 
@@ -313,7 +323,7 @@ last bit instead, which is effectively free.
 crates/
   mpv-frames    libmpv loaded at runtime, software render to BGRA
   streamlink    supervises streamlink as a headless byte source
-  twitch-chat   read-only chat over anonymous IRC
+  twitch-chat   read-only chat over anonymous IRC; a recording's chat replayed
   twitch-api    device-code sign-in, follows, browsing and search
   emotes        Twitch/FFZ/BTTV/7TV resolution, disk image cache
   settings      persisted user settings

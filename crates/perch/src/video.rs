@@ -103,6 +103,9 @@ pub enum Playback {
         playlist: Playlist,
         start_at: f64,
         label: String,
+        /// Where the recording is, published for whoever follows it. The
+        /// pane's, not the stream's: see [`PositionHandle`].
+        position: PositionHandle,
     },
 }
 
@@ -163,6 +166,48 @@ impl SizeHandle {
     }
 }
 
+/// Where a recording is, shared between the render thread that learns it
+/// and whatever follows it: the seek bar, and the chat replay, which reads
+/// it a few times a second to know what to say next.
+///
+/// Made by whoever opens the pane rather than by the stream, and handed to
+/// each stream the pane starts, so a quality change — which is a new player
+/// — picks up the position the old one reached rather than starting the bar
+/// at zero, and the replay following it sees playback carry on rather than
+/// a jump. Whole milliseconds inside: an atomic cannot hold an `f64`, and
+/// nothing reads finer.
+#[derive(Clone, Default)]
+pub struct PositionHandle(Arc<AtomicU64>);
+
+impl PositionHandle {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Seconds into the recording. Zero until a player has said otherwise.
+    pub fn get(&self) -> f64 {
+        from_millis(self.0.load(Ordering::Relaxed))
+    }
+
+    fn set(&self, secs: f64) {
+        self.0.store(to_millis(secs), Ordering::Relaxed);
+    }
+}
+
+/// The same handle, not the same value: two panes on one recording each
+/// have their own.
+impl PartialEq for PositionHandle {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl std::fmt::Debug for PositionHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("PositionHandle").field(&self.get()).finish()
+    }
+}
+
 /// A running stream. Dropping this stops the render thread and tears down mpv.
 pub struct VideoStream {
     latest: Arc<Mutex<Option<Arc<RenderImage>>>>,
@@ -192,11 +237,11 @@ pub struct VideoStream {
     /// pane's video box, so a 4:3 or a vertical stream gets a box its shape
     /// rather than a 16:9 one with bars inside it.
     source: Arc<AtomicU64>,
-    /// Seconds into a recording, in milliseconds, as mpv last reported them —
-    /// counted from the start of the recording, not of the file the player
-    /// happens to be reading. Only ever written for [`Playback::Vod`]; a live
-    /// stream has no position anybody wants.
-    position: Arc<AtomicU64>,
+    /// Seconds into a recording, as mpv last reported them — counted from the
+    /// start of the recording, not of the file the player happens to be
+    /// reading. Only ever written for [`Playback::Vod`], whose pane it is
+    /// shared with; a live stream has no position anybody wants.
+    position: PositionHandle,
     /// A seek the UI has asked for and the render thread has not yet applied.
     ///
     /// A slot rather than a queue, like volume: only the last target matters,
@@ -228,7 +273,18 @@ impl VideoStream {
         let paused = Arc::new(AtomicBool::new(false));
         let source_size = Arc::new(AtomicU64::new(0));
         let stopped: Arc<Mutex<Option<Stopped>>> = Arc::new(Mutex::new(None));
-        let position = Arc::new(AtomicU64::new(0));
+        let position = match &playback {
+            Playback::Live { .. } => PositionHandle::new(),
+            // Said now rather than when the player reports: for the seconds
+            // it takes to open, the bar and the replay would otherwise sit on
+            // wherever the last player left the handle.
+            Playback::Vod {
+                position, start_at, ..
+            } => {
+                position.set(*start_at);
+                position.clone()
+            }
+        };
         let seek: Arc<Mutex<Option<f64>>> = Arc::new(Mutex::new(None));
         let live = matches!(playback, Playback::Live { .. });
         let extent = match &playback {
@@ -275,6 +331,7 @@ impl VideoStream {
                             playlist,
                             start_at,
                             label,
+                            ..
                         } => {
                             let extent = extent.expect("a recording has an extent");
                             match Recording::open(playlist, &label, start_at, extent) {
@@ -372,14 +429,12 @@ impl VideoStream {
                                     "height" => source_h = value.and_then(|v| v.parse().ok()),
                                     // Where a recording is: the player's
                                     // position in its file, plus where in the
-                                    // recording that file starts. Stored as
-                                    // whole milliseconds: an atomic cannot
-                                    // hold an `f64` and nothing reads finer.
+                                    // recording that file starts.
                                     "time-pos" => {
                                         let secs = value.and_then(|v| v.parse::<f64>().ok());
                                         if let (Some(secs), Some(recording)) = (secs, &recording) {
                                             if let Some(at) = recording.position(secs) {
-                                                position.store(to_millis(at), Ordering::Relaxed);
+                                                position.set(at);
                                             }
                                         }
                                     }
@@ -518,7 +573,7 @@ impl VideoStream {
                             // Said now rather than when the new file reports
                             // its first position, so the bar does not sit on
                             // the old one while the player reopens.
-                            position.store(to_millis(secs), Ordering::Relaxed);
+                            position.set(secs);
                             if let Err(e) = recording.reposition(&player, secs) {
                                 eprintln!("video: could not reposition: {e}");
                             }
@@ -610,7 +665,7 @@ impl VideoStream {
     /// Seconds into a recording, as mpv last reported. Zero on a live stream,
     /// which reports none.
     pub fn position(&self) -> f64 {
-        from_millis(self.position.load(Ordering::Relaxed))
+        self.position.get()
     }
 
     /// Ask a recording to jump to `secs`. Applied between frames, like volume;

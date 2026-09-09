@@ -70,6 +70,17 @@ fn main() {
                         others += 1;
                         println!("[disconnected] {reason}");
                     }
+                    // Only a recording's replay sends these, and this tails a
+                    // live channel; named rather than wildcarded so a new
+                    // event cannot go unnoticed here.
+                    ChatEvent::Reset => {
+                        others += 1;
+                        println!("[reset]");
+                    }
+                    ChatEvent::Unavailable { reason } => {
+                        others += 1;
+                        println!("[unavailable] {reason}");
+                    }
                 },
                 futures::future::Either::Left((None, _)) => {
                     println!("[event stream ended]");

@@ -140,14 +140,14 @@ pub const DEFAULT_COLORS: [u32; 15] = [
 
 /// Stable per-login colour. Twitch's own scheme is not public, so this only
 /// needs to be deterministic and evenly spread, not identical to the website.
-fn fallback_color(login: &str) -> u32 {
+pub(crate) fn fallback_color(login: &str) -> u32 {
     let hash = login
         .bytes()
         .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
     DEFAULT_COLORS[hash as usize % DEFAULT_COLORS.len()]
 }
 
-fn parse_hex_color(raw: &str) -> Option<u32> {
+pub(crate) fn parse_hex_color(raw: &str) -> Option<u32> {
     u32::from_str_radix(raw.strip_prefix('#')?, 16).ok()
 }
 
