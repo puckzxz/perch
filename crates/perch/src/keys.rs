@@ -28,7 +28,9 @@
 //! stops moving, and the other two are audible — so a flash of UI would only be
 //! telling you what you already know.
 
-use gpui::{actions, App, KeyBinding};
+use gpui::{actions, Action, App, KeyBinding};
+
+use crate::watch::MAX_PANES;
 
 actions!(
     perch,
@@ -63,8 +65,29 @@ actions!(
         SeekBack,
         /// Skip ahead in a past broadcast.
         SeekForward,
+        /// Point the keyboard at the next pane along, or the one before.
+        NextPane,
+        PreviousPane,
+        /// One step out of wherever the browse page has got to: a channel's
+        /// page, a search or a category closes; with none open, back to
+        /// whatever is playing.
+        Back,
     ]
 );
+
+/// Point the keyboard at the pane numbered `index`, counting from the top
+/// left. One action carrying the number rather than one per pane, so the
+/// bindings are a loop and the handler a lookup. `no_json` because the keymap
+/// here is code, not a file: nothing ever builds one of these from JSON.
+#[derive(Clone, PartialEq, Eq, Action)]
+#[action(namespace = perch, no_json)]
+pub struct ActivatePane {
+    pub index: usize,
+}
+
+/// The key for each pane, in grid order. Sized by `MAX_PANES` so a fifth
+/// pane could not arrive without a key to reach it.
+const PANE_KEYS: [&str; MAX_PANES] = ["1", "2", "3", "4"];
 
 /// How much one press moves the volume.
 ///
@@ -120,7 +143,7 @@ fn bindings() -> Vec<KeyBinding> {
     let browse = format!("{APP} && {BROWSE} && {TYPING}");
     let modal = format!("{APP} && {MODAL} && {TYPING}");
 
-    vec![
+    let mut bindings = vec![
         // Watching. Bare letters and arrows are safe here only because of the
         // guard: nothing on the watch page takes typed input.
         KeyBinding::new("space", TogglePlayback, Some(&watch)),
@@ -160,7 +183,21 @@ fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("f11", ToggleFullscreen, Some(&watch)),
         KeyBinding::new("f11", ToggleFullscreen, Some(&browse)),
         KeyBinding::new("escape", ToggleSettings, Some(&modal)),
-    ]
+        // Back, on the browse page: out of a list that has taken the page
+        // over, or to whatever is playing. The watch page's `escape` is the
+        // other direction, and the two never meet: each is scoped to its page.
+        KeyBinding::new("escape", Back, Some(&browse)),
+        // The pane the keys talk to, without reaching for the mouse: the next
+        // one along, or the one before.
+        KeyBinding::new("tab", NextPane, Some(&watch)),
+        KeyBinding::new("shift-tab", PreviousPane, Some(&watch)),
+    ];
+    // Or its number. Bare digits are safe here for the reason the letters
+    // are: nothing on the watch page takes typed input.
+    for (index, key) in PANE_KEYS.iter().enumerate() {
+        bindings.push(KeyBinding::new(key, ActivatePane { index }, Some(&watch)));
+    }
+    bindings
 }
 
 /// Install the keymap. Must run after `gpui_component::init`, which registers
@@ -215,7 +252,7 @@ macro_rules! secondary {
 /// way this table could still lie after the check below — the keystrokes
 /// normalise through `Keystroke::parse`, and the labels used to normalise
 /// through nothing at all.
-pub const SHORTCUTS: [(&[&str], &str, &str); 14] = [
+pub const SHORTCUTS: [(&[&str], &str, &str); 16] = [
     (&["space"], "Space", "Pause or resume"),
     (&["m"], "M", "Mute or unmute"),
     (&["c"], "C", "Show or hide this chat"),
@@ -223,8 +260,10 @@ pub const SHORTCUTS: [(&[&str], &str, &str); 14] = [
     (&["f", "f11"], "F / F11", "Fullscreen"),
     (&["up", "down"], "↑ / ↓", "Volume"),
     (&["left", "right"], "← / →", "Skip 10 s in a past broadcast"),
+    (&PANE_KEYS, "1 – 4", "Talk to that pane"),
+    (&["tab", "shift-tab"], "Tab", "The next pane"),
     (&["secondary-w"], secondary!("W"), "Close this pane"),
-    (&["escape"], "Esc", "Back to follows"),
+    (&["escape"], "Esc", "Back to follows, or to watching"),
     (&["secondary-f"], secondary!("F"), "Search"),
     (&["secondary-r"], secondary!("R"), "Refresh this list"),
     (&["secondary-,"], secondary!(","), "Settings"),
@@ -243,7 +282,7 @@ mod tests {
     /// symptom is "the key does nothing", which is a poor thing to debug.
     #[test]
     fn every_binding_and_every_context_parses() {
-        assert_eq!(bindings().len(), 20);
+        assert_eq!(bindings().len(), 27);
         for context in [CONTEXT_WATCH, CONTEXT_BROWSE, CONTEXT_MODAL] {
             KeyContext::parse(context)
                 .unwrap_or_else(|e| panic!("{context} is not a key context: {e}"));

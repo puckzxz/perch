@@ -1,8 +1,8 @@
 #!/bin/sh
-# Launch perch. Pass a channel to open it, or nothing to reopen the
-# last one. Builds first if the release binary is missing or out of date.
+# Launch perch. Pass a channel to open it, or nothing to open on the
+# follows page. Builds first if the release binary is missing or out of date.
 #
-#   ./run.sh              reopen the last channel
+#   ./run.sh              open on the follows page
 #   ./run.sh forsen       open a specific channel
 #   ./run.sh forsen --volume 30
 #

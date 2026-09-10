@@ -54,6 +54,8 @@ pub enum Request {
         user_id: Option<String>,
         after: Option<String>,
     },
+    /// One recording, by the id a link carries.
+    Video { id: String },
 }
 
 /// A page of a browse list, and what the UI should do with it.
@@ -123,6 +125,13 @@ pub enum TwitchEvent {
         login: String,
         user_id: String,
         videos: Listing<Video>,
+    },
+    /// The recording a link named, or why it could not be had. Its own
+    /// event rather than a `BrowseError`, because the link was not a browse
+    /// page's question and its failure belongs in a toast, not on the page.
+    Video {
+        id: String,
+        result: Result<Video, String>,
     },
     /// Sign-in itself failed, so nothing works.
     Error(String),
@@ -454,6 +463,14 @@ fn serve(
             user_id,
             after,
         } => channel_videos(client_id, token, login, user_id, after),
+        Request::Video { id } => {
+            let result = match twitch_api::video(client_id, token, &id) {
+                Ok(Some(video)) => Ok(video),
+                Ok(None) => Err("Twitch has no recording by that id".to_string()),
+                Err(e) => Err(e.to_string()),
+            };
+            Ok(TwitchEvent::Video { id, result })
+        }
     };
 
     let _ = tx.unbounded_send(result.unwrap_or_else(|e| TwitchEvent::BrowseError(e.to_string())));

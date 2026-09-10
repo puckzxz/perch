@@ -18,7 +18,7 @@ use std::path::PathBuf;
 
 /// Beside the image cache: reproducible, not worth roaming.
 pub fn log_path() -> PathBuf {
-    crate::image_cache_dir()
+    crate::root::image_cache_dir()
         .parent()
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir)

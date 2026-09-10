@@ -35,6 +35,12 @@ fn file_lock() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// How many channels [`Settings::recent`] remembers.
+///
+/// Enough for a week of evenings, and few enough that the palette's first
+/// screen is still mostly who is live.
+pub const RECENT_LIMIT: usize = 8;
+
 /// Which stream quality to pull.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "mode", content = "value", rename_all = "snake_case")]
@@ -220,8 +226,17 @@ pub struct Settings {
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub channel_prefs: BTreeMap<String, ChannelPrefs>,
     pub credentials: Credentials,
-    /// Reopened on launch when no channel is given on the command line.
-    pub last_channel: Option<String>,
+    /// The channels watched most recently, newest first and at most
+    /// [`RECENT_LIMIT`] of them, by [`channel_key`]. What the palette offers
+    /// before anything has been typed: the most common thing to open is what
+    /// was open yesterday.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent: Vec<String>,
+    /// What `recent` was before it was a list. Every build up to 0.2.1 wrote
+    /// the last channel opened here and nothing ever read it back; it is
+    /// folded into `recent` on load and never written again.
+    #[serde(default, skip_serializing)]
+    last_channel: Option<String>,
     /// Width of the chat pane when it sits beside the video. There is no
     /// height counterpart: when chat sits below the video it takes whatever the
     /// video leaves, which on a tall window is the point.
@@ -279,6 +294,7 @@ impl Default for Settings {
             volume: 10,
             credentials: Credentials::default(),
             channel_prefs: BTreeMap::new(),
+            recent: Vec::new(),
             last_channel: None,
             chat_width: 340.0,
             // Enough that a busy channel opens mid-conversation and a quiet one
@@ -414,6 +430,31 @@ impl Settings {
         true
     }
 
+    /// Put `channel` at the front of the recently watched list.
+    ///
+    /// Returns whether anything changed, so opening the channel that is
+    /// already first does not rewrite the file. Keyed like everything else,
+    /// so `Forsen` and `forsen` are one entry.
+    pub fn note_watched(&mut self, channel: &str) -> bool {
+        let key = channel_key(channel);
+        if self.recent.first() == Some(&key) {
+            return false;
+        }
+        self.recent.retain(|login| *login != key);
+        self.recent.insert(0, key);
+        self.recent.truncate(RECENT_LIMIT);
+        true
+    }
+
+    /// Fold a pre-0.2.2 file's single last channel into the list.
+    fn adopt_last_channel(&mut self) {
+        if let Some(last) = self.last_channel.take() {
+            if self.recent.is_empty() {
+                self.recent.push(channel_key(&last));
+            }
+        }
+    }
+
     /// Drop per-channel entries that remember nothing.
     ///
     /// Run on load and before every save, so a file written by an older build
@@ -453,6 +494,7 @@ impl Settings {
             source,
         })?;
         settings.prune_empty_prefs();
+        settings.adopt_last_channel();
         Ok(settings)
     }
 
@@ -591,7 +633,7 @@ mod tests {
         let settings = Settings {
             volume: 42,
             quality: QualityPreference::Fixed("720p60".into()),
-            last_channel: Some("forsen".into()),
+            recent: vec!["forsen".into()],
             channel_prefs: BTreeMap::from([(
                 "forsen".to_string(),
                 ChannelPrefs {
@@ -672,6 +714,52 @@ mod tests {
         assert_eq!(
             stored.credentials.client_id.as_deref(),
             Some("a-different-app")
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Newest first, no repeats, and a bounded length: the three things a
+    /// "recently watched" list has to get right.
+    #[test]
+    fn recently_watched_is_newest_first_without_repeats() {
+        let mut settings = Settings::default();
+        assert!(settings.note_watched("forsen"));
+        assert!(settings.note_watched("xqc"));
+        assert_eq!(settings.recent, ["xqc", "forsen"]);
+        assert!(!settings.note_watched("xqc"), "already first");
+        assert!(settings.note_watched("Forsen"));
+        assert_eq!(settings.recent, ["forsen", "xqc"], "one entry per channel");
+
+        for n in 0..(RECENT_LIMIT * 2) {
+            settings.note_watched(&format!("channel{n}"));
+        }
+        assert_eq!(settings.recent.len(), RECENT_LIMIT);
+        assert_eq!(
+            settings.recent[0],
+            format!("channel{}", RECENT_LIMIT * 2 - 1)
+        );
+    }
+
+    /// Builds up to 0.2.1 wrote one `last_channel` and read it back nowhere.
+    /// It becomes the list's first entry, once, and is not written again.
+    #[test]
+    fn an_old_last_channel_becomes_the_recent_list() {
+        let path = temp_file("last-channel");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, r#"{"last_channel": "Forsen"}"#).unwrap();
+
+        let loaded = Settings::load(&path).unwrap();
+        assert_eq!(loaded.recent, ["forsen"]);
+
+        loaded.save(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !text.contains("last_channel"),
+            "the old field came back: {text}"
+        );
+        assert!(
+            text.contains("\"recent\""),
+            "the list was not written: {text}"
         );
         let _ = std::fs::remove_file(&path);
     }

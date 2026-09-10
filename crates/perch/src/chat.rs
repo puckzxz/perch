@@ -133,6 +133,10 @@ struct Row {
     /// time the backlog drains. Element ids inside a row are built from this,
     /// so a link keeps its hover state while messages arrive above it.
     seq: u64,
+    /// A moderator has since deleted it. Kept and greyed rather than removed:
+    /// the replies around it still refer to it, and a row that vanishes from
+    /// under the eye reads as the pane skipping.
+    deleted: bool,
 }
 
 /// Where a pane's messages come from.
@@ -204,6 +208,13 @@ pub struct ChatView {
     /// Name lookups for FFZ / BTTV / 7TV emotes, filled in as they load.
     emote_sets: EmoteSets,
     emote_loader: EmoteLoader,
+    /// Whether new rows are being held back because the pointer is over the
+    /// pane. A list that moves under the pointer is a link you cannot click
+    /// and a line you cannot finish, so while the pane is pointed at and
+    /// following live, arrivals wait in `held` and land when it leaves. See
+    /// [`sync_hold`](Self::sync_hold).
+    hold: bool,
+    held: Vec<(RowKind, Option<u64>)>,
     _link: Link,
     _pump: Task<()>,
     _emote_pump: Task<()>,
@@ -320,6 +331,8 @@ impl ChatView {
             _release: release,
             emote_sets,
             emote_loader,
+            hold: false,
+            held: Vec::new(),
             _link: link,
             _pump: pump,
             _emote_pump: emote_pump,
@@ -339,7 +352,7 @@ impl ChatView {
             ChatEvent::Connected { channel } => {
                 self.loaded = true;
                 if !self.replay {
-                    self.push(
+                    self.append(
                         RowKind::Notice(format!("connected to {channel}'s chat").into()),
                         None,
                     );
@@ -349,7 +362,7 @@ impl ChatView {
             ChatEvent::Message(message) => {
                 let sent_at = message.sent_at;
                 self.colors.insert(message.login.clone(), message.color);
-                self.push(RowKind::Message(message), sent_at)
+                self.append(RowKind::Message(message), sent_at)
             }
             ChatEvent::Notice(notice) => {
                 let sent_at = notice.sent_at;
@@ -358,14 +371,14 @@ impl ChatView {
                 if let Some(body) = &notice.body {
                     self.colors.insert(body.login.clone(), body.color);
                 }
-                self.push(RowKind::Event(notice), sent_at)
+                self.append(RowKind::Event(notice), sent_at)
             }
             ChatEvent::Cleared { login } => {
                 let text = match login {
                     Some(who) => format!("{who} was timed out or banned"),
                     None => "chat was cleared".to_string(),
                 };
-                self.push(RowKind::Notice(text.into()), None);
+                self.append(RowKind::Notice(text.into()), None);
             }
             ChatEvent::Disconnected { reason } => {
                 let text = if self.replay {
@@ -373,7 +386,7 @@ impl ChatView {
                 } else {
                     format!("disconnected: {reason} — retrying")
                 };
-                self.push(RowKind::Notice(text.into()), None);
+                self.append(RowKind::Notice(text.into()), None);
             }
             // The recording was repositioned. What is on screen was said
             // around a moment the picture has left; the backlog for the new
@@ -383,11 +396,21 @@ impl ChatView {
             ChatEvent::Reset => {
                 let count = self.rows.len();
                 self.rows.clear();
+                self.held.clear();
                 self.list.splice(0..count, 0);
                 self.striped = false;
                 self.loaded = false;
             }
-            ChatEvent::Unavailable { reason } => self.push(RowKind::Notice(reason.into()), None),
+            // Greyed where it stands — see `Row::deleted`. One still waiting
+            // on the pointer was never shown, and is not shown now.
+            ChatEvent::Deleted { id } => {
+                let deleted = |kind: &RowKind| matches!(kind, RowKind::Message(message) if message.id.as_deref() == Some(id.as_str()));
+                for row in self.rows.iter_mut().filter(|row| deleted(&row.kind)) {
+                    row.deleted = true;
+                }
+                self.held.retain(|(kind, _)| !deleted(kind));
+            }
+            ChatEvent::Unavailable { reason } => self.append(RowKind::Notice(reason.into()), None),
         }
     }
 
@@ -451,6 +474,7 @@ impl ChatView {
             striped: self.striped,
             stamp: clock(sent_at),
             seq: self.next_seq,
+            deleted: false,
         });
         let count = self.rows.len();
         self.list.splice(count - 1..count - 1, 1);
@@ -460,6 +484,41 @@ impl ChatView {
             self.rows.drain(0..excess);
             self.list.splice(0..excess, 0);
         }
+    }
+
+    /// Add a row, or hold it back while the pointer is over the pane.
+    fn append(&mut self, kind: RowKind, sent_at: Option<u64>) {
+        if self.hold {
+            self.held.push((kind, sent_at));
+        } else {
+            self.push(kind, sent_at);
+        }
+    }
+
+    /// Hold new rows back while the pointer is over a pane that is following
+    /// live, and let them land the moment it is not.
+    ///
+    /// A chat that moves under the pointer is a link that moves as you reach
+    /// for it and a line that scrolls away as you read it, which is what
+    /// every chat client pauses for. Holding the rows rather than pinning the
+    /// list is what makes this cheap and safe: nothing about the list changes
+    /// while it is held, so there is no scroll position to keep in step, and
+    /// the rows arrive on release the way a burst of chat always does. A pane
+    /// scrolled back is left alone — its position is already held, by the
+    /// reader, and rows can land below it without moving anything.
+    ///
+    /// `over` is measured, not reported, like every hover in this app: the
+    /// list's bounds from the last layout against the pointer now, so a
+    /// pointer that left the window without a move event still releases the
+    /// rows at the next repaint.
+    fn sync_hold(&mut self, over: bool) {
+        let hold = over && self.at_live();
+        if !hold && !self.held.is_empty() {
+            for (kind, sent_at) in std::mem::take(&mut self.held) {
+                self.push(kind, sent_at);
+            }
+        }
+        self.hold = hold;
     }
 
     /// The frame every row shares.
@@ -708,10 +767,16 @@ impl ChatView {
     /// to get the same emotes, links and mention colouring as anything else
     /// that person says.
     fn message_line(&self, row: &Row, message: &ChatMessage, cx: &mut Context<Self>) -> gpui::Div {
-        let name_color = theme::readable(message.color);
+        // A deleted message keeps its place and loses its colour: greyed all
+        // through, name included, so it reads as struck rather than as said.
+        let name_color = if row.deleted {
+            theme::text_dim()
+        } else {
+            theme::readable(message.color)
+        };
         // An action is written in the speaker's colour; a normal message is
         // not, or a chat of many voices becomes a chat of many colours.
-        let text_color: gpui::Hsla = if message.is_action {
+        let text_color: gpui::Hsla = if message.is_action || row.deleted {
             name_color
         } else {
             theme::text()
@@ -814,17 +879,36 @@ impl ChatView {
             }
         }
 
+        if row.deleted {
+            line = line.child(controls::tag("deleted"));
+        }
+
         line
     }
 }
 
 impl Render for ChatView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let this = cx.entity().downgrade();
 
+        // Where the pointer is, against where the list was last laid out.
+        // Before `at_live` is read: releasing held rows changes it.
+        let over = window.is_window_hovered()
+            && self
+                .list
+                .viewport_bounds()
+                .contains(&window.mouse_position());
+        self.sync_hold(over);
         let at_live = self.at_live();
+        let holding = !self.held.is_empty();
 
         div()
+            .id("chat-pane")
+            // Only to wake a repaint when the pointer arrives or leaves; the
+            // value is not trusted, for the reasons `VideoView::hovered`
+            // gives. Without it a quiet channel would not notice the pointer
+            // going until the next message did.
+            .on_hover(cx.listener(|_, _: &bool, _window, cx| cx.notify()))
             .relative()
             .size_full()
             .text_size(px(theme::TEXT_BODY))
@@ -876,6 +960,22 @@ impl Render for ChatView {
                         div().child(self.waiting.clone()),
                     )))
                 }
+            })
+            // Rows are waiting on the pointer. Said quietly, where the
+            // jump-to-live pill goes — which is empty whenever this is true,
+            // since rows are only held while the pane is following live.
+            .when(holding, |pane| {
+                pane.child(
+                    div()
+                        .absolute()
+                        .bottom(px(theme::GAP))
+                        .left_0()
+                        .right_0()
+                        .flex()
+                        .flex_row()
+                        .justify_center()
+                        .child(controls::waiting("chat paused")),
+                )
             })
             .when(!at_live, |pane| {
                 pane.child(

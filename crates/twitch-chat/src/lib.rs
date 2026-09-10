@@ -78,6 +78,12 @@ pub enum ChatEvent {
     Cleared {
         login: Option<String>,
     },
+    /// A moderator deleted one message, named by its `id` tag. It stays in
+    /// the pane, greyed, rather than vanishing: the conversation around it
+    /// still refers to it.
+    Deleted {
+        id: String,
+    },
     /// The source failed and is being retried; for a replay, a request that
     /// Twitch or the network did not answer.
     Disconnected {
@@ -245,6 +251,9 @@ fn event_for(irc: &IrcMessage) -> Option<ChatEvent> {
         "CLEARCHAT" => Some(ChatEvent::Cleared {
             login: irc.param(1).map(str::to_string),
         }),
+        "CLEARMSG" => irc
+            .tag("target-msg-id")
+            .map(|id| ChatEvent::Deleted { id: id.to_string() }),
         _ => None,
     }
 }
@@ -428,5 +437,22 @@ fn session(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A deletion names the message, not the person: the row it points at is
+    /// the one to grey, and a `CLEARMSG` naming nothing is nothing to show.
+    #[test]
+    fn a_deleted_message_is_named_by_its_id() {
+        let line = r"@login=someone;room-id=1;target-msg-id=abc-123;tmi-sent-ts=1 :tmi.twitch.tv CLEARMSG #bar :the message";
+        let irc = message::parse_line(line).unwrap();
+        assert!(matches!(event_for(&irc), Some(ChatEvent::Deleted { id }) if id == "abc-123"));
+
+        let bare = message::parse_line(":tmi.twitch.tv CLEARMSG #bar :x").unwrap();
+        assert!(event_for(&bare).is_none());
     }
 }

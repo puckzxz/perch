@@ -81,6 +81,11 @@ pub enum Error {
     /// The user took too long; start a new device flow.
     #[error("the sign-in code expired")]
     Expired,
+    /// Helix has nothing by that id. Its own answer for a video that has
+    /// expired or never existed, and the one status worth telling apart from
+    /// a request that was wrong.
+    #[error("Twitch has nothing by that id")]
+    NotFound,
 }
 
 // ── Sign-in ──────────────────────────────────────────────────────────
@@ -369,6 +374,7 @@ fn helix_get(
     match status {
         200..=299 => Ok(json),
         401 => Err(Error::NotSignedIn),
+        404 => Err(Error::NotFound),
         // Surface Twitch's own wording; "HTTP 403" alone tells nobody whether
         // the scope, the client id or the token is at fault.
         other => Err(Error::Api(
@@ -857,6 +863,17 @@ pub fn videos(
         items: parse_videos(&json),
         next: next_cursor(&json),
     })
+}
+
+/// One video by its id, or `None` if Twitch has no such video: deleted,
+/// expired, or never there. For a link somebody pasted, which names a video
+/// and says nothing else about it. Needs no scope, only a token.
+pub fn video(client_id: &str, token: &str, id: &str) -> Result<Option<Video>, Error> {
+    match helix_get(client_id, token, "/videos", &[("id", id)]) {
+        Ok(json) => Ok(parse_videos(&json).into_iter().next()),
+        Err(Error::NotFound) => Ok(None),
+        Err(e) => Err(e),
+    }
 }
 
 // ── Browsing ─────────────────────────────────────────────────────────

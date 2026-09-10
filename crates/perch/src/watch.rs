@@ -6,6 +6,7 @@
 //! [`crate::layout`], which derives a grid from the window rather than looking
 //! one up per stream count.
 
+use chrono::{DateTime, Utc};
 use gpui::{
     canvas, div, prelude::*, px, Context, CursorStyle, ElementId, Entity, IntoElement, MouseButton,
     MouseDownEvent, Pixels, SharedString, Task, Window,
@@ -104,6 +105,12 @@ pub struct Slot {
     /// Per pane, like everything else here, and remembered per channel: a
     /// channel you watch for the game is not a statement about the next one.
     pub chat_hidden: bool,
+    /// When this pane last found nothing to play: the moment streamlink said
+    /// the channel was off, or the moment the broadcast ended. A follows poll
+    /// that lists the channel live with a `started_at` later than this is a
+    /// broadcast this pane has not tried, and it tries it — see
+    /// `RootView::on_streams`.
+    pub stalled_at: Option<DateTime<Utc>>,
 }
 
 impl Slot {
@@ -112,6 +119,17 @@ impl Slot {
             StreamState::Playing(view) => Some(view),
             _ => None,
         }
+    }
+
+    /// Move to `state`, noting the time if it is one with nothing playing —
+    /// see [`stalled_at`](Self::stalled_at). Every change of state goes
+    /// through here, so the note cannot be forgotten by one of them.
+    pub fn set_state(&mut self, state: StreamState) {
+        self.stalled_at = match state {
+            StreamState::Offline | StreamState::Ended | StreamState::Failed(_) => Some(Utc::now()),
+            StreamState::Starting | StreamState::Playing(_) => None,
+        };
+        self.state = state;
     }
 
     /// The key a recording's pane gets. Prefixed so it can never collide with

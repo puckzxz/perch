@@ -321,6 +321,16 @@ impl VideoView {
         self.stream.is_paused()
     }
 
+    /// The qualities this stream offers, highest first, and the one playing:
+    /// what a re-pick after the pane changes size chooses from.
+    pub fn available(&self) -> &[String] {
+        &self.available
+    }
+
+    pub fn quality(&self) -> &str {
+        &self.quality
+    }
+
     /// Width over height of the stream itself, once a frame has decoded.
     ///
     /// The stream's shape, not the frame's size: the render size follows the

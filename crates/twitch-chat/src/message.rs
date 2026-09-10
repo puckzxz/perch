@@ -127,6 +127,9 @@ pub struct ChatMessage {
     /// Unix milliseconds, from the `tmi-sent-ts` tag. Twitch sends this on
     /// every message under the tags capability we already request.
     pub sent_at: Option<u64>,
+    /// Twitch's id for this message, from the `id` tag: what a `CLEARMSG`
+    /// names when a moderator deletes one message rather than a person.
+    pub id: Option<String>,
 }
 
 /// Twitch's default colour set, used when a user has not chosen one.
@@ -213,6 +216,7 @@ impl ChatMessage {
             is_action,
             emotes: message.tag("emotes").map(str::to_string),
             sent_at: message.tag("tmi-sent-ts").and_then(|ts| ts.parse().ok()),
+            id: message.tag("id").map(str::to_string),
         }
     }
 }
@@ -356,6 +360,18 @@ mod tests {
         let chat = ChatMessage::from_irc(&m).unwrap();
         assert_eq!(chat.display_name, "foo");
         assert!(!chat.is_action);
+    }
+
+    /// The id is what a later `CLEARMSG` points at; a line without one is
+    /// still a message, just one nothing can single out.
+    #[test]
+    fn a_message_carries_its_id_when_twitch_sends_one() {
+        let line = r"@id=abc-123;display-name=Foo :foo!foo@foo.tmi.twitch.tv PRIVMSG #bar :hi";
+        let chat = ChatMessage::from_irc(&parse_line(line).unwrap()).unwrap();
+        assert_eq!(chat.id.as_deref(), Some("abc-123"));
+
+        let bare = parse_line(":foo!foo@foo.tmi.twitch.tv PRIVMSG #bar :hi").unwrap();
+        assert_eq!(ChatMessage::from_irc(&bare).unwrap().id, None);
     }
 
     #[test]

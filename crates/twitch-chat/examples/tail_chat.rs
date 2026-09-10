@@ -66,6 +66,10 @@ fn main() {
                         others += 1;
                         println!("[cleared] {login:?}");
                     }
+                    ChatEvent::Deleted { id } => {
+                        others += 1;
+                        println!("[deleted] {id}");
+                    }
                     ChatEvent::Disconnected { reason } => {
                         others += 1;
                         println!("[disconnected] {reason}");

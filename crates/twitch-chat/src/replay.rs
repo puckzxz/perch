@@ -543,8 +543,6 @@ fn comment(node: &Value) -> Option<Comment> {
         .and_then(Value::as_str)
         .and_then(unix_millis);
     Some(Comment {
-        id,
-        offset,
         message: ChatMessage {
             login,
             display_name,
@@ -553,7 +551,10 @@ fn comment(node: &Value) -> Option<Comment> {
             is_action: false,
             emotes,
             sent_at,
+            id: Some(id.clone()),
         },
+        id,
+        offset,
     })
 }
 
@@ -853,6 +854,7 @@ mod tests {
                 is_action: false,
                 emotes: None,
                 sent_at: Some(sent_at),
+                id: None,
             },
         }
     }

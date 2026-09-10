@@ -4,7 +4,7 @@ For whoever picks this up next. `README.md` covers *using* it; this covers
 *working on* it — the architecture, the traps, and the things that cost real
 time to discover and would cost the same again.
 
-Roughly 11,000 lines across seven crates. `cargo test --workspace`,
+Roughly 24,000 lines across seven crates. `cargo test --workspace`,
 `cargo clippy --workspace --all-targets` and `cargo fmt --all --check` are all
 expected to pass; if one does not, that is the change you are looking at, not
 the baseline.
@@ -68,7 +68,9 @@ App modules:
 
 | file | role |
 |---|---|
-| `main.rs` | shell: `RootView`, pages, stream slots, navigation |
+| `main.rs` | the process: arguments, the window, where stderr goes |
+| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `browsing`, `streams`, `prefs`, `chrome`, `pages` |
+| `target.rs` | what a typed or pasted thing means: a login, or a twitch.tv link to a channel or a recording (pure, tested) |
 | `browse.rs` | the picker page: following, popular, categories, search |
 | `channel_page.rs` | one channel's past broadcasts, and when each was |
 | `watch.rs` | the grid of panes; `Slot` lives here |
@@ -244,6 +246,17 @@ at 117–196% of a core — the most expensive thing this pipeline can do. Rende
 size is clamped to the source resolution and the GPU stretches the last bit,
 which is free. This was introduced *and* reintroduced once; do not undo it.
 
+**Quality is chosen again when the grid changes, and only ever upwards.**
+`RootView::sync_quality` runs after a pane opens or closes, when the rail
+toggles, and 750 ms after the last window resize (`observe_window_bounds`, so
+fullscreen and maximise count) — and restarts only a pane whose Auto or Fixed
+choice now names a *sharper* rendition; a pane that shrank keeps what it has,
+and a choice made from the pane's own menu is left alone. A restart is the
+only way to change rendition, since streamlink is resolved again, so it costs
+a few seconds of black: worth it for a picture that was soft, not for a CPU
+saving in a pane that hides nothing — which is also why the re-pick waits for
+a resize to settle rather than running per event.
+
 **Animated GIFs need an `ElementId`.** From gpui's `img.rs`:
 
 ```rust
@@ -343,6 +356,12 @@ checked tag by tag across 2,150 segments and four more samples. Without the
 auth-token cookie, Twitch's playback token caps a recording at 1080p
 (`AUTHZ_NOT_LOGGED_IN` for the 1440p and 4K tiers) and refuses
 subscriber-only ones; the cookie the settings already hold lifts both, and did.
+
+A recording named by a link — `twitch.tv/videos/<id>`, on the command line or
+pasted into the palette — is read by `target.rs` and looked up through
+`Request::Video`, since the pane needs the video's title and channel and the
+link carries neither; it opens from the link's `?t=`, if it has one, and a
+link given before sign-in waits in `RootView::linked_videos` for the session.
 
 ### Performance
 
@@ -900,12 +919,13 @@ drawn as names rather than cards: a card is mostly a picture, and an offline
 channel has none worth showing — a thumbnail stale by hours, or a profile
 picture that costs another request per refresh and says nothing. Names also
 pack, so a hundred follows is five rows instead of a wall of grey rectangles.
-Clicking one still opens it: the video says offline, but the *chat* connects
-either way, which is the reason to go there.
+Clicking one opens the channel's page — its past broadcasts, with its chat one
+click away from that page's bar, since chat connects whether or not anyone is
+streaming.
 
-`/channels/followed` is the only Helix endpoint here that genuinely paginates,
-and the only one whose `first` defaults to 20 rather than 100 — forget the
-parameter and a long follows list quietly shows a fifth of itself.
+Both followed endpoints paginate — see the Networking trap — and
+`/channels/followed` is the one whose `first` defaults to 20 rather than 100:
+forget the parameter and a long follows list quietly shows a fifth of itself.
 
 **Refresh means "this list", not "follows".** One control, whichever list is up,
 because the discovery tabs are otherwise fetched once and kept forever, which is
@@ -938,10 +958,18 @@ Two things worth keeping:
   out would otherwise sit in the queue behind the device-code poll and pulse
   "Loading…" indefinitely. `fill_tab` picks it up once sign-in lands.
 
-Lists are fetched once per tab and kept. There is no pagination: Helix caps a
-page at 100, which is the top 100 streams or categories on Twitch, and that is
-plenty to pick from. Adding "load more" means threading the `pagination.cursor`
-Twitch already returns through `top_streams`/`top_categories`.
+Lists are fetched once per tab and kept, and grow a page at a time on Load
+more — see "Paging, and what is not paged" for the cursor's route out to the
+caller.
+
+**A went-live toast is the way to the channel**, not only news of it:
+`Toast::action`, watch from the text and `+ add` from the pill beside it. And
+a pane that stalled — streamlink said the channel was off, or the broadcast
+ended — is retried by `on_streams` when a poll lists the channel live with a
+`started_at` later than `Slot::stalled_at`. The timestamp is the whole trick:
+the list is up to a minute behind the pane, so a stream that has just ended is
+still on it, and a retry keyed on presence alone would find it gone and turn
+"ended" into "offline" for nothing.
 
 **Search** is three requests behind one result, and both halves have a reason:
 
@@ -1090,6 +1118,17 @@ the row pitch and the emote's actual height before believing a screenshot.
 the very bottom, which in a fast channel is a long way down. The scrollbar and
 the jump-to-live pill exist because nothing on screen said so otherwise — see
 the `list` trap for why the thumb's *size* is not to be trusted.
+
+**New rows wait while the pointer is over the pane.** Not by pinning the list:
+a pin at the bottom of a bottom-aligned `list` is cleared by its next layout
+pass, and pinning at the first visible row means reproducing `scroll_by`'s
+arithmetic. The rows are held in `ChatView::held` and pushed when the pointer
+leaves, which changes nothing about the list while it is being read; only
+while following live, since a pane scrolled back already holds its own
+position. The check is measured — `viewport_bounds` against `mouse_position`
+— like every hover here, so a pointer that leaves the window without a move
+event still releases the rows at the next repaint. A `CLEARMSG` greys the row
+it names rather than removing it, keyed on the `id` tag `ChatMessage` carries.
 
 **A pane opens with what was already being said.** Twitch publishes no
 scrollback — IRC gives you what arrives after your JOIN and there is no Helix
@@ -1260,6 +1299,14 @@ over it is `.occlude()`d so a double-click on `pause` does not also reach it.
 A single click deliberately does nothing there — it is how a pane is made the
 active one, and pausing on a click would turn choosing a pane into stopping it.
 
+**`1`–`4` and `Tab` choose the pane the keys talk to**, through
+`keys::ActivatePane` — the one action here that carries data, derived with
+`no_json` because nothing builds this keymap from a file. `PANE_KEYS` is sized
+by `MAX_PANES`, so a fifth pane cannot arrive without a key. `Esc` on the
+browse page is `Back`: out of a channel page, a search or a category, else to
+whatever is playing — the other direction from the watch page's `Esc`, each
+scoped to its own page.
+
 **The window remembers where it was.** `Settings::window` is written from
 `on_window_should_close` with the platform's restore bounds, so a maximised or
 fullscreen window is saved as the size it would un-maximise to. On open it is
@@ -1394,8 +1441,11 @@ the environment variable that overrides the search.
 ## What to build next
 
 Nothing here is agreed. The four items that were, plus chat backfill, the
-follows filter, window placement, past broadcasts and their chat replay, are
-built. Ranked by what would be noticed, roughly:
+follows filter, window placement, past broadcasts and their chat replay, and
+the September 2026 round of streamlining — recents and open-by-name in the
+palette, links on the command line, pane keys, clickable toasts, auto-retry,
+the quality re-pick, chat holding still under the pointer — are built. Ranked
+by what would be noticed, roughly:
 
 1. **Rewind a live stream.** A "from the start" control on a live pane that
    opens the in-progress archive in place. The archive is in the channel's
@@ -1477,8 +1527,10 @@ None of these is being worked on; all of them are real.
    scrolled back reading them. Raised from 500 when the pane started opening
    with a backlog; a row is a `ChatMessage` and a few `SharedString`s, and only
    the visible ones are ever laid out, so it can go further if it needs to.
-3. **Quality does not re-pick on resize.** It is chosen when a channel opens,
-   using the pane size at that moment.
+3. **A quality change is a restart.** The rendition is chosen again, upwards
+   only, whenever a pane grows; changing it means resolving the stream again
+   — a few seconds of black — because streamlink has no way to switch
+   mid-stream, and a pane that shrinks is left on the rendition it has.
 4. **No sign-out**, and no way to clear a bad token except editing the field.
 5. **Animated WebP** (7TV, some BTTV) may render as stills. Twitch's own
    animated emotes are GIF and animate correctly.
@@ -1488,22 +1540,17 @@ None of these is being worked on; all of them are real.
    it indexes, so startup no longer gets slower with every run — but it is one
    `read_dir` plus a stat per file, done synchronously in `RootView::new`.
    Deleting `%LOCALAPPDATA%/perch/images` is always safe.
-7. **Orphaned streamlink on a hard crash.** A Windows job object would close it.
+7. **Orphaned streamlink on a hard crash, on macOS.** Windows ties every
+   child to a job object (`streamlink::job`) that the kernel closes with the
+   process, however it died; nothing equivalent is wired up on macOS.
 8. **Never tested on a vertical monitor.** The layout derives portrait grids and
    stacks chat below video, the logic is unit-tested, but nobody has seen it.
 9. **The offline follows list has no cap.** Someone following several hundred
     channels gets several hundred names. There is a filter now, on the tab and
     in the palette, so they can be found; the wall is still a wall.
-10. **A volume drag writes `settings.json` per pixel.** Pre-existing: every
-    `SliderEvent::Change` is a full read-modify-write of the file, and there are
-    a hundred of them in one drag. `set_volume_for` returns whether anything
-    changed so a repeated value is free.
-
-    The `Slider` still reports no drag-end, but that is no longer the obstacle
-    it was written as: the divider drag has the same shape and solves it with
-    `RootView::on_mouse_up` on the root, because the *window* sees the release
-    even when the widget does not. Whoever fixes this can hang a save on the
-    same listener rather than inventing a debounce.
+10. **Every settings save is a read-modify-write of the whole file.** Runs of
+    changes — a volume drag — are coalesced into one write after they settle
+    (`RootView::save_settings_soon`); single changes still write at once.
 11. **Chat history depends on somebody else's server.** If it is down the pane
     opens blank, which is what it did before the feature existed. Failures go to
     the log rather than the pane, on purpose.
@@ -1558,6 +1605,8 @@ None of these is being worked on; all of them are real.
 - Do not rename or rewrite a playlist the player is reading. Write a new file
   for a reposition; append for growth.
 - Do not add tokio; use a thread plus an mpsc pump.
+- Do not pin a bottom-aligned `list` to hold chat still; hold the rows back
+  instead. See the Chat section for why the pin does not survive a layout.
 - Do not put a repeating animation on a state that can persist.
 - Do not assume an overlay blocks input because it covers something; use
   `occlude` / `block_mouse_except_scroll`, and put it on the smallest thing that

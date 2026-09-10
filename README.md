@@ -47,22 +47,24 @@ Or build it, which is the rest of this page.
 ## Running it
 
 ```
-run.cmd                    reopen the last channel        (Windows)
+run.cmd                    open on the follows page       (Windows)
 run.cmd forsen             open a channel
 run.cmd forsen xqc         open two, side by side
 run.cmd forsen --volume 30
 ```
 
 ```
-./run.sh                   reopen the last channel        (macOS, Linux)
+./run.sh                   open on the follows page       (macOS, Linux)
 ./run.sh forsen            open a channel
 ./run.sh forsen xqc        open two, side by side
 ./run.sh forsen --volume 30
 ```
 
-Name up to four channels to open them together. `--volume` applies to this run
-only: it does not overwrite the level each channel remembers, and it wins over
-one for as long as the app is open.
+Name up to four channels to open them together. A twitch.tv link works in
+place of a name — to a channel, or to a recording, which opens where the link
+points when it carries a `?t=`. `--volume` applies to this run only: it does
+not overwrite the level each channel remembers, and it wins over one for as
+long as the app is open.
 
 Or directly, once built:
 
@@ -86,8 +88,10 @@ video, which is no use when you are not holding the mouse.
 | `B` | Show or hide the follows rail |
 | `↑` `↓` | Volume |
 | `←` `→` | Skip ten seconds in a past broadcast |
+| `1` – `4` | Talk to that pane |
+| `Tab` | The next pane |
 | `Ctrl+W` | Close this pane |
-| `Esc` | Back to follows |
+| `Esc` | Back to follows, or back to watching |
 | `Ctrl+F` | Search |
 | `Ctrl+R` | Refresh whichever list is on screen |
 | `Ctrl+,` | Settings |
@@ -102,9 +106,11 @@ binds, and a test holds it to that.
 
 Player keys act on the pane you last pointed at, or last clicked — clicking
 anywhere in a pane, video or chat, makes it the one the keyboard is talking to,
-and with more than one pane open its header is underlined to say so. All of them
-stand aside while the cursor is in a text box. The same list is in the settings
-sheet. Double-clicking the video is fullscreen too.
+and with more than one pane open its header is underlined to say so. `1` to
+`4` name a pane by its place in the grid and `Tab` steps along them, for when
+the mouse is nowhere near. All of them stand aside while the cursor is in a
+text box. The same list is in the settings sheet. Double-clicking the video is
+fullscreen too.
 
 The header above each chat says `muted` or `paused` when either is true, so a
 channel that opens silent says so without the pointer having to be on the
@@ -178,6 +184,13 @@ those come from the same community service
 someone other than Twitch which channels you watch. Settings has the switch,
 including **Off**.
 
+Chat holds still while the pointer is over it. A link that moves as you reach
+for it is not much of a link, so while a pane is pointed at and following live
+its new messages wait — it says `chat paused` — and land the moment the pointer
+leaves. A pane you have scrolled back in is left alone; its position is already
+yours. A message a moderator deletes stays where it was, greyed and marked
+`deleted`, rather than vanishing from under your eye.
+
 Popular and the categories arrive a hundred at a time, which is Twitch's cap
 per request rather than a choice. **Load more** at the end of the list fetches
 the next hundred — a page you asked for, rather than a list that grows while you
@@ -191,6 +204,12 @@ which connects whether or not anyone is streaming.
 
 The list refreshes itself every minute. `Ctrl+R`, or the pill in the header,
 asks again now — for whichever list is on screen, not just follows.
+
+When somebody you follow goes live, a notice says so in the corner; click it
+to watch them, or `+ add` beside it to open them next to what is playing. A
+pane left on a channel that was off, or whose broadcast ended, starts by
+itself when a later poll finds them on again — open a channel before they
+start and it begins without you.
 
 The box at the top of the Following tab filters both lists as you type, live
 and offline, by the same few-letters-of-a-name match the palette uses. It is
@@ -227,6 +246,12 @@ than aimed at. It filters what the app already knows, so it costs nothing and
 runs on every keystroke; the search box in the header is the one that asks
 Twitch. `qb` finds QuickyBaby. Offline follows are in it too, once you have
 typed something, and so is every channel's page of past broadcasts.
+
+With nothing typed it leads with the channels you watched most recently, then
+who is live. Type a name none of your follows answer to and it offers to open
+that channel anyway, with its past broadcasts beside it; paste a twitch.tv link
+and it opens the channel or the recording the link names, from the moment a
+`?t=` points at.
 
 ## Past broadcasts
 
@@ -316,6 +341,13 @@ size, despite producing fewer pixels. So selection prefers 1:1, then exact
 fractions, and never upscales while a larger source exists. Render size is also
 clamped to the source resolution — mpv never scales up, the GPU stretches the
 last bit instead, which is effectively free.
+
+The choice is made again whenever a pane changes size — another pane opening
+or closing, the rail folding, the window resizing or going fullscreen — and
+only ever upwards: a pane that has grown restarts on a sharper rendition,
+since a restart is a few seconds of black and worth it for the picture, and a
+pane that has shrunk keeps what it has. A quality picked from a pane's own
+menu is left alone; that choice was about the pane, whatever its size.
 
 ## Layout
 
