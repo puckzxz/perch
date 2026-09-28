@@ -14,7 +14,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures::channel::mpsc;
 use gpui::RenderImage;
@@ -24,7 +24,7 @@ use smallvec::smallvec;
 use streamlink::Playlist;
 
 use crate::seek_bar::Timeline;
-use crate::vod::{Extent, Recording};
+use crate::vod::{self, Extent, Recording};
 
 /// Upper bound on render size. 1440p is the highest Twitch tier, so anything
 /// beyond this is scaling up, which measured as the single most expensive thing
@@ -182,6 +182,17 @@ pub struct PositionHandle(Arc<AtomicU64>);
 impl PositionHandle {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A handle that says `secs` until a player says otherwise: where a pane
+    /// opens its recording. The chat replay follows the handle from the
+    /// moment the pane opens, seconds before any player exists, so a pane
+    /// picking up three hours in would otherwise load the first minute of
+    /// chat, and then the right one.
+    pub fn starting_at(secs: f64) -> Self {
+        let handle = Self::default();
+        handle.set(secs);
+        handle
     }
 
     /// Seconds into the recording. Zero until a player has said otherwise.
@@ -420,6 +431,13 @@ impl VideoStream {
                     let mut applied_volume = volume;
                     let mut applied_pause = false;
                     let mut last_drops = 0u64;
+                    // What getting a recording going again needs to know:
+                    // when it was paused, when it last moved, and whether it
+                    // has ever moved — a player still opening has not
+                    // stalled. See `vod::reopen_on_resume` and `vod::stalled`.
+                    let mut paused_since: Option<Instant> = None;
+                    let mut moved_at = Instant::now();
+                    let mut has_moved = false;
 
                     'frames: while !stop.load(Ordering::Relaxed) {
                         for event in player.poll_events() {
@@ -429,12 +447,16 @@ impl VideoStream {
                                     "height" => source_h = value.and_then(|v| v.parse().ok()),
                                     // Where a recording is: the player's
                                     // position in its file, plus where in the
-                                    // recording that file starts.
+                                    // recording that file starts. mpv says so
+                                    // only when it changes, so each of these
+                                    // is also the picture moving.
                                     "time-pos" => {
                                         let secs = value.and_then(|v| v.parse::<f64>().ok());
                                         if let (Some(secs), Some(recording)) = (secs, &recording) {
                                             if let Some(at) = recording.position(secs) {
                                                 position.set(at);
+                                                moved_at = Instant::now();
+                                                has_moved = true;
                                             }
                                         }
                                     }
@@ -558,6 +580,28 @@ impl VideoStream {
                                 // recording, where it stopped is the point.
                                 let _ = player.seek_to_live();
                             }
+                            if let Some(recording) = &mut recording {
+                                if want_pause {
+                                    paused_since = Some(Instant::now());
+                                } else if let Some(since) = paused_since.take() {
+                                    // Its connection may have died while it
+                                    // waited, and a dead one can hang the
+                                    // demuxer for good; a reopen costs a
+                                    // second. Queued ahead of the unpause, so
+                                    // mpv takes the new file first.
+                                    if vod::reopen_on_resume(since.elapsed()) {
+                                        let at = position.get();
+                                        eprintln!(
+                                            "video: resuming after {}s paused by reopening at {at:.1}",
+                                            since.elapsed().as_secs()
+                                        );
+                                        if let Err(e) = recording.reposition(&player, at) {
+                                            eprintln!("video: could not reposition: {e}");
+                                        }
+                                    }
+                                    moved_at = Instant::now();
+                                }
+                            }
                             if let Err(e) = player.set_paused(want_pause) {
                                 eprintln!("video: could not pause: {e}");
                             }
@@ -576,6 +620,34 @@ impl VideoStream {
                             position.set(secs);
                             if let Err(e) = recording.reposition(&player, secs) {
                                 eprintln!("video: could not reposition: {e}");
+                            }
+                            moved_at = Instant::now();
+                            // A seek while paused opened fresh connections,
+                            // so the pause that counts starts again here.
+                            if paused_since.is_some() {
+                                paused_since = Some(Instant::now());
+                            }
+                        }
+
+                        // A recording that should be playing and has sat
+                        // still for a while is got going again the same way,
+                        // whatever stopped it — a connection that died
+                        // mid-segment is the one seen, but the remedy does
+                        // not depend on the cause.
+                        if let Some(recording) = &mut recording {
+                            let at = position.get();
+                            if !applied_pause
+                                && has_moved
+                                && vod::stalled(moved_at.elapsed(), at, &recording.timeline())
+                            {
+                                eprintln!(
+                                    "video: the recording has not moved for {}s; reopening at {at:.1}",
+                                    moved_at.elapsed().as_secs()
+                                );
+                                if let Err(e) = recording.reposition(&player, at) {
+                                    eprintln!("video: could not reposition: {e}");
+                                }
+                                moved_at = Instant::now();
                             }
                         }
 

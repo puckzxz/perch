@@ -3,17 +3,19 @@
 //! Everything you can reach while watching is a key or a hover-revealed
 //! overlay, and everything you can reach while *browsing* was a click — the
 //! picker had no keyboard path at all past the search box. This is the one
-//! control that answers both: a channel to open, a pane to close, a page to go
-//! to, typed rather than aimed at.
+//! control that answers both: a channel to open, a recording to carry on
+//! with, a pane to close, a page to go to, typed rather than aimed at.
 //!
 //! It is not a second search box. The search box asks *Twitch* a question and
 //! costs a request; this filters what the app already knows — who is live, what
-//! is open, what it can do — and costs nothing, which is why it can run on
-//! every keystroke.
+//! is open, what has been watched, what it can do — and costs nothing, which is
+//! why it can run on every keystroke.
 
 use gpui::{div, prelude::*, px, Context, SharedString};
+use settings::history::Watched;
 use twitch_api::{FollowedChannel, LiveStream};
 
+use crate::seek_bar;
 use crate::target::{self, Target};
 use crate::theme;
 
@@ -53,6 +55,10 @@ pub enum Command {
         id: String,
         start_secs: Option<u64>,
     },
+    /// Play a recording from the history, where it was left.
+    Resume(String),
+    /// Show the history tab.
+    ShowHistory,
     GoBrowse,
     GoWatch,
     StopAll,
@@ -96,6 +102,47 @@ pub fn matches(haystack: &str, needle: &str) -> bool {
 /// How many recently watched channels an empty palette leads with.
 const RECENT_SHOWN: usize = 5;
 
+/// The shortest query a recording's title is searched for. Titles are long,
+/// and matched like names — a letter at a time — two letters would find
+/// nearly all of them; so a title has to contain what was typed, whole, and
+/// what was typed has to be long enough to mean something.
+const TITLE_QUERY_MIN: usize = 3;
+
+/// A row for a recording in the history: whose, and what, and where it was
+/// left — which is what tells apart a channel that titles every broadcast
+/// the same.
+fn resume_row(watched: &Watched) -> Entry {
+    let name = if watched.channel_name.is_empty() {
+        &watched.channel_login
+    } else {
+        &watched.channel_name
+    };
+    Entry {
+        command: Command::Resume(watched.id.clone()),
+        title: SharedString::from(format!("{name} — {}", watched.title)),
+        kind: if watched.finished {
+            "watched".into()
+        } else {
+            format!(
+                "resume at {}",
+                seek_bar::timecode(watched.position_secs as f64)
+            )
+            .into()
+        },
+    }
+}
+
+/// Whether a history entry answers to `query`: its channel, by the same
+/// few-letters match as every name here, or its title, containing the query
+/// whole — see [`TITLE_QUERY_MIN`].
+fn watched_matches(watched: &Watched, query: &str) -> bool {
+    if matches(&watched.channel_name, query) || matches(&watched.channel_login, query) {
+        return true;
+    }
+    query.chars().count() >= TITLE_QUERY_MIN
+        && watched.title.to_lowercase().contains(&query.to_lowercase())
+}
+
 /// Everything the palette can offer right now, filtered by `query`.
 ///
 /// Channels first and commands after, because the overwhelmingly common reason
@@ -115,11 +162,20 @@ const RECENT_SHOWN: usize = 5;
 /// at all, so a channel nobody follows is a name and Enter away rather than
 /// unreachable. While a follow still matches, the typing is a filter and the
 /// row would be noise under it; a link is unambiguous and is always offered.
+///
+/// The recordings in `history` are offered once something is typed, after
+/// the channels that answer to it: picking one up is a name and Enter away.
+/// With nothing typed, one of them leads the whole list — the newest, if it
+/// is part-watched and its channel leads the recents, which is what it looks
+/// like when the last thing opened was that recording. That makes the most
+/// likely thing to want, carrying on with it, the row Enter runs.
+#[allow(clippy::too_many_arguments)]
 pub fn entries(
     query: &str,
     follows: &[LiveStream],
     offline: &[FollowedChannel],
     recent: &[String],
+    history: &[Watched],
     watching: &[String],
     can_add: bool,
 ) -> Vec<Entry> {
@@ -161,6 +217,13 @@ pub fn entries(
 
     let mut led_with: Vec<&str> = Vec::new();
     if query.is_empty() {
+        let last = history.first().filter(|watched| {
+            !watched.finished
+                && recent
+                    .first()
+                    .is_some_and(|login| *login == settings::channel_key(&watched.channel_login))
+        });
+        entries.extend(last.map(resume_row));
         for login in recent.iter().take(RECENT_SHOWN) {
             offer(&mut entries, login, name_of(login), "recent");
             led_with.push(login.as_str());
@@ -196,6 +259,32 @@ pub fn entries(
             });
         }
 
+        // What was typed, taken at its word: a channel nobody here follows,
+        // or a link to a recording. Only once no follow matches, because
+        // until then the typing is a filter over the lists and a row
+        // offering to open `f` under everyone whose name has an f in it is
+        // noise; a link answers to nobody's name and is always offered.
+        // The channel's rows go with the other rows that open a channel now,
+        // and its past broadcasts with everyone else's, below.
+        let typed = target::parse(query);
+        let typed_channel = match &typed {
+            Some(Target::Channel(login)) if !matched_follow => Some(login.clone()),
+            _ => None,
+        };
+        if let Some(login) = &typed_channel {
+            offer(&mut entries, login, format!("Open {login}"), "channel");
+        }
+
+        // What has been watched, newest first: after the rows that open a
+        // channel now, and before the ones that list a channel's past — a
+        // recording already begun is the more particular answer.
+        entries.extend(
+            history
+                .iter()
+                .filter(|watched| watched_matches(watched, query))
+                .map(resume_row),
+        );
+
         // Everyone's past broadcasts, live or not, after the rows that open
         // them now. Only once something is typed, for the same reason the
         // offline rows wait: with nothing typed this would be a second row
@@ -223,33 +312,26 @@ pub fn entries(
             });
         }
 
-        // What was typed, taken at its word: a channel nobody here follows,
-        // or a link to a recording. Only once no follow matches, because
-        // until then the typing is a filter over the lists and a row
-        // offering to open `f` under everyone whose name has an f in it is
-        // noise; a link answers to nobody's name and is always offered.
-        match target::parse(query) {
-            Some(Target::Channel(login)) if !matched_follow => {
-                offer(&mut entries, &login, format!("Open {login}"), "channel");
-                entries.push(Entry {
-                    command: Command::Videos {
-                        login: login.clone(),
-                        display_name: login.clone(),
-                        user_id: None,
-                    },
-                    title: SharedString::from(format!("{login} — past broadcasts")),
-                    kind: "videos".into(),
-                });
-            }
-            Some(Target::Video { id, start_secs }) => entries.push(Entry {
+        if let Some(login) = typed_channel {
+            entries.push(Entry {
+                command: Command::Videos {
+                    login: login.clone(),
+                    display_name: login.clone(),
+                    user_id: None,
+                },
+                title: SharedString::from(format!("{login} — past broadcasts")),
+                kind: "videos".into(),
+            });
+        }
+        if let Some(Target::Video { id, start_secs }) = typed {
+            entries.push(Entry {
                 command: Command::OpenVideo {
                     id: id.clone(),
                     start_secs,
                 },
                 title: SharedString::from(format!("Open recording {id}")),
                 kind: "recording".into(),
-            }),
-            _ => {}
+            });
         }
     }
 
@@ -264,8 +346,9 @@ pub fn entries(
         }
     }
 
-    let commands: [(Command, &str); 6] = [
+    let commands: [(Command, &str); 7] = [
         (Command::GoBrowse, "Go to follows"),
+        (Command::ShowHistory, "Go to history"),
         (Command::GoWatch, "Back to watching"),
         (Command::StopAll, "Stop all streams"),
         (Command::ToggleSidebar, "Toggle the follows rail"),
@@ -434,7 +517,7 @@ mod tests {
     #[test]
     fn channels_come_before_commands() {
         let follows = [stream("forsen", "Forsen")];
-        let entries = entries("", &follows, &[], &[], &[], true);
+        let entries = entries("", &follows, &[], &[], &[], &[], true);
 
         let first_command = entries
             .iter()
@@ -453,13 +536,13 @@ mod tests {
     fn adding_is_only_offered_when_something_is_already_open() {
         let follows = [stream("forsen", "Forsen")];
 
-        let alone = entries("", &follows, &[], &[], &[], true);
+        let alone = entries("", &follows, &[], &[], &[], &[], true);
         assert!(!alone.iter().any(|entry| entry.kind == "add"));
 
-        let beside = entries("", &follows, &[], &[], &["quin69".into()], true);
+        let beside = entries("", &follows, &[], &[], &[], &["quin69".into()], true);
         assert!(beside.iter().any(|entry| entry.kind == "add"));
 
-        let full = entries("", &follows, &[], &[], &["quin69".into()], false);
+        let full = entries("", &follows, &[], &[], &[], &["quin69".into()], false);
         assert!(
             !full.iter().any(|entry| entry.kind == "add"),
             "a fifth pane cannot be added, so it should not be offered"
@@ -471,7 +554,7 @@ mod tests {
     #[test]
     fn an_open_channel_says_so() {
         let follows = [stream("forsen", "Forsen")];
-        let entries = entries("", &follows, &[], &[], &["forsen".into()], true);
+        let entries = entries("", &follows, &[], &[], &[], &["forsen".into()], true);
         assert_eq!(entries[0].kind, "watching");
         assert_eq!(entries[0].command, Command::Watch("forsen".into()));
     }
@@ -479,7 +562,7 @@ mod tests {
     #[test]
     fn every_open_pane_can_be_closed_by_name() {
         let watching: Vec<String> = vec!["forsen".into(), "quin69".into()];
-        let entries = entries("close quin", &[], &[], &[], &watching, true);
+        let entries = entries("close quin", &[], &[], &[], &[], &watching, true);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].command, Command::Close(1));
     }
@@ -489,9 +572,9 @@ mod tests {
     #[test]
     fn a_channel_is_found_by_either_of_its_names() {
         let follows = [stream("kato_junichi0817", "加藤純一")];
-        let by_login = entries("kato", &follows, &[], &[], &[], false);
+        let by_login = entries("kato", &follows, &[], &[], &[], &[], false);
         assert_eq!(by_login.iter().filter(|e| e.kind == "watch").count(), 1);
-        let by_name = entries("加藤", &follows, &[], &[], &[], false);
+        let by_name = entries("加藤", &follows, &[], &[], &[], &[], false);
         assert_eq!(by_name.iter().filter(|e| e.kind == "watch").count(), 1);
     }
 
@@ -507,10 +590,10 @@ mod tests {
             display_name: "Fextralife".into(),
         }];
 
-        let blank = entries("", &follows, &offline, &[], &[], false);
+        let blank = entries("", &follows, &offline, &[], &[], &[], false);
         assert!(!blank.iter().any(|entry| entry.kind == "offline"));
 
-        let typed = entries("f", &follows, &offline, &[], &[], false);
+        let typed = entries("f", &follows, &offline, &[], &[], &[], false);
         let live = typed
             .iter()
             .position(|entry| entry.kind == "watch")
@@ -535,10 +618,10 @@ mod tests {
             display_name: "Fextralife".into(),
         }];
 
-        let blank = entries("", &follows, &offline, &[], &[], false);
+        let blank = entries("", &follows, &offline, &[], &[], &[], false);
         assert!(!blank.iter().any(|entry| entry.kind == "videos"));
 
-        let typed = entries("f", &follows, &offline, &[], &[], false);
+        let typed = entries("f", &follows, &offline, &[], &[], &[], false);
         let videos: Vec<&Entry> = typed
             .iter()
             .filter(|entry| entry.kind == "videos")
@@ -578,7 +661,7 @@ mod tests {
         let follows = [stream("forsen", "Forsen"), stream("xqc", "xQc")];
         let recent: Vec<String> = vec!["xqc".into(), "quin69".into()];
 
-        let blank = entries("", &follows, &[], &recent, &[], false);
+        let blank = entries("", &follows, &[], &recent, &[], &[], false);
         assert_eq!(blank[0].command, Command::Watch("xqc".into()));
         assert_eq!(blank[0].kind, "recent");
         assert_eq!(
@@ -598,7 +681,7 @@ mod tests {
         assert_eq!(blank[2].command, Command::Watch("forsen".into()));
 
         // Typed, the recents step aside: the lists and the typed name cover it.
-        let typed = entries("q", &follows, &[], &recent, &[], false);
+        let typed = entries("q", &follows, &[], &recent, &[], &[], false);
         assert!(!typed.iter().any(|entry| entry.kind == "recent"));
     }
 
@@ -610,7 +693,7 @@ mod tests {
     fn a_channel_nobody_follows_can_be_opened_by_name() {
         let follows = [stream("forsen", "Forsen")];
 
-        let unknown = entries("xqc", &follows, &[], &[], &[], false);
+        let unknown = entries("xqc", &follows, &[], &[], &[], &[], false);
         assert_eq!(unknown[0].command, Command::Watch("xqc".into()));
         assert_eq!(unknown[0].kind, "channel");
         assert!(matches!(
@@ -618,9 +701,9 @@ mod tests {
             Command::Videos { login, user_id: None, .. } if login == "xqc"
         ));
 
-        let known = entries("forsen", &follows, &[], &[], &[], false);
+        let known = entries("forsen", &follows, &[], &[], &[], &[], false);
         assert!(!known.iter().any(|entry| entry.kind == "channel"));
-        let filtering = entries("f", &follows, &[], &[], &[], false);
+        let filtering = entries("f", &follows, &[], &[], &[], &[], false);
         assert!(
             !filtering.iter().any(|entry| entry.kind == "channel"),
             "a filter keystroke offered to open a channel called that"
@@ -633,7 +716,7 @@ mod tests {
             1
         );
 
-        let nonsense = entries("not a login", &follows, &[], &[], &[], false);
+        let nonsense = entries("not a login", &follows, &[], &[], &[], &[], false);
         assert!(!nonsense.iter().any(|entry| entry.kind == "channel"));
     }
 
@@ -642,6 +725,7 @@ mod tests {
     fn a_recording_link_becomes_a_row() {
         let found = entries(
             "https://www.twitch.tv/videos/123?t=1m",
+            &[],
             &[],
             &[],
             &[],
@@ -656,5 +740,107 @@ mod tests {
             }
         );
         assert_eq!(found[0].kind, "recording");
+    }
+
+    fn watched(id: &str, login: &str, title: &str, position_secs: u64) -> Watched {
+        Watched {
+            id: id.into(),
+            channel_login: login.into(),
+            channel_name: login.to_uppercase(),
+            title: title.into(),
+            length_secs: 36_000,
+            position_secs,
+            ..Default::default()
+        }
+    }
+
+    /// Opened last and part-watched: with nothing typed it is the row Enter
+    /// runs. Finished, or not the last thing opened, it waits to be typed.
+    #[test]
+    fn the_recording_last_opened_leads_an_empty_palette() {
+        let follows = [stream("forsen", "Forsen")];
+        let history = [
+            watched("2", "xqc", "WICKED", 4_000),
+            watched("1", "forsen", "Games and shit!", 100),
+        ];
+
+        let recent: Vec<String> = vec!["xqc".into(), "forsen".into()];
+        let blank = entries("", &follows, &[], &recent, &history, &[], false);
+        assert_eq!(blank[0].command, Command::Resume("2".into()));
+        assert_eq!(blank[0].title, "XQC — WICKED");
+        assert_eq!(blank[0].kind, "resume at 1:06:40");
+        assert_eq!(blank[1].command, Command::Watch("xqc".into()));
+        assert_eq!(
+            blank
+                .iter()
+                .filter(|entry| matches!(entry.command, Command::Resume(_)))
+                .count(),
+            1,
+            "one recording leads; the rest wait to be typed"
+        );
+
+        let live_since: Vec<String> = vec!["forsen".into(), "xqc".into()];
+        let blank = entries("", &follows, &[], &live_since, &history, &[], false);
+        assert_eq!(
+            blank[0].command,
+            Command::Watch("forsen".into()),
+            "something else was opened since"
+        );
+
+        let finished = [Watched {
+            finished: true,
+            ..watched("2", "xqc", "WICKED", 36_000)
+        }];
+        let blank = entries("", &follows, &[], &recent, &finished, &[], false);
+        assert!(
+            !blank
+                .iter()
+                .any(|entry| matches!(entry.command, Command::Resume(_))),
+            "a finished recording is not carried on with"
+        );
+    }
+
+    /// Typed, a recording answers to its channel the way every name does, or
+    /// to a piece of its title — whole, and long enough to mean something,
+    /// since nearly any two letters appear in order in a title somewhere.
+    /// It comes after the rows that open a channel now and before the one
+    /// that lists the channel's past.
+    #[test]
+    fn a_recording_is_found_by_its_channel_or_a_piece_of_its_title() {
+        let follows = [stream("xqc", "xQc")];
+        let history = [
+            watched("2", "xqc", "NOPIXEL DRAMA", 4_000),
+            Watched {
+                finished: true,
+                ..watched("1", "forsen", "Games and shit!", 36_000)
+            },
+        ];
+
+        let by_channel = entries("xqc", &follows, &[], &[], &history, &[], false);
+        let kinds: Vec<&str> = by_channel.iter().map(|entry| entry.kind.as_ref()).collect();
+        assert_eq!(kinds[..3], ["watch", "resume at 1:06:40", "videos"]);
+
+        // A word that is also a login: the channel it names comes first, as a
+        // channel always does, then the recording.
+        let by_title = entries("games", &[], &[], &[], &history, &[], false);
+        let kinds: Vec<&str> = by_title.iter().map(|entry| entry.kind.as_ref()).collect();
+        assert_eq!(kinds[..3], ["channel", "watched", "videos"]);
+        assert_eq!(by_title[1].command, Command::Resume("1".into()));
+
+        let scattered = entries("gs", &[], &[], &[], &history, &[], false);
+        assert!(
+            !scattered
+                .iter()
+                .any(|entry| matches!(entry.command, Command::Resume(_))),
+            "two letters in order are not a title"
+        );
+    }
+
+    #[test]
+    fn the_history_is_a_command_away() {
+        let found = entries("history", &[], &[], &[], &[], &[], false);
+        assert!(found
+            .iter()
+            .any(|entry| entry.command == Command::ShowHistory));
     }
 }

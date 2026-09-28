@@ -14,6 +14,7 @@
 //! | `follows` | the Twitch worker's events: sign-in, who is live, replies |
 //! | `browsing` | the browse page's requests: tabs, search, categories, channels |
 //! | `streams` | opening, restarting and closing panes |
+//! | `history` | what has been watched: noting where each recording got to, resuming there |
 //! | `prefs` | the settings sheet, the divider drag, the rail |
 //! | `chrome` | pills, toasts, the now-playing bar, the rail |
 //! | `pages` | the two pages, assembled |
@@ -27,6 +28,7 @@ mod browsing;
 mod chrome;
 mod commands;
 mod follows;
+mod history;
 mod pages;
 mod prefs;
 mod shortcuts;
@@ -42,6 +44,7 @@ use gpui::{
     Subscription, Task, Window,
 };
 use gpui_component::input::{InputEvent, InputState};
+use settings::history::History;
 use settings::Settings;
 use twitch_api::{FollowedChannel, LiveStream};
 
@@ -129,6 +132,15 @@ enum Page {
 pub(crate) struct RootView {
     settings: Settings,
     settings_path: PathBuf,
+    /// Every recording opened, and where each was left. A file of its own
+    /// beside the settings; see `settings::history`.
+    history: History,
+    history_path: PathBuf,
+    /// Which scheduled history save is the newest; see `save_history_soon`.
+    history_epoch: u64,
+    /// Notes where the recordings playing have got to, every few seconds;
+    /// see `keep_history`. Dropping it stops that.
+    _history_tick: Task<()>,
     cache: Arc<ImageCache>,
 
     page: Page,
@@ -250,6 +262,11 @@ impl RootView {
             eprintln!("settings: {e}; using defaults");
             Settings::default()
         });
+        let history_path = settings::history::default_path(APP_NAME);
+        let history = History::load(&history_path).unwrap_or_else(|e| {
+            eprintln!("history: {e}; starting with none");
+            History::default()
+        });
 
         // A cache directory that cannot be created is not a reason to have no
         // window. This runs before there is one, so a panic here was a release
@@ -332,6 +349,10 @@ impl RootView {
         let mut view = Self {
             settings,
             settings_path,
+            history,
+            history_path,
+            history_epoch: 0,
+            _history_tick: Self::keep_history(cx),
             cache,
             page: Page::Browse,
             slots: Vec::new(),

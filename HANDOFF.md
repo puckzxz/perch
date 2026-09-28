@@ -4,7 +4,7 @@ For whoever picks this up next. `README.md` covers *using* it; this covers
 *working on* it — the architecture, the traps, and the things that cost real
 time to discover and would cost the same again.
 
-Roughly 24,000 lines across seven crates. `cargo test --workspace`,
+Roughly 26,000 lines across seven crates. `cargo test --workspace`,
 `cargo clippy --workspace --all-targets` and `cargo fmt --all --check` are all
 expected to pass; if one does not, that is the change you are looking at, not
 the baseline.
@@ -56,7 +56,7 @@ crates/
                 the replay of a recording's chat
   twitch-api    device-code sign-in, follows, top streams, categories, search
   emotes        Twitch/FFZ/BTTV/7TV resolution + disk image cache
-  settings      persisted user settings
+  settings      persisted user settings, and what has been watched
   perch         the app
 ```
 
@@ -69,10 +69,11 @@ App modules:
 | file | role |
 |---|---|
 | `main.rs` | the process: arguments, the window, where stderr goes |
-| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `browsing`, `streams`, `prefs`, `chrome`, `pages` |
+| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `browsing`, `streams`, `history` (where each recording was left, and resuming there), `prefs`, `chrome`, `pages` |
 | `target.rs` | what a typed or pasted thing means: a login, or a twitch.tv link to a channel or a recording (pure, tested) |
 | `browse.rs` | the picker page: following, popular, categories, search |
-| `channel_page.rs` | one channel's past broadcasts, and when each was |
+| `channel_page.rs` | one channel's past broadcasts, and when each was; the recording card both pages use |
+| `history_page.rs` | the history tab, and the one translation between a video and a history entry |
 | `watch.rs` | the grid of panes; `Slot` lives here |
 | `layout.rs` | derives grid shape from window aspect (pure, tested) |
 | `video_view.rs` | player element + overlay controls |
@@ -348,6 +349,30 @@ as "finished" rather than "ended the stream" by looking at what it was playing.
 the live edge; an absolute one was added for recordings and removed when the
 measurement above came in, because a command nothing can use is a trap.
 
+**A recording paused for a while can come back to a dead connection, and
+hang.** The main file is local, so mpv runs no network cache: the demuxer reads
+about a second ahead (`demuxer-cache-duration` sits at 1.0) and keeps its
+connection to the CDN between segments. A pause therefore leaves a connection
+idle, usually halfway through a ten-megabyte segment. In a five-minute pause
+against the real CDN the connection was closed while it waited, cleanly —
+ffmpeg's keep-alive request failed at once and it opened another, and play
+went on. Dropped *silently* instead — a router, a VPN or a sleep forgetting the
+flow, simulated with a local proxy that stopped answering on the connections it
+already had — the read simply waits: playback resumed for the two seconds
+already buffered, then sat at `paused-for-cache` for the two minutes it was
+watched. mpv could not apply its sixty-second network timeout to the demuxer
+("Could not set AVOption timeout" in its log); some timeout did fire a minute
+in, and only moved the demuxer on to asking for the next segment down the same
+dead connection. The fix is the user's own workaround, automated: a reopen at
+the same position is fresh connections and lands in about a second. So a pause
+of `vod::LONG_PAUSE` or more resumes by reopening where it is, and a recording
+that is not paused and has not moved for `vod::STALL` is reopened where it is
+too — except within `vod::EDGE` of a broadcast still being recorded, where
+waiting is the point. Both were measured against that proxy — the resume
+reopened in 1.4 s, and in the app a stall mid-play was reopened by the
+watchdog and carried on — and neither fired in minutes of ordinary playing,
+pausing and background play. Both say so in the log.
+
 **Why not streamlink's relay for a recording.** Its server answers one GET with
 a body that never ends, ignores `Range` and sends no `Content-Length`, so a
 seek would be a process restart. And the `--stream-url` rule is about ad
@@ -360,8 +385,9 @@ subscriber-only ones; the cookie the settings already hold lifts both, and did.
 A recording named by a link — `twitch.tv/videos/<id>`, on the command line or
 pasted into the palette — is read by `target.rs` and looked up through
 `Request::Video`, since the pane needs the video's title and channel and the
-link carries neither; it opens from the link's `?t=`, if it has one, and a
-link given before sign-in waits in `RootView::linked_videos` for the session.
+link carries neither; it opens from the link's `?t=`, if it has one — or else
+where the history says it was left — and a link given before sign-in waits in
+`RootView::linked_videos` for the session.
 
 ### Performance
 
@@ -945,6 +971,30 @@ categories look different, and only because box art is 3:4 rather than 16:9.
 Opening a category *replaces* the page rather than nesting inside the tab, so
 there is only ever one thing to scroll.
 
+**The fourth tab, history, is the app's own memory and asks Twitch nothing.**
+It is `settings::history`, kept in `history.json` beside the settings rather
+than in them: it is written every fifteen seconds while a recording plays, and
+the file with the sign-in in it is better rewritten as seldom as possible.
+`root::history` does the writing — an entry the moment a recording opens, so
+one that turns out to be gone is still findable; its place every fifteen
+seconds while it moves, and never while it stands still, so a pause does not
+rewrite the file or reorder the list; and when its pane goes. That last one is
+why `RootView::retire_slots` is the only way panes are closed: the position
+lives on the slot, and a `slots.clear()` anywhere else takes the last few
+seconds with it. The window closing writes it too. Opening a recording from
+anywhere — its channel's page, the tab, the palette, a link with no `?t=` —
+asks `resume_point` first, so a card on a channel's page picks up where it was
+left as well; within a minute of the end (`history::finished_at`) counts as
+watched, and starts from the top. An entry keeps what a pane needs to play the
+recording again, so the tab opens one without a lookup; the price is that its
+title and picture are as fresh as the last listing that mentioned it —
+`refresh_history` takes a channel page's listing as the newer word, and
+Twitch's "still recording" placeholder is dropped once the player says the
+recording has finished, or it would say "streaming now" on the card for good.
+With nothing typed, the palette leads with the newest part-watched recording
+when its channel also leads the recents, which is what it looks like when the
+last thing opened was that recording: Ctrl+K then Enter carries on with it.
+
 Everything the user does there arrives as one `browse::Action` rather than one
 callback per control: the page is generic over its owner, so each extra closure
 would be another type parameter threaded through every helper.
@@ -1218,13 +1268,19 @@ thread asks again every ten seconds from the last offset, which is how the
 replay of a broadcast still being recorded grows.
 
 **The position is the pane's, not the player's.** `video::PositionHandle` is
-made in `open_video`, lives on `Source::Video`, and is handed to every
+made in `open_video_at`, lives on `Source::Video`, and is handed to every
 `VideoStream` the pane starts, so a quality change — a new player — carries
 the position across and the replay sees playback continue rather than a jump.
-"Watch again" starts a player at zero, which the replay reads as a seek back
-and reloads from the start. `VideoStream::start` writes the start position
-into the handle at once, so neither the bar nor the replay sits on the last
-player's position for the seconds a player takes to open.
+It is made already holding the place the pane opens at
+(`PositionHandle::starting_at`): the replay starts following it seconds before
+any player exists, and a pane resuming three hours in used to load the first
+minute of chat and then the right one. "Watch again" starts a player at zero,
+which the replay reads as a seek back and reloads from the start.
+`VideoStream::start` writes the start position into the handle at once, so
+neither the bar nor the replay sits on the last player's position for the
+seconds a player takes to open. The history reads the same handle, which is
+why a pane still opening, or one whose player has stopped, is noted where it
+is rather than at zero.
 
 **Two events only a replay sends, and one that means something else.**
 `ChatEvent::Reset` clears the rows and keeps the colour map — same chat, same
@@ -1441,42 +1497,43 @@ the environment variable that overrides the search.
 ## What to build next
 
 Nothing here is agreed. The four items that were, plus chat backfill, the
-follows filter, window placement, past broadcasts and their chat replay, and
-the September 2026 round of streamlining — recents and open-by-name in the
+follows filter, window placement, past broadcasts and their chat replay, the
+September 2026 round of streamlining — recents and open-by-name in the
 palette, links on the command line, pane keys, clickable toasts, auto-retry,
-the quality re-pick, chat holding still under the pointer — are built. Ranked
-by what would be noticed, roughly:
+the quality re-pick, chat holding still under the pointer — and the watch
+history that followed it — where each recording was left, resuming there from
+anywhere, the history tab, the time under the pointer on the seek bar, and
+getting a stalled recording going again — are built. Ranked by what would be
+noticed, roughly:
 
 1. **Rewind a live stream.** A "from the start" control on a live pane that
    opens the in-progress archive in place. The archive is in the channel's
    page already; the shortcut is the work.
-2. **Remember where a recording was stopped**, per video, and resume there.
-   `Slot::resume_at` is the seam.
-3. **Buffered range and muted-audio spans on the seek bar**, from
+2. **Buffered range and muted-audio spans on the seek bar**, from
    `demuxer-cache-time` and the `-muted` segments a playlist names.
-4. **Highlights and uploads** on the channel page, as a second list.
-5. **Stream metadata for channels in none of the lists.** The chat header now
+3. **Highlights and uploads** on the channel page, as a second list.
+4. **Stream metadata for channels in none of the lists.** The chat header now
    reads from every live list the app holds, so a pane opened from popular, a
    category or a search carries its numbers, title and game. A channel opened by
    name still carries none: nothing has ever fetched it. `GET
    /helix/streams?user_login=…` per open channel would fill it, and would also
    keep a title that changes mid-stream honest, which the snapshot does not.
-6. **A stable order for the rail and the grid.** Both re-sort by viewers on every
+5. **A stable order for the rail and the grid.** Both re-sort by viewers on every
    poll, so a row can move under the pointer while a menu is open. Keeping the
    order a channel arrived in for the session, or animating the move, are the
    two answers; neither is free.
-7. **Badges in the chat gutter** — sub, mod, VIP. The tags already arrive and
+6. **Badges in the chat gutter** — sub, mod, VIP. The tags already arrive and
    are parsed into the map; nothing reads them.
-8. **Reply context lines.** `reply-parent-*` tags arrive too.
-9. **Highlight rules** that wash the row background rather than colouring a
-    word. The wash already exists for events.
-10. **Rebindable keys.** `keys::bindings` is a plain `Vec<KeyBinding>` built
-    from constants; the work is a UI and a settings shape, not a mechanism.
-11. **Sign-out.** There is no way to clear a bad token except editing the field.
-12. **The auth-token cookie off argv.** It is documented as a tradeoff, but a
-   per-spawn `--config` file with a user-only ACL, deleted once streamlink has
-   started, would take it out of the process list at the cost of one more file
-   on disk. Not done here because it changes a documented decision.
+7. **Reply context lines.** `reply-parent-*` tags arrive too.
+8. **Highlight rules** that wash the row background rather than colouring a
+   word. The wash already exists for events.
+9. **Rebindable keys.** `keys::bindings` is a plain `Vec<KeyBinding>` built
+   from constants; the work is a UI and a settings shape, not a mechanism.
+10. **Sign-out.** There is no way to clear a bad token except editing the field.
+11. **The auth-token cookie off argv.** It is documented as a tradeoff, but a
+    per-spawn `--config` file with a user-only ACL, deleted once streamlink has
+    started, would take it out of the process list at the cost of one more file
+    on disk. Not done here because it changes a documented decision.
 
 **Known to be out of reach**, so nobody re-derives it:
 
@@ -1570,7 +1627,8 @@ None of these is being worked on; all of them are real.
     rather than a seek — see the Recordings trap for why that is the only
     kind that works — and while a recording is still being made a viewer who
     has caught up with the edge waits up to ten seconds for the next segment,
-    which is what the live pane is for.
+    which is what the live pane is for. Resuming after a pause of half a
+    minute or more pays the same second, on purpose — the same trap says why.
 17. **Chat replay rides an unpublished Twitch query** and a Client-ID that is
     not the app's own — see the Chat section. There is no sanctioned
     alternative; the website itself has no other path, and TwitchDownloader
@@ -1579,6 +1637,12 @@ None of these is being worked on; all of them are real.
     of a broadcast still being recorded runs about thirty seconds behind live,
     so a viewer who has caught up with the edge sees no chat there; the live
     pane is for that.
+18. **The history is only as fresh as the last listing.** An entry keeps the
+    title and the picture from when it was last opened or listed, so a title
+    edited since shows the old one until the channel's page is opened again.
+    And it is written every fifteen seconds while a recording plays, so a
+    crash picks up at most that much early; closing a pane or the window
+    writes it at once.
 
 ## Things not to redo
 
@@ -1604,6 +1668,11 @@ None of these is being worked on; all of them are real.
   kind is most channels. Reposition by rewriting the playlist, as `vod.rs` does.
 - Do not rename or rewrite a playlist the player is reading. Write a new file
   for a reposition; append for growth.
+- Do not resume a recording paused for a while by unpausing it, or wait on
+  ffmpeg to notice a connection that died under it. A silently dropped one
+  hangs the demuxer for good; reopen where it is. See the Recordings trap.
+- Do not close a pane with anything but `RootView::retire_slots`. The place a
+  recording was left is on the slot, and has to be written down first.
 - Do not add tokio; use a thread plus an mpsc pump.
 - Do not pin a bottom-aligned `list` to hold chat still; hold the rows back
   instead. See the Chat section for why the pin does not survive a layout.

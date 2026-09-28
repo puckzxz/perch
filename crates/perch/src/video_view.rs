@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use gpui::{
     canvas, div, img, prelude::*, px, Animation, AnimationExt, Bounds, ClickEvent, Context,
-    ElementId, Entity, EventEmitter, Hsla, Pixels, RenderImage, SharedString, Subscription, Task,
-    Window,
+    ElementId, Entity, EventEmitter, Hsla, Pixels, Point, RenderImage, SharedString, Subscription,
+    Task, Window,
 };
 use gpui_component::slider::{Slider, SliderEvent, SliderState};
 
@@ -87,6 +87,10 @@ pub struct VideoView {
     /// Where the seek bar's track was laid out last frame, so a scrub can
     /// follow the pointer after it has left the track.
     track: Option<Bounds<Pixels>>,
+    /// Where along the seek bar the pointer is, while it is over the bar:
+    /// what the label above it names. Measured by the probe against `track`,
+    /// for the reason `hovered` is.
+    pointing: Option<f32>,
     _pump: Task<()>,
     /// Keeps the release hook alive; see [`VideoView::from_stream`].
     _release: Subscription,
@@ -166,6 +170,7 @@ impl VideoView {
             volume_before_background: volume,
             scrub: None,
             track: None,
+            pointing: None,
             _pump: pump,
             _release: release,
         }
@@ -175,6 +180,13 @@ impl VideoView {
     /// the new one to pick up where this one was. Zero on a live stream.
     pub fn position(&self) -> f64 {
         self.stream.position()
+    }
+
+    /// How long the recording is, as the player measures it — the playlist's
+    /// length, which grows while a broadcast is still being made. `None` on a
+    /// live stream.
+    pub fn timeline(&self) -> Option<seek_bar::Timeline> {
+        self.stream.timeline()
     }
 
     /// Skip a recording by `delta` seconds, clamped to its length. Does
@@ -220,6 +232,23 @@ impl VideoView {
             return false;
         }
         self.scrub = Some(fraction);
+        true
+    }
+
+    /// Note where along the seek bar the pointer is, from the probe — `None`
+    /// for a pointer that is not over this player at all. Returns whether the
+    /// label moved.
+    fn follow_pointer(&mut self, pointer: Option<Point<Pixels>>) -> bool {
+        let pointing = match (pointer, self.track) {
+            // A backgrounded player draws no bar, so wherever its track was
+            // last laid out is somewhere else on the screen by now.
+            (Some(pointer), Some(track)) if !self.background => seek_bar::hover_at(&track, pointer),
+            _ => None,
+        };
+        if self.pointing == pointing {
+            return false;
+        }
+        self.pointing = pointing;
         true
     }
 
@@ -278,6 +307,7 @@ impl VideoView {
         }
         self.quality_menu_open = false;
         self.hovered = false;
+        self.pointing = None;
         self.sync_controls();
         cx.notify();
     }
@@ -410,9 +440,19 @@ impl VideoView {
             .scrub
             .map(|fraction| fraction as f64 * extent)
             .unwrap_or(position);
+        // Mid-scrub the label rides the thumb, whatever the pointer has since
+        // wandered over: the time being chosen is the one worth reading.
+        let hover = self
+            .scrub
+            .or(self.pointing)
+            .map(|fraction| seek_bar::Hover {
+                fraction,
+                time: seek_bar::timecode(fraction as f64 * extent).into(),
+            });
         let state = seek_bar::State {
             played: (position / extent) as f32,
             scrub: self.scrub,
+            hover,
             position: seek_bar::timecode(shown).into(),
             extent: seek_bar::timecode(extent).into(),
         };
@@ -585,7 +625,8 @@ impl Render for VideoView {
                 this.update(cx, |view: &mut Self, cx| {
                     let hovered = view.set_hovered(inside);
                     let scrubbed = view.follow_scrub(pointer.x);
-                    if hovered || scrubbed {
+                    let pointed = view.follow_pointer(inside.then_some(pointer));
+                    if hovered || scrubbed || pointed {
                         cx.notify();
                     }
                 })

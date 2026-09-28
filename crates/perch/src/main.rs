@@ -23,6 +23,7 @@ mod clock;
 mod controls;
 mod cpu_log;
 mod diagnostics;
+mod history_page;
 mod keys;
 mod layout;
 mod motion;
@@ -223,8 +224,11 @@ fn main() {
                     let root = root.downgrade();
                     move |window, cx| {
                         let placement = placement_of(window.window_bounds());
-                        root.update(cx, |this, cx| this.remember_window(placement, cx))
-                            .ok();
+                        root.update(cx, |this, cx| {
+                            this.remember_window(placement, cx);
+                            this.remember_watching(cx);
+                        })
+                        .ok();
                         true
                     }
                 });

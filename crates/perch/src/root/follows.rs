@@ -148,6 +148,9 @@ impl RootView {
                 user_id,
                 videos,
             } => {
+                // Whatever the history holds of these, this is the newer
+                // word on it, wherever the user has got to since.
+                self.refresh_history(&videos.items, cx);
                 // Same guard as a category: a reply for a channel the user
                 // has already left must not repopulate the page behind them.
                 if let Some(page) = self
@@ -295,7 +298,12 @@ impl RootView {
                 // Alone if nothing is playing, beside it otherwise: the same
                 // answer the command line gives a second channel.
                 let solo = self.slots.is_empty();
-                let start_at = linked.start_secs.unwrap_or(0) as f64;
+                // Where the link points, if it points anywhere; otherwise
+                // where it was left, as from any other way in.
+                let start_at = linked
+                    .start_secs
+                    .map(|secs| secs as f64)
+                    .unwrap_or_else(|| self.resume_point(&video.id));
                 self.open_video_at(video, solo, start_at, window, cx);
             }
             Err(reason) => self.toast(format!("could not open recording {id}: {reason}"), cx),

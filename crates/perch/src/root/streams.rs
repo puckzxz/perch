@@ -37,7 +37,7 @@ impl RootView {
             // Already open, so switch to it rather than restarting it. Solo
             // closes the others; dropping them stops their streamlink and mpv.
             if solo {
-                self.slots.retain(|slot| slot.channel == channel);
+                self.retire_slots(|slot| slot.channel == channel, cx);
             }
             self.set_background(false, cx);
             cx.notify();
@@ -45,7 +45,7 @@ impl RootView {
         }
 
         if solo {
-            self.slots.clear();
+            self.retire_slots(|_| false, cx);
         } else if self.slots.len() >= MAX_PANES {
             self.toast(format!("already watching {MAX_PANES} streams"), cx);
             return;
@@ -97,6 +97,9 @@ impl RootView {
     /// moment on screen, following the pane's position from the moment it
     /// opens, so the pane fills with the first seconds of chat while the
     /// player is still being resolved.
+    ///
+    /// It opens where it was left, if it has been watched before — from any
+    /// card, on any page. See `root::history`.
     pub(super) fn open_video(
         &mut self,
         video: Video,
@@ -104,11 +107,12 @@ impl RootView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_video_at(video, solo, 0.0, window, cx);
+        let start_at = self.resume_point(&video.id);
+        self.open_video_at(video, solo, start_at, window, cx);
     }
 
     /// [`open_video`](Self::open_video), from `start_at` seconds in: where a
-    /// link pointed.
+    /// link pointed, or where the history says it was left.
     pub(super) fn open_video_at(
         &mut self,
         video: Video,
@@ -122,7 +126,7 @@ impl RootView {
 
         if self.slot_index(&key).is_some() {
             if solo {
-                self.slots.retain(|slot| slot.key == key);
+                self.retire_slots(|slot| slot.key == key, cx);
             }
             self.set_background(false, cx);
             cx.notify();
@@ -130,14 +134,21 @@ impl RootView {
         }
 
         if solo {
-            self.slots.clear();
+            self.retire_slots(|_| false, cx);
         } else if self.slots.len() >= MAX_PANES {
             self.toast(format!("already watching {MAX_PANES} streams"), cx);
             return;
         }
 
+        // Into the history now rather than once it plays, so a recording
+        // opened and closed at once, or one that turns out to be gone, is
+        // still one you can find again.
+        self.note_opened(&video, start_at, cx);
+
         let channel = video.user_login.clone();
-        let position = PositionHandle::new();
+        // Already where the pane is opening, so the chat replay starts there
+        // rather than at the top and then jumping.
+        let position = PositionHandle::starting_at(start_at);
         // Archives only. A highlight is cut from ranges of a broadcast, so
         // its offsets mean nothing to a replay; the app lists none today, and
         // one that arrives plays as picture alone.
@@ -397,6 +408,11 @@ impl RootView {
             Stopped::Failed(message) => StreamState::Failed(message.into()),
         };
         self.slots[index].set_state(state);
+        // A recording that reached its end is finished, and one that failed
+        // is left where it failed: either way the history hears now.
+        if !self.slots[index].is_live() && self.note_watching(cx) {
+            self.save_history_soon(cx);
+        }
         cx.notify();
     }
 
@@ -494,9 +510,8 @@ impl RootView {
     }
 
     pub(super) fn close_slot(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if index < self.slots.len() {
-            // Dropping the slot stops its streamlink and its mpv.
-            self.slots.remove(index);
+        if let Some(key) = self.slots.get(index).map(|slot| slot.key.clone()) {
+            self.retire_slots(|slot| slot.key != key, cx);
         }
         if self.slots.is_empty() {
             self.page = Page::Browse;
@@ -527,8 +542,7 @@ impl RootView {
         if self.settings.miniplayer {
             self.set_background(true, cx);
         } else {
-            // Dropping the slots stops each streamlink and its mpv.
-            self.slots.clear();
+            self.retire_slots(|_| false, cx);
         }
         cx.notify();
     }
@@ -543,8 +557,22 @@ impl RootView {
     }
 
     pub(super) fn stop_all(&mut self, cx: &mut Context<Self>) {
-        self.slots.clear();
+        self.retire_slots(|_| false, cx);
         self.page = Page::Browse;
         cx.notify();
+    }
+
+    /// Close every pane `keep` says no to.
+    ///
+    /// The one way panes are closed, because a recording's place has to be
+    /// written down before its pane goes: the position lives on the slot,
+    /// and a pane closed any other way takes the last few seconds of it with
+    /// it. Dropping a slot stops its streamlink and its mpv.
+    pub(super) fn retire_slots(&mut self, keep: impl Fn(&Slot) -> bool, cx: &mut Context<Self>) {
+        let recording_leaves = self.slots.iter().any(|slot| !slot.is_live() && !keep(slot));
+        if recording_leaves && self.note_watching(cx) {
+            self.save_history_soon(cx);
+        }
+        self.slots.retain(keep);
     }
 }

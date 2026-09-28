@@ -63,7 +63,7 @@ impl RootView {
                         this.settings_panel = None;
 
                         if miniplayer_off && this.page == Page::Browse {
-                            this.slots.clear();
+                            this.retire_slots(|_| false, cx);
                         }
 
                         // Apply immediately rather than asking for a restart,

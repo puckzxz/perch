@@ -21,6 +21,7 @@ use crate::chat::ChatView;
 use crate::controls;
 use crate::layout;
 use crate::motion;
+use crate::seek_bar;
 use crate::theme;
 use crate::video::PositionHandle;
 use crate::video_view::VideoView;
@@ -199,6 +200,11 @@ fn status_message(slot: &Slot) -> Option<Status> {
     let recording = !slot.is_live();
     match &slot.state {
         StreamState::Playing(_) => None,
+        // Where it is opening, when that is not the top: picked up from the
+        // history, a link's moment, or a quality change part-way through.
+        StreamState::Starting if recording && slot.resume_at >= 1.0 => Some(waiting_on_it(
+            format!("opening at {}…", seek_bar::timecode(slot.resume_at)).into(),
+        )),
         StreamState::Starting if recording => Some(waiting_on_it("opening the recording…".into())),
         StreamState::Starting => Some(waiting_on_it("starting stream…".into())),
         StreamState::Offline if recording => Some(over(

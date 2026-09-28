@@ -43,6 +43,7 @@ impl RootView {
             Tab::Categories if self.discovery.categories.is_empty() => {
                 self.fetch(Request::Categories { after: None })
             }
+            // The history is the app's own; there is nothing to ask for.
             _ => {}
         }
     }
@@ -81,6 +82,9 @@ impl RootView {
                 Tab::Following => self.refresh_follows(),
                 Tab::Popular => self.fetch(Request::Popular { after: None }),
                 Tab::Categories => self.fetch(Request::Categories { after: None }),
+                // Nothing on it came from Twitch, so there is nothing to ask
+                // again; the follows are what goes stale on this page.
+                Tab::History => self.refresh_follows(),
             }
         }
         cx.notify();
@@ -174,6 +178,8 @@ impl RootView {
             }
             Action::WatchVideo(video) => self.open_video(*video, true, window, cx),
             Action::AddVideo(video) => self.open_video(*video, false, window, cx),
+            Action::ForgetVideo(id) => self.forget_video(&id, cx),
+            Action::ClearHistory => self.clear_history(cx),
         }
     }
 
@@ -254,7 +260,7 @@ impl RootView {
                     .next
                     .clone()
                     .map(|after| Request::Categories { after: Some(after) }),
-                Tab::Following => None,
+                Tab::Following | Tab::History => None,
             }
         };
 

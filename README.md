@@ -253,6 +253,11 @@ that channel anyway, with its past broadcasts beside it; paste a twitch.tv link
 and it opens the channel or the recording the link names, from the moment a
 `?t=` points at.
 
+The recordings you have watched are in it too: type a few letters of the
+channel, or a word of the title, to carry on with one. When the last thing you
+opened was a recording you had not finished, it leads the empty palette, so
+`Ctrl+K` then `Enter` picks it up where you left it.
+
 ## Past broadcasts
 
 Every channel has a page of what it broadcast before: click an offline name on
@@ -262,13 +267,31 @@ the length where a stream's card has its viewer count, and how long ago it was
 underneath. One still being recorded carries the live dot and says how long it
 has been going so far; it can be watched from the start while the stream is on.
 
-A recording plays in an ordinary pane, with a seek bar above the controls. Click
-the bar or drag its thumb; `←` and `→` skip ten seconds. A jump takes a second
+A recording plays in an ordinary pane, with a seek bar above the controls. Point
+at the bar and it says what time is under the pointer before you click; click
+it or drag its thumb, and `←` and `→` skip ten seconds. A jump takes a second
 or so, because the player is reopened at the new place rather than seeked —
 the reason is the player's and `HANDOFF.md` has it. The header says `replay`,
 names the broadcast, and opens it on twitch.tv; when the recording ends the pane
 says so and offers to start over. A channel's live stream and one of its
 recordings can be open side by side.
+
+Every recording you open is kept on the **history** tab, newest first: the ones
+you are part-way through under *continue watching*, each saying where you left
+it, then the ones you finished. Opening a recording again — from there, from its
+channel's page, or from the palette — picks up where you left it, and the pane
+says so while it opens; one watched to within a minute of its end starts from
+the top, and a link with a `?t=` goes where the link says. Cards on a channel's
+page carry the same bar along the bottom of the picture, so you can see which
+ones you have seen. **forget** on a card's picture takes one off; **clear
+history** takes the lot. The list is `history.json` beside the settings, and
+deleting it forgets what was watched and nothing else.
+
+Resuming a recording left paused for half a minute or more takes a second: it is
+reopened where it was, because the connection it was using may have gone while
+it waited — and a dead one used to leave the picture stuck until you jumped away
+and back. One that stops moving for twenty seconds while playing is reopened the
+same way.
 
 The chat plays back beside it: what was being said at the moment on screen,
 from Twitch's own copy of it, with the same emotes, links and colours as a live
@@ -287,7 +310,8 @@ broadcast.
 
 The gear in the title bar. Stored at `%APPDATA%/perch/settings.json` on Windows
 and `~/Library/Application Support/perch/settings.json` on macOS; changes apply
-immediately rather than needing a restart.
+immediately rather than needing a restart. What you have watched is beside it,
+in `history.json`.
 
 Volume is remembered per channel, because streamers are not consistent about
 how loud they run. Muting one is remembered too, and deliberately never becomes
@@ -358,7 +382,7 @@ crates/
   twitch-chat   read-only chat over anonymous IRC; a recording's chat replayed
   twitch-api    device-code sign-in, follows, browsing and search
   emotes        Twitch/FFZ/BTTV/7TV resolution, disk image cache
-  settings      persisted user settings
+  settings      persisted user settings, and what has been watched
   perch         the app
 ```
 

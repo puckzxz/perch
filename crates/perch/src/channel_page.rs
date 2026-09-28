@@ -8,14 +8,22 @@
 //! corner differs: a stream's card says how many are watching now, and a
 //! recording's says how long it is, which is the one number that decides
 //! whether there is time for it.
+//!
+//! The recording's card is the history page's card too — see
+//! `history_page` — so a recording looks the same wherever it is found, and
+//! one part-watched says how far in it was left on both.
 
 use chrono::{DateTime, Datelike as _, Local, Utc};
 use emotes::ImageCache;
-use gpui::{div, img, prelude::*, px, rgb, AnyElement, Context, ScrollHandle, SharedString};
+use gpui::{
+    div, img, prelude::*, px, rgb, AnyElement, Context, DefiniteLength, ScrollHandle, SharedString,
+};
+use settings::history::{History, Watched};
 use twitch_api::{Video, VIDEO_THUMBNAIL};
 
 use crate::browse::{self, Action, ChannelPage, Discovery};
 use crate::controls;
+use crate::seek_bar;
 use crate::theme;
 
 /// How long after a broadcast's listed end it may still be going.
@@ -30,9 +38,18 @@ const STILL_GOING_SECS: i64 = 600;
 /// Whether `video` is a broadcast still being recorded, as best the list can
 /// tell. See [`STILL_GOING_SECS`] for the two signals.
 pub fn in_progress(video: &Video, now: DateTime<Utc>) -> bool {
-    if video.thumbnail_url.contains("404_processing") {
-        return true;
-    }
+    placeholder(&video.thumbnail_url) || listed_as_going(video, now)
+}
+
+/// Whether a thumbnail is the picture Twitch serves in place of one while a
+/// broadcast is still being recorded.
+pub fn placeholder(thumbnail_url: &str) -> bool {
+    thumbnail_url.contains("404_processing")
+}
+
+/// Whether the listed length puts the broadcast's end close enough to now
+/// that it may still be going. See [`STILL_GOING_SECS`].
+pub fn listed_as_going(video: &Video, now: DateTime<Utc>) -> bool {
     let Some(started) = started_at(video) else {
         return false;
     };
@@ -113,14 +130,31 @@ pub fn describe(video: &Video, now: DateTime<Utc>) -> String {
         .join(" · ")
 }
 
+/// How tall the bar along the bottom of a watched recording's picture is.
+const WATCHED_BAR: f32 = 3.0;
+
+/// One card's worth: a recording, and what the page showing it knows about
+/// it besides. The two pages that show recordings differ only here.
+pub(crate) struct Card<'a> {
+    /// Unique on the page: the card's element ids are made from it.
+    pub index: usize,
+    pub video: &'a Video,
+    /// Where it was left, if it has been watched.
+    pub watched: Option<&'a Watched>,
+    /// The line under the title: when it was and how many have watched it,
+    /// on a channel's page; whose it is and when, in the history.
+    pub byline: String,
+    /// Whether the card offers to forget it, which only the history does.
+    pub forgettable: bool,
+}
+
 /// One past broadcast.
 ///
-/// Clicking the card plays it alone; the small "+" adds it beside whatever is
-/// already playing, the same two gestures a stream's card has.
-#[allow(clippy::too_many_arguments)]
-fn card<V: 'static>(
-    index: usize,
-    video: &Video,
+/// Clicking the card plays it alone — from where it was left, when it has
+/// been watched — and the small "+" adds it beside whatever is already
+/// playing, the same two gestures a stream's card has.
+pub(crate) fn card<V: 'static>(
+    card: Card,
     width: f32,
     cache: &ImageCache,
     can_add: bool,
@@ -128,10 +162,19 @@ fn card<V: 'static>(
     on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + Clone + 'static,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
+    let Card {
+        index,
+        video,
+        watched,
+        byline,
+        forgettable,
+    } = card;
     let on_click = on_action.clone();
-    let on_add = on_action;
+    let on_add = on_action.clone();
+    let on_forget = on_action;
     let chosen = video.clone();
     let added = video.clone();
+    let forgotten = video.id.clone();
 
     // Kept for good rather than refreshed: a recording's picture is a frame
     // of it and never changes. The placeholder Twitch serves while a
@@ -155,27 +198,46 @@ fn card<V: 'static>(
 
     // The corner a stream's card gives to its viewer count. A recording has
     // one number that matters in the same way, its length; one still being
-    // recorded carries the dot, because that number is still moving.
+    // recorded carries the dot, because that number is still moving. One
+    // part-watched says where it was left instead, in the seek bar's own
+    // words, because that is where a click will take you.
     let going = in_progress(video, now);
-    let corner = if going {
-        elapsed_secs(video, now)
+    let so_far = going.then(|| elapsed_secs(video, now)).flatten();
+    let corner = match watched {
+        Some(watched) if watched.finished => format!("watched · {}", length(video.length_secs)),
+        Some(watched) if watched.position_secs > 0 => {
+            let known = so_far
+                .unwrap_or(0.0)
+                .max(watched.length_secs.max(video.length_secs) as f64);
+            format!(
+                "{} / {}",
+                seek_bar::timecode(watched.position_secs as f64),
+                seek_bar::timecode(known)
+            )
+        }
+        _ => so_far
             .map(|secs| format!("{} so far", length(secs as u64)))
-            .unwrap_or_else(|| length(video.length_secs))
-    } else {
-        length(video.length_secs)
+            .unwrap_or_else(|| length(video.length_secs)),
     };
 
-    let meta = [
-        when(&video.created_at, now),
-        Some(format!(
-            "{} views",
-            browse::format_viewers(video.view_count)
-        )),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>()
-    .join(" · ");
+    // How much of it has been watched, the way every video site draws it:
+    // along the bottom edge of the picture, in the colour of the seek bar's
+    // played part.
+    let watched_bar = watched.map(|watched| {
+        div()
+            .absolute()
+            .left_0()
+            .right_0()
+            .bottom_0()
+            .h(px(WATCHED_BAR))
+            .bg(theme::seek_rail())
+            .child(
+                div()
+                    .h_full()
+                    .w(DefiniteLength::Fraction(watched.progress()))
+                    .bg(theme::accent()),
+            )
+    });
 
     div()
         .id(("video-card", index))
@@ -221,6 +283,32 @@ fn card<V: 'static>(
                         .when(going, |badge| badge.child(controls::live_dot()))
                         .child(SharedString::from(corner)),
                 )
+                .children(watched_bar)
+                // In the corner the live card gives to its channel's page,
+                // revealed the same way, so a card at rest is still a
+                // picture.
+                .when(forgettable, |thumb| {
+                    thumb.child(
+                        controls::pill(("forget-video", index), "forget", controls::Variant::Pill)
+                            .absolute()
+                            .top(px(theme::GAP_TIGHT))
+                            .left(px(theme::GAP_TIGHT))
+                            .opacity(0.0)
+                            .group_hover("video-card", |style| style.opacity(1.0))
+                            .tooltip(|window, cx| {
+                                gpui_component::tooltip::Tooltip::new(
+                                    "Take this off your history, and where you left it",
+                                )
+                                .build(window, cx)
+                            })
+                            .on_click(cx.listener(move |view, _event, window, cx| {
+                                // Or the card underneath plays what was just
+                                // forgotten.
+                                cx.stop_propagation();
+                                on_forget(view, Action::ForgetVideo(forgotten.clone()), window, cx)
+                            })),
+                    )
+                })
                 .when(can_add, |thumb| {
                     thumb.child(
                         controls::pill(("add-video", index), "+ add", controls::Variant::Pill)
@@ -259,9 +347,25 @@ fn card<V: 'static>(
                         .text_size(px(theme::TEXT_META))
                         .line_height(px(theme::LINE_TIGHT))
                         .text_color(theme::text_dim())
-                        .child(SharedString::from(meta)),
+                        .child(SharedString::from(byline)),
                 ),
         )
+}
+
+/// A recording's line on its channel's page: when it was, and how many have
+/// watched it.
+fn byline(video: &Video, now: DateTime<Utc>) -> String {
+    [
+        when(&video.created_at, now),
+        Some(format!(
+            "{} views",
+            browse::format_viewers(video.view_count)
+        )),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(" · ")
 }
 
 /// The page: a bar saying whose broadcasts these are and how to leave, then
@@ -271,10 +375,14 @@ fn card<V: 'static>(
 /// control the bar offers: the stream, when there is one, or else the chat,
 /// which is what clicking an offline name used to open and stays one click
 /// away.
+///
+/// `history` is what has been watched, so a recording part-watched says so on
+/// its card and a click on it picks up where it was left.
 #[allow(clippy::too_many_arguments)]
 pub fn view<V: 'static>(
     channel: &ChannelPage,
     discovery: &Discovery,
+    history: &History,
     live: bool,
     width: f32,
     cache: &ImageCache,
@@ -302,9 +410,15 @@ pub fn view<V: 'static>(
         );
         let mut row = browse::wrap_row(theme::GAP_SECTION);
         for (index, video) in channel.videos.items.iter().enumerate() {
-            row = row.child(card(
+            let item = Card {
                 index,
                 video,
+                watched: history.get(&video.id),
+                byline: byline(video, now),
+                forgettable: false,
+            };
+            row = row.child(card(
+                item,
                 card_width,
                 cache,
                 can_add,

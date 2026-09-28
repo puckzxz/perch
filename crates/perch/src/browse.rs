@@ -1,12 +1,15 @@
-//! The browse page: what you follow, what is popular, and what is on.
+//! The browse page: what you follow, what is popular, what is on, and what
+//! you have watched.
 //!
 //! A page rather than a sidebar. Picking what to watch and watching it are
 //! different activities, and giving the picker the whole window means
 //! thumbnails big enough to actually choose by.
 //!
-//! All three lists are the same grid of the same card, because they are the
-//! same question asked three ways. Only categories look different, and only
-//! because box art is a different shape from a thumbnail.
+//! The three lists of what is on are the same grid of the same card, because
+//! they are the same question asked three ways. Only categories look
+//! different, and only because box art is a different shape from a
+//! thumbnail. The history is a grid of recordings, drawn by the card a
+//! channel's page uses; see `history_page`.
 
 use std::sync::Arc;
 
@@ -17,10 +20,12 @@ use gpui::{
     ScrollHandle, SharedString, Stateful, Window,
 };
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
+use settings::history::History;
 use twitch_api::{Category, FollowedChannel, LiveStream, Video};
 
 use crate::channel_page;
 use crate::controls;
+use crate::history_page;
 use crate::motion;
 use crate::palette;
 use crate::theme;
@@ -84,16 +89,20 @@ pub enum Tab {
     Following,
     Popular,
     Categories,
+    /// The recordings you have watched, each where you left it. The one tab
+    /// that asks Twitch nothing: it is the app's own memory.
+    History,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 3] = [Tab::Following, Tab::Popular, Tab::Categories];
+    pub const ALL: [Tab; 4] = [Tab::Following, Tab::Popular, Tab::Categories, Tab::History];
 
     pub fn label(self) -> &'static str {
         match self {
             Tab::Following => "following",
             Tab::Popular => "popular",
             Tab::Categories => "categories",
+            Tab::History => "history",
         }
     }
 }
@@ -221,6 +230,10 @@ pub enum Action {
     /// name.
     WatchVideo(Box<Video>),
     AddVideo(Box<Video>),
+    /// Take one recording off the history, and where it was left with it.
+    ForgetVideo(String),
+    /// Take every recording off the history.
+    ClearHistory,
     /// Open the settings sheet. Only the not-signed-in state raises this: it is
     /// the one empty state whose instruction is "open settings", and telling
     /// somebody where a button is instead of giving them the button is the sort
@@ -538,6 +551,7 @@ pub struct Scrolls {
     pub category: ScrollHandle,
     pub search: ScrollHandle,
     pub channel: ScrollHandle,
+    pub history: ScrollHandle,
 }
 
 /// The scrolling body of a list. Separate from the rows inside it, so a search
@@ -1022,7 +1036,7 @@ fn awaiting_code<V: 'static>(
 }
 
 /// A centred title and explanation, for a list with nothing in it.
-fn notice(title: SharedString, detail: SharedString, error: bool) -> gpui::Div {
+pub(crate) fn notice(title: SharedString, detail: SharedString, error: bool) -> gpui::Div {
     div()
         .flex_1()
         .flex()
@@ -1146,6 +1160,7 @@ pub fn page<V: 'static>(
     discovery: &Discovery,
     sign_in: &SignIn,
     follows_loaded: bool,
+    history: &History,
     width: f32,
     cache: &Arc<ImageCache>,
     can_add: bool,
@@ -1160,6 +1175,7 @@ pub fn page<V: 'static>(
         channel_page::view(
             channel,
             discovery,
+            history,
             channel_live,
             width,
             cache,
@@ -1272,6 +1288,15 @@ pub fn page<V: 'static>(
                     ));
                 scrollable(list, &scrolls.categories).into_any_element()
             }
+            Tab::History => history_page::view(
+                history,
+                width,
+                cache,
+                can_add,
+                &scrolls.history,
+                on_action,
+                cx,
+            ),
         }
     };
 

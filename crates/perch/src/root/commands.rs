@@ -6,6 +6,7 @@ use gpui::{App, Context, IntoElement, KeyDownEvent, Window};
 use gpui_component::input::Input;
 
 use super::RootView;
+use crate::history_page;
 use crate::palette;
 use crate::watch::Slot;
 
@@ -22,6 +23,7 @@ impl RootView {
             &self.follows,
             &self.offline,
             &self.settings.recent,
+            &self.history.videos,
             &watching,
             self.can_add(),
         )
@@ -114,6 +116,18 @@ impl RootView {
             palette::Command::OpenVideo { id, start_secs } => {
                 self.open_video_link(id, start_secs, cx)
             }
+            // From what the history kept of it, so no lookup and no wait; it
+            // opens where it was left, as a recording always does.
+            palette::Command::Resume(id) => {
+                if let Some(video) = self
+                    .history
+                    .get(&id)
+                    .map(|watched| history_page::video(watched, chrono::Utc::now()))
+                {
+                    self.open_video(video, true, window, cx);
+                }
+            }
+            palette::Command::ShowHistory => self.show_history(cx),
             palette::Command::GoBrowse => self.go_browse(cx),
             palette::Command::GoWatch => self.go_watch(cx),
             palette::Command::StopAll => self.stop_all(cx),

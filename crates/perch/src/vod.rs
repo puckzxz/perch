@@ -16,6 +16,21 @@
 //! grow: that is done by *appending* to the current file, which the demuxer
 //! sees on its next re-read, and which never disturbs the part it has already
 //! read. A keeper thread does the asking, once per segment.
+//!
+//! Reopening is also how a recording is got going again when its connections
+//! have gone bad under it. The demuxer reads about a second ahead of the
+//! picture and keeps its connection to Twitch's CDN between segments, so a
+//! pause leaves that connection idle, often halfway through a segment — and a
+//! connection idle for long enough may be gone by the time playback wants it.
+//! Closed cleanly, ffmpeg notices and opens another. Dropped silently — by a
+//! router or a VPN that forgot the flow — the read simply waits: measured
+//! against a proxy that went silent during a one-minute pause, playback
+//! resumed for the two seconds already buffered and then sat still for the
+//! two minutes it was watched, a timeout a minute in only moving the demuxer
+//! on to asking for the next segment down the same dead connection. A reopen
+//! lands in about a second on fresh connections, so [`reopen_on_resume`] and
+//! [`stalled`] decide when to do that rather than wait. HANDOFF's Recordings
+//! trap has the rest of the measurement.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write as _;
@@ -57,6 +72,38 @@ pub fn sweep_scratch() {
 /// for. The list is quoted with mpv's length-prefix form because it has
 /// commas in it and so does the option it goes into.
 const PROTOCOLS: &str = "file,http,https,tcp,tls,crypto,data";
+
+/// A pause at least this long is resumed by reopening the recording where it
+/// is, rather than by unpausing a demuxer whose connection may have died
+/// while it waited. Shorter pauses resume instantly, as they always have; a
+/// longer one pays the second a reopen costs, which after half a minute away
+/// is not noticed, where a picture that never starts again is.
+const LONG_PAUSE: Duration = Duration::from_secs(30);
+
+/// How long a recording that should be playing may sit still before it is
+/// reopened where it is. Longer than any ordinary wait for a segment, so a
+/// slow one is not thrown away half-read; short enough that a viewer is not
+/// left wondering.
+const STALL: Duration = Duration::from_secs(20);
+
+/// How near the end of a broadcast still being recorded counts as its edge,
+/// where waiting is the point: the player is ahead of what Twitch has
+/// written, and gets the next segment when the keeper does.
+const EDGE: f64 = 60.0;
+
+/// Whether to resume a recording paused for `paused_for` by reopening it.
+/// See [`LONG_PAUSE`].
+pub fn reopen_on_resume(paused_for: Duration) -> bool {
+    paused_for >= LONG_PAUSE
+}
+
+/// Whether a recording that is not paused, and has not moved for `still_for`,
+/// has stalled rather than caught up with the edge of a broadcast that is
+/// still going. `position` and `timeline` are where it is and how long it is.
+pub fn stalled(still_for: Duration, position: f64, timeline: &Timeline) -> bool {
+    let at_edge = timeline.growing && position >= timeline.extent(position) - EDGE;
+    still_for >= STALL && !at_edge
+}
 
 /// The recording's length as the seek bar sees it, published for the UI
 /// thread and kept fresh by the keeper while the broadcast is still going.
@@ -208,6 +255,12 @@ impl Recording {
         (!self.loading).then_some(self.base + time_pos)
     }
 
+    /// How long the recording is, as far as the playlist knows, and whether
+    /// it is still growing.
+    pub fn timeline(&self) -> Timeline {
+        self.extent.timeline()
+    }
+
     /// Reopen the player at `secs`.
     pub fn reposition(&mut self, player: &Player, secs: f64) -> Result<(), String> {
         let (path, within) = {
@@ -315,5 +368,48 @@ fn keep_growing(shared: Arc<Mutex<Shared>>, extent: Extent, stop: Arc<AtomicBool
             }
         }
         extent.publish(&shared.playlist);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_short_pause_just_unpauses_and_a_long_one_reopens() {
+        assert!(!reopen_on_resume(Duration::from_secs(5)));
+        assert!(!reopen_on_resume(Duration::from_secs(29)));
+        assert!(reopen_on_resume(Duration::from_secs(30)));
+        assert!(reopen_on_resume(Duration::from_secs(3600)));
+    }
+
+    /// Standing still is a stall anywhere but the edge of a broadcast still
+    /// being made, where it is the player waiting for Twitch.
+    #[test]
+    fn standing_still_is_a_stall_except_at_the_edge_of_a_growing_recording() {
+        let finished = Timeline {
+            length: 36_000.0,
+            fetched_at: Instant::now(),
+            growing: false,
+        };
+        assert!(
+            !stalled(Duration::from_secs(5), 1_000.0, &finished),
+            "a wait"
+        );
+        assert!(stalled(Duration::from_secs(20), 1_000.0, &finished));
+        assert!(
+            stalled(Duration::from_secs(20), 35_990.0, &finished),
+            "near the end of a finished one is still a stall"
+        );
+
+        let growing = Timeline {
+            growing: true,
+            ..finished
+        };
+        assert!(stalled(Duration::from_secs(20), 1_000.0, &growing));
+        assert!(
+            !stalled(Duration::from_secs(60), 35_990.0, &growing),
+            "caught up with the broadcast"
+        );
     }
 }

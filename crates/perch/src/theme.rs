@@ -166,6 +166,13 @@ pub fn seek_rail() -> Hsla {
     rgba(0xffffff40).into()
 }
 
+/// The stretch of that rail between the playhead and the pointer: where a
+/// press would skip to. The same wash, a step stronger, so it reads as more of
+/// the rail rather than as a second bar competing with the played part.
+pub fn seek_hover() -> Hsla {
+    rgba(0xffffff80).into()
+}
+
 /// Hairlines within a pane, e.g. between chat messages. Deliberately fainter
 /// than `border`, since separating peers needs less weight than separating
 /// regions.

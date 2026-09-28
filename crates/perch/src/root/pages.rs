@@ -125,6 +125,7 @@ impl RootView {
                         &self.discovery,
                         &self.sign_in,
                         self.follows_loaded,
+                        &self.history,
                         width,
                         &self.cache,
                         self.can_add(),

@@ -702,12 +702,24 @@ pub enum VideoKind {
 }
 
 impl VideoKind {
-    fn parse(text: &str) -> Self {
+    /// Helix's word for a kind of video, as its `type` field writes it.
+    pub fn parse(text: &str) -> Self {
         match text {
             "archive" => Self::Archive,
             "highlight" => Self::Highlight,
             "upload" => Self::Upload,
             _ => Self::Other,
+        }
+    }
+
+    /// The word [`parse`](Self::parse) reads: how a kind is written down
+    /// anywhere outside this crate, so there is one spelling of each.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Archive => "archive",
+            Self::Highlight => "highlight",
+            Self::Upload => "upload",
+            Self::Other => "other",
         }
     }
 }
@@ -1028,6 +1040,22 @@ fn parse_categories(json: &Value) -> Vec<Category> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A kind written down by `as_str` reads back as itself — the history
+    /// file stores it that way — and a word Twitch has since invented is
+    /// `Other` rather than a failure.
+    #[test]
+    fn a_video_kind_reads_back_as_it_was_written() {
+        for kind in [
+            VideoKind::Archive,
+            VideoKind::Highlight,
+            VideoKind::Upload,
+            VideoKind::Other,
+        ] {
+            assert_eq!(VideoKind::parse(kind.as_str()), kind);
+        }
+        assert_eq!(VideoKind::parse("premiere"), VideoKind::Other);
+    }
 
     /// `slow_down` is an instruction, and collapsing it into `Pending` throws
     /// the instruction away. Keeping them distinct is the whole fix, so the

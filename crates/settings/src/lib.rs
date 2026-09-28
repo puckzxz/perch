@@ -7,6 +7,11 @@
 //! Credentials live here too. They are stored in plain text, which is the same
 //! thing every desktop Twitch client does, but it is a deliberate choice rather
 //! than an oversight — see [`Credentials`].
+//!
+//! What has been watched is in a file of its own beside this one; see
+//! [`history`].
+
+pub mod history;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -363,6 +368,53 @@ pub fn default_path(app_name: &str) -> PathBuf {
         .join("settings.json")
 }
 
+/// The text of `path`, or `None` if there is no such file — which on a first
+/// run is normal rather than an error.
+///
+/// A byte-order mark is stripped rather than parsed, because `serde_json` will
+/// not have one and every obvious way to hand-edit a file on Windows writes
+/// one: Notepad's "UTF-8", PowerShell's `Set-Content -Encoding utf8`, and most
+/// of what an editor calls "UTF-8 with signature". Both files here are
+/// documented as hand-editable, and refusing one over three invisible bytes
+/// would mean the app silently starting without it.
+fn read_if_present(path: &Path) -> Result<Option<String>, Error> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok(Some(
+            text.strip_prefix('\u{feff}')
+                .map(str::to_string)
+                .unwrap_or(text),
+        )),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(Error::Read {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
+/// Write `text` to `path`, creating parent directories as needed.
+///
+/// Written to a temporary file and renamed, so an interrupted save cannot
+/// leave a truncated file behind — which for the settings, holding the
+/// sign-in, would mean silently signing the user out.
+fn write_atomically(path: &Path, text: &str) -> Result<(), Error> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|source| Error::Write {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    let temp = path.with_extension("json.part");
+    std::fs::write(&temp, text).map_err(|source| Error::Write {
+        path: temp.clone(),
+        source,
+    })?;
+    std::fs::rename(&temp, path).map_err(|source| Error::Write {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
 impl Settings {
     /// The level `channel` should start at.
     ///
@@ -469,27 +521,16 @@ impl Settings {
     /// file *is* an error rather than a silent reset, because silently
     /// discarding someone's credentials is worse than refusing to start.
     pub fn load(path: &Path) -> Result<Self, Error> {
-        let text = match std::fs::read_to_string(path) {
-            Ok(text) => text,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
-            Err(source) => {
-                return Err(Error::Read {
-                    path: path.to_path_buf(),
-                    source,
-                })
-            }
+        // A byte-order mark is stripped on the way in; see `read_if_present`.
+        // Refusing one here would be worse than for any other file: the app
+        // would start on defaults and then be unable to save either, since
+        // every write reads this file back first to keep the tokens another
+        // thread put there.
+        let Some(text) = read_if_present(path)? else {
+            return Ok(Self::default());
         };
-        // A byte-order mark is stripped rather than parsed, because
-        // `serde_json` will not have one and every obvious way to hand-edit
-        // this file on Windows writes one: Notepad's "UTF-8", PowerShell's
-        // `Set-Content -Encoding utf8`, and most of what an editor calls
-        // "UTF-8 with signature". The file is documented as hand-editable, so
-        // refusing it over three invisible bytes means the app silently starts
-        // on defaults — and then cannot save either, since every write reads
-        // the file back first to keep the tokens another thread put there.
-        let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
 
-        let mut settings: Self = serde_json::from_str(text).map_err(|source| Error::Parse {
+        let mut settings: Self = serde_json::from_str(&text).map_err(|source| Error::Parse {
             path: path.to_path_buf(),
             source,
         })?;
@@ -552,32 +593,13 @@ impl Settings {
         self.write(path)
     }
 
-    /// The write itself, with the lock already held.
-    ///
-    /// Writes to a temporary file and renames, so an interrupted save cannot
-    /// leave truncated settings — which for a file holding credentials would
-    /// mean silently signing the user out.
+    /// The write itself, with the lock already held. Atomic; see
+    /// `write_atomically`.
     fn write(&self, path: &Path) -> Result<(), Error> {
         let mut out = self.clone();
         out.prune_empty_prefs();
-        let this = &out;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|source| Error::Write {
-                path: parent.to_path_buf(),
-                source,
-            })?;
-        }
-
-        let text = serde_json::to_string_pretty(this).expect("settings are always serialisable");
-        let temp = path.with_extension("json.part");
-        std::fs::write(&temp, text).map_err(|source| Error::Write {
-            path: temp.clone(),
-            source,
-        })?;
-        std::fs::rename(&temp, path).map_err(|source| Error::Write {
-            path: path.to_path_buf(),
-            source,
-        })
+        let text = serde_json::to_string_pretty(&out).expect("settings are always serialisable");
+        write_atomically(path, &text)
     }
 }
 

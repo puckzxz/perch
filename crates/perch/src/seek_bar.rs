@@ -13,6 +13,13 @@
 //! right now, what a second reads as — are here and tested. The element takes
 //! callbacks, so it knows nothing about the player that owns it, the way
 //! `controls` knows nothing about pages.
+//!
+//! Pointing at the bar says what time is under the pointer, in a label above
+//! it, before anything is clicked: on a twelve-hour recording a pixel is
+//! several seconds, and a jump you cannot aim is a jump you make twice. The
+//! owner measures where the pointer is, the way it measures everything else
+//! about the pointer (see `VideoView::hovered` for why that is not
+//! `on_hover`'s job), and hands the answer back in [`State::hover`].
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -20,13 +27,15 @@ use std::time::Instant;
 
 use gpui::{
     canvas, div, prelude::*, px, Bounds, Context, DefiniteLength, MouseButton, MouseDownEvent,
-    MouseUpEvent, Pixels, SharedString, Window,
+    MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Window,
 };
 
 use crate::theme;
 
 /// Room for `h:mm:ss` at meta size, so the track does not shift by a few
-/// pixels as the hours column arrives.
+/// pixels as the hours column arrives. Also what keeps the hover label whole
+/// at either end of the bar: centred on the pointer, half of it hangs past
+/// the track's end, above the time this leaves room for.
 const TIME_WIDTH: f32 = 54.0;
 
 /// How long a recording is, and whether it is still getting longer.
@@ -83,6 +92,23 @@ pub fn fraction_at(bounds: &Bounds<Pixels>, x: Pixels) -> f32 {
     ((f32::from(x) - f32::from(bounds.origin.x)) / width).clamp(0.0, 1.0)
 }
 
+/// Where along a track laid out at `bounds` the pointer is, if it is over the
+/// track at all — the strip that takes a click, not the four-pixel rail drawn
+/// inside it, so the label appears exactly where a press would land.
+pub fn hover_at(bounds: &Bounds<Pixels>, pointer: Point<Pixels>) -> Option<f32> {
+    bounds
+        .contains(&pointer)
+        .then(|| fraction_at(bounds, pointer.x))
+}
+
+/// The time a press would go to, and where along the bar that is.
+pub struct Hover {
+    /// A fraction of the extent.
+    pub fraction: f32,
+    /// The time there, written out.
+    pub time: SharedString,
+}
+
 /// What the bar shows this frame.
 pub struct State {
     /// The playhead, as a fraction of the extent.
@@ -90,6 +116,9 @@ pub struct State {
     /// Where a scrub in progress has got to, which the thumb follows instead
     /// of the playhead until the pointer lets go.
     pub scrub: Option<f32>,
+    /// What the pointer is over — or, mid-scrub, where the thumb has been
+    /// dragged to — labelled above the bar.
+    pub hover: Option<Hover>,
     /// The time under the thumb, written out.
     pub position: SharedString,
     /// The length, written out.
@@ -112,6 +141,10 @@ pub fn element<V: 'static>(
     cx: &mut Context<V>,
 ) -> impl IntoElement {
     let shown = state.scrub.unwrap_or(state.played).clamp(0.0, 1.0);
+    let hovered = state
+        .hover
+        .as_ref()
+        .map(|hover| hover.fraction.clamp(0.0, 1.0));
 
     // The track's bounds, as laid out this frame. Shared between the probe
     // that measures them and the press that needs them to turn a pointer into
@@ -141,6 +174,19 @@ pub fn element<V: 'static>(
         .h(px(theme::SEEK_RAIL))
         .rounded(px(theme::SEEK_RAIL / 2.0))
         .bg(theme::seek_rail())
+        // As far as the pointer, under the played part: beyond the playhead
+        // it is the stretch a press would skip, and short of it the played
+        // part covers it, so it only ever shows what a press would add.
+        .children(hovered.map(|fraction| {
+            div()
+                .absolute()
+                .left_0()
+                .top_0()
+                .bottom_0()
+                .w(DefiniteLength::Fraction(fraction))
+                .rounded(px(theme::SEEK_RAIL / 2.0))
+                .bg(theme::seek_hover())
+        }))
         .child(
             div()
                 .absolute()
@@ -164,6 +210,39 @@ pub fn element<V: 'static>(
         .rounded_full()
         .bg(theme::text());
 
+    // The time under the pointer, centred over it. Anchored by a zero-width
+    // box at the fraction, with the label centred in it: a centred flex item
+    // wider than its line overflows both ways equally, so the label sits on
+    // the pointer at whatever width its text comes out — no width to guess,
+    // and none to go stale when a recording passes ten hours.
+    let label = state.hover.map(|hover| {
+        div()
+            .absolute()
+            .left(DefiniteLength::Fraction(hover.fraction.clamp(0.0, 1.0)))
+            // Just clear of the strip that takes the pointer, so the label
+            // never sits under it.
+            .bottom(px(theme::SEEK_HIT))
+            .w(px(0.))
+            .flex()
+            .justify_center()
+            .child(
+                div()
+                    .flex_none()
+                    .whitespace_nowrap()
+                    .px(px(theme::GAP_TIGHT))
+                    .py(px(2.))
+                    .rounded(px(theme::RADIUS))
+                    // Over the picture rather than the bar, so it carries its
+                    // own contrast the way the bar does.
+                    .bg(theme::overlay())
+                    .text_size(px(theme::TEXT_META))
+                    .font_weight(theme::weight_label())
+                    .line_height(px(theme::LINE_TIGHT))
+                    .text_color(theme::text())
+                    .child(hover.time),
+            )
+    });
+
     let release_inside = on_release.clone();
     let track = div()
         .id("seek-track")
@@ -171,6 +250,12 @@ pub fn element<V: 'static>(
         .h(px(theme::SEEK_HIT))
         .relative()
         .cursor_pointer()
+        // Neither says where the pointer is — the owner's probe measures
+        // that, as it does for every hover on the video. They only ask for a
+        // frame so the probe runs again: a paused recording sends none, and
+        // the label would otherwise stay wherever the pointer entered.
+        .on_mouse_move(cx.listener(|_, _: &MouseMoveEvent, _window, cx| cx.notify()))
+        .on_hover(cx.listener(|_, _: &bool, _window, cx| cx.notify()))
         .on_mouse_down(
             MouseButton::Left,
             cx.listener({
@@ -194,7 +279,8 @@ pub fn element<V: 'static>(
         )
         .child(measure)
         .child(rail)
-        .child(thumb);
+        .child(thumb)
+        .children(label);
 
     let time = |text: SharedString| {
         div()
@@ -251,6 +337,26 @@ mod tests {
             size: size(px(0.), px(0.)),
         };
         assert_eq!(fraction_at(&unlaid, px(10.)), 0.0, "no width, no division");
+    }
+
+    /// The label is for the strip a press lands on: anywhere in it, and
+    /// nowhere above, below or beside it — a pointer on its way to the
+    /// buttons under the bar must not drag a time along with it.
+    #[test]
+    fn a_pointer_is_over_the_track_only_inside_the_strip_that_takes_it() {
+        let track = Bounds {
+            origin: point(px(100.), px(500.)),
+            size: size(px(400.), px(18.)),
+        };
+        assert_eq!(hover_at(&track, point(px(300.), px(509.))), Some(0.5));
+        assert_eq!(
+            hover_at(&track, point(px(100.), px(500.))),
+            Some(0.0),
+            "the top-left corner is on it"
+        );
+        assert_eq!(hover_at(&track, point(px(300.), px(490.))), None, "above");
+        assert_eq!(hover_at(&track, point(px(300.), px(530.))), None, "below");
+        assert_eq!(hover_at(&track, point(px(60.), px(509.))), None, "beside");
     }
 
     /// The extent is Twitch's length, grown by the clock while a broadcast is
