@@ -8,6 +8,13 @@
 //!
 //! Blocking calls throughout, to be driven from a worker thread like the rest
 //! of the app. No UI types appear here.
+//!
+//! Everything in this file is Helix, documented and asked with the app's own
+//! Client-ID and the user's token. [`recommend`] is the one exception: it asks
+//! the website's unpublished GraphQL endpoint, anonymously, and its module docs
+//! say why and what happens when that stops working.
+
+pub mod recommend;
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -86,6 +93,21 @@ pub enum Error {
     /// a request that was wrong.
     #[error("Twitch has nothing by that id")]
     NotFound,
+    /// Twitch's GraphQL endpoint would not run the query, and said so in an
+    /// `errors` array inside an HTTP 200. The usual reason is
+    /// `PersistedQueryNotFound`: the website's query has a new hash and the
+    /// one this app sends has been retired. Any message not known to be a
+    /// passing failure on Twitch's side counts; the passing ones ("service
+    /// error", "service timeout" and the like) are [`Network`](Error::Network)
+    /// instead, as a 5xx is.
+    ///
+    /// Only [`recommend`] asks that endpoint, and the query is not ours to
+    /// fix, so this is neither retried nor shown: the caller hides what it was
+    /// for. Kept apart from [`Api`](Error::Api) and [`Network`](Error::Network)
+    /// so a caller can tell "this will not work again this session" from "try
+    /// again later".
+    #[error("Twitch would not run the query: {0}")]
+    QueryRefused(String),
 }
 
 // ── Sign-in ──────────────────────────────────────────────────────────
@@ -166,16 +188,26 @@ fn agent() -> &'static ureq::Agent {
 fn read_body(
     result: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
 ) -> Result<(u16, Value), Error> {
-    let mut response = result.map_err(|e| Error::Network(e.to_string()))?;
-    let status = response.status().as_u16();
-    if status >= 500 {
-        return Err(Error::Network(format!("Twitch answered HTTP {status}")));
-    }
+    let (status, mut response) = answered(result)?;
     let json = response
         .body_mut()
         .read_json::<Value>()
         .map_err(|e| Error::Shape(format!("HTTP {status} with an unreadable body: {e}")))?;
     Ok((status, json))
+}
+
+/// The part of [`read_body`] before the body: the status, with a transport
+/// failure or a 5xx already turned into [`Error::Network`]. The body is left
+/// unread, for a caller that reads it by its own rule.
+fn answered(
+    result: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
+) -> Result<(u16, ureq::http::Response<ureq::Body>), Error> {
+    let response = result.map_err(|e| Error::Network(e.to_string()))?;
+    let status = response.status().as_u16();
+    if status >= 500 {
+        return Err(Error::Network(format!("Twitch answered HTTP {status}")));
+    }
+    Ok((status, response))
 }
 
 /// Twitch's error bodies carry the reason under `message`.

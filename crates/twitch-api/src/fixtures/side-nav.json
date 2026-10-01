@@ -1,0 +1,320 @@
+{
+  "data": {
+    "sideNav": {
+      "sections": {
+        "edges": [
+          {
+            "cursor": "",
+            "node": {
+              "id": "provider-side-nav-recommended-streams-1",
+              "title": {
+                "fallbackLocalizedTitle": "",
+                "key": "",
+                "localizedTitleTokens": [],
+                "__typename": "ShelfTitle"
+              },
+              "content": {
+                "edges": [
+                  {
+                    "cursor": "",
+                    "trackingID": "7ae4de2a-36fa-40b9-9a60-de791e97f993:73e59722-9aee-4248-a2fd-8ea2598f2294:MF|COLDSTART_TF2_006:RF|UNK:CG|UNK:CR|UNK:BL|UNK:FC|UNK:RK|0:CRK|0",
+                    "socialCue": "",
+                    "promotionsCampaignID": "",
+                    "label": "NONE",
+                    "node": {
+                      "__typename": "Stream",
+                      "id": "318249040088",
+                      "broadcaster": {
+                        "id": "175831187",
+                        "login": "ironmouse",
+                        "displayName": "ironmouse",
+                        "profileImageURL": "https://static-cdn.jtvnw.net/jtv_user_pictures/c2aca19b-b318-4398-99a5-fb6a597536fd-profile_image-70x70.png",
+                        "primaryColorHex": "FF96D4",
+                        "broadcastSettings": {
+                          "id": "175831187",
+                          "title": "!MOUSEATHON DAY 30! FINAL DAY? 50% TO IMMUNE DEFICIENCY FOUNDATION! | !glamb !youtooz !omocat !fox !cheeky !ht !starforge !tts !merch !razer",
+                          "__typename": "BroadcastSettings"
+                        },
+                        "__typename": "User"
+                      },
+                      "collaborationViewersCount": null,
+                      "viewersCount": 11557,
+                      "game": {
+                        "id": "509658",
+                        "slug": "just-chatting",
+                        "displayName": "Just Chatting",
+                        "name": "Just Chatting",
+                        "__typename": "Game"
+                      },
+                      "type": "live",
+                      "hasHypeTrain": true,
+                      "freeformTags": [
+                        {
+                          "id": "fft:CHANNEL:175831187:0",
+                          "name": "English",
+                          "__typename": "FreeformTag"
+                        },
+                        {
+                          "id": "fft:CHANNEL:175831187:1",
+                          "name": "Anime",
+                          "__typename": "FreeformTag"
+                        },
+                        {
+                          "id": "fft:CHANNEL:175831187:2",
+                          "name": "Singing",
+                          "__typename": "FreeformTag"
+                        },
+                        {
+                          "id": "fft:CHANNEL:175831187:3",
+                          "name": "puertorico",
+                          "__typename": "FreeformTag"
+                        },
+                        {
+                          "id": "fft:CHANNEL:175831187:4",
+                          "name": "Vtuber",
+                          "__typename": "FreeformTag"
+                        },
+                        {
+                          "id": "fft:CHANNEL:175831187:5",
+                          "name": "Latino",
+                          "__typename": "FreeformTag"
+                        },
+                        {
+                          "id": "fft:CHANNEL:175831187:6",
+                          "name": "vtuber",
+                          "__typename": "FreeformTag"
+                        },
+                        {
+                          "id": "fft:CHANNEL:175831187:7",
+                          "name": "DropsEnabled",
+                          "__typename": "FreeformTag"
+                        }
+                      ],
+                      "costreamDetails": null
+                    },
+                    "__typename": "ShelfContentEdge"
+                  },
+                  {
+                    "cursor": "",
+                    "trackingID": "7ae4de2a-36fa-40b9-9a60-de791e97f993:da599494-0161-46da-86c9-1aea0d2a3be8:MF|COLDSTART_TF2_006:RF|UNK:CG|UNK:CR|UNK:BL|UNK:FC|UNK:RK|1:CRK|1",
+                    "socialCue": "",
+                    "promotionsCampaignID": "",
+                    "label": "NONE",
+                    "node": {
+                      "__typename": "Stream",
+                      "id": "319411596375",
+                      "broadcaster": {
+                        "id": "124494583",
+                        "login": "peterpark",
+                        "displayName": "peterpark",
+                        "profileImageURL": "https://static-cdn.jtvnw.net/jtv_user_pictures/6949420f-ce2c-4b7d-bae0-282c707592db-profile_image-70x70.png",
+                        "primaryColorHex": "640000",
+                        "broadcastSettings": {
+                          "id": "124494583",
+                          "title": "WEDDING SUBATHON DAY 17 | !subathon !plan !drops !nodrops",
+                          "__typename": "BroadcastSettings"
+                        },
+                        "__typename": "User"
+                      },
+                      "collaborationViewersCount": null,
+                      "viewersCount": 1524,
+                      "game": {
+                        "id": "263490",
+                        "slug": "rust",
+                        "displayName": "Rust",
+                        "name": "Rust",
+                        "__typename": "Game"
+                      },
+                      "type": "live",
+                      "hasHypeTrain": false,
+                      "freeformTags": [
+                        {
+                          "id": "fft:CHANNEL:124494583:0",
+                          "name": "English",
+                          "__typename": "FreeformTag"
+                        },
+                        {
+                          "id": "fft:CHANNEL:124494583:1",
+                          "name": "DropsEnabled",
+                          "__typename": "FreeformTag"
+                        }
+                      ],
+                      "costreamDetails": null
+                    },
+                    "__typename": "ShelfContentEdge"
+                  }
+                ],
+                "__typename": "ShelfContentConnection"
+              },
+              "__typename": "Shelf"
+            },
+            "__typename": "ShelfEdge"
+          },
+          {
+            "cursor": "",
+            "node": {
+              "id": "provider-side-nav-similar-streamer-currently-watching-1",
+              "title": {
+                "fallbackLocalizedTitle": "",
+                "key": "",
+                "localizedTitleTokens": [],
+                "__typename": "ShelfTitle"
+              },
+              "content": {
+                "edges": [
+                  {
+                    "cursor": "",
+                    "trackingID": "2af8bcef-86b7-4780-8979-28e49684528c:3f4a16a0-a74b-419d-b317-690eccaff903:MF|CHANNEL2VEC_001:RF|UNK:CG|UNK:CR|UNK:BL|UNK:FC|UNK:RK|0:CRK|0",
+                    "socialCue": "",
+                    "promotionsCampaignID": "",
+                    "label": "NONE",
+                    "node": {
+                      "__typename": "Stream",
+                      "id": "316941856597",
+                      "broadcaster": {
+                        "id": "30816637",
+                        "login": "admiralbulldog",
+                        "displayName": "AdmiralBulldog",
+                        "profileImageURL": "https://static-cdn.jtvnw.net/jtv_user_pictures/admiralbulldog-profile_image-888d5b80958e636f-70x70.jpeg",
+                        "primaryColorHex": "5C16C5",
+                        "broadcastSettings": {
+                          "id": "30816637",
+                          "title": "🔴VODS ON KICK 🔴24/7 STREAM 👉 @admiralbulldog247 🔴PRIME 🔴YOUNG 🔴SHREDDED 🔴LUSCIOUS HAIR 🔴",
+                          "__typename": "BroadcastSettings"
+                        },
+                        "__typename": "User"
+                      },
+                      "collaborationViewersCount": null,
+                      "viewersCount": 2095,
+                      "game": {
+                        "id": "29595",
+                        "slug": "dota-2",
+                        "displayName": "Dota 2",
+                        "name": "Dota 2",
+                        "__typename": "Game"
+                      },
+                      "type": "live",
+                      "hasHypeTrain": false,
+                      "freeformTags": [
+                        {
+                          "id": "fft:CHANNEL:30816637:0",
+                          "name": "English",
+                          "__typename": "FreeformTag"
+                        }
+                      ],
+                      "costreamDetails": null
+                    },
+                    "__typename": "ShelfContentEdge"
+                  },
+                  {
+                    "cursor": "",
+                    "trackingID": "2af8bcef-86b7-4780-8979-28e49684528c:48980082-2f88-49a6-9ce1-4b825e43f9ff:MF|CHANNEL2VEC_001:RF|UNK:CG|UNK:CR|UNK:BL|UNK:FC|UNK:RK|3:CRK|3",
+                    "socialCue": "",
+                    "promotionsCampaignID": "",
+                    "label": "NONE",
+                    "node": {
+                      "__typename": "Stream",
+                      "id": "321652593114",
+                      "broadcaster": {
+                        "id": "26490481",
+                        "login": "summit1g",
+                        "displayName": "summit1g",
+                        "profileImageURL": "https://static-cdn.jtvnw.net/jtv_user_pictures/99aa4739-21d6-40af-86ae-4b4d3457fce4-profile_image-70x70.png",
+                        "primaryColorHex": "2A292E",
+                        "broadcastSettings": {
+                          "id": "26490481",
+                          "title": "chillin - !starforge @StarforgeSystems",
+                          "__typename": "BroadcastSettings"
+                        },
+                        "__typename": "User"
+                      },
+                      "collaborationViewersCount": null,
+                      "viewersCount": 8953,
+                      "game": {
+                        "id": "18122",
+                        "slug": "world-of-warcraft",
+                        "displayName": "World of Warcraft",
+                        "name": "World of Warcraft",
+                        "__typename": "Game"
+                      },
+                      "type": "live",
+                      "hasHypeTrain": false,
+                      "freeformTags": [
+                        {
+                          "id": "fft:CHANNEL:26490481:0",
+                          "name": "English",
+                          "__typename": "FreeformTag"
+                        }
+                      ],
+                      "costreamDetails": null
+                    },
+                    "__typename": "ShelfContentEdge"
+                  },
+                  {
+                    "cursor": "",
+                    "trackingID": "2af8bcef-86b7-4780-8979-28e49684528c:29298131-f596-482b-a1b9-eea4fece7144:MF|CHANNEL2VEC_001:RF|UNK:CG|UNK:CR|UNK:BL|UNK:FC|UNK:RK|4:CRK|4",
+                    "socialCue": "",
+                    "promotionsCampaignID": "",
+                    "label": "NONE",
+                    "node": {
+                      "__typename": "Stream",
+                      "id": "317563804663",
+                      "broadcaster": {
+                        "id": "106750859",
+                        "login": "nymn247",
+                        "displayName": "NymN247",
+                        "profileImageURL": "https://static-cdn.jtvnw.net/jtv_user_pictures/be1987b2-62ce-4cdb-834c-b7c0fae9a137-profile_image-70x70.png",
+                        "primaryColorHex": null,
+                        "broadcastSettings": {
+                          "id": "106750859",
+                          "title": "24/7 @NymN | WTTG2",
+                          "__typename": "BroadcastSettings"
+                        },
+                        "__typename": "User"
+                      },
+                      "collaborationViewersCount": null,
+                      "viewersCount": 1,
+                      "game": {
+                        "id": "499507",
+                        "slug": "welcome-to-the-game-ii",
+                        "displayName": "Welcome to the Game II",
+                        "name": "Welcome to the Game II",
+                        "__typename": "Game"
+                      },
+                      "type": "live",
+                      "hasHypeTrain": false,
+                      "freeformTags": [
+                        {
+                          "id": "fft:CHANNEL:106750859:0",
+                          "name": "English",
+                          "__typename": "FreeformTag"
+                        },
+                        {
+                          "id": "fft:CHANNEL:106750859:1",
+                          "name": "FootballSoccer",
+                          "__typename": "FreeformTag"
+                        }
+                      ],
+                      "costreamDetails": null
+                    },
+                    "__typename": "ShelfContentEdge"
+                  }
+                ],
+                "__typename": "ShelfContentConnection"
+              },
+              "__typename": "Shelf"
+            },
+            "__typename": "ShelfEdge"
+          }
+        ],
+        "__typename": "ShelfConnection"
+      },
+      "__typename": "SideNav"
+    }
+  },
+  "extensions": {
+    "durationMilliseconds": 149,
+    "requestID": "01M3V9SWZ1MDZS3ZRG8G4EVAJB",
+    "operationName": "SideNav"
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "data": {
+    "users": [
+      {
+        "login": "forsen",
+        "lastBroadcast": {
+          "startedAt": "2026-09-30T18:59:21.469059Z"
+        },
+        "stream": null
+      },
+      {
+        "login": "summit1g",
+        "lastBroadcast": {
+          "startedAt": "2026-09-30T20:17:02.477609Z"
+        },
+        "stream": {
+          "id": "321652593114"
+        }
+      },
+      {
+        "login": "esl_csgo",
+        "lastBroadcast": {
+          "startedAt": null
+        },
+        "stream": null
+      },
+      null,
+      {
+        "login": "asmongold",
+        "lastBroadcast": {
+          "startedAt": "2023-06-10T22:05:36.711791Z"
+        },
+        "stream": null
+      },
+      {
+        "login": "lirik_247",
+        "lastBroadcast": {
+          "startedAt": "2026-09-29T18:53:26.17837Z"
+        },
+        "stream": {
+          "id": "317553435639"
+        }
+      }
+    ]
+  },
+  "extensions": {
+    "durationMilliseconds": 44,
+    "requestID": "01M3V9ZQBAQFZPCBEFYMXX5GY7",
+    "operationName": "LastBroadcasts"
+  }
+}
