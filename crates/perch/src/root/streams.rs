@@ -13,7 +13,7 @@ use super::{Page, RootView};
 use crate::chat::{ChatView, Feed};
 use crate::video::{self, Playback, PositionHandle, Stopped, VideoStream};
 use crate::video_view::{ChatButton, Qualities, Start, VideoView};
-use crate::watch::{Slot, Source, StreamState, MAX_PANES};
+use crate::watch::{Lookup, Slot, Source, StreamState, MAX_PANES};
 use crate::{layout, motion, settings_view};
 
 /// Starting render size. Each pane measures itself on the first layout pass and
@@ -116,6 +116,7 @@ impl RootView {
     /// [`open_video`](Self::open_video), from `start_at` seconds in: where a
     /// link pointed, or where the history says it was left. One step on the
     /// trail, and refused where you are at four panes, as `open_channel` is.
+    /// The pane itself is [`video_slot`](Self::video_slot)'s.
     pub(super) fn open_video_at(
         &mut self,
         video: Video,
@@ -145,48 +146,9 @@ impl RootView {
             }
             this.show_watch_page(window, cx);
 
-            // Into the history now rather than once it plays, so a recording
-            // opened and closed at once, or one that turns out to be gone, is
-            // still one you can find again.
-            this.note_opened(&video, start_at, cx);
-
             let channel = video.user_login.clone();
-            // Already where the pane is opening, so the chat replay starts there
-            // rather than at the top and then jumping.
-            let position = PositionHandle::starting_at(start_at);
-            // Archives only. A highlight is cut from ranges of a broadcast, so
-            // its offsets mean nothing to a replay, and an upload had no chat to
-            // replay; both play as picture alone.
-            let chat = matches!(video.kind, VideoKind::Archive).then(|| {
-                cx.new(|cx| {
-                    ChatView::new(
-                        Feed::Replay {
-                            video_id: video.id.clone(),
-                            channel: channel.clone(),
-                            room_id: video.user_id.clone(),
-                            position: position.clone(),
-                        },
-                        this.cache.clone(),
-                        window,
-                        cx,
-                    )
-                })
-            });
-            // Chat hidden is remembered against the channel, like a live
-            // pane's: hiding chat is a statement about the streamer, not the
-            // broadcast.
-            let chat_hidden = this.settings.chat_hidden_for(&channel);
-            this.slots.push(Slot::new(
-                key.clone(),
-                channel.clone(),
-                Source::Video {
-                    video: Box::new(video),
-                    position,
-                },
-                chat,
-                start_at,
-                chat_hidden,
-            ));
+            let slot = this.video_slot(video, start_at, window, cx);
+            this.slots.push(slot);
 
             // A recording counts as watching its channel, for the palette.
             if this.settings.note_watched(&channel) {
@@ -197,6 +159,106 @@ impl RootView {
             this.set_compact(false, cx);
             this.sync_quality(window, cx);
         })
+    }
+
+    /// A pane on `video`, opening `start_at` seconds in: what opening a
+    /// recording makes, wherever it is opened from.
+    ///
+    /// Its chat is the replay of what was said at the moment on screen,
+    /// following the pane's position from the moment it opens; and it goes
+    /// into the history now rather than once it plays, so a recording opened
+    /// and closed at once, or one that turns out to be gone, is still one you
+    /// can find again.
+    fn video_slot(
+        &mut self,
+        video: Video,
+        start_at: f64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Slot {
+        self.note_opened(&video, start_at, cx);
+
+        let channel = video.user_login.clone();
+        // Already where the pane is opening, so the chat replay starts there
+        // rather than at the top and then jumping.
+        let position = PositionHandle::starting_at(start_at);
+        // Archives only. A highlight is cut from ranges of a broadcast, so
+        // its offsets mean nothing to a replay, and an upload had no chat to
+        // replay; both play as picture alone.
+        let chat = matches!(video.kind, VideoKind::Archive).then(|| {
+            cx.new(|cx| {
+                ChatView::new(
+                    Feed::Replay {
+                        video_id: video.id.clone(),
+                        channel: channel.clone(),
+                        room_id: video.user_id.clone(),
+                        position: position.clone(),
+                    },
+                    self.cache.clone(),
+                    window,
+                    cx,
+                )
+            })
+        });
+        // Chat hidden is remembered against the channel, like a live
+        // pane's: hiding chat is a statement about the streamer, not the
+        // broadcast.
+        let chat_hidden = self.settings.chat_hidden_for(&channel);
+        Slot::new(
+            Slot::video_key(&video.id),
+            channel,
+            Source::Video {
+                video: Box::new(video),
+                position,
+            },
+            chat,
+            start_at,
+            chat_hidden,
+        )
+    }
+
+    /// Play `video` from `start_at` in the pane `key` names, in its place:
+    /// what a stopped live pane's last broadcast and `Watch from the start`
+    /// ask for.
+    ///
+    /// A swap, not an opening. The pane keeps its place in the grid and the
+    /// keys, so nothing moves; there is no count to refuse at, since it is
+    /// one pane for one; and the trail takes no step, since the page is the
+    /// watch page before and after. The live slot is dropped, which stops
+    /// its streamlink and its chat — the channel's live chat goes with the
+    /// pane, and so does its `Start when they go live` — and a live slot has
+    /// no place in the history to write first. Mute all's hold stays: it is
+    /// the pane's, and a press on a card is no change of level
+    /// (`Slot::take_over_from`). A new slot rather than a new key on the old
+    /// one, which everything keyed on the pane — element ids, the player's
+    /// subscription, the active pane — would then misname.
+    ///
+    /// If that recording is already open in another pane, that pane is made
+    /// the active one instead, and this one is left as it is.
+    pub(super) fn replace_with_video(
+        &mut self,
+        key: &str,
+        video: Video,
+        start_at: f64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let video_key = Slot::video_key(&video.id);
+        if self.slot_index(&video_key).is_some() {
+            self.active = Some(video_key);
+            cx.notify();
+            return;
+        }
+        let Some(index) = self.slot_index(key) else {
+            return;
+        };
+        let mut slot = self.video_slot(video, start_at, window, cx);
+        slot.take_over_from(&self.slots[index]);
+        self.slots[index] = slot;
+        self.active = Some(video_key.clone());
+        self.start_stream(video_key, window, cx);
+        self.sync_quality(window, cx);
+        cx.notify();
     }
 
     /// Onto the watch page, for a pane just opened or switched to, taking
@@ -299,6 +361,18 @@ impl RootView {
                 available,
                 playlist,
             } => {
+                // Playing again: whatever the pane learned about its
+                // channel's past broadcasts when it last stopped is about
+                // that stop, and the next one asks afresh. And which
+                // broadcast this is, read while the live list still has it,
+                // for finding its recording once it ends.
+                let broadcast = self
+                    .stream_info(&self.slots[index].channel)
+                    .map(|stream| stream.id.clone())
+                    .filter(|id| !id.is_empty());
+                let slot = &mut self.slots[index];
+                slot.archives = Lookup::NotAsked;
+                slot.broadcast = if slot.is_live() { broadcast } else { None };
                 // What the player is handed: the relay for a live stream, or
                 // the recording's playlist and where to open it.
                 let playback = match (&self.slots[index].source, playlist) {
@@ -364,7 +438,11 @@ impl RootView {
                     }
                 }
             }
-            StreamEvent::Offline => self.slots[index].set_state(StreamState::Offline),
+            StreamEvent::Offline => {
+                self.slots[index].set_state(StreamState::Offline);
+                // What the channel broadcast last, for the pane to offer.
+                self.ask_broadcasts(index);
+            }
             StreamEvent::Failed { reason } => {
                 self.slots[index].set_state(StreamState::Failed(reason.into()))
             }
@@ -455,11 +533,26 @@ impl RootView {
             Stopped::Ended => StreamState::Ended,
             Stopped::Failed(message) => StreamState::Failed(message.into()),
         };
+        let ended = matches!(state, StreamState::Ended);
         self.slots[index].set_state(state);
         // A recording that reached its end is finished, and one that failed
         // is left where it failed: either way the history hears now.
         if !self.slots[index].is_live() && self.note_watching(cx) {
             self.save_history_soon(cx);
+        }
+        // A broadcast that ended has a recording to watch from its start,
+        // if the channel keeps one: ask for it, knowing which broadcast this
+        // was — read now if the live list did not have it when the picture
+        // came. The pane forgot any earlier answer when it began to play,
+        // so this always asks afresh; that answer predates this recording.
+        if ended && self.slots[index].is_live() {
+            if self.slots[index].broadcast.is_none() {
+                self.slots[index].broadcast = self
+                    .stream_info(&self.slots[index].channel)
+                    .map(|stream| stream.id.clone())
+                    .filter(|id| !id.is_empty());
+            }
+            self.ask_broadcasts(index);
         }
         cx.notify();
     }

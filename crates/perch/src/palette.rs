@@ -603,6 +603,7 @@ mod tests {
 
     fn stream(login: &str, name: &str) -> LiveStream {
         LiveStream {
+            id: String::new(),
             user_login: login.into(),
             user_id: String::new(),
             display_name: name.into(),

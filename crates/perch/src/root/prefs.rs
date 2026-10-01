@@ -116,6 +116,10 @@ impl RootView {
                                 Self::spawn_twitch(this.settings_path.clone(), window, cx);
                             this.twitch = service;
                             this._twitch_pump = pump;
+                            // And the panes' asks about past broadcasts, whose
+                            // answers die with the old worker; the new one's
+                            // sign-in asks again.
+                            this.forget_asks();
                         }
                         if stream_changed {
                             // By key, not by channel: a recording's pane is

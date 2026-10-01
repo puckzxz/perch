@@ -67,7 +67,7 @@ fn offline_after(
         fresh
     }
 }
-use crate::browse::{SearchResults, SignIn};
+use crate::browse::{SearchResults, SignIn, Unanswered};
 use crate::twitch::{ListKey, Request, TwitchEvent, TwitchService};
 
 impl RootView {
@@ -112,9 +112,11 @@ impl RootView {
             }
             TwitchEvent::SignedIn { login } => {
                 self.sign_in = SignIn::SignedIn(login.into());
-                // Whatever the user opened while signed out can be fetched now.
+                // Whatever the user opened while signed out can be fetched now,
+                // and whatever a stopped pane would offer next asked for.
                 self.fill_shown();
                 self.request_linked_videos();
+                self.ask_missing();
             }
             TwitchEvent::Streams(streams) => self.on_streams(streams, window, cx),
             TwitchEvent::FollowedChannels(channels) => {
@@ -149,9 +151,12 @@ impl RootView {
                 // dropped on the way out. Left pending, a list would pulse
                 // "Loading…" for good, and `fill_shown` would never ask for it
                 // again. The list on screen, if it is empty, then says why.
+                // Nor a pane's ask about past broadcasts, which an ended pane
+                // would otherwise go on saying it was looking for.
                 self.refreshing = false;
                 self.sign_in = SignIn::Error(reason.into());
                 self.discovery.pending.clear();
+                self.forget_asks();
                 self.fill_shown();
             }
 
@@ -232,6 +237,7 @@ impl RootView {
                 self.discovery.finish(&ListKey::Videos { login, kind });
             }
             TwitchEvent::Video { id, result } => self.on_linked_video(id, result, window, cx),
+            TwitchEvent::Broadcasts { login, result } => self.on_broadcasts(login, result, cx),
             // Said on the list that failed, which may not be the one on
             // screen by now; see `Discovery::shown_error`.
             TwitchEvent::BrowseError {
@@ -239,7 +245,7 @@ impl RootView {
                 reason,
             } => {
                 self.discovery.finish(&list);
-                self.discovery.error = Some((list, reason.into()));
+                self.discovery.error = Some((list, Unanswered::Failed(reason.into())));
             }
             // Nothing the worker sends: every request that fails into a
             // `BrowseError` names its list. Kept out of the page all the same.
@@ -286,24 +292,28 @@ impl RootView {
         }
 
         // A pane that found nothing to play, whose channel this poll lists as
-        // broadcasting since then, tries again by itself: the channel was
-        // opened before the stream started, or the broadcast dropped and came
-        // back. `started_at` against when the pane stalled is what tells a
-        // new broadcast from a list that is simply a minute behind the pane —
-        // a stream that ended a moment ago is still on this list, and a retry
-        // against it would only find it gone.
-        let resumed: Vec<String> = self
+        // broadcasting, tries again by itself when `Start when they go live`
+        // says so: the channel was opened before the stream started, or the
+        // broadcast dropped and came back. Which broadcasts count is the
+        // pane's to say (`Slot::due_to_start`), from when this one started;
+        // a try at one the pane found early is noted on it, so it is made
+        // once.
+        let resumed: Vec<(String, DateTime<Utc>)> = self
             .slots
             .iter()
-            .filter(|slot| slot.is_live())
             .filter_map(|slot| {
-                let stalled = slot.stalled_at?;
                 let stream = streams.iter().find(|s| s.user_login == slot.channel)?;
-                let started = DateTime::parse_from_rfc3339(&stream.started_at).ok()?;
-                (started.with_timezone(&Utc) > stalled).then(|| slot.key.clone())
+                let started = DateTime::parse_from_rfc3339(&stream.started_at)
+                    .ok()?
+                    .with_timezone(&Utc);
+                slot.due_to_start(started)
+                    .then(|| (slot.key.clone(), started))
             })
             .collect();
-        for key in resumed {
+        for (key, started) in resumed {
+            if let Some(index) = self.slot_index(&key) {
+                self.slots[index].retried_for = Some(started);
+            }
             self.retry_stream(&key, window, cx);
         }
 
@@ -435,6 +445,7 @@ mod tests {
 
     fn stream(login: &str, viewers: u64) -> LiveStream {
         LiveStream {
+            id: String::new(),
             user_login: login.into(),
             user_id: String::new(),
             display_name: login.into(),

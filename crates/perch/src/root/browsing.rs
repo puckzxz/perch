@@ -6,7 +6,7 @@ use gpui::{Context, Point, Window};
 use super::{Page, RootView};
 use twitch_api::VideoKind;
 
-use crate::browse::{Action, ChannelPage, Place, SearchResults, SignIn, Tab};
+use crate::browse::{Action, ChannelPage, Place, SearchResults, SignIn, Tab, Unanswered};
 use crate::twitch::Request;
 
 impl RootView {
@@ -20,8 +20,9 @@ impl RootView {
     /// parked on the device-code poll, so a request would sit in the queue
     /// behind it and the page would pulse "Loading…" until the user noticed
     /// the code on another tab. Say what is actually wrong instead, on the
-    /// list that asked, and come back to it in
-    /// [`fill_shown`](Self::fill_shown) once signed in.
+    /// list that asked — that nobody is signed in, which is not a failure to
+    /// reach Twitch — and come back to it in [`fill_shown`](Self::fill_shown)
+    /// once signed in.
     pub(super) fn fetch(&mut self, request: Request) {
         let key = request.list_key();
         debug_assert!(key.is_some(), "{request:?} fills no browse list");
@@ -40,14 +41,15 @@ impl RootView {
         }
 
         if !matches!(self.sign_in, SignIn::SignedIn(_)) {
-            self.discovery.error = Some((key, "Sign in to Twitch to browse.".into()));
+            self.discovery.error = Some((key, Unanswered::SignedOut));
             return;
         }
         // Fails once the worker has returned, which it does when sign-in fails.
         if self.twitch.request(request) {
             self.discovery.start(key);
         } else {
-            self.discovery.error = Some((key, "Not connected to Twitch.".into()));
+            self.discovery.error =
+                Some((key, Unanswered::Failed("Not connected to Twitch.".into())));
         }
     }
 

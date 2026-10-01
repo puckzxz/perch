@@ -8,20 +8,25 @@
 //!
 //! A pane with no picture is `status`'s: the one reading of what it is
 //! showing ([`Showing`]), which the mini player's tiles read too, and the
-//! screen drawn from it. A pane's header is `header`'s, and where it goes —
-//! in the chat panel, or over the top of the picture when there is no chat on
-//! screen — is [`Placement`]. Whatever a pane asks of its owner — a close, a
-//! retry, a press that makes it the active one — is a [`PaneAction`],
-//! addressed by the pane's key.
+//! screen drawn from it: what is being waited for, or what to do next. A
+//! pane's header is `header`'s, and where it goes — in the chat panel, or
+//! over the top of the picture when there is no chat on screen — is
+//! [`Placement`]. Whatever a pane asks of its owner — a close, a retry, a
+//! press that makes it the active one, a recording to play in its place — is
+//! a [`PaneAction`], addressed by the pane's key.
 
 mod header;
 mod status;
 
+use std::path::PathBuf;
+
 use chrono::{DateTime, Utc};
+use emotes::ImageCache;
 use gpui::{
     canvas, div, prelude::*, px, AnyElement, App, Context, CursorStyle, ElementId, Entity,
     IntoElement, MouseButton, MouseDownEvent, Pixels, SharedString, Task, Window,
 };
+use settings::history::Watched;
 use streamlink::StreamSupervisor;
 
 use twitch_api::{LiveStream, Video};
@@ -137,15 +142,113 @@ pub struct Slot {
     pub chat_hidden: bool,
     /// Held silent by Mute all: a mute that is not a preference. The slot's
     /// rather than the player's, so it outlives the player — a quality change
-    /// or a re-pick builds a new one, which is born quiet from this. Ends at
-    /// the pane's first deliberate change of level, and is never saved.
+    /// or a re-pick builds a new one, which is born quiet from this — and it
+    /// goes on to a recording that takes the pane's place
+    /// ([`take_over_from`](Self::take_over_from)). Ends at the pane's first
+    /// deliberate change of level, and is never saved.
     pub quiet: bool,
     /// When this pane last found nothing to play: the moment streamlink said
     /// the channel was off, or the moment the broadcast ended. A follows poll
     /// that lists the channel live with a `started_at` later than this is a
     /// broadcast this pane has not tried, and it tries it — see
-    /// `RootView::on_streams`.
+    /// [`due_to_start`](Self::due_to_start).
     pub stalled_at: Option<DateTime<Utc>>,
+    /// Whether a live pane that has stopped starts by itself when its
+    /// channel is found on again: `Start when they go live`, on its status
+    /// screen. On for every pane, since that is what a pane left on an
+    /// offline channel is for; per pane and for the session, never saved.
+    pub start_when_live: bool,
+    /// The broadcast, by its `started_at`, this pane last tried by itself
+    /// while it said the channel was off: one try per broadcast, for a pane
+    /// that asked in a broadcast's first seconds, before streamlink could
+    /// find it — see [`due_to_start`](Self::due_to_start).
+    pub retried_for: Option<DateTime<Utc>>,
+    /// The channel's newest past broadcasts, asked for each time a live pane
+    /// stops (`RootView::ask_broadcasts`): what it offers next, the last
+    /// broadcast when the channel is off and the one that just ended when it
+    /// ends. Forgotten when the pane plays again, so the next stop asks
+    /// afresh.
+    pub archives: Lookup,
+    /// The id of the broadcast a live pane is showing, read off the live list
+    /// when its picture arrived and again when it ended: what finds that
+    /// broadcast's recording among `archives` (`channel_page::archive_of`).
+    /// `None` for a channel in no list, and for a recording.
+    pub broadcast: Option<String>,
+}
+
+/// Where a pane's ask about its channel's past broadcasts has got to.
+///
+/// A pane asks again at every stop, answer in hand or not: it can sit
+/// stopped while its channel broadcasts and ends — one opened by name, or
+/// with `Start when they go live` off, that nothing starts — and a `Try
+/// again` that finds the channel still off should offer that broadcast, not
+/// one from before it. The answer in hand stands while the next is out
+/// ([`Refreshing`](Self::Refreshing)), so asking again never blanks the card
+/// the pane is showing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Lookup {
+    /// Not asked, or forgotten since: the pane played again, or the worker
+    /// that was asked has been replaced before it answered.
+    NotAsked,
+    /// Asked, with nothing to show meanwhile, and waiting on the worker.
+    Asked,
+    /// The answer, newest first.
+    Answered(Vec<Video>),
+    /// Asked again, waiting on the worker, with the last answer, newest
+    /// first, still what the pane offers until the new one comes.
+    Refreshing(Vec<Video>),
+    /// The ask failed. The pane offers nothing, as it would with no archive.
+    Failed,
+}
+
+impl Lookup {
+    /// The answer the pane offers from: the last one, even while a newer
+    /// one is being asked for.
+    pub fn answer(&self) -> Option<&[Video]> {
+        match self {
+            Self::Answered(videos) | Self::Refreshing(videos) => Some(videos),
+            Self::NotAsked | Self::Asked | Self::Failed => None,
+        }
+    }
+
+    /// Whether an ask is out: what an answer is taken for, and what a stop
+    /// does not ask over.
+    pub fn waiting(&self) -> bool {
+        matches!(self, Self::Asked | Self::Refreshing(_))
+    }
+
+    /// An ask has gone out: waiting, keeping the answer in hand if there is
+    /// one.
+    pub fn asked(&mut self) {
+        *self = match std::mem::replace(self, Self::NotAsked) {
+            Self::Answered(videos) | Self::Refreshing(videos) => Self::Refreshing(videos),
+            Self::NotAsked | Self::Asked | Self::Failed => Self::Asked,
+        };
+    }
+
+    /// The worker's answer to the ask that is out: the videos, or `None` for
+    /// an ask that failed. A failed repeat leaves the last answer standing,
+    /// since it is still the best word there is; a failed first ask has
+    /// nothing to leave.
+    pub fn settle(&mut self, answer: Option<Vec<Video>>) {
+        *self = match (answer, std::mem::replace(self, Self::NotAsked)) {
+            (Some(videos), _) => Self::Answered(videos),
+            (None, Self::Answered(last) | Self::Refreshing(last)) => Self::Answered(last),
+            (None, Self::NotAsked | Self::Asked | Self::Failed) => Self::Failed,
+        };
+    }
+
+    /// Forget an ask still out, for a worker that will never answer it. A
+    /// first ask is as if never made, so sign-in asks it again
+    /// (`RootView::ask_missing`); a repeat goes back to the answer it would
+    /// have replaced, and the pane's next stop asks again.
+    pub fn forget(&mut self) {
+        *self = match std::mem::replace(self, Self::NotAsked) {
+            Self::Asked => Self::NotAsked,
+            Self::Refreshing(videos) => Self::Answered(videos),
+            other => other,
+        };
+    }
 }
 
 impl Slot {
@@ -180,7 +283,20 @@ impl Slot {
             chat_hidden,
             quiet: false,
             stalled_at: None,
+            start_when_live: true,
+            retried_for: None,
+            archives: Lookup::NotAsked,
+            broadcast: None,
         }
+    }
+
+    /// Take `old`'s place in its pane, as a recording swapped in for a live
+    /// pane does (`RootView::replace_with_video`). What is the pane's rather
+    /// than the channel's or the player's comes along: Mute all's hold, which
+    /// a press on a card is no deliberate change of level to end. Everything
+    /// else is this slot's own, from [`new`](Self::new).
+    pub fn take_over_from(&mut self, old: &Slot) {
+        self.quiet = old.quiet;
     }
 
     pub fn video(&self) -> Option<&Entity<VideoView>> {
@@ -190,12 +306,21 @@ impl Slot {
         }
     }
 
-    /// Whether the pane has a picture up: a player, and a frame decoded in
-    /// it. A player still waiting for its first frame draws no picture and
-    /// no bar, so for what goes over the top of the pane it is a pane with
-    /// nothing to cover, like one starting or stopped.
+    /// Whether the pane has a player with a frame decoded in it, and so a
+    /// bar it can draw. A player still waiting for its first frame draws
+    /// neither.
     pub fn has_picture(&self, cx: &App) -> bool {
         self.video().is_some_and(|view| view.read(cx).has_picture())
+    }
+
+    /// Whether the pane's picture covers it: a player whose first frame has
+    /// faded all the way in (`VideoView::covers`). Until then the pane is
+    /// still starting, and what it was waiting for stays drawn under the
+    /// fading picture — so for what goes over the top of the pane it is a
+    /// pane with nothing to cover, like one stopped. What
+    /// [`showing`](status::showing) is told.
+    pub fn covered(&self, cx: &App) -> bool {
+        self.video().is_some_and(|view| view.read(cx).covers())
     }
 
     /// Where the pointer is, from the pane's probe, every frame the pane is
@@ -228,6 +353,33 @@ impl Slot {
             StreamState::Starting | StreamState::Playing(_) => None,
         };
         self.state = state;
+    }
+
+    /// Whether a poll that lists this pane's channel as broadcasting since
+    /// `started` should start the pane by itself.
+    ///
+    /// Only a live pane that has stopped, and only with `Start when they go
+    /// live` on. Then a broadcast that began after the pane stopped is one it
+    /// has not tried, whatever the pane is saying. One that began before is
+    /// usually the one the pane already saw end — the list is up to a minute
+    /// behind the pane, so a stream that has just ended is still on it, and a
+    /// try would only find it gone and turn "ended" into "offline". Except
+    /// for a pane saying the channel is off: one opened in a broadcast's
+    /// first seconds asked before streamlink could find it, and is offline
+    /// with the broadcast already going. That pane gets one try for that
+    /// broadcast, and [`retried_for`](Self::retried_for) remembers it.
+    pub fn due_to_start(&self, started: DateTime<Utc>) -> bool {
+        let Some(stalled) = self.stalled_at else {
+            return false;
+        };
+        if !self.is_live() || !self.start_when_live {
+            return false;
+        }
+        match self.state {
+            StreamState::Offline => started > stalled || self.retried_for != Some(started),
+            StreamState::Ended | StreamState::Failed(_) => started > stalled,
+            StreamState::Starting | StreamState::Playing(_) => false,
+        }
     }
 
     /// The key a recording's pane gets. Prefixed so it can never collide with
@@ -313,6 +465,30 @@ pub struct PaneInfo<'a> {
     /// What the pane calls its channel, in its header and its status line —
     /// see `RootView::display_name`.
     pub name: SharedString,
+    /// The picture a starting pane is waiting for, dimmed under its words:
+    /// the channel's live preview, the one its browse card shows, or a
+    /// recording's own thumbnail. Resolved only for a pane that is starting,
+    /// and `None` for one with nothing in the cache to show yet.
+    pub poster: Option<PathBuf>,
+    /// What a stopped live pane offers next: the newest past broadcast for a
+    /// channel that is off, or the recording of the broadcast that just
+    /// ended. `None` until the pane's ask has an answer with one in it.
+    pub next: Option<NextUp<'a>>,
+    /// Whether the pane's ask for that is still out, which an ended pane
+    /// says with a waiting control rather than nothing.
+    pub looking: bool,
+    /// Whether `Start when they go live` is offered: only where it can fire,
+    /// for a channel the follows poll watches — see
+    /// `RootView::start_offered`.
+    pub start_offered: bool,
+}
+
+/// A recording a stopped pane offers, and where it was left if it has been
+/// watched: what a recording's card needs.
+#[derive(Clone, Copy)]
+pub struct NextUp<'a> {
+    pub video: &'a Video,
+    pub watched: Option<&'a Watched>,
 }
 
 /// What a pane asks of whoever owns it: its controls, its player's bar and
@@ -342,6 +518,16 @@ pub enum PaneAction {
     OpenOnTwitch,
     /// Put the same link on the clipboard: More's, and the palette's.
     CopyLink,
+    /// Turn `Start when they go live` on or off: the switch on a stopped
+    /// live pane.
+    StartWhenLive(bool),
+    /// Play this recording in the pane, in place of the live stream that
+    /// stopped there, from where it was left: an offline pane's last
+    /// broadcast.
+    WatchHere(Box<Video>),
+    /// The same, from its start: `Watch from the start` on a pane whose
+    /// broadcast has just ended, which plays that broadcast's recording.
+    WatchFromStart(Box<Video>),
 }
 
 /// How every pane in the current grid is arranged. Identical for all of them,
@@ -501,6 +687,11 @@ fn chat_or_why(slot: &Slot) -> AnyElement {
 /// pane's header: its facts and its ×, on the band along the top. Over a
 /// pane with no picture that band stays up at rest, since there is nothing
 /// to keep clear. Nothing else is drawn on the picture.
+///
+/// Under the player, until its picture covers the pane, is the status
+/// screen: what a starting pane is waiting for, which the first frame fades
+/// in over, or what a stopped one offers next. `cache` is where a poster and
+/// a recording's card find their pictures.
 #[allow(clippy::too_many_arguments)]
 fn pane<V: 'static>(
     index: usize,
@@ -509,19 +700,61 @@ fn pane<V: 'static>(
     layout: PaneLayout,
     active: bool,
     window_hovered: bool,
+    cache: &ImageCache,
     on_pane: impl Fn(&mut V, &str, PaneAction, &mut Window, &mut Context<V>) + Clone + 'static,
     on_resize: impl Fn(&mut V, ResizeStart, &mut Window, &mut Context<V>) + 'static,
     on_hover: impl Fn(&mut V, usize, bool, &mut Context<V>) + 'static,
     cx: &mut Context<V>,
 ) -> gpui::AnyElement {
-    let video = match &slot.state {
-        StreamState::Playing(view) => view.clone().into_any_element(),
-        _ => status::screen(slot, &info.name, on_pane.clone(), cx),
-    };
+    let placement = placement(slot);
+
+    // Below the video, the box is the shape of the stream, so chat starts
+    // where the picture stops. 16:9 until the first frame says otherwise.
+    let aspect = slot
+        .video()
+        .and_then(|view| view.read(cx).source_aspect())
+        .unwrap_or(layout::VIDEO_ASPECT);
+    let video_height = layout::stacked_video_height(
+        layout.cell_width,
+        layout.cell_height,
+        aspect,
+        layout.video_share,
+    );
+
+    // The status screen, and the player over it. The screen is drawn until
+    // the picture has faded all the way in, and the player draws nothing
+    // until it has a frame, so a starting pane goes from its poster to its
+    // picture with no black between them.
+    let showing = status::showing(slot, slot.covered(cx));
+    let screen = (showing != Showing::Picture).then(|| {
+        // The room the screen has for what it offers: the video's box, less
+        // the header resting over its top when there is no chat panel.
+        let (width, height) = if layout.portrait {
+            (layout.cell_width, video_height)
+        } else if placement == Placement::Panel {
+            (layout.cell_width - layout.chat_width, layout.cell_height)
+        } else {
+            (layout.cell_width, layout.cell_height)
+        };
+        let height = match placement {
+            Placement::Panel => height,
+            Placement::OverPicture => height - theme::BAND_ROOM,
+        };
+        status::screen(
+            slot,
+            info,
+            showing,
+            status::next_up_room(width, height),
+            window_hovered,
+            cache,
+            on_pane.clone(),
+            cx,
+        )
+    });
+    let player = slot.video().cloned();
 
     // Built once, and drawn in one place: the panel, or the band over the
     // picture. Never both, since its elements' ids are the pane's.
-    let placement = placement(slot);
     let header = header::pane_header(
         slot,
         info,
@@ -597,19 +830,6 @@ fn pane<V: 'static>(
         .header
         .apply(pane_id(&slot.key, "band"), theme::MOTION_HOVER, band);
 
-    // Below the video, the box is the shape of the stream, so chat starts
-    // where the picture stops. 16:9 until the first frame says otherwise.
-    let aspect = slot
-        .video()
-        .and_then(|view| view.read(cx).source_aspect())
-        .unwrap_or(layout::VIDEO_ASPECT);
-    let video_height = layout::stacked_video_height(
-        layout.cell_width,
-        layout.cell_height,
-        aspect,
-        layout.video_share,
-    );
-
     // A flex container, so the player inside it is a flex item whose height is
     // the pane's height and nothing else. As a block, the player's `100%`
     // height did not resolve while the pane was being measured, and it fell
@@ -639,7 +859,8 @@ fn pane<V: 'static>(
         .relative()
         .on_hover(cx.listener(|_, _: &bool, _window, cx| cx.notify()))
         .child(hover_probe)
-        .child(video)
+        .children(screen)
+        .children(player)
         .child(band);
 
     // Pointing at the video makes a pane active, which is right while you are
@@ -719,6 +940,7 @@ fn pane<V: 'static>(
 /// `panes` is what the app knows about each slot, in the same order — see
 /// [`PaneInfo`]. `window_hovered` is `window.is_window_hovered()`, which the
 /// panes' headers give their tooltips by; see `header::pane_header`.
+/// `cache` is the app's image cache, for what a pane's status screen shows.
 #[allow(clippy::too_many_arguments)]
 pub fn page<V: 'static>(
     slots: &[Slot],
@@ -728,6 +950,7 @@ pub fn page<V: 'static>(
     video_share: f32,
     active: Option<usize>,
     window_hovered: bool,
+    cache: &ImageCache,
     on_pane: impl Fn(&mut V, &str, PaneAction, &mut Window, &mut Context<V>) + Clone + 'static,
     on_resize: impl Fn(&mut V, ResizeStart, &mut Window, &mut Context<V>) + Clone + 'static,
     on_hover: impl Fn(&mut V, usize, bool, &mut Context<V>) + Clone + 'static,
@@ -771,6 +994,7 @@ pub fn page<V: 'static>(
                 cell,
                 active == Some(index),
                 window_hovered,
+                cache,
                 on_pane.clone(),
                 on_resize.clone(),
                 on_hover.clone(),
@@ -840,6 +1064,13 @@ mod tests {
             assert!(!slot.hovered && !slot.quiet && !slot.revealed);
             assert!(!slot.header.is_visible());
             assert_eq!(slot.stalled_at, None);
+            assert!(
+                slot.start_when_live,
+                "a pane starts by itself unless told not to"
+            );
+            assert_eq!(slot.retried_for, None);
+            assert_eq!(slot.archives, Lookup::NotAsked);
+            assert_eq!(slot.broadcast, None);
         }
         assert_eq!(recording(42.0).resume_at, 42.0);
         assert_eq!(recording(42.0).key, "vod:2868644730");
@@ -863,6 +1094,189 @@ mod tests {
         }
         slot.set_state(StreamState::Starting);
         assert_eq!(slot.stalled_at, None, "asking again is not a stall");
+    }
+
+    /// A moment, written the way Helix writes `started_at`.
+    fn at(rfc3339: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(rfc3339)
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
+    /// A live pane that stopped at `stalled`, in `state`.
+    fn stopped(state: StreamState, stalled: &str) -> Slot {
+        let mut slot = live();
+        slot.set_state(state);
+        slot.stalled_at = Some(at(stalled));
+        slot
+    }
+
+    /// A broadcast that began after the pane stopped is one it has not
+    /// tried, whatever the pane is saying.
+    #[test]
+    fn a_new_broadcast_after_the_stall_is_due() {
+        for state in [
+            StreamState::Offline,
+            StreamState::Ended,
+            StreamState::Failed("mpv gave up".into()),
+        ] {
+            let pane = stopped(state, "2026-10-01T18:00:00Z");
+            assert!(pane.due_to_start(at("2026-10-01T18:05:00Z")));
+        }
+    }
+
+    /// Opened in a broadcast's first seconds, the pane asked before
+    /// streamlink could find it and says the channel is off with the
+    /// broadcast already going: the poll's broadcast began before the pane
+    /// stopped, and the pane tries it all the same.
+    #[test]
+    fn an_offline_pane_tries_a_broadcast_it_found_early_once() {
+        let pane = stopped(StreamState::Offline, "2026-10-01T18:00:20Z");
+        assert!(pane.due_to_start(at("2026-10-01T18:00:00Z")));
+    }
+
+    /// That try is made once per broadcast. A later broadcast is another.
+    #[test]
+    fn the_same_broadcast_is_tried_only_once() {
+        let started = at("2026-10-01T18:00:00Z");
+        let mut pane = stopped(StreamState::Offline, "2026-10-01T18:00:20Z");
+        pane.retried_for = Some(started);
+        assert!(!pane.due_to_start(started), "tried twice");
+        assert!(pane.due_to_start(at("2026-10-01T20:00:00Z")));
+    }
+
+    /// The list is up to a minute behind the pane, so the broadcast the
+    /// pane just saw end is still on it. Trying it would only turn "ended"
+    /// into "offline".
+    #[test]
+    fn an_ended_broadcast_still_listed_is_not_due() {
+        for state in [StreamState::Ended, StreamState::Failed("gone".into())] {
+            let pane = stopped(state, "2026-10-01T22:00:00Z");
+            assert!(!pane.due_to_start(at("2026-10-01T18:00:00Z")));
+        }
+    }
+
+    /// `Start when they go live` off, nothing starts the pane but a press.
+    #[test]
+    fn switched_off_it_waits_for_nobody() {
+        for state in [StreamState::Offline, StreamState::Ended] {
+            let mut pane = stopped(state, "2026-10-01T18:00:00Z");
+            pane.start_when_live = false;
+            assert!(!pane.due_to_start(at("2026-10-01T19:00:00Z")));
+        }
+    }
+
+    /// A recording is not a channel going live, and a pane still starting
+    /// or playing has nothing to start.
+    #[test]
+    fn a_recording_never_starts_itself() {
+        let mut video = recording(0.0);
+        video.set_state(StreamState::Offline);
+        video.stalled_at = Some(at("2026-10-01T18:00:00Z"));
+        assert!(!video.due_to_start(at("2026-10-01T19:00:00Z")));
+
+        let mut asking = live();
+        asking.stalled_at = Some(at("2026-10-01T18:00:00Z"));
+        assert!(!asking.due_to_start(at("2026-10-01T19:00:00Z")));
+        assert!(
+            !live().due_to_start(at("2026-10-01T19:00:00Z")),
+            "never stalled"
+        );
+    }
+
+    /// A channel's past broadcasts, newest first, by id.
+    fn listed(ids: &[&str]) -> Vec<Video> {
+        let video = recording(0.0).recording().cloned().unwrap();
+        ids.iter()
+            .map(|id| Video {
+                id: (*id).into(),
+                ..video.clone()
+            })
+            .collect()
+    }
+
+    /// A first ask has nothing to show while it is out, and its answer is
+    /// then what the pane offers from.
+    #[test]
+    fn a_first_ask_waits_with_nothing_then_answers() {
+        let mut lookup = Lookup::NotAsked;
+        assert!(!lookup.waiting());
+        lookup.asked();
+        assert_eq!(lookup, Lookup::Asked);
+        assert!(lookup.waiting());
+        assert_eq!(lookup.answer(), None);
+        lookup.settle(Some(listed(&["2"])));
+        assert_eq!(lookup, Lookup::Answered(listed(&["2"])));
+        assert!(!lookup.waiting());
+    }
+
+    /// Asking again at a later stop keeps the card on screen until the new
+    /// answer replaces it: tonight's broadcast, found by a `Try again` on a
+    /// pane that sat offline through it.
+    #[test]
+    fn asking_again_keeps_the_last_answer_until_the_next() {
+        let mut lookup = Lookup::Answered(listed(&["1"]));
+        lookup.asked();
+        assert!(lookup.waiting());
+        assert_eq!(lookup.answer(), Some(listed(&["1"]).as_slice()));
+        lookup.settle(Some(listed(&["2", "1"])));
+        assert_eq!(lookup, Lookup::Answered(listed(&["2", "1"])));
+    }
+
+    /// A failed repeat leaves the last answer standing; a failed first ask
+    /// offers nothing, and the next stop asks from nothing again.
+    #[test]
+    fn a_failed_ask_keeps_whatever_was_known() {
+        let mut again = Lookup::Answered(listed(&["1"]));
+        again.asked();
+        again.settle(None);
+        assert_eq!(again, Lookup::Answered(listed(&["1"])));
+
+        let mut first = Lookup::NotAsked;
+        first.asked();
+        first.settle(None);
+        assert_eq!(first, Lookup::Failed);
+        assert_eq!(first.answer(), None);
+        first.asked();
+        assert_eq!(first, Lookup::Asked);
+    }
+
+    /// An ask a dead worker will never answer is forgotten: a first one as
+    /// if never made, a repeat back to the answer it would have replaced.
+    /// With nothing out there is nothing to forget.
+    #[test]
+    fn a_forgotten_ask_goes_back_to_what_was_known() {
+        let mut first = Lookup::Asked;
+        first.forget();
+        assert_eq!(first, Lookup::NotAsked);
+
+        let mut again = Lookup::Refreshing(listed(&["1"]));
+        again.forget();
+        assert_eq!(again, Lookup::Answered(listed(&["1"])));
+
+        for settled in [
+            Lookup::NotAsked,
+            Lookup::Answered(listed(&["1"])),
+            Lookup::Failed,
+        ] {
+            let mut lookup = settled.clone();
+            lookup.forget();
+            assert_eq!(lookup, settled);
+        }
+    }
+
+    /// A recording swapped in for a live pane that Mute all is holding is
+    /// born quiet, as a re-pick would be; one swapped into a pane nobody
+    /// muted is not.
+    #[test]
+    fn a_swapped_in_recording_keeps_mute_alls_hold() {
+        for held in [true, false] {
+            let mut pane = live();
+            pane.quiet = held;
+            let mut swapped = recording(0.0);
+            swapped.take_over_from(&pane);
+            assert_eq!(swapped.quiet, held);
+        }
     }
 
     /// A live pane hands out its channel, with or without a moment asked

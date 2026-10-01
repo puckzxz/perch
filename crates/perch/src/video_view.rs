@@ -16,6 +16,12 @@
 //! What the bar offers that is not the player's to do — the pane's chat,
 //! opening it on twitch.tv, copying its link — it asks the root for, as
 //! [`VideoEvent::Pane`], the same way it asks for a new quality.
+//!
+//! A player draws nothing at all until its picture arrives, not even a
+//! backdrop: whoever holds it says what is happening meanwhile — the pane's
+//! status screen, under it, or a mini-player tile's word — and paints the
+//! black behind it. So the first frame fades in over what was being waited
+//! for rather than out of black; see [`VideoView::covers`].
 
 mod bar;
 mod menu;
@@ -23,11 +29,12 @@ mod menu;
 pub use menu::Menu;
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use gpui::{
     canvas, div, img, prelude::*, Animation, AnimationExt, Bounds, ClickEvent, Context, ElementId,
-    Entity, EventEmitter, FocusHandle, Hsla, MouseDownEvent, Pixels, Point, RenderImage,
-    SharedString, Subscription, Task, Window,
+    Entity, EventEmitter, FocusHandle, MouseDownEvent, Pixels, Point, RenderImage, SharedString,
+    Subscription, Task, Window,
 };
 use gpui_component::slider::{SliderEvent, SliderState};
 
@@ -114,6 +121,9 @@ pub struct VideoView {
     /// so `render` can tell a genuinely new frame from a repaint of the one the
     /// atlas already holds.
     current: Option<Arc<RenderImage>>,
+    /// When `current` was first filled: the moment the first frame began
+    /// to fade in, which [`covers`](Self::covers) counts from.
+    first_frame: Option<Instant>,
     /// The level the user chose, and whether Mute all is holding the pane
     /// silent on top of it. What mpv hears is read from here and nowhere
     /// else; see `loudness`.
@@ -261,6 +271,7 @@ impl VideoView {
         Self {
             stream,
             current: None,
+            first_frame: None,
             loudness,
             volume_slider,
             qualities,
@@ -533,11 +544,22 @@ impl VideoView {
     }
 
     /// Whether a frame has decoded, and so whether `render` draws the picture
-    /// and the bar over it rather than the word "buffering". Asks what
-    /// `render` asks, so the two cannot disagree; once true it stays true for
-    /// the life of the stream.
+    /// and the bar over it rather than nothing at all. Asks what `render`
+    /// asks, so the two cannot disagree; once true it stays true for the life
+    /// of the stream.
     pub fn has_picture(&self) -> bool {
         self.stream.latest_frame().is_some()
+    }
+
+    /// Whether the picture covers everything under it: its first frame has
+    /// been drawn and has finished fading in. Until then the pane goes on
+    /// drawing what it was waiting for under the player, which draws nothing
+    /// before its first frame and only part of it during the fade — so the
+    /// picture arrives over the poster, never over black. Once true it stays
+    /// true for the life of this player; a quality change makes a new one,
+    /// which starts over.
+    pub fn covers(&self) -> bool {
+        covered(self.first_frame.map(|first| first.elapsed()))
     }
 
     /// Width over height of the stream itself, once a frame has decoded.
@@ -552,26 +574,24 @@ impl VideoView {
     }
 }
 
+/// Whether a picture whose first frame was drawn `since_first` ago covers
+/// what is under it: once the first frame's fade-in, [`theme::MOTION_VIDEO`],
+/// has run its course, and never before there is a first frame.
+fn covered(since_first: Option<Duration>) -> bool {
+    since_first.is_some_and(|since| since >= theme::MOTION_VIDEO)
+}
+
 impl Render for VideoView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let backdrop: Hsla = theme::player_bg();
-
         let Some(frame) = self.stream.latest_frame() else {
-            // Breathing rather than still: a stream takes a few seconds to
-            // arrive, and a motionless word is indistinguishable from a hang.
-            // Only the text pulses - taking the backdrop with it would strobe
-            // the whole pane.
-            return div()
-                .size_full()
-                .bg(backdrop)
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(motion::waiting(
-                    "buffering",
-                    div().text_color(theme::text_dim()).child("buffering…"),
-                ))
-                .into_any_element();
+            // Nothing, and no backdrop: whoever holds the player says what
+            // is happening until its picture arrives, under it — the pane's
+            // status screen, the tile's word — and that has to show through.
+            // A player that painted its own black here, or a word of its
+            // own, hid the poster the pane was showing the moment the
+            // player existed, seconds before there was a picture to replace
+            // it with.
+            return div().size_full().into_any_element();
         };
 
         // One tile for the life of the stream: every frame carries the same
@@ -602,6 +622,7 @@ impl Render for VideoView {
             // `img` below then inserts it the ordinary way.
             window.update_image(&frame, 0);
             self.current = Some(frame.clone());
+            self.first_frame.get_or_insert_with(Instant::now);
         }
 
         // Measure the pane every frame: the render thread follows it, and so
@@ -651,12 +672,16 @@ impl Render for VideoView {
         // percentage could not resolve - which fed the next frame's size, and
         // that frame's ratio, and so on. As a stretched flex item the image is
         // the pane's size, whatever shape the frame it holds is.
+        //
+        // No backdrop here either. Both of the player's containers — the
+        // pane, a mini-player tile — paint the player's black themselves, so
+        // the letterbox is black once the picture covers the pane; until it
+        // does, it is the poster under the fading first frame.
         div()
             .relative()
             .size_full()
             .flex()
             .flex_col()
-            .bg(backdrop)
             .id("video-pane")
             // Only here to wake a repaint. Its *value* is wrong during a drag,
             // so the probe above decides; but a paused stream sends no frames,
@@ -679,8 +704,9 @@ impl Render for VideoView {
             // Ahead of the bar and its menus, so it hears a press before
             // anything on them does; see `run_guard`. A tile has no menus.
             .when(!self.compact, |pane| pane.child(Self::run_guard(cx)))
-            // Fade the first frames in rather than cutting from black, which
-            // makes a channel switch read as deliberate instead of a glitch.
+            // Fade the first frames in rather than cutting to them, which
+            // makes a channel switch read as deliberate instead of a glitch;
+            // the poster under it is what it fades in over.
             .child(img(frame).flex_1().min_h_0().w_full().with_animation(
                 ElementId::from("video-fade-in"),
                 Animation::new(theme::MOTION_VIDEO),
@@ -709,6 +735,18 @@ impl Render for VideoView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The picture covers the pane only once its first frame has faded all
+    /// the way in; before a first frame, and during the fade, what is under
+    /// it still shows.
+    #[test]
+    fn the_picture_covers_only_once_faded_in() {
+        assert!(!covered(None), "no frame yet");
+        assert!(!covered(Some(Duration::ZERO)), "the first frame just drawn");
+        assert!(!covered(Some(theme::MOTION_VIDEO / 2)), "half faded in");
+        assert!(covered(Some(theme::MOTION_VIDEO)));
+        assert!(covered(Some(Duration::from_secs(60))));
+    }
 
     /// A recording with no chat to replay offers none, whatever the channel
     /// was saved as: its glyph is the still one either way.

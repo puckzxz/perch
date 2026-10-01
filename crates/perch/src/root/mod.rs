@@ -14,7 +14,8 @@
 //! | `follows` | the Twitch worker's events: sign-in, who is live, replies |
 //! | `browsing` | the browse page's requests: tabs, search, categories, channels |
 //! | `navigation` | back and forward: where the app is as a `Route`, recording each step on the trail (`crate::trail`), and the three ways along it |
-//! | `streams` | opening, restarting and closing panes |
+//! | `streams` | opening, restarting and closing panes, and swapping one for a recording in place |
+//! | `broadcasts` | what a stopped live pane asks about its channel's past broadcasts, and whether it can start by itself |
 //! | `pane_actions` | what a pane asks for: its controls, and its player's requests; the header a pane key reveals |
 //! | `launches` | what the command line named, at startup and from later launches |
 //! | `history` | what has been watched: noting where each recording got to, resuming there |
@@ -29,6 +30,7 @@
 //! methods are `pub(super)`: callable from the rest of the root, and nowhere
 //! else.
 
+mod broadcasts;
 mod browsing;
 mod chrome;
 mod commands;

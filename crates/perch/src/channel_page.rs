@@ -13,6 +13,8 @@
 //! `history_page` — so a recording looks the same wherever it is found, and
 //! one part-watched says how far in it was left on both.
 
+use std::path::PathBuf;
+
 use chrono::{DateTime, Datelike as _, Local, Utc};
 use emotes::ImageCache;
 use gpui::{
@@ -77,6 +79,41 @@ pub fn in_progress(video: &Video, now: DateTime<Utc>) -> bool {
 /// broadcast is still being recorded.
 pub fn placeholder(thumbnail_url: &str) -> bool {
     thumbnail_url.contains("404_processing")
+}
+
+/// The recording of the broadcast that ended at `ended_at` — the one whose
+/// id was `stream_id`, when that is known — among a channel's `archives`.
+///
+/// Only an archive can be one, and only one that started no later than the
+/// end and is listed as going on until close to it ([`listed_as_going`] at
+/// `ended_at`). The id chooses among those, and without one the newest of
+/// them is it. The id never reaches past them: it comes from whichever live
+/// list last carried the channel, and an old snapshot — a Popular page from
+/// yesterday — carries yesterday's broadcast, whose archive is the one thing
+/// `Watch from the start` must not open. No archive near the end is no
+/// answer, rather than an older broadcast that would not be this one.
+///
+/// Not [`in_progress`]: its placeholder signal says a recording is still
+/// being made with no regard to when, which tells nothing about this end.
+pub fn archive_of<'a>(
+    archives: &'a [Video],
+    stream_id: Option<&str>,
+    ended_at: DateTime<Utc>,
+) -> Option<&'a Video> {
+    let candidates: Vec<&Video> = archives
+        .iter()
+        .filter(|video| video.kind == VideoKind::Archive)
+        .filter(|video| started_at(video).is_some_and(|started| started <= ended_at))
+        .filter(|video| listed_as_going(video, ended_at))
+        .collect();
+    stream_id
+        .and_then(|id| {
+            candidates
+                .iter()
+                .find(|video| video.stream_id.as_deref() == Some(id))
+                .copied()
+        })
+        .or_else(|| candidates.into_iter().max_by_key(|video| started_at(video)))
 }
 
 /// Whether the listed length puts the broadcast's end close enough to now
@@ -165,6 +202,26 @@ pub fn describe(video: &Video, now: DateTime<Utc>) -> String {
 /// How tall the bar along the bottom of a watched recording's picture is.
 const WATCHED_BAR: f32 = 3.0;
 
+/// Where a recording's picture is fetched from: the one size Twitch serves.
+fn video_thumbnail(video: &Video) -> String {
+    twitch_api::thumbnail(&video.thumbnail_url, VIDEO_THUMBNAIL.0, VIDEO_THUMBNAIL.1)
+}
+
+/// A recording's picture as a pane's poster while it opens, or `None` when
+/// it has none worth showing: no picture at all, or Twitch's placeholder for
+/// a broadcast still being recorded, which says "processing" across a pane
+/// rather than what the recording looks like.
+pub fn poster_url(video: &Video) -> Option<String> {
+    (!video.thumbnail_url.is_empty() && !placeholder(&video.thumbnail_url))
+        .then(|| video_thumbnail(video))
+}
+
+/// A recording's poster from the cache — the card's own picture, the same
+/// entry — or `None` while it is fetched or when it has none.
+pub(crate) fn video_preview(cache: &ImageCache, video: &Video) -> Option<PathBuf> {
+    cache.get_or_request(&poster_url(video)?)
+}
+
 /// One card's worth: a recording, and what the page showing it knows about
 /// it besides. The two pages that show recordings differ only here.
 pub(crate) struct Card<'a> {
@@ -212,11 +269,7 @@ pub(crate) fn card<V: 'static>(
     // of it and never changes. The placeholder Twitch serves while a
     // broadcast is still being recorded has a URL of its own, so the real
     // picture is a new fetch when it arrives.
-    let thumbnail = cache.get_or_request(&twitch_api::thumbnail(
-        &video.thumbnail_url,
-        VIDEO_THUMBNAIL.0,
-        VIDEO_THUMBNAIL.1,
-    ));
+    let thumbnail = cache.get_or_request(&video_thumbnail(video));
     let preview_height = px(width * 9.0 / 16.0);
     let preview = match thumbnail {
         Some(path) => img(path).w_full().h(preview_height).into_any_element(),
@@ -528,6 +581,139 @@ mod tests {
         DateTime::parse_from_rfc3339(rfc3339)
             .unwrap()
             .with_timezone(&Utc)
+    }
+
+    /// One of a channel's archives: started at `created_at`, listed as
+    /// `length_secs` long, the recording of broadcast `stream_id`.
+    fn archive(id: &str, stream_id: &str, created_at: &str, length_secs: u64) -> Video {
+        Video {
+            id: id.into(),
+            stream_id: Some(stream_id.into()),
+            ..video(created_at, length_secs, "https://cdn/x.jpg")
+        }
+    }
+
+    /// The channel's newest few, newest first, as the pane is answered: the
+    /// one that ran until 22:00 today, and yesterday's.
+    fn archives() -> Vec<Video> {
+        vec![
+            archive("today", "stream-today", "2026-10-01T18:00:00Z", 4 * 3600),
+            archive(
+                "yesterday",
+                "stream-yesterday",
+                "2026-09-30T18:00:00Z",
+                4 * 3600,
+            ),
+        ]
+    }
+
+    #[test]
+    fn the_archive_with_the_streams_id_wins_inside_the_window() {
+        let mut archives = archives();
+        // A reconnect split today's broadcast: the second part is listed
+        // first, ending at the same moment, with another broadcast's id.
+        archives.insert(
+            0,
+            archive(
+                "reconnect",
+                "stream-reconnect",
+                "2026-10-01T21:00:00Z",
+                3600,
+            ),
+        );
+        let ended = at("2026-10-01T22:00:30Z");
+        assert_eq!(
+            archive_of(&archives, Some("stream-today"), ended).map(|v| v.id.as_str()),
+            Some("today")
+        );
+    }
+
+    /// An old snapshot's id names yesterday's broadcast; its archive is not
+    /// near today's end, so it is never what plays from the start.
+    #[test]
+    fn a_stale_id_never_reaches_an_older_archive() {
+        let ended = at("2026-10-01T22:00:30Z");
+        assert_eq!(
+            archive_of(&archives(), Some("stream-yesterday"), ended).map(|v| v.id.as_str()),
+            Some("today")
+        );
+    }
+
+    #[test]
+    fn without_an_id_the_archive_that_just_ended_is_found() {
+        let ended = at("2026-10-01T22:00:30Z");
+        assert_eq!(
+            archive_of(&archives(), None, ended).map(|v| v.id.as_str()),
+            Some("today")
+        );
+    }
+
+    /// A channel that keeps no archive of today, or Helix not listing it
+    /// yet: nothing is offered, rather than yesterday.
+    #[test]
+    fn no_archive_near_the_end_offers_nothing() {
+        let yesterday_only = vec![archive(
+            "yesterday",
+            "stream-yesterday",
+            "2026-09-30T18:00:00Z",
+            4 * 3600,
+        )];
+        let ended = at("2026-10-01T22:00:30Z");
+        assert_eq!(archive_of(&yesterday_only, None, ended), None);
+        assert_eq!(
+            archive_of(&yesterday_only, Some("stream-today"), ended),
+            None
+        );
+        assert_eq!(archive_of(&[], None, ended), None);
+    }
+
+    /// A broadcast that started after this one ended is a later one, even
+    /// with the id this pane knew.
+    #[test]
+    fn an_archive_started_after_the_end_is_not_this_one() {
+        let later = vec![archive("later", "stream-today", "2026-10-01T22:05:00Z", 60)];
+        let ended = at("2026-10-01T22:00:30Z");
+        assert_eq!(archive_of(&later, Some("stream-today"), ended), None);
+    }
+
+    /// A highlight or an upload made at the end of a broadcast is not its
+    /// recording, and never plays as `Watch from the start`.
+    #[test]
+    fn highlights_and_uploads_are_never_from_the_start() {
+        let ended = at("2026-10-01T22:00:30Z");
+        for kind in [VideoKind::Highlight, VideoKind::Upload] {
+            let cut = vec![Video {
+                kind,
+                ..archive("cut", "stream-today", "2026-10-01T18:00:00Z", 4 * 3600)
+            }];
+            assert_eq!(
+                archive_of(&cut, Some("stream-today"), ended),
+                None,
+                "{kind:?}"
+            );
+        }
+    }
+
+    /// A pane opening a recording shows its picture, unless that picture is
+    /// missing or is Twitch's placeholder for one still being made.
+    #[test]
+    fn a_placeholder_or_empty_thumbnail_is_no_poster() {
+        let real = video(
+            "2026-09-08T13:00:00Z",
+            60,
+            "https://static-cdn.jtvnw.net/cf_vods/x/thumb/index-0000000000-%{width}x%{height}.jpg",
+        );
+        assert_eq!(
+            poster_url(&real).as_deref(),
+            Some("https://static-cdn.jtvnw.net/cf_vods/x/thumb/index-0000000000-320x180.jpg")
+        );
+        let processing = video(
+            "2026-09-08T13:00:00Z",
+            60,
+            "https://vod-secure.twitch.tv/_404/404_processing_%{width}x%{height}.png",
+        );
+        assert_eq!(poster_url(&processing), None);
+        assert_eq!(poster_url(&video("2026-09-08T13:00:00Z", 60, "")), None);
     }
 
     #[test]

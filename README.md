@@ -188,9 +188,19 @@ Each pane's header says who is on, how many are watching, how long they have
 been going, and what they are doing — the stream's title and its game, on a line
 of their own. Both are cut to fit; rest the pointer on them for the whole thing.
 
-When a stream ends the pane says so, and offers to try again. It does not simply
-stop on its last frame, which is indistinguishable from a pause. Chat stays
-connected either way, which is where the goodnights are.
+While a pane starts it shows the channel's latest picture — the one its card on
+the browse page shows, when a list there has the channel — dimmed under its
+name, and the stream fades in over it when it arrives. A channel that is off
+says so and offers what there is instead: its last broadcast, as a card where
+there is room, which plays right there in place of the live pane; **Start when
+they go live**, a switch that is on unless you turn it off, for a channel you
+follow; and **Try again**. When a stream ends the pane says so — it does not
+simply stop on its last frame, which is indistinguishable from a pause — and
+offers **Watch from the start**, which plays that broadcast's recording from
+the top in the same pane once Twitch lists it, **Try again** and **Close**. The
+last broadcast and the recording need a sign-in to be found. Chat stays
+connected either way, which is where the goodnights are, until a recording
+takes the pane's place and brings its own chat replay.
 
 ### Requirements
 
@@ -277,7 +287,9 @@ When somebody you follow goes live, a notice says so in the corner; click it
 to watch them, or `+ Add` beside it to open them next to what is playing. A
 pane left on a channel that was off, or whose broadcast ended, starts by
 itself when a later poll finds them on again — open a channel before they
-start and it begins without you.
+start and it begins without you. That is the pane's **Start when they go
+live** switch, on unless you turn it off, and it is there only for channels
+you follow, since the poll that notices is the follows poll.
 
 The box at the top of the Following tab filters both lists as you type, live
 and offline, by the same few-letters-of-a-name match the palette uses. It is
@@ -376,7 +388,8 @@ it or drag its thumb, and `←` and `→` skip ten seconds. A jump takes a secon
 or so, because the player is reopened at the new place rather than seeked —
 the reason is the player's and `HANDOFF.md` has it. The header says `replay`
 — or `highlight`, or `upload` — names the video, and opens it on twitch.tv;
-when the recording ends the pane says so and offers to start over. Under the
+while it opens the pane shows the recording's own picture, dimmed, and when
+the recording ends the pane says so and offers to start over. Under the
 bar's **More**, **Copy link** reads `Copy link at 1:02:03` and copies a link
 to the moment you are at, which pasted back into Perch opens there, and
 **Open on twitch.tv** opens it at that moment. A channel's

@@ -577,6 +577,26 @@ pub const QUALITY_PILL_ROOM: f32 = 72.0;
 /// screen's words. Built from the header's own tokens, so it follows them.
 pub const BAND_ROOM: f32 = GAP_TIGHT * 2.0 + ICON_BUTTON + GAP_WORD + LINE_TIGHT + 1.0;
 
+/// What a stopped pane's status screen needs besides the card of what it
+/// offers next (`watch::status`): its sentence at [`TEXT_TITLE`], the `Start
+/// when they go live` switch, `Try again`, and the gaps between them. With
+/// [`VIDEO_CARD_TEXT`], it decides when an offline pane's last broadcast
+/// shrinks from a card to a pill. An estimate, like [`QUALITY_PILL_ROOM`],
+/// and the number to tune against a PrintWindow of a real pane: too small
+/// and a card in a short pane pushes `Try again` out of the box.
+pub const STATUS_ROOM: f32 = 100.0;
+
+/// gpui's line height for text that sets none, as a multiple of its size:
+/// `gpui::phi`, the golden ratio.
+const DEFAULT_LINE: f32 = 1.618;
+
+/// How tall a recording's card is under its picture
+/// (`channel_page::card`): its padding, the title at gpui's own line height,
+/// the gap and the byline. With the picture's 16:9, how tall a card of a
+/// given width is, for a pane working out whether one fits.
+pub const VIDEO_CARD_TEXT: f32 =
+    PANEL_PAD * 2.0 + TEXT_BODY * DEFAULT_LINE + GAP_TIGHT + LINE_TIGHT;
+
 /// The live indicator's diameter. Small enough to read as a status mark
 /// beside a number rather than as a control.
 pub const LIVE_DOT: f32 = 6.0;

@@ -558,6 +558,7 @@ mod tests {
 
     fn stream(login: &str, viewers: u64) -> LiveStream {
         LiveStream {
+            id: String::new(),
             user_login: login.into(),
             user_id: String::new(),
             display_name: login.into(),

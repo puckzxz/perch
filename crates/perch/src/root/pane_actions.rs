@@ -1,7 +1,7 @@
 //! What a pane asks for, resolved: a press on one of its own controls, on
-//! its player's bar or in its menus, a palette row about it, or a press on
-//! the pane itself (`watch::PaneAction`), and what its player asks of the
-//! root (`VideoEvent`).
+//! its player's bar or in its menus or on its status screen, a palette row
+//! about it, or a press on the pane itself (`watch::PaneAction`), and what
+//! its player asks of the root (`VideoEvent`).
 //!
 //! Both arrive with the pane's key and are looked up here, when they land,
 //! rather than by a position read when the pane was drawn: a press can land
@@ -58,6 +58,20 @@ impl RootView {
             PaneAction::CopyLink => {
                 cx.write_to_clipboard(ClipboardItem::new_string(self.slots[index].link(true)));
                 self.toast("link copied", cx);
+            }
+            PaneAction::StartWhenLive(on) => {
+                self.slots[index].start_when_live = on;
+                cx.notify();
+            }
+            // An offline channel's last broadcast plays where it was left, as
+            // a recording does from anywhere; the one that just ended plays
+            // from its start, which is what the control says.
+            PaneAction::WatchHere(video) => {
+                let start_at = self.resume_point(&video.id);
+                self.replace_with_video(key, *video, start_at, window, cx);
+            }
+            PaneAction::WatchFromStart(video) => {
+                self.replace_with_video(key, *video, 0.0, window, cx)
             }
         }
     }

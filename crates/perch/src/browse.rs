@@ -11,6 +11,7 @@
 //! thumbnail. The history is a grid of recordings, drawn by the card a
 //! channel's page uses; see `history_page`.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
@@ -138,12 +139,43 @@ pub struct Discovery {
     /// answer takes one away; see [`finish`](Self::finish). Emptied when the
     /// worker stops, since nothing it was holding will ever answer.
     pub pending: Vec<ListKey>,
-    /// The last browse request that failed, and the list it was for — said
-    /// on that list only (see [`shown_error`](Self::shown_error)), so a
-    /// failure that lands after you have moved on does not blank the list you
-    /// moved to. Deliberately separate from `SignIn::Error`: the session is
-    /// fine, and blanking the whole page would say otherwise.
-    pub error: Option<(ListKey, SharedString)>,
+    /// The last browse list that could not be had, the list it was, and
+    /// why — said on that list only (see [`shown_error`](Self::shown_error)),
+    /// so a failure that lands after you have moved on does not blank the
+    /// list you moved to. Deliberately separate from `SignIn::Error`: the
+    /// session is fine, and blanking the whole page would say otherwise.
+    pub error: Option<(ListKey, Unanswered)>,
+}
+
+/// Why a browse list has nothing it asked for.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Unanswered {
+    /// It was never asked: nobody is signed in yet, and every list needs a
+    /// token. Not a failure — Twitch was never tried — and the list fills by
+    /// itself once a sign-in lands (`RootView::fill_shown`).
+    SignedOut,
+    /// Twitch was asked and the request failed, in these words.
+    Failed(SharedString),
+}
+
+impl Unanswered {
+    /// What the list says instead of its contents: a heading, the words
+    /// under it, and whether those are a fault's.
+    ///
+    /// Two headings, because they are two different news. A search typed
+    /// while signed out used to say "Could not reach Twitch" over "Sign in
+    /// to Twitch to browse" — a network failure, for a request that was
+    /// never sent.
+    pub fn notice(&self) -> (SharedString, SharedString, bool) {
+        match self {
+            Unanswered::SignedOut => (
+                "Not signed in".into(),
+                "Sign in to Twitch to browse.".into(),
+                false,
+            ),
+            Unanswered::Failed(reason) => ("Could not reach Twitch".into(), reason.clone(), true),
+        }
+    }
 }
 
 /// What the browse page is showing: one of the lists that take it over, or
@@ -239,7 +271,7 @@ impl Discovery {
     }
 
     /// Why the list on screen could not be had, if it was the one that failed.
-    pub fn shown_error(&self) -> Option<&SharedString> {
+    pub fn shown_error(&self) -> Option<&Unanswered> {
         let (failed, reason) = self.error.as_ref()?;
         (self.shown_key().as_ref() == Some(failed)).then_some(reason)
     }
@@ -551,6 +583,23 @@ pub fn release_retired_previews(cache: &ImageCache, window: &mut Window, cx: &mu
     }
 }
 
+/// Where a live channel's preview is fetched from, at the size the cards
+/// draw it.
+fn preview_url(stream: &LiveStream) -> String {
+    twitch_api::thumbnail(&stream.thumbnail_url, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT)
+}
+
+/// A live channel's preview, from the cache, or `None` while it is fetched.
+///
+/// The card's picture, and a starting pane's poster (`watch::status`): the
+/// same URL and the same entry, so a pane opened from a card shows at once
+/// the picture the card was showing, with nothing more to fetch. Refreshed on
+/// Twitch's cadence ([`THUMBNAIL_MAX_AGE`]); a refresh retires the old file,
+/// which is why [`release_retired_previews`] runs before anything calls this.
+pub(crate) fn stream_preview(cache: &ImageCache, stream: &LiveStream) -> Option<PathBuf> {
+    cache.get_or_request_fresh(&preview_url(stream), THUMBNAIL_MAX_AGE)
+}
+
 /// One live channel.
 ///
 /// Clicking the card watches it alone; the small "+" adds it beside whatever is
@@ -576,10 +625,7 @@ fn card<V: 'static>(
         display_name: stream.display_name.clone(),
         user_id: Some(stream.user_id.clone()).filter(|id| !id.is_empty()),
     };
-    let thumbnail = cache.get_or_request_fresh(
-        &twitch_api::thumbnail(&stream.thumbnail_url, THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT),
-        THUMBNAIL_MAX_AGE,
-    );
+    let thumbnail = stream_preview(cache, stream);
 
     let preview_height = px(width * 9.0 / 16.0);
     let preview = match thumbnail {
@@ -1348,8 +1394,9 @@ fn empty_state<V: 'static>(
 
 /// What a browse list shows when it has nothing in it yet.
 pub(crate) fn browse_placeholder(discovery: &Discovery, empty: SharedString) -> AnyElement {
-    if let Some(reason) = discovery.shown_error() {
-        return notice("Could not reach Twitch".into(), reason.clone(), true).into_any_element();
+    if let Some(unanswered) = discovery.shown_error() {
+        let (title, detail, error) = unanswered.notice();
+        return notice(title, detail, error).into_any_element();
     }
     if discovery.is_loading() {
         // Ends as soon as the request does, which is what makes a repeating
@@ -1646,10 +1693,13 @@ mod tests {
             tab: Tab::Popular,
             ..Discovery::default()
         };
-        discovery.error = Some((ListKey::Popular, "Twitch is down".into()));
+        discovery.error = Some((
+            ListKey::Popular,
+            Unanswered::Failed("Twitch is down".into()),
+        ));
         assert_eq!(
-            discovery.shown_error().map(|reason| reason.as_ref()),
-            Some("Twitch is down")
+            discovery.shown_error(),
+            Some(&Unanswered::Failed("Twitch is down".into()))
         );
 
         discovery.tab = Tab::Categories;
@@ -1671,7 +1721,7 @@ mod tests {
                 login: "someone".into(),
                 kind: VideoKind::Highlight,
             },
-            "no such thing".into(),
+            Unanswered::Failed("no such thing".into()),
         ));
         assert!(
             discovery.shown_error().is_none(),
@@ -1681,6 +1731,46 @@ mod tests {
             page.kind = VideoKind::Highlight;
         }
         assert!(discovery.shown_error().is_some());
+    }
+
+    /// A list asked for while nobody is signed in was never sent, and says
+    /// so without calling it a failure to reach Twitch, which is reserved
+    /// for a request that went and failed.
+    #[test]
+    fn signed_out_is_not_a_failure_to_reach_twitch() {
+        let (title, detail, error) = Unanswered::SignedOut.notice();
+        assert_eq!(title.as_ref(), "Not signed in");
+        assert_eq!(detail.as_ref(), "Sign in to Twitch to browse.");
+        assert!(!error, "a sign-in still to come is not drawn as a fault");
+
+        let (title, detail, error) = Unanswered::Failed("timed out".into()).notice();
+        assert_eq!(title.as_ref(), "Could not reach Twitch");
+        assert_eq!(detail.as_ref(), "timed out");
+        assert!(error);
+    }
+
+    /// A starting pane's poster is the picture its channel's card shows:
+    /// one URL, so one cache entry, and nothing more to fetch for a pane
+    /// opened from a card.
+    #[test]
+    fn the_pane_poster_is_the_cards_picture() {
+        let stream = LiveStream {
+            id: "318576165606".into(),
+            user_login: "forsen".into(),
+            user_id: "22484632".into(),
+            display_name: "Forsen".into(),
+            title: String::new(),
+            game_name: String::new(),
+            viewer_count: 0,
+            thumbnail_url:
+                "https://static-cdn.jtvnw.net/previews-ttv/live_user_forsen-{width}x{height}.jpg"
+                    .into(),
+            started_at: String::new(),
+        };
+        assert_eq!(
+            preview_url(&stream),
+            "https://static-cdn.jtvnw.net/previews-ttv/live_user_forsen-440x248.jpg"
+        );
     }
 
     /// Two asks for one list are two answers to wait for.

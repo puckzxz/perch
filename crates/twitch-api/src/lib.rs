@@ -434,9 +434,14 @@ fn current_user(client_id: &str, token: &str) -> Result<(String, String), Error>
     Ok((id.to_string(), login.to_string()))
 }
 
-/// A followed channel that is currently broadcasting.
+/// A channel that is broadcasting now: from the follows poll, the top
+/// streams, a category or a search, which all list streams the same way.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveStream {
+    /// The broadcast's own id, which its recording carries as
+    /// [`Video::stream_id`]: what tells this broadcast's archive from the
+    /// channel's others once it has ended. Empty when Helix left it out.
+    pub id: String,
     pub user_login: String,
     /// Helix's id for the channel. Kept because the endpoints that list a
     /// channel's videos take ids and nothing else; see [`videos`].
@@ -500,6 +505,7 @@ fn parse_streams(json: &Value) -> Vec<LiveStream> {
         .filter_map(|entry| {
             let user_login = text(entry, "user_login")?;
             Some(LiveStream {
+                id: text_or_empty(entry, "id"),
                 user_login: user_login.to_string(),
                 user_id: text_or_empty(entry, "user_id"),
                 display_name: text(entry, "user_name").unwrap_or(user_login).to_string(),
@@ -929,20 +935,51 @@ pub fn videos(
     kind: VideoKind,
     after: Option<&str>,
 ) -> Result<Page<Video>, Error> {
-    let mut query = vec![
-        ("user_id", user_id),
-        ("type", kind.as_str()),
-        ("sort", "time"),
-        ("first", PAGE_SIZE),
-    ];
-    if let Some(cursor) = after {
-        query.push(("after", cursor));
-    }
+    let query = videos_query(user_id, kind, PAGE_SIZE, after);
     let json = helix_get(client_id, token, "/videos", &query)?;
     Ok(Page {
         items: parse_videos(&json),
         next: next_cursor(&json),
     })
+}
+
+/// The newest `count` of one kind of a channel's videos, and nothing after
+/// them: a pane that has stopped asking what the channel broadcast last, which
+/// wants a handful rather than the page a channel's shelf asks for. `count`
+/// is held to Helix's range for `first`, 1 to 100.
+pub fn recent_videos(
+    client_id: &str,
+    token: &str,
+    user_id: &str,
+    kind: VideoKind,
+    count: u8,
+) -> Result<Vec<Video>, Error> {
+    let first = count.clamp(1, 100).to_string();
+    let query = videos_query(user_id, kind, &first, None);
+    let json = helix_get(client_id, token, "/videos", &query)?;
+    Ok(parse_videos(&json))
+}
+
+/// What `/videos` is asked for one kind of a channel's videos: newest first
+/// (`sort=time`, which is what makes the first of them the latest), `first`
+/// of them, from `after` when continuing a list. One spelling for the shelf's
+/// page and a pane's few.
+fn videos_query<'a>(
+    user_id: &'a str,
+    kind: VideoKind,
+    first: &'a str,
+    after: Option<&'a str>,
+) -> Vec<(&'static str, &'a str)> {
+    let mut query = vec![
+        ("user_id", user_id),
+        ("type", kind.as_str()),
+        ("sort", "time"),
+        ("first", first),
+    ];
+    if let Some(cursor) = after {
+        query.push(("after", cursor));
+    }
+    query
 }
 
 /// One video by its id, or `None` if Twitch has no such video: deleted,
@@ -1516,7 +1553,7 @@ mod tests {
     fn parses_a_followed_streams_payload() {
         let json: Value = serde_json::from_str(
             r#"{"data":[
-                {"user_login":"alice","user_id":"77","user_name":"Alice","title":"hi",
+                {"id":"318576165606","user_login":"alice","user_id":"77","user_name":"Alice","title":"hi",
                  "game_name":"Chess","viewer_count":12,
                  "thumbnail_url":"https://cdn.test/a-{width}x{height}.jpg",
                  "started_at":"2026-08-25T10:00:00Z"}
@@ -1526,6 +1563,7 @@ mod tests {
 
         let streams = parse_streams(&json);
         assert_eq!(streams.len(), 1);
+        assert_eq!(streams[0].id, "318576165606");
         assert_eq!(streams[0].user_login, "alice");
         assert_eq!(streams[0].user_id, "77");
         assert_eq!(streams[0].display_name, "Alice");
@@ -1682,6 +1720,26 @@ mod tests {
         assert_eq!(recording.user_name, "xqc");
         assert_eq!(recording.length_secs, 12 * 3600 + 49 * 60 + 37);
         assert_eq!(next_cursor(&json).as_deref(), Some("next"));
+    }
+
+    /// A pane's few are asked for the way a shelf's page is — one kind,
+    /// newest first — but only as many as it wants, and from the top.
+    #[test]
+    fn a_small_page_asks_for_just_that_many() {
+        assert_eq!(
+            videos_query("22484632", VideoKind::Archive, "5", None),
+            vec![
+                ("user_id", "22484632"),
+                ("type", "archive"),
+                ("sort", "time"),
+                ("first", "5"),
+            ]
+        );
+        assert_eq!(
+            videos_query("22484632", VideoKind::Highlight, PAGE_SIZE, Some("next")).last(),
+            Some(&("after", "next")),
+            "a shelf's next page continues from its cursor"
+        );
     }
 
     #[test]

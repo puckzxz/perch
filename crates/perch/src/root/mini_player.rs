@@ -156,11 +156,15 @@ impl RootView {
     /// talk to (`go_watch_pane`), and a close under the pointer shuts just
     /// this pane — the
     /// docked bar had a close per stream, and the player keeps it.
+    ///
+    /// The word is the pane's own reading of itself (`watch::Showing`), so a
+    /// player whose first frame has not faded in yet says `Starting…`, as the
+    /// pane does, where it used to say a word of its own.
     fn mini_tile(&self, slot: &Slot, mini: MiniLayout, cx: &mut Context<Self>) -> impl IntoElement {
         let key = slot.key.clone();
         let close_key = slot.key.clone();
         let name = self.display_name(slot);
-        let showing = watch::showing(slot);
+        let showing = watch::showing(slot, slot.covered(cx));
 
         div()
             // By key, never by position: closing a tile moves the ones after
@@ -172,33 +176,44 @@ impl RootView {
             .flex_none()
             .w(px(mini.tile_w))
             .h(px(mini.tile_h))
-            // A flex container, so the word, when there is one, sits in the
-            // middle, and the player is a flex item filling a box of definite
-            // size — never a block child whose height could fall back to its
-            // frame's aspect (the `img` trap in the handoff).
+            // A flex container, so the player is a flex item filling a box of
+            // definite size — never a block child whose height could fall
+            // back to its frame's aspect (the `img` trap in the handoff).
             .flex()
             .items_center()
             .justify_center()
             .overflow_hidden()
             .bg(theme::player_bg())
             .cursor_pointer()
-            .children(slot.video().cloned())
             // The pane's own reading of itself, said in a word: a tile is a
             // few words wide, and the pane says the whole of it a click away.
+            // Under the player, which draws nothing until its first frame
+            // and then fades that in over the word; and out of the flow, so
+            // the two never share the tile's width.
             .when_some(showing.word(), |tile, word| {
                 let word = div()
                     .text_size(px(theme::TEXT_META))
                     .text_color(theme::text_dim())
                     .child(word);
-                tile.child(if matches!(showing, Showing::Starting { .. }) {
+                let word = if matches!(showing, Showing::Starting { .. }) {
                     // Breathing like the pane's own starting state: a still
                     // word reads as a hang.
                     motion::waiting(ElementId::Name(format!("mini-starting-{key}").into()), word)
                         .into_any_element()
                 } else {
                     word.into_any_element()
-                })
+                };
+                tile.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(word),
+                )
             })
+            .children(slot.video().cloned())
             .child(
                 controls::icon_button(
                     ElementId::Name(format!("mini-close-{key}").into()),

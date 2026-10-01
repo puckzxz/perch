@@ -4,14 +4,16 @@
 //! column — the title bar over it and the rail beside it are the root's, drawn
 //! once for both.
 
+use std::path::PathBuf;
+
 use gpui::{canvas, div, prelude::*, px, Context, Div, IntoElement, Stateful, Window};
 use gpui_component::input::Input;
 
 use super::follows::LiveList;
 use super::RootView;
 use crate::browse::{Place, Tab};
-use crate::watch::PaneInfo;
-use crate::{browse, layout, theme, watch};
+use crate::watch::{NextUp, PaneInfo, Showing, Slot};
+use crate::{browse, channel_page, layout, theme, watch};
 
 impl RootView {
     pub(super) fn browse_page(
@@ -182,15 +184,24 @@ impl RootView {
         let panes: Vec<PaneInfo> = self
             .slots
             .iter()
-            .map(|slot| PaneInfo {
-                // A recording's header speaks for the recording; the live
-                // numbers would be about a different broadcast.
-                stream: if slot.is_live() {
-                    self.stream_info(&slot.channel)
-                } else {
-                    None
-                },
-                name: self.display_name(slot).into(),
+            .map(|slot| {
+                let showing = watch::showing(slot, slot.covered(cx));
+                PaneInfo {
+                    // A recording's header speaks for the recording; the live
+                    // numbers would be about a different broadcast.
+                    stream: if slot.is_live() {
+                        self.stream_info(&slot.channel)
+                    } else {
+                        None
+                    },
+                    name: self.display_name(slot).into(),
+                    poster: matches!(showing, Showing::Starting { .. })
+                        .then(|| self.poster(slot))
+                        .flatten(),
+                    next: self.next_up(slot, showing),
+                    looking: slot.archives.waiting(),
+                    start_offered: slot.is_live() && self.start_offered(&slot.channel),
+                }
             })
             .collect();
         // Nothing over the panes but their own controls. A back pill and the
@@ -207,18 +218,21 @@ impl RootView {
             self.settings.video_share,
             self.active_slot(),
             window.is_window_hovered(),
+            &self.cache,
             |this: &mut RootView, key: &str, action, window, cx| {
                 this.on_pane_action(key, action, window, cx)
             },
             |this: &mut RootView, start, window, cx| this.start_resize(start, window, cx),
             |this: &mut RootView, index, inside, cx| {
                 // What the header over the picture follows besides the
-                // pointer: whether there is a picture to keep clear, and
-                // whether a menu on the bar has the space.
+                // pointer: whether there is a picture to keep clear — one
+                // that covers the pane, not a status screen under a player
+                // still fading in — and whether a menu on the bar has the
+                // space.
                 let Some(slot) = this.slots.get(index) else {
                     return;
                 };
-                let picture = slot.has_picture(cx);
+                let picture = slot.covered(cx);
                 let menu_open = slot.video().is_some_and(|view| view.read(cx).menu_open());
                 let pointed = this.slots[index].point(inside, picture, menu_open);
                 // Sticky, unlike `hovered`: a keyboard shortcut has to keep
@@ -236,5 +250,49 @@ impl RootView {
             },
             cx,
         ))
+    }
+
+    /// The picture a starting pane is waiting for: the channel's live
+    /// preview, which its browse card shows from the same cache entry, or a
+    /// recording's own thumbnail. A recording with no picture of its own yet
+    /// — Twitch's placeholder while it is being made — borrows its channel's
+    /// live preview, since a broadcast still being recorded is still live.
+    /// One that has a picture waits for it rather than borrowing meanwhile:
+    /// an old broadcast of a channel that is on now would otherwise open
+    /// over a picture of what the channel is doing tonight.
+    ///
+    /// Only for a channel in a list the app has fetched: nothing has ever
+    /// fetched a preview for one opened by name, and a pane with none waits
+    /// on black, as before.
+    fn poster(&self, slot: &Slot) -> Option<PathBuf> {
+        match slot.recording() {
+            Some(video) if channel_page::poster_url(video).is_some() => {
+                channel_page::video_preview(&self.cache, video)
+            }
+            _ => self
+                .stream_info(&slot.channel)
+                .and_then(|stream| browse::stream_preview(&self.cache, stream)),
+        }
+    }
+
+    /// What a stopped live pane offers next, from its ask's last answer,
+    /// which stands while the next ask is out: an offline channel's newest
+    /// past broadcast — the first, since they are asked for newest first — or
+    /// an ended broadcast's own recording, found by its id inside the moments
+    /// around its end ([`channel_page::archive_of`]). With where it was left,
+    /// for the card.
+    fn next_up<'a>(&'a self, slot: &'a Slot, showing: Showing<'_>) -> Option<NextUp<'a>> {
+        let archives = slot.archives.answer()?;
+        let video = match showing {
+            Showing::Offline => archives.first(),
+            Showing::Ended => {
+                channel_page::archive_of(archives, slot.broadcast.as_deref(), slot.stalled_at?)
+            }
+            _ => None,
+        }?;
+        Some(NextUp {
+            video,
+            watched: self.history.get(&video.id),
+        })
     }
 }

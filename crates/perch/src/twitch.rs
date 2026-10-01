@@ -1,5 +1,5 @@
 //! The Twitch worker: signing in, keeping the follows list fresh, and
-//! answering the browse page's requests.
+//! answering the browse page's requests and a stopped pane's.
 //!
 //! One thread owns the session, and it has to. Refresh tokens are single-use,
 //! so two things refreshing at once would spend the same token twice and lock
@@ -27,7 +27,13 @@ const POLL_INTERVAL: Duration = Duration::from_secs(60);
 /// Five seconds is what RFC 8628 §3.5 specifies, not a number we picked.
 const SLOW_DOWN_STEP: Duration = Duration::from_secs(5);
 
-/// Something the browse page wants fetched.
+/// How many of a channel's newest past broadcasts a stopped pane asks for.
+/// The newest is what an offline pane offers, and the one that has just
+/// ended is among the first few even when a reconnect split it in two; five
+/// is room for that without asking for the shelf's hundred.
+const BROADCASTS_ASKED: u8 = 5;
+
+/// Something the browse page, or a pane, wants fetched.
 #[derive(Debug, Clone)]
 pub enum Request {
     /// Who is live and who is followed, now rather than at the next poll.
@@ -58,6 +64,20 @@ pub enum Request {
     },
     /// One recording, by the id a link carries.
     Video { id: String },
+    /// A channel's newest few past broadcasts, for a live pane that has
+    /// stopped: the last one, to offer when the channel is off, and the one
+    /// that just ended, to watch from its start. `user_id` as for
+    /// [`Videos`](Request::Videos).
+    ///
+    /// Not `Videos`, though it reads the same endpoint. That fills a channel's
+    /// page, and its answer would land on the page's shelf and end the page's
+    /// wait; its failure would be said on the page. A pane's question is none
+    /// of the page's business, so it fills no list and its failure travels in
+    /// its answer.
+    Broadcasts {
+        login: String,
+        user_id: Option<String>,
+    },
 }
 
 /// Which browse list a request fills, so its answer — or its failure — can
@@ -83,12 +103,13 @@ pub enum ListKey {
 }
 
 impl Request {
-    /// The browse list this fills, or `None` for the two that fill none: the
-    /// follows poll, whose lists are not the browse page's, and a recording
-    /// looked up for a link, whose failure is a toast.
+    /// The browse list this fills, or `None` for the three that fill none:
+    /// the follows poll, whose lists are not the browse page's, a recording
+    /// looked up for a link, whose failure is a toast, and a pane's past
+    /// broadcasts, which are the pane's.
     pub fn list_key(&self) -> Option<ListKey> {
         match self {
-            Request::Follows | Request::Video { .. } => None,
+            Request::Follows | Request::Video { .. } | Request::Broadcasts { .. } => None,
             Request::Popular { .. } => Some(ListKey::Popular),
             Request::Categories { .. } => Some(ListKey::Categories),
             Request::Category { category, .. } => Some(ListKey::Category(category.id.clone())),
@@ -179,6 +200,15 @@ pub enum TwitchEvent {
     Video {
         id: String,
         result: Result<Video, String>,
+    },
+    /// A channel's newest past broadcasts, newest first, for the pane on
+    /// its live stream — or why they could not be had. Its own event, with
+    /// the failure inside it, for the reason [`Video`](TwitchEvent::Video)
+    /// has one: a `BrowseError` would end a browse list's wait, and this was
+    /// never a browse list's question.
+    Broadcasts {
+        login: String,
+        result: Result<Vec<Video>, String>,
     },
     /// Sign-in itself failed, so nothing works.
     Error(String),
@@ -528,6 +558,20 @@ fn serve(
             };
             Ok(TwitchEvent::Video { id, result })
         }
+        Request::Broadcasts { login, user_id } => {
+            let result = user_id_or_lookup(client_id, token, &login, user_id)
+                .and_then(|user_id| {
+                    twitch_api::recent_videos(
+                        client_id,
+                        token,
+                        &user_id,
+                        VideoKind::Archive,
+                        BROADCASTS_ASKED,
+                    )
+                })
+                .map_err(|e| e.to_string());
+            Ok(TwitchEvent::Broadcasts { login, result })
+        }
     };
 
     let _ = tx.unbounded_send(result.unwrap_or_else(|e| TwitchEvent::BrowseError {
@@ -581,12 +625,7 @@ fn channel_videos(
     kind: VideoKind,
     after: Option<String>,
 ) -> Result<TwitchEvent, twitch_api::Error> {
-    let user_id = match user_id {
-        Some(id) => id,
-        None => twitch_api::user_id_for(client_id, token, &login)?
-            .map(|(id, _)| id)
-            .ok_or_else(|| twitch_api::Error::Api(format!("there is no channel called {login}")))?,
-    };
+    let user_id = user_id_or_lookup(client_id, token, &login, user_id)?;
     let page = twitch_api::videos(client_id, token, &user_id, kind, after.as_deref())?;
     Ok(TwitchEvent::Videos {
         login,
@@ -594,6 +633,23 @@ fn channel_videos(
         kind,
         videos: Listing::from(page, after.is_some()),
     })
+}
+
+/// The channel's id: `user_id` when the caller had it, or looked up from
+/// `login` when it did not. Helix lists videos by id alone, and a channel can
+/// arrive with a name and nothing else.
+fn user_id_or_lookup(
+    client_id: &str,
+    token: &str,
+    login: &str,
+    user_id: Option<String>,
+) -> Result<String, twitch_api::Error> {
+    match user_id {
+        Some(id) => Ok(id),
+        None => twitch_api::user_id_for(client_id, token, login)?
+            .map(|(id, _)| id)
+            .ok_or_else(|| twitch_api::Error::Api(format!("there is no channel called {login}"))),
+    }
 }
 
 /// Ask who is live, then who is followed at all.
@@ -725,8 +781,9 @@ mod tests {
     use super::*;
 
     /// Every request the browse page makes names the list it fills, and the
-    /// two that fill none say so. A request with no key would leave its list
-    /// with nothing to wait on, and its failure with nowhere to be said.
+    /// three that fill none say so. A request with no key would leave its list
+    /// with nothing to wait on, and its failure with nowhere to be said; a
+    /// pane's request with one would end a browse list's wait.
     #[test]
     fn every_browse_request_names_its_list() {
         let category = Category {
@@ -737,6 +794,13 @@ mod tests {
         let cases = [
             (Request::Follows, None),
             (Request::Video { id: "1".into() }, None),
+            (
+                Request::Broadcasts {
+                    login: "someone".into(),
+                    user_id: None,
+                },
+                None,
+            ),
             (Request::Popular { after: None }, Some(ListKey::Popular)),
             (
                 Request::Popular {

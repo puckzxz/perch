@@ -34,8 +34,9 @@ impl RootView {
                     ),
                     None => self.display_name(slot),
                 },
-                // A picture, not just a player: one still buffering draws no
-                // bar, so it has no menu to offer (`VideoView::open_menu`).
+                // A picture, not just a player: one still waiting for its
+                // first frame draws no bar, so it has no menu to offer
+                // (`VideoView::open_menu`).
                 playing: slot.video().is_some_and(|view| view.read(cx).has_picture()),
             })
             .collect();
