@@ -235,6 +235,7 @@ impl RootView {
             self.settings.chat_width,
             self.settings.video_share,
             active,
+            self.pane_move.as_deref(),
             window.is_window_hovered(),
             &self.cache,
             |this: &mut RootView, key: &str, action, window, cx| {
@@ -261,8 +262,11 @@ impl RootView {
                 // Sticky, unlike `hovered`: a keyboard shortcut has to keep
                 // working once the pointer has moved into chat or off the
                 // window entirely, and the pane you last looked at is the
-                // one you meant.
-                if pointed.entered {
+                // one you meant. Not while a header is being dragged: the
+                // panes it crosses on the way are not being looked at, and
+                // the keys stay with the pane dragged, wherever it is let go
+                // (`move_pane`).
+                if pointed.entered && this.pane_move.is_none() {
                     this.active = Some(this.slots[index].key.clone());
                 }
                 // Most frames change nothing: the pointer moving within the

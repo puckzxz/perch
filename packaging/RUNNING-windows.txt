@@ -102,6 +102,7 @@ Getting around
   Ctrl+W    Close this pane          Esc        Back to browsing, or to watching
   Alt+Left  Back                     Alt+Right  Forward
   P         Pop out, or bring back   Z          Maximize, or show all panes
+  Shift+Left/Right  Move this pane one place earlier, or later
 
 Player keys act on the pane you last pointed at or clicked. While the cursor
 is in a text box the keys stand aside for it, all but Ctrl+K, Ctrl+, and
@@ -125,6 +126,11 @@ small window brings the pane back; its Close closes the pane.
 With more than one pane open, Z gives the one you are on the whole window,
 chat and all; the others keep playing, with their sound, out of sight, and
 1 to 4 or Tab hands the window to another. Z or Esc shows them all again.
+
+Drag a pane by its header onto another and the two swap places; Shift+Left
+and Shift+Right swap the pane you are on with the one before or after it,
+counting the way 1 to 4 do. Esc lets go of a drag. The order lasts until
+Perch closes.
 
 Back and forward go through the pages you have been on, the way a browser
 does. The mouse's side buttons and the arrows in the bar across the top do

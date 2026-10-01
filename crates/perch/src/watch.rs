@@ -12,8 +12,9 @@
 //! pane's header is `header`'s, and where it goes — in the chat panel, or
 //! over the top of the picture when there is no chat on screen — is
 //! [`Placement`]. Whatever a pane asks of its owner — a close, a retry, a
-//! press that makes it the active one, a recording to play in its place — is
-//! a [`PaneAction`], addressed by the pane's key.
+//! press that makes it the active one, a recording to play in its place, its
+//! header dropped on another pane to swap the two — is a [`PaneAction`],
+//! addressed by the pane's key.
 
 mod header;
 mod status;
@@ -616,6 +617,13 @@ pub enum PaneAction {
     /// once that has folded, and the palette's `Maximize …`. `Z` does the
     /// same for the active pane; see `RootView::toggle_maximize`.
     Maximize,
+    /// Its header has started to be dragged ([`PaneDrag`]): every other
+    /// pane on the page offers itself to be dropped on until the drag ends.
+    BeginMove,
+    /// The pane `from` names was dropped on this one: the two swap places
+    /// in the order; see `RootView::move_pane`. `Shift+←` and `Shift+→` do
+    /// the same with the active pane and its neighbour.
+    MoveOnto { from: String },
     /// Turn `Start when they go live` on or off: the switch on a stopped
     /// live pane.
     StartWhenLive(bool),
@@ -649,6 +657,23 @@ struct PaneLayout {
     /// with more than one pane on screen: with one, it is the answer to a
     /// question nobody asked.
     mark_active: bool,
+    /// Whether a pane's header can be dragged onto another pane, and the
+    /// others offer themselves to be dropped on: only with more than one
+    /// pane on screen, so not for a lone pane, nor while one is maximized.
+    movable: bool,
+}
+
+/// What a pane's header carries while it is being dragged onto another
+/// pane: the pane, by its key, like everything a pane sends.
+///
+/// gpui's drag is the app's rather than a window's (`App::active_drag`), and
+/// every window paints the preview a drag is given — a pop-out included,
+/// over its picture. So the preview is nothing at all
+/// (`header::pane_header`), and the outline on the pane under the pointer is
+/// the cue: there is no grab cursor on Windows to say it either.
+#[derive(Clone, Debug)]
+pub struct PaneDrag {
+    pub key: String,
 }
 
 /// Where a drag of the video/chat divider started.
@@ -793,12 +818,16 @@ fn chat_or_why(slot: &Slot) -> AnyElement {
 /// screen: what a starting pane is waiting for, which the first frame fades
 /// in over, or what a stopped one offers next. `cache` is where a poster and
 /// a recording's card find their pictures.
+///
+/// And over all of it, while another pane's header is being dragged
+/// (`drop_target`), a layer the drag can be let go on; see [`drop_layer`].
 #[allow(clippy::too_many_arguments)]
 fn pane<V: 'static>(
     slot: &Slot,
     info: &PaneInfo,
     layout: PaneLayout,
     active: bool,
+    drop_target: bool,
     window_hovered: bool,
     cache: &ImageCache,
     on_pane: impl Fn(&mut V, &str, PaneAction, &mut Window, &mut Context<V>) + Clone + 'static,
@@ -866,6 +895,7 @@ fn pane<V: 'static>(
         info,
         placement,
         layout.mark_active && active,
+        layout.movable,
         picture,
         window_hovered,
         on_pane.clone(),
@@ -970,6 +1000,11 @@ fn pane<V: 'static>(
         .children(player)
         .child(band);
 
+    // While another pane's header is being dragged, the layer it can be let
+    // go on, over the whole cell: the cell's last child, so it is over
+    // everything else in it, and the reason the cell is `relative`.
+    let drop_zone = drop_target.then(|| drop_layer(&slot.key, on_pane.clone(), cx));
+
     // Pointing at the video makes a pane active, which is right while you are
     // reaching for its controls and wrong the moment you go to read its chat:
     // the pointer sitting in one pane's messages left the *keyboard* still
@@ -989,14 +1024,20 @@ fn pane<V: 'static>(
     // the keys instead. Any later press of a run is within a few pixels of
     // the first, so on a pane the first press already chose.
     let key = slot.key.clone();
-    let cell = div().flex_1().min_w_0().min_h_0().flex().on_mouse_down(
-        MouseButton::Left,
-        cx.listener(move |view, event: &MouseDownEvent, window, cx| {
-            if event.click_count <= 1 {
-                on_pane(view, &key, PaneAction::Activate, window, cx);
-            }
-        }),
-    );
+    let cell = div()
+        .relative()
+        .flex_1()
+        .min_w_0()
+        .min_h_0()
+        .flex()
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |view, event: &MouseDownEvent, window, cx| {
+                if event.click_count <= 1 {
+                    on_pane(view, &key, PaneAction::Activate, window, cx);
+                }
+            }),
+        );
 
     // Beside, a pane with no chat on screen is the picture and nothing else:
     // the picture takes chat's column, and the header is over its top. It
@@ -1004,7 +1045,11 @@ fn pane<V: 'static>(
     // was drawn over the video at all — which cost the picture a strip of
     // its height, and moved it every time `C` was pressed.
     if placement == Placement::OverPicture && !layout.portrait {
-        return cell.flex_row().child(video_pane).into_any_element();
+        return cell
+            .flex_row()
+            .child(video_pane)
+            .children(drop_zone)
+            .into_any_element();
     }
 
     let chat_pane = div()
@@ -1038,7 +1083,48 @@ fn pane<V: 'static>(
     .child(video_pane)
     .child(divider(&slot.key, layout.portrait, on_resize, cx))
     .child(chat_pane)
+    .children(drop_zone)
     .into_any_element()
+}
+
+/// Whether the pane `key` names is somewhere to drop a dragged header, with
+/// the header of the pane `moving` names being dragged, if one is: any pane
+/// but that one, and only while headers can be dragged at all (`movable`,
+/// two panes or more on the page).
+fn drop_target(movable: bool, moving: Option<&str>, key: &str) -> bool {
+    movable && moving.is_some_and(|moving| moving != key)
+}
+
+/// Where another pane's header can be let go of over the pane `key` names,
+/// swapping the two (`PaneAction::MoveOnto`): the whole cell, outlined
+/// while the drag is over it. Mounted only while a header is being dragged,
+/// and never over the pane being dragged.
+///
+/// A layer of its own over everything else in the cell, and one that
+/// blocks the pointer, rather than a drop listener on the cell. gpui hands
+/// a drop only to an element whose own hitbox the pointer is over
+/// (div.rs:2089-2121), and the cell is covered — by the player and its bar,
+/// an open menu, the band over the picture, chat — each of which blocks
+/// the pointer from what is under it (window.rs:775-797), so the cell's own
+/// listener would hear a drop nowhere but in the gaps between them. Gone
+/// the moment the drag ends, so it never takes a press meant for them.
+fn drop_layer<V: 'static>(
+    key: &str,
+    on_pane: impl Fn(&mut V, &str, PaneAction, &mut Window, &mut Context<V>) + 'static,
+    cx: &mut Context<V>,
+) -> impl IntoElement {
+    let onto = key.to_string();
+    div()
+        .absolute()
+        .inset_0()
+        .occlude()
+        .drag_over::<PaneDrag>(|style, _drag: &PaneDrag, _window, _cx| {
+            style.border_2().border_color(theme::accent())
+        })
+        .on_drop(cx.listener(move |view, drag: &PaneDrag, window, cx| {
+            let from = drag.key.clone();
+            on_pane(view, &onto, PaneAction::MoveOnto { from }, window, cx)
+        }))
 }
 
 /// The whole watch page: `slots`, in the cells of `grid`, row by row.
@@ -1064,6 +1150,11 @@ fn pane<V: 'static>(
 /// `window_hovered` is `window.is_window_hovered()`, which the panes'
 /// headers give their tooltips by; see `header::pane_header`. `cache` is
 /// the app's image cache, for what a pane's status screen shows.
+///
+/// `moving` is the key of the pane whose header is being dragged, if one
+/// is (`RootView::pane_move`): every other pane is a place to drop it until
+/// the drag ends ([`drop_layer`]). A header can be dragged only with two
+/// panes or more on the page.
 #[allow(clippy::too_many_arguments)]
 pub fn page<V: 'static>(
     slots: &[&Slot],
@@ -1072,6 +1163,7 @@ pub fn page<V: 'static>(
     chat_width: f32,
     video_share: f32,
     active: Option<&str>,
+    moving: Option<&str>,
     window_hovered: bool,
     cache: &ImageCache,
     on_pane: impl Fn(&mut V, &str, PaneAction, &mut Window, &mut Context<V>) + Clone + 'static,
@@ -1088,6 +1180,7 @@ pub fn page<V: 'static>(
         cell_height: grid.cell_height,
         video_share,
         mark_active: slots.len() > 1,
+        movable: slots.len() > 1,
     };
 
     // No ids on the grid, its rows or its cells; see above.
@@ -1115,6 +1208,7 @@ pub fn page<V: 'static>(
                 info,
                 cell,
                 active == Some(slot.key.as_str()),
+                drop_target(cell.movable, moving, &slot.key),
                 window_hovered,
                 cache,
                 on_pane.clone(),
@@ -1444,6 +1538,21 @@ mod tests {
         assert_eq!(
             recording(3723.0).link(false),
             "https://www.twitch.tv/videos/2868644730"
+        );
+    }
+
+    /// While a header is dragged every other pane takes the drop, and the
+    /// pane being dragged does not: letting go of it on itself moves
+    /// nothing. With nothing dragged, or a lone pane on the page, no pane
+    /// does.
+    #[test]
+    fn a_dragged_header_drops_on_any_pane_but_its_own() {
+        assert!(drop_target(true, Some("forsen"), "quin69"));
+        assert!(!drop_target(true, Some("forsen"), "forsen"));
+        assert!(!drop_target(true, None, "quin69"), "nothing dragged");
+        assert!(
+            !drop_target(false, Some("forsen"), "quin69"),
+            "one pane on the page, maximized or alone"
         );
     }
 

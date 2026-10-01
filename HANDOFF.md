@@ -74,15 +74,15 @@ App modules:
 | `instance/` | one perch per settings file: the claim, and a later launch handing its arguments to the running one — a named pipe on Windows, `flock` and a socket on Unix |
 | `launch.rs` | what a launch's arguments ask for, read the one way at startup and on a handover (pure, tested) |
 | `trail.rs` | back and forward: the places behind and ahead, what a step passes over, and forgetting a place that is gone (pure, tested) |
-| `stage.rs` | where each pane is drawn — a pane, a mini-player tile, a window of its own, or nowhere while another pane has the watch page (`Place`) — which panes are popped out and which one is maximized (`Stage`), the cells the watch grid draws (`cells`) and what a pane's maximize control offers (`MaximizeButton`): the one owner of the answer both windows ask before drawing a player (pure, tested) |
+| `stage.rs` | where each pane is drawn — a pane, a mini-player tile, a window of its own, or nowhere while another pane has the watch page (`Place`) — which panes are popped out and which one is maximized (`Stage`), the cells the watch grid draws (`cells`) and what a pane's maximize control offers (`MaximizeButton`): the one owner of the answer both windows ask before drawing a player; and where a pane moved one place along the order goes (`moved`) (pure, tested) |
 | `os_window.rs` | what Perch asks of a window that gpui does not: its platform handle, and keeping a pop-out above every other app (`keep_on_top`, Windows only) |
-| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams` (opening, restarting, closing, and `replace_with_video`, a recording swapped in for a live pane in place), `renditions` (what each pane plays, and when it restarts: the quality chosen against each pane's own height, `pane_height_for`, the upward re-pick when the grid changes, `sync_quality`, a pick from the pane's own menu, and how each changes what plays, `change_rendition` — beside a picture that covers the pane, to take over in place, and cold otherwise; and the root's half of that swap: what a start resolving beside a pane does with its events, `pending_event`, and what the pane keeps once its player has taken over or been given up on, `on_swapped` and `on_swap_failed`; tested), `panes` (where each pane is drawn, applied: `restage`, the one funnel every change of a pane's state, of which panes there are, of the page, of what is popped out and of what is maximized ends in; `set_slot_state`, the only write of a pane's state, which a test holds the root to; `video_in_main`, the only way the main window reaches a player, which a test holds the mini player and the pages to; and the maximize as the root drives it, `toggle_maximize`, `show_all_panes`, and `choose`, which takes it to the pane chosen), `pop_out` (a pane's picture in a window of its own, on top of other apps: the `PopOut` view, opening and closing it through `cx.defer`, `to_root`, the only way back to the root from it, and `offered`, Windows only), `broadcasts` (what a stopped live pane asks about its channel's past broadcasts, and whether it may offer to start by itself), `pane_actions` (what a pane asks for, by its key: a press on it or one of its controls, which takes the keys back for the root first, and its player's requests; the moment a pane key brings a pane's header up over its picture; and `run_guard`, which swallows the rest of a double-click whose first press took a player out from under the pointer — More's `Pop out`, the mini player's — where the player's own guard cannot follow), `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `prefs`, `recommended` (the rail's Recommended group: when to ask the worker, what its answer becomes, and the hooks that call it), `chrome` (pills, toasts, the rail), `mini_player` (what plays on while you browse, in the corner of the page), `title_bar` (the bar Perch draws across the top of the window — the rail button, back and forward, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`) |
+| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams` (opening, restarting, closing, and `replace_with_video`, a recording swapped in for a live pane in place), `renditions` (what each pane plays, and when it restarts: the quality chosen against each pane's own height, `pane_height_for`, the upward re-pick when the grid changes, `sync_quality`, a pick from the pane's own menu, and how each changes what plays, `change_rendition` — beside a picture that covers the pane, to take over in place, and cold otherwise; and the root's half of that swap: what a start resolving beside a pane does with its events, `pending_event`, and what the pane keeps once its player has taken over or been given up on, `on_swapped` and `on_swap_failed`; tested), `panes` (where each pane is drawn, applied: `restage`, the one funnel every change of a pane's state, of which panes there are, of the page, of what is popped out and of what is maximized ends in; `set_slot_state`, the only write of a pane's state, which a test holds the root to; `video_in_main`, the only way the main window reaches a player, which a test holds the mini player and the pages to; and the maximize as the root drives it, `toggle_maximize`, `show_all_panes`, and `choose`, which takes it to the pane chosen; and `move_pane`, two panes swapping places in the order, from a header dropped on a pane or `Shift+←`/`Shift+→`), `pop_out` (a pane's picture in a window of its own, on top of other apps: the `PopOut` view, opening and closing it through `cx.defer`, `to_root`, the only way back to the root from it, and `offered`, Windows only), `broadcasts` (what a stopped live pane asks about its channel's past broadcasts, and whether it may offer to start by itself), `pane_actions` (what a pane asks for, by its key: a press on it or one of its controls, which takes the keys back for the root first, and its player's requests; the moment a pane key brings a pane's header up over its picture; and `run_guard`, which swallows the rest of a double-click whose first press took a player out from under the pointer — More's `Pop out`, the mini player's — where the player's own guard cannot follow), `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `prefs`, `recommended` (the rail's Recommended group: when to ask the worker, what its answer becomes, and the hooks that call it), `chrome` (pills, toasts, the rail), `mini_player` (what plays on while you browse, in the corner of the page), `title_bar` (the bar Perch draws across the top of the window — the rail button, back and forward, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`) |
 | `target.rs` | what a typed or pasted thing means: a login, or a twitch.tv link to a channel or a recording; `link`, its inverse and the one place a twitch.tv URL is written, and `moment`, the second a link to a recording starts at (pure, tested) |
 | `browse.rs` | the picker page: following, popular, categories, search; which of them is on screen (`Discovery::place`) and which lists are still being waited on |
 | `channel_page.rs` | one channel's past broadcasts, and when each was; the recording card both pages use, and a stopped pane too; a recording's poster, and `archive_of`, which finds the recording of a broadcast that just ended (tested) |
 | `history_page.rs` | the history tab, and the one translation between a video and a history entry |
-| `watch.rs` | the grid of panes; `Slot` lives here, made by `Slot::new`, with `PendingStart`, a start of its stream resolving beside the picture, and `PaneAction`, everything a pane asks of the root; the band a header rides over the picture on, and when it is up (`Slot::point`, `band_wanted`, tested) |
-| `watch/header.rs` | a pane's header — name, numbers, what is on, `muted`/`paused`, the pop-out icon that turns into Bring back, and the × — each icon naming its key — and `Placement`, the one rule for where it goes: the chat panel, or over the picture with no chat on screen (tested) |
+| `watch.rs` | the grid of panes; `Slot` lives here, made by `Slot::new`, with `PendingStart`, a start of its stream resolving beside the picture, and `PaneAction`, everything a pane asks of the root; the band a header rides over the picture on, and when it is up (`Slot::point`, `band_wanted`, tested); the layer a dragged header is dropped on (`drop_layer`, `PaneDrag`) |
+| `watch/header.rs` | a pane's header — name, numbers, what is on, `muted`/`paused`, the pop-out icon that turns into Bring back, and the × — each icon naming its key — the handle a pane is dragged by onto another, and `Placement`, the one rule for where it goes: the chat panel, or over the picture with no chat on screen (tested) |
 | `watch/status.rs` | a pane with no picture: `Showing`, the one reading of its state that the pane's sentence and the mini player's word both come from, and the screen drawn from it under the player — a starting pane's poster, a stopped one's next steps and what room it has for them (`next_up_room`), and `Elsewhere`, a pane whose picture is in a window of its own, with `Bring back` (tested) |
 | `layout.rs` | derives grid shape from window aspect, as `Grid::of`, the one grid the watch page, the divider drag and each pane's quality read; `quality_height`, the height a pane asks a rendition for; the page's `Body`, the title bar's height and drag edge, and the mini player's tiles, how far in it floats clear of the scrollbar, and the `Room` a browse list leaves for it; where a pop-out opens, stacked clear of where the open ones really are (`pop_out_bounds`) (pure, tested) |
 | `video_view.rs` | the player element: its sound, its hover, the picture; drawn as a pane, a mini-player tile, in a pop-out or not at all while another pane is maximized (`stage::Place`), moved between them only by `set_place`, and belonging to no window |
@@ -1089,6 +1089,41 @@ in `OVERHAUL-DECISIONS.md`:
   (windows/platform.rs:718-745). A pop-out's own close brings its pane back
   instead, by returning false from its should-close.
 
+Dragging a pane's header onto another pane, which swaps the two, is gpui's
+own drag and drop (`on_drag`, `drag_over`, `on_drop`), and four things about
+it are not what they seem:
+
+- **A drag is the app's, not a window's.** `App::active_drag` is one value,
+  and every window paints its preview over everything it draws
+  (window.rs:2055-2060) — a pop-out included, over its picture. So the
+  header's drag is drawn as nothing (`cx.new(|_| gpui::Empty)`), and the
+  outline on the pane under the pointer is the cue. Hover goes with it:
+  while anything is dragged, `on_hover`, `hover` and `group_hover` report
+  nothing in any window (below). gpui does not say what a drag carries
+  either, and the volume slider drags too, so the root keeps which pane is
+  being dragged itself (`RootView::pane_move`), set from the drag's start
+  (`PaneAction::BeginMove`, sent from the `on_drag` constructor) and cleared
+  by the window-level release in `drag_listeners`, by a drop, and by `Esc`
+  (`cx.stop_active_drag`).
+- **A drop needs a layer of its own, and it must occlude.** `on_drop` fires
+  only over the element's own hitbox (div.rs:2089-2121), and a pane's cell is
+  covered by things that block the pointer — the player and its bar, a menu,
+  the band over the picture, chat — so a listener on the cell hears a drop
+  only in the gaps. While a header is dragged every other pane's cell gets
+  a last child over all of it that occludes and carries the `drag_over`
+  outline and the `on_drop` (`watch::drop_layer`), mounted only for the
+  drag, so it never takes a press meant for what is under it.
+- **A click that ends a drag is ignored.** A press on the header's name or
+  one of its icons can start the header's drag, since they do not block
+  their parent's press. gpui clears their pending click on the next frame
+  once a drag is under way (div.rs:1569-1577), but a drag that begins and
+  ends between two frames still clicks — the name would open twitch.tv. So
+  each of the header's controls does nothing while `cx.has_active_drag()`.
+- **Windows has no grab cursor.** gpui maps `OpenHand` and `ClosedHand` to
+  the arrow there (windows/util.rs:113-135), so nothing about the pointer
+  says a pane is being carried: the target's outline is all there is, and
+  it is enough.
+
 **Neither `group_hover` nor `on_hover` means "the pointer is over this."** Both
 resolve through the same expression:
 
@@ -1098,9 +1133,11 @@ let is_hovered = has_mouse_down.borrow().is_none()
     && hitbox.is_hovered(window);
 ```
 
-`cx.has_active_drag()` is *window-wide*, and gpui-component's `Slider` drags via
-`on_drag` — so touching the volume slider makes every hover listener in the
-window report false, including the one whose control bar holds that slider. And
+`cx.has_active_drag()` is *app-wide* — it reads `App::active_drag`, one value
+for every window (app.rs:1939-1941) — and gpui-component's `Slider` drags via
+`on_drag`, so touching the volume slider makes every hover listener in every
+window report false, pop-outs included, and the one whose control bar holds
+that slider too. And
 because `on_hover` only fires on a `MouseMoveEvent`, leaving the window is
 invisible to it: the last move it saw was inside, so the controls stayed up.
 
@@ -1560,7 +1597,9 @@ header rests over it. The split:
   each with its own id, so a tooltip never outlives the press that changed
   it; then the pane's ×, a `Destructive` icon whose tooltip names `Ctrl+W`
   through `keys::Hint::Close`. With more than one pane its bottom border
-  marks the one the keyboard is talking to. Under that row,
+  marks the one the keyboard is talking to, and the whole header is a
+  handle: dragged onto another pane, the two swap places
+  (`RootView::move_pane`; see the GPUI traps and Keyboard). Under that row,
   what is actually on: the title and the game, joined the way the numbers
   above them are, clamped to one line, with the whole of both a hover away
   through `controls::full_text`. The live numbers go when the stream ends —
@@ -2467,8 +2506,9 @@ at all or only panes that are starting or stopped — every popped pane back
 out` is offered by (`mini_pop_out_offered`), so the key pops out exactly
 when the bar offers to.
 
-**`Esc` on the watch page takes back one thing at a time.** An open menu
-closes first, then a pane given the whole page shows every pane again
+**`Esc` on the watch page takes back one thing at a time.** A pane's header
+being dragged is let go first, where it was, with nothing moved; then an
+open menu closes, then a pane given the whole page shows every pane again
 (`show_all_panes`), and only then is the page left (`on_go_browse`). While a
 pane has the page, choosing another — `1`–`4`, `Tab`, its tile, its
 palette row `Choose quality for …` — moves the maximize to it
@@ -2551,23 +2591,27 @@ bindings, so a documented key is a bound one. The README's keyboard table is hel
 shows, the label verbatim and in backticks as the row's first cell. It looks
 for the cell, `` | `Esc` | ``, rather than the label, because most labels are
 in the README's prose too and would hide a dropped row. Off macOS only, since
-the README writes `Ctrl` and `Alt` once and says what a Mac draws instead.
+the README writes `Ctrl`, `Alt` and `Shift` once and says what a Mac draws
+instead.
 The `RUNNING` pages are shorter on purpose and are kept in step by hand.
 
 The one exception to "no transient feedback" is **which pane the keys talk
 to**. A pane with chat hidden has its underline on the band, so it shows only
 while that pane is pointed at — and pointing at a pane is what makes it
 active, so the pointer can never answer the question. So `1`–`4`, `Tab` and
-`Shift+Tab` with more than one pane, and `C` hiding a chat, bring that pane's
-band up for `theme::HEADER_REVEAL` (`RootView::reveal_header`), underline and
-all when it is marked. One pane at a time: a reveal takes it off the others.
+`Shift+Tab` with more than one pane, `C` hiding a chat, and a pane moved by
+`Shift+←`/`Shift+→` or a header drop, bring that pane's band up for
+`theme::HEADER_REVEAL` (`RootView::reveal_header`), underline and all when it
+is marked. One pane at a time: a reveal takes it off the others.
 It sets `Slot::revealed`, which `band_wanted` reads, and a timer clears it —
 the toasts' pattern, numbered by `reveal_epoch` so an earlier reveal's timer
 cannot take down a later one (`reveal_is_current`). A header in the panel is
-always on screen and gets none. Never on `Space`, `M` or the arrows, which
-answer for themselves; `keys.rs` says the same at the top. Whether brief
-chrome after a key suits is a product call, so the reveal can be dropped as a
-unit: its callers are `reveal_active` in `shortcuts.rs` and `toggle_chat`.
+always on screen and gets none. Never on `Space`, `M` or the plain arrows,
+which answer for themselves; `keys.rs` says the same at the top. Whether brief
+chrome after a key or a drop suits is a product call, so the reveal can be
+dropped as a unit: its callers are `reveal_active` in `shortcuts.rs`, `toggle_chat` in
+`pane_actions.rs` (where `reveal_header` itself lives) and `move_pane` in
+`panes.rs`.
 
 The controls are the fourth place a key is named. The title bar's and the
 player's bar's tooltips — `Settings (Ctrl+,)`, `Pause (Space)`, `Mute (M)`,
@@ -2598,6 +2642,19 @@ The double-click lives on the pane's root element; the control bar over it is
 not also reach it.
 A single click deliberately does nothing there — it is how a pane is made the
 active one, and pausing on a click would turn choosing a pane into stopping it.
+
+**`Shift+←` and `Shift+→` move the active pane** one place along the order
+`1`–`4` count, swapping it with its neighbour exactly as dropping its header
+there would (`RootView::move_pane`), and only where a header can be dragged,
+with two panes or more on the page. Along the order rather than across the
+screen — in a 2×2 grid `Shift+→` from the second pane lands bottom-left —
+since the order is what every pane key counts. Clamped at either end
+(`stage::moved`) rather than wrapped, which would renumber every pane at
+once. Shift and an arrow rather than `[` and `]`, which need AltGr on some
+layouts; the plain arrows stay time and volume, since a binding matches its
+modifiers exactly. The pane moved keeps the keys, and every pane counts as
+pointed at already, so the one the swap put under a still pointer does not
+take them. The order is the session's: nothing saves it.
 
 **`1`–`4` and `Tab` choose the pane the keys talk to**, through
 `keys::ActivatePane` — the one action here that carries data, derived with

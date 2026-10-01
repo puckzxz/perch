@@ -42,7 +42,9 @@
 //! given one pane the whole watch page, `1`–`4` and `Tab` take the page to
 //! the pane they choose (`RootView::choose`), so the keys never talk to a
 //! pane that is drawn nowhere; and `Esc` shows every pane again before it
-//! leaves the page.
+//! leaves the page. `Shift+←` and `Shift+→` move the active pane one place
+//! along the order those count, and bring its header up the same way, since
+//! the pane they moved is now somewhere else.
 
 use gpui::{actions, Action, App, KeyBinding};
 
@@ -65,8 +67,9 @@ actions!(
         ClosePane,
         /// Leave the watch page, keeping the streams playing, with their
         /// sound, in the mini player — or stopping them, with it turned off.
-        /// Once whatever is in the way has gone: an open menu, then a pane
-        /// given the whole page, which shows every pane again first.
+        /// Once whatever is in the way has gone: a pane being dragged, which
+        /// is let go where it was, an open menu, then a pane given the whole
+        /// page, which shows every pane again first.
         GoBrowse,
         /// Open the settings sheet, or close it if it is already open.
         ToggleSettings,
@@ -108,6 +111,14 @@ actions!(
         /// every pane again from the pane that has it. The others are drawn
         /// as nothing meanwhile, and play on; see `crate::stage`.
         ToggleMaximize,
+        /// Swap the active pane with the one before it in the order `1`–`4`
+        /// count, as dropping its header on that pane would; see
+        /// `RootView::move_pane`. Along the order rather than across the
+        /// screen: in a grid of four, the first pane of the second row moved
+        /// earlier lands at the end of the first.
+        MovePaneEarlier,
+        /// The same with the one after it.
+        MovePaneLater,
     ]
 );
 
@@ -287,6 +298,11 @@ fn bindings() -> Vec<KeyBinding> {
         // watch page's alone: the browse page draws every pane as a tile,
         // and a pane in a window of its own is not on the page to fill it.
         KeyBinding::new("z", ToggleMaximize, Some(&watch)),
+        // The active pane one place along the order, as a drag of its header
+        // swaps it. Shift and an arrow rather than `[` and `]`, which need
+        // AltGr on some layouts; the plain arrows are time and volume.
+        KeyBinding::new("shift-left", MovePaneEarlier, Some(&watch)),
+        KeyBinding::new("shift-right", MovePaneLater, Some(&watch)),
         // The pop-out's own: the player's keys, `P` back, and `Ctrl+W`.
         KeyBinding::new("space", TogglePlayback, Some(&pop_out)),
         KeyBinding::new("m", ToggleMute, Some(&pop_out)),
@@ -368,6 +384,29 @@ macro_rules! alt {
     };
 }
 
+/// How this platform writes Shift: `⇧` on macOS, as every Mac app draws it,
+/// and `Shift+` elsewhere. The same shape as [`alt!`], and checked the same
+/// way.
+#[cfg(target_os = "macos")]
+macro_rules! shift {
+    () => {
+        "\u{21e7}"
+    };
+    ($key:literal) => {
+        concat!(shift!(), $key)
+    };
+}
+
+#[cfg(not(target_os = "macos"))]
+macro_rules! shift {
+    () => {
+        "Shift+"
+    };
+    ($key:literal) => {
+        concat!(shift!(), $key)
+    };
+}
+
 /// What the settings sheet lists, so a shortcut nobody can discover is not the
 /// same as one that does not exist.
 ///
@@ -383,11 +422,12 @@ macro_rules! alt {
 /// way this table could still lie after the check below — the keystrokes
 /// normalise through `Keystroke::parse`, and the labels used to normalise
 /// through nothing at all. The Alt modifier is held to the same rule through
-/// [`alt!`].
+/// [`alt!`], and Shift through [`shift!`].
 ///
-/// Back and forward are two rows rather than one `Alt+← / →`: the key column
-/// is sized for the longest label in it, and that one would not fit.
-pub const SHORTCUTS: [(&[&str], &str, &str); 20] = [
+/// Back and forward are two rows rather than one `Alt+← / →`, and moving a
+/// pane two rather than one `Shift+← / →`: the key column is sized for the
+/// longest label in it, and neither of those would fit.
+pub const SHORTCUTS: [(&[&str], &str, &str); 22] = [
     (&["space"], "Space", "Pause or resume"),
     (&["m"], "M", "Mute or unmute"),
     (&["c"], "C", "Show or hide this chat"),
@@ -397,6 +437,8 @@ pub const SHORTCUTS: [(&[&str], &str, &str); 20] = [
     (&["left", "right"], "← / →", "Skip 10 s in a past broadcast"),
     (&PANE_KEYS, "1 – 4", "Talk to that pane"),
     (&["tab", "shift-tab"], "Tab", "The next pane"),
+    (&["shift-left"], shift!("←"), "Move this pane earlier"),
+    (&["shift-right"], shift!("→"), "Move this pane later"),
     (&["z"], "Z", "Give this pane the window, or show them all"),
     (&["secondary-w"], secondary!("W"), "Close this pane"),
     (
@@ -517,7 +559,7 @@ mod tests {
     /// symptom is "the key does nothing", which is a poor thing to debug.
     #[test]
     fn every_binding_and_every_context_parses() {
-        assert_eq!(bindings().len(), 43);
+        assert_eq!(bindings().len(), 45);
         for context in [
             CONTEXT_WATCH,
             CONTEXT_BROWSE,
@@ -796,6 +838,61 @@ mod tests {
         }
     }
 
+    /// `Shift+←` and `Shift+→` move the active pane on the watch page
+    /// alone: not in a pop-out, which holds one pane and no order, and not
+    /// typed into a text box, where they stretch a selection.
+    /// Nor are they the plain arrows' seek, which they look like: each
+    /// press does one or the other, never both.
+    #[test]
+    fn shift_and_an_arrow_move_the_pane_on_the_watch_page_alone() {
+        use std::any::TypeId;
+
+        let keymap = gpui::Keymap::new(bindings());
+        let fires_in = |context: &[&str], keystroke: &str, action: TypeId| {
+            let context: Vec<KeyContext> = context
+                .iter()
+                .map(|context| KeyContext::parse(context).unwrap())
+                .collect();
+            let (matched, _) =
+                keymap.bindings_for_input(&[Keystroke::parse(keystroke).unwrap()], &context);
+            matched
+                .iter()
+                .any(|binding| binding.action().as_any().type_id() == action)
+        };
+        for (keystroke, action, seek) in [
+            (
+                "shift-left",
+                TypeId::of::<MovePaneEarlier>(),
+                TypeId::of::<SeekBack>(),
+            ),
+            (
+                "shift-right",
+                TypeId::of::<MovePaneLater>(),
+                TypeId::of::<SeekForward>(),
+            ),
+        ] {
+            assert!(fires_in(&[CONTEXT_WATCH], keystroke, action), "{keystroke}");
+            assert!(
+                !fires_in(&[CONTEXT_WATCH, "Input"], keystroke, action),
+                "{keystroke} typed into the search box is the box's"
+            );
+            for context in [CONTEXT_POPOUT, CONTEXT_BROWSE, CONTEXT_MODAL, CONTEXT_SHEET] {
+                assert!(
+                    !fires_in(&[context], keystroke, action),
+                    "{keystroke} in {context}"
+                );
+            }
+            assert!(
+                !fires_in(&[CONTEXT_WATCH], keystroke, seek),
+                "{keystroke} also seeks"
+            );
+        }
+        assert!(
+            !fires_in(&[CONTEXT_WATCH], "left", TypeId::of::<MovePaneEarlier>()),
+            "a plain arrow moves the pane"
+        );
+    }
+
     /// The listing is for humans, so it is not derived from the bindings — but
     /// a line that describes no key at all is a documentation bug.
     #[test]
@@ -816,12 +913,19 @@ mod tests {
     /// when the modifier started depending on the target: a row reading `Ctrl+W`
     /// on a machine that binds `⌘W` is wrong in the one place a reader has no
     /// way to check.
+    ///
+    /// Shift is held to it by the row rather than by each key: `Tab` lists
+    /// `tab` and `shift-tab`, the pair a reader thinks of as one key, the way
+    /// `↑ / ↓` is two. A label claims Shift exactly when every key in its
+    /// row is shifted.
     #[test]
     fn the_listing_names_the_modifier_it_binds() {
         const PREFIX: &str = secondary!();
         const ALT: &str = alt!();
+        const SHIFT: &str = shift!();
 
         for (keystrokes, display, _) in SHORTCUTS {
+            let mut shifted = true;
             for keystroke in keystrokes {
                 let parsed = Keystroke::parse(keystroke)
                     .unwrap_or_else(|e| panic!("{display}: {keystroke} does not parse: {e}"));
@@ -835,7 +939,13 @@ mod tests {
                     display.starts_with(ALT),
                     "{display} and {keystroke} disagree about the {ALT} modifier"
                 );
+                shifted &= parsed.modifiers.shift;
             }
+            assert_eq!(
+                shifted,
+                display.starts_with(SHIFT),
+                "{display} and {keystrokes:?} disagree about the {SHIFT} modifier"
+            );
         }
     }
 
@@ -910,9 +1020,9 @@ mod tests {
     /// are in the README's prose as well, and a row dropped from the table
     /// would still find its key in a sentence further down.
     ///
-    /// Not on macOS: the README spells the modifiers once, as `Ctrl` and
-    /// `Alt`, and says that a Mac writes them `⌘` and `⌥`, so the labels a Mac
-    /// build shows are deliberately not on the page. The `RUNNING` pages are
+    /// Not on macOS: the README spells the modifiers once, as `Ctrl`, `Alt`
+    /// and `Shift`, and says that a Mac writes them `⌘`, `⌥` and `⇧`, so the
+    /// labels a Mac build shows are deliberately not on the page. The `RUNNING` pages are
     /// shorter lists on purpose, and are kept in step by hand.
     #[cfg(not(target_os = "macos"))]
     #[test]

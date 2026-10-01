@@ -22,7 +22,9 @@
 //! nothing else. A popped pane keeps its place in it, its number and its
 //! chat in the main window; only its picture moves. A maximized pane keeps
 //! its place too, and the others theirs, so showing them all again puts
-//! every pane back where it was.
+//! every pane back where it was. Only the arithmetic of moving a pane one
+//! place along that order is here ([`moved`]), pure, beside the rest of
+//! what the stage answers without a window.
 //!
 //! Generic over what a popped pane carries, and free of gpui, in the
 //! `trail` pattern: the app keeps its window and focus there
@@ -274,6 +276,16 @@ impl<P> Stage<P> {
             self.maximized = Some(new.to_string());
         }
     }
+}
+
+/// Where the pane at `index`, among `len`, goes when it is moved `delta`
+/// places along the order — `Shift+←` one earlier, `Shift+→` one later — or
+/// `None` when that is off either end, or nowhere. Clamped rather than
+/// wrapped: the order is what `1`–`4` count, and the last pane moved later
+/// turning up first would renumber every pane at once.
+pub fn moved(index: usize, delta: isize, len: usize) -> Option<usize> {
+    let target = index.checked_add_signed(delta)?;
+    (target < len && target != index).then_some(target)
 }
 
 #[cfg(test)]
@@ -554,5 +566,18 @@ mod tests {
         );
         assert!(stage.pop_out("xqc", ()));
         assert_eq!(stage.maximize_button("xqc", &THREE), MaximizeButton::Hidden);
+    }
+
+    /// A pane moves one place along the order and no further: the first
+    /// does not go earlier, the last does not go later, and neither wraps
+    /// round to the other end.
+    #[test]
+    fn moving_a_pane_stays_inside_the_row() {
+        assert_eq!(moved(0, -1, 3), None, "the first, earlier");
+        assert_eq!(moved(2, 1, 3), None, "the last, later");
+        assert_eq!(moved(1, 1, 3), Some(2));
+        assert_eq!(moved(1, -1, 3), Some(0));
+        assert_eq!(moved(0, 1, 1), None, "a lone pane has nowhere to go");
+        assert_eq!(moved(1, 0, 3), None, "not moving is no move");
     }
 }

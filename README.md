@@ -98,6 +98,8 @@ Neither is any use when you are not holding the mouse.
 | `← / →` | Skip ten seconds in a past broadcast |
 | `1 – 4` | Talk to that pane |
 | `Tab` | The next pane |
+| `Shift+←` | Move this pane one place earlier, swapping it with the one before |
+| `Shift+→` | Move this pane one place later, swapping it with the one after |
 | `Z` | Give this pane the whole window, chat and all, or show every pane again |
 | `Ctrl+W` | Close this pane |
 | `P` | Pop this pane out into a window of its own, on top of other apps, or bring it back; on the browse page, every pane in the mini player (Windows) |
@@ -111,9 +113,10 @@ Neither is any use when you are not holding the mouse.
 | `Ctrl+0` | Reset the pane sizes |
 | `F / F11` | Fullscreen, and back |
 
-On macOS every `Ctrl` on this page is `⌘` and every `Alt` is `⌥`. The `Ctrl`
-bindings are declared on gpui's `secondary` modifier, which is cmd there and
-ctrl everywhere else, so the two never drift apart. The settings sheet draws
+On macOS every `Ctrl` on this page is `⌘`, every `Alt` is `⌥` and every
+`Shift` is `⇧`. The `Ctrl` bindings are declared on gpui's `secondary`
+modifier, which is cmd there and ctrl everywhere else, so the two never
+drift apart. The settings sheet draws
 whichever one this machine actually binds, and so does every tooltip that
 names a key — a pane's × says `Close (⌘W)` on a Mac — and a test holds them
 to that, and holds this table to the sheet, so a key the app lists is a key
@@ -125,15 +128,17 @@ and with more than one pane open its header is underlined to say so. `1` to
 `4` name a pane by its place in the grid and `Tab` steps along them, for when
 the mouse is nowhere near. A pane with its chat hidden has its header over the
 picture, so its underline shows while the pointer is on it, and for a second
-and a half after `1` to `4` or `Tab` has chosen it or `C` has hidden its chat.
+and a half after `1` to `4` or `Tab` has chosen it, `C` has hidden its chat,
+or `Shift+←`, `Shift+→` or a drag of its header has moved it.
 Pause, mute and volume never bring a header up over the picture. The keys
 stand aside while the cursor is in a text box — all but `Ctrl+K`, `Ctrl+,` and
 `Ctrl+R`, which type nothing, so the palette is one keystroke away straight
 after a search. A search typed on the watch page leaves it for the results, the
 way `Esc` does. The same list is in the settings sheet. Double-clicking the
 video is fullscreen too. `Esc` from the watch page goes back to whichever tab, category
-or channel you left the browse page on — and first closes a pane's open menu,
-if there is one, and then shows every pane again, if one has the window. A
+or channel you left the browse page on — and first lets go of a pane being
+dragged, then closes a pane's open menu, if there is one, and then shows
+every pane again, if one has the window. A
 playing pane's quality menu is in the palette as well:
 type `quality` and some of the pane's name, and `Choose quality for …` opens
 it. So are the two things under the bar's **More**, as `Copy link to …` and
@@ -209,6 +214,21 @@ the top in the same pane once Twitch lists it, **Try again** and **Close**. The
 last broadcast and the recording need a sign-in to be found. Chat stays
 connected either way, which is where the goodnights are, until a recording
 takes the pane's place and brings its own chat replay.
+
+### Panes in another order
+
+With two panes or more on the page, drag a pane by its header onto another
+pane and the two swap places. Nothing follows the pointer; the pane it is
+over is outlined, and letting go anywhere else, or pressing `Esc`, leaves
+everything where it was. `Shift+←` and `Shift+→` do the same from the
+keyboard, swapping the pane you are on with the one before or after it.
+Before and after are the order `1` to `4` count, row by row, rather than
+directions on the screen: in a grid of two rows, the first pane of the
+second row moved earlier goes to the end of the first. The pane you moved
+stays the one the keys talk to, nothing restarts, and each pane keeps its
+picture, its sound and its chat. `1` to `4`, `Tab`, the mini player and the
+palette follow the new order, which lasts until Perch closes: it is not
+saved. While one pane has the whole window there is nothing to rearrange.
 
 ### One pane, the whole window
 

@@ -1,6 +1,7 @@
 //! A pane's header: who is on, how many are watching, how long for, what
 //! they are doing, and the pane's own two icons — out into a window of its
-//! own and back, and its ×. Where it goes is [`Placement`].
+//! own and back, and its ×. Where it goes is [`Placement`]. It is also what
+//! a pane is dragged by, onto another pane, to swap the two.
 //!
 //! It is the same header in both places. Above (or below) chat it sits on
 //! the chat panel, where it costs nothing: chat is already a panel. With
@@ -12,7 +13,7 @@
 
 use gpui::{div, prelude::*, px, Context, SharedString, Window};
 
-use super::{pane_id, PaneAction, PaneInfo, Showing, Slot, StreamState};
+use super::{pane_id, PaneAction, PaneDrag, PaneInfo, Showing, Slot, StreamState};
 use crate::assets::Icon;
 use crate::controls::{self, Variant};
 use crate::keys::Hint;
@@ -84,6 +85,18 @@ impl PopOutButton {
 /// chat back: the bar does when there is a picture, and this header does
 /// when there is not, since without a picture there is no bar.
 ///
+/// With two panes or more on the page (`movable`) the whole header is a
+/// handle: dragged onto another pane, it swaps the two
+/// (`PaneAction::MoveOnto`, which that pane's drop layer sends). The drag
+/// says it has begun (`PaneAction::BeginMove`) so the other panes offer
+/// themselves, and is drawn as nothing: gpui's drag belongs to the app, and
+/// every window paints its preview, a pop-out over its picture included
+/// (window.rs:2055-2060). A press on one of the header's controls can begin
+/// a drag too, and then is no press on the control: each control ignores a
+/// click that ends a drag, which gpui would otherwise still deliver when
+/// the drag began and ended between two frames (div.rs:1569-1577) — the
+/// name would open twitch.tv.
+///
 /// Its tooltips are there only while `window_hovered`, from
 /// `window.is_window_hovered()`, as the bar's are (`bar::bar_icon`): gpui
 /// hears the pointer leave the window as a flag, never a move, so a tooltip
@@ -97,6 +110,7 @@ pub(super) fn pane_header<V: 'static>(
     pane: &PaneInfo,
     placement: Placement,
     marked: bool,
+    movable: bool,
     picture: bool,
     window_hovered: bool,
     on_pane: impl Fn(&mut V, &str, PaneAction, &mut Window, &mut Context<V>) + Clone + 'static,
@@ -210,7 +224,9 @@ pub(super) fn pane_header<V: 'static>(
             button.tooltip(controls::tip(Hint::Chat.tooltip("Show chat")))
         })
         .on_click(cx.listener(move |view, _event, window, cx| {
-            on_pane(view, &key, PaneAction::ToggleChat, window, cx)
+            if !cx.has_active_drag() {
+                on_pane(view, &key, PaneAction::ToggleChat, window, cx)
+            }
         }))
     });
 
@@ -237,7 +253,9 @@ pub(super) fn pane_header<V: 'static>(
                 button.tooltip(controls::tip(Hint::PopOut.tooltip(words)))
             })
             .on_click(cx.listener(move |view, _event, window, cx| {
-                on_pane(view, &key, action.clone(), window, cx)
+                if !cx.has_active_drag() {
+                    on_pane(view, &key, action.clone(), window, cx)
+                }
             }))
     });
 
@@ -245,6 +263,7 @@ pub(super) fn pane_header<V: 'static>(
     // was left, while `Ctrl+W` went on closing that one — a control the
     // keyboard had and the pointer did not. An icon now, like every other
     // control on a pane, and like them it names its key under the pointer.
+    let on_drag = on_pane.clone();
     let close = controls::icon_button(
         pane_id(&slot.key, "close"),
         Icon::Close,
@@ -254,10 +273,32 @@ pub(super) fn pane_header<V: 'static>(
         button.tooltip(controls::tip(Hint::Close.tooltip("Close")))
     })
     .on_click(cx.listener(move |view, _event, window, cx| {
-        on_pane(view, &key, PaneAction::Close, window, cx)
+        if !cx.has_active_drag() {
+            on_pane(view, &key, PaneAction::Close, window, cx)
+        }
     }));
 
+    // The handle a pane is dragged by, onto another; see above. Keyed by the
+    // pane, like every id in it, so it is the same element wherever the pane
+    // is in the grid.
+    let owner = cx.entity().downgrade();
     div()
+        .id(pane_id(&slot.key, "header"))
+        .when(movable, |header| {
+            header.on_drag(
+                PaneDrag {
+                    key: slot.key.clone(),
+                },
+                move |drag: &PaneDrag, _offset, window, cx| {
+                    owner
+                        .update(cx, |view, cx| {
+                            on_drag(view, &drag.key, PaneAction::BeginMove, window, cx)
+                        })
+                        .ok();
+                    cx.new(|_| gpui::Empty)
+                },
+            )
+        })
         .flex_none()
         .w_full()
         .flex()
@@ -307,7 +348,11 @@ pub(super) fn pane_header<V: 'static>(
                         .cursor_pointer()
                         .hover(|style| style.text_color(theme::accent()))
                         .when(window_hovered, |name| name.tooltip(controls::tip(tooltip)))
-                        .on_click(cx.listener(move |_, _event, _window, cx| cx.open_url(&url)))
+                        .on_click(cx.listener(move |_, _event, _window, cx| {
+                            if !cx.has_active_drag() {
+                                cx.open_url(&url)
+                            }
+                        }))
                         .child(name),
                 )
                 // Said where `muted` and `paused` are said, and for the same

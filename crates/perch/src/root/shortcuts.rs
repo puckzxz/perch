@@ -7,7 +7,7 @@ use settings::Settings;
 
 use super::{Page, RootView};
 use crate::browse::{Action, Place};
-use crate::keys;
+use crate::{keys, stage};
 
 impl RootView {
     pub(super) fn on_toggle_playback(
@@ -116,16 +116,25 @@ impl RootView {
     }
 
     /// `Esc` on the watch page: one step out of it, taking back the last
-    /// thing that was opened first. A menu open over a pane goes first —
-    /// leaving the page with the menu still up was two steps taken for one
-    /// press — then a pane given the whole page shows every pane again
-    /// (`show_all_panes`), and only then is the page left.
+    /// thing that was opened first. A pane's header being dragged goes
+    /// first, let go where it was with nothing moved — the button is still
+    /// down, and the release then lands on nothing. Then a menu open over a
+    /// pane — leaving the page with the menu still up was two steps taken
+    /// for one press — then a pane given the whole page shows every pane
+    /// again (`show_all_panes`), and only then is the page left.
     pub(super) fn on_go_browse(
         &mut self,
         _: &keys::GoBrowse,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Only a drag of a pane. The volume slider drags too, and `Esc`
+        // midway through that is no reason to let go of it.
+        if self.pane_move.take().is_some() {
+            cx.stop_active_drag(window);
+            cx.notify();
+            return;
+        }
         let videos: Vec<_> = self
             .slots
             .iter()
@@ -273,6 +282,49 @@ impl RootView {
         let key = self.slots[next].key.clone();
         self.choose(&key, window, cx);
         self.reveal_active(&key, cx);
+    }
+
+    /// `Shift+←`: the active pane swapped with the one before it in the
+    /// order; see `move_active`.
+    pub(super) fn on_move_pane_earlier(
+        &mut self,
+        _: &keys::MovePaneEarlier,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_active(-1, cx);
+    }
+
+    /// `Shift+→`: the same with the one after it.
+    pub(super) fn on_move_pane_later(
+        &mut self,
+        _: &keys::MovePaneLater,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_active(1, cx);
+    }
+
+    /// Swap the active pane with its neighbour `delta` places along the
+    /// order, as dropping its header there would (`move_pane`), keeping it
+    /// the active pane. Not past either end, which is not a wrap
+    /// (`stage::moved`); and only where a header could be dragged, with two
+    /// panes or more on the page, so not while one is maximized and the
+    /// move would be to somewhere nobody can see. Nor while a header is
+    /// being dragged: that is a move already, and this one would end it.
+    fn move_active(&mut self, delta: isize, cx: &mut Context<Self>) {
+        if self.cells().len() < 2 || self.pane_move.is_some() {
+            return;
+        }
+        let Some(index) = self.active_slot() else {
+            return;
+        };
+        let Some(neighbour) = stage::moved(index, delta, self.slots.len()) else {
+            return;
+        };
+        let from = self.slots[index].key.clone();
+        let onto = self.slots[neighbour].key.clone();
+        self.move_pane(&from, &onto, cx);
     }
 
     /// Reveal the header of the pane a pane key just chose, with more than

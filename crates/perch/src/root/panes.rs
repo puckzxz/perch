@@ -16,7 +16,9 @@
 //! page and showing every pane again
 //! ([`toggle_maximize`](RootView::toggle_maximize),
 //! [`show_all_panes`](RootView::show_all_panes)), and choosing a pane
-//! ([`choose`](RootView::choose)), which takes the maximize with it.
+//! ([`choose`](RootView::choose)), which takes the maximize with it. And two
+//! panes swapping places in the order ([`move_pane`](RootView::move_pane)),
+//! which is the slots' alone and changes where nothing is drawn.
 
 use gpui::{App, Context, Entity, FocusHandle, Window};
 
@@ -132,7 +134,17 @@ impl RootView {
     /// above, so none is re-picked on its way out. A caller that chooses
     /// again itself (`close_slot`) costs nothing more: a second look finds
     /// the rendition already resolving (`wants_swap`).
+    ///
+    /// A header being dragged whose pane has gone is let go of here too, so
+    /// no pane goes on offering itself to a drag of nothing.
     pub(super) fn restage(&mut self, cx: &mut Context<Self>) {
+        if self
+            .pane_move
+            .as_deref()
+            .is_some_and(|key| self.slot_index(key).is_none())
+        {
+            self.pane_move = None;
+        }
         let was_maximized = self.stage.maximized().is_some();
         let slots = &self.slots;
         let gone = self.stage.retain(&pane_keys(slots), |key| {
@@ -327,6 +339,44 @@ impl RootView {
         }
         self.restage(cx);
         self.sync_quality(window, cx);
+    }
+
+    /// Swap the pane `from` names with the one `onto` names, in the order:
+    /// `from`'s header dropped on `onto`, or `Shift+←`/`Shift+→` with `from`
+    /// the active pane and `onto` its neighbour. A swap rather than an
+    /// insert — the two trade places and every other pane stays where it
+    /// was, which with four panes at most is the move people make. Whatever
+    /// counts the order follows at once: the grid, `1`–`4` and `Tab`, the
+    /// mini player and the palette all read `slots`. For the session only;
+    /// nothing of it is saved.
+    ///
+    /// `from` is the active pane afterwards, the pane just handled, and its
+    /// header comes up where it went (`reveal_header`). Every pane counts
+    /// as pointed at already, as on the way back from a mini-player tile
+    /// (`go_watch_pane`): another pane is under the pointer now without it
+    /// having moved, and its rising edge would take the keys from the pane
+    /// just moved.
+    ///
+    /// Nothing is restarted or told anything. Every cell in the grid is as
+    /// tall as every other, and a pane's quality is chosen by its height
+    /// (`pane_height_for`), so no pane's rendition changes with its place;
+    /// nor does where it is drawn, nor its maximize control, which are
+    /// `restage`'s and read no order. And nothing is remounted, since every
+    /// id in a pane is its key's (`watch::page`).
+    pub(super) fn move_pane(&mut self, from: &str, onto: &str, cx: &mut Context<Self>) {
+        self.pane_move = None;
+        let (Some(from_index), Some(onto_index)) = (self.slot_index(from), self.slot_index(onto))
+        else {
+            cx.notify();
+            return;
+        };
+        self.slots.swap(from_index, onto_index);
+        self.active = Some(from.to_string());
+        for slot in &mut self.slots {
+            slot.hovered = true;
+        }
+        self.reveal_header(from, cx);
+        cx.notify();
     }
 }
 

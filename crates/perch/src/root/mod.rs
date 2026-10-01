@@ -16,7 +16,7 @@
 //! | `navigation` | back and forward: where the app is as a `Route`, recording each step on the trail (`crate::trail`), and the three ways along it |
 //! | `streams` | opening, restarting and closing panes, and swapping one for a recording in place |
 //! | `renditions` | what each pane plays, and when it restarts: the quality chosen against each pane's own height (`pane_height_for`), the upward re-pick when the grid changes, a pick from the pane's menu; a new rendition resolved beside the picture and kept once its player has taken over in place (`video_view::swap`) |
-//! | `panes` | where each pane is drawn, applied: `restage`, the one funnel every change of state, membership, page, pop-out or maximize ends in; `set_slot_state`, the only write of a pane's state; `video_in_main`, the only way the main window reaches a player; `retire_homeless`, the one rule for which panes stop when nothing in the main window would draw them; a pane given the watch page and every pane shown again (`toggle_maximize`, `show_all_panes`), and `choose`, which takes the maximize to the pane chosen |
+//! | `panes` | where each pane is drawn, applied: `restage`, the one funnel every change of state, membership, page, pop-out or maximize ends in; `set_slot_state`, the only write of a pane's state; `video_in_main`, the only way the main window reaches a player; `retire_homeless`, the one rule for which panes stop when nothing in the main window would draw them; a pane given the watch page and every pane shown again (`toggle_maximize`, `show_all_panes`), and `choose`, which takes the maximize to the pane chosen; two panes swapping places in the order (`move_pane`), from a header dropped on a pane or `Shift+←`/`Shift+→` |
 //! | `pop_out` | a pane in a window of its own, on top of other apps: moving its picture there and back, the window, and `to_root`, the only way back from it |
 //! | `broadcasts` | what a stopped live pane asks about its channel's past broadcasts, and whether it can start by itself |
 //! | `pane_actions` | what a pane asks for: its controls, and its player's requests; the header a pane key reveals |
@@ -177,7 +177,9 @@ pub(crate) struct RootView {
 
     page: Page,
     /// The panes, in their order: the grid's, the keys `1`–`4` and `Tab`
-    /// walk, the mini player's and the palette's. The one account of it.
+    /// walk, the mini player's and the palette's. The one account of it,
+    /// which a header dropped on another pane and `Shift+←`/`Shift+→`
+    /// rearrange (`move_pane`) for the session: the order is never saved.
     slots: Vec<Slot>,
     /// Which panes are drawn in windows of their own, with each window, and
     /// which pane has the watch page to itself, if one has; see
@@ -277,6 +279,16 @@ pub(crate) struct RootView {
     /// have that silently overwrite the level every channel remembers, and
     /// should not be ignored on the channels that remember one.
     volume_override: Option<u8>,
+
+    /// The pane whose header is being dragged onto another, by key: from
+    /// the moment the drag begins (`PaneAction::BeginMove`) until it is let
+    /// go, on a pane or not, or `Esc` lets go of it. What the watch page
+    /// mounts its drop layers by (`watch::page`), and what keeps the panes
+    /// the pointer crosses on the way from taking the keys. gpui knows that
+    /// something is being dragged (`App::has_active_drag`) but not what — the
+    /// volume slider drags too — so the root keeps which. For the session
+    /// only, like the order it changes.
+    pane_move: Option<String>,
 
     /// A divider being dragged: where it started, and the sizes it started
     /// from.
@@ -460,6 +472,7 @@ impl RootView {
             focus,
             _focus_lost,
             volume_override: launch.volume,
+            pane_move: None,
             resize: None,
             palette_input,
             palette_open: false,
@@ -694,6 +707,8 @@ impl Render for RootView {
             .on_action(cx.listener(Self::on_navigate_forward))
             .on_action(cx.listener(Self::on_toggle_pop_out))
             .on_action(cx.listener(Self::on_toggle_maximize))
+            .on_action(cx.listener(Self::on_move_pane_earlier))
+            .on_action(cx.listener(Self::on_move_pane_later))
             .on_key_down(cx.listener(Self::on_palette_key))
             .relative()
             .size_full()
@@ -776,8 +791,9 @@ impl Render for RootView {
                     .children(self.settings_panel.clone()),
             )
             // A divider drag is followed by the window rather than by the
-            // handle or the root; see `drag_listeners`. So are the mouse's
-            // back and forward buttons, for the same reason.
+            // handle or the root, and so is the end of a header's drag; see
+            // `drag_listeners`. So are the mouse's back and forward buttons,
+            // for the same reason.
             .child(self.drag_listeners(cx))
             .child(self.side_buttons(cx))
     }

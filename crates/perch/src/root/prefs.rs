@@ -208,6 +208,13 @@ impl RootView {
     /// A `canvas` inserts no hitbox, so this covers the window without being
     /// in the way of anything. Both handlers return at once when nothing is
     /// being dragged, which is most of the time.
+    ///
+    /// The release also ends a pane header's drag (`pane_move`), wherever it
+    /// lands: gpui ends its own drag after every release (window.rs:3750-3760)
+    /// and tells nobody, so a drag let go over no other pane would otherwise
+    /// leave every pane offering itself. One let go on a pane swaps the two
+    /// as well, from that pane's drop layer, which this runs ahead of — the
+    /// drop carries its own pane, so it needs nothing kept here.
     pub(super) fn drag_listeners(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let owner = cx.entity().downgrade();
         canvas(
@@ -262,11 +269,14 @@ impl RootView {
         cx.notify();
     }
 
-    /// Let go, and write the size down.
+    /// Let go: of a pane's header, and of a divider, writing its size down.
     ///
     /// Saved here rather than on every move: a drag is hundreds of events and
     /// each save is a read-modify-write of the whole settings file.
     fn on_mouse_up(&mut self, _event: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.pane_move.take().is_some() {
+            cx.notify();
+        }
         if self.resize.take().is_none() {
             return;
         }

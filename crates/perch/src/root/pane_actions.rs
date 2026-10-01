@@ -9,10 +9,11 @@
 //!
 //! Also the one answer the root gives a pane on its own account: bringing
 //! its header up over the picture for a moment when a key has just made it
-//! the active pane (`reveal_header`). And the guard on the rest of a run of
-//! presses whose first one took a pane's player out from under the pointer
-//! (`run_guard`), which the player's own guard cannot follow it out of the
-//! window to stop.
+//! the active pane, `C` has hidden its chat, or `Shift+←`/`Shift+→` or a
+//! header drop has moved it (`reveal_header`). And the guard on the rest of
+//! a run of presses whose first one took a pane's player out from under the
+//! pointer (`run_guard`), which the player's own guard cannot follow it out
+//! of the window to stop.
 
 use gpui::{
     canvas, prelude::*, ClipboardItem, Context, DispatchPhase, IntoElement, MouseDownEvent, Window,
@@ -72,6 +73,15 @@ impl RootView {
             PaneAction::PopOut => self.pop_out(key, window, cx),
             PaneAction::PopIn => self.pop_in(key, window, cx),
             PaneAction::Maximize => self.toggle_maximize(key, window, cx),
+            // Its header is being dragged: the other panes offer themselves
+            // until it is let go (`pane_move`). From the drag's own start,
+            // which gpui runs from a move of the pointer, not a press.
+            PaneAction::BeginMove => {
+                self.pane_move = Some(key.to_string());
+                cx.notify();
+            }
+            // Dropped on this pane, `key`: the two swap places.
+            PaneAction::MoveOnto { from } => self.move_pane(&from, key, cx),
             PaneAction::StartWhenLive(on) => {
                 self.slots[index].start_when_live = on;
                 cx.notify();
@@ -142,12 +152,14 @@ impl RootView {
     /// Taken down by a timer — the toasts' pattern — unless a later reveal
     /// has started since, whose own timer is the one that counts.
     ///
-    /// For a pane key, and for chat going away. The pointer cannot ask which
-    /// pane the keys talk to — pointing at a pane is what makes it active —
-    /// and pause, mute and volume get no reveal at all; see `keys`. Hiding
-    /// chat from the bar's glyph reveals too, as `C` does: the pointer is on
-    /// the pane then, so the band is up for it anyway, and the reveal only
-    /// keeps it up for the rest of the moment if the pointer goes sooner.
+    /// For a pane key, for chat going away, and for a pane moved to another
+    /// place in the grid (`move_pane`), which is somewhere you were not
+    /// looking. The pointer cannot ask which pane the keys talk to — pointing
+    /// at a pane is what makes it active — and pause, mute and volume get no
+    /// reveal at all; see `keys`. Hiding chat from the bar's glyph reveals
+    /// too, as `C` does: the pointer is on the pane then, so the band is up
+    /// for it anyway, and the reveal only keeps it up for the rest of the
+    /// moment if the pointer goes sooner.
     pub(super) fn reveal_header(&mut self, key: &str, cx: &mut Context<Self>) {
         let over_picture = self
             .slot_index(key)
