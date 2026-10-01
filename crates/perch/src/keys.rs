@@ -20,8 +20,9 @@
 //! `m` registered after `gpui_component::init` beats the text input's own
 //! bindings and eats what you are typing — on Windows the character is simply
 //! lost, because no `WM_CHAR` is ever generated. Hence [`TYPING`]: every
-//! binding here is scoped, and every one of them stands aside for a focused
-//! input or dropdown.
+//! binding here is scoped, and every one a text box could want stands aside
+//! for a focused input or dropdown. The three chords that cannot be typing
+//! do not; see `bindings`.
 //!
 //! There is deliberately no on-screen feedback for pause, mute or volume.
 //! Each one announces itself through the thing it controls — a paused picture
@@ -138,10 +139,17 @@ const TYPING: &str = "!Input && !Select && !PopupMenu";
 /// and a panic at startup is a nicer failure than a shortcut that quietly does
 /// nothing, but a test is nicer still.
 fn bindings() -> Vec<KeyBinding> {
-    let app = format!("{APP} && {TYPING}");
     let watch = format!("{APP} && {WATCH} && {TYPING}");
     let browse = format!("{APP} && {BROWSE} && {TYPING}");
     let modal = format!("{APP} && {MODAL} && {TYPING}");
+    // The palette, the settings and refresh stand aside for nothing. A chord
+    // on the command key types no character, and gpui-component binds none
+    // of these three in any widget — so standing aside only meant that after
+    // a search, which leaves the cursor in the box, `Ctrl+K` did nothing
+    // until the page was clicked. Scoped all the same: `None` would outrank
+    // the widgets' own bindings, these three included if one ever took them.
+    let anywhere = APP;
+    let browsing = format!("{APP} && {BROWSE}");
 
     let mut bindings = vec![
         // Watching. Bare letters and arrows are safe here only because of the
@@ -169,9 +177,9 @@ fn bindings() -> Vec<KeyBinding> {
         // Anywhere. `secondary-,` is the settings gesture on both platforms —
         // literally so on macOS, where ⌘, opens preferences in everything —
         // and it also closes the sheet, so the same key opens and dismisses it.
-        KeyBinding::new("secondary-,", ToggleSettings, Some(&app)),
-        KeyBinding::new("secondary-r", Refresh, Some(&browse)),
-        KeyBinding::new("secondary-k", TogglePalette, Some(&app)),
+        KeyBinding::new("secondary-,", ToggleSettings, Some(anywhere)),
+        KeyBinding::new("secondary-r", Refresh, Some(&browsing)),
+        KeyBinding::new("secondary-k", TogglePalette, Some(anywhere)),
         // Only where the sizes exist. `secondary-0` is the reset gesture every
         // browser and editor already uses for the same kind of thing.
         KeyBinding::new("secondary-0", ResetLayout, Some(&watch)),
@@ -287,6 +295,39 @@ mod tests {
             KeyContext::parse(context)
                 .unwrap_or_else(|e| panic!("{context} is not a key context: {e}"));
         }
+    }
+
+    /// With the cursor in a text box — where a search leaves it — the three
+    /// chords still answer, and a bare letter still goes to the box. Asked of
+    /// gpui's own keymap, so it is the resolution that runs, not a reading of
+    /// the predicates.
+    #[test]
+    fn the_chords_work_while_typing_and_the_letters_do_not() {
+        use std::any::TypeId;
+
+        let keymap = gpui::Keymap::new(bindings());
+        let typing = [
+            KeyContext::parse(CONTEXT_BROWSE).unwrap(),
+            KeyContext::parse("Input").unwrap(),
+        ];
+        let fires = |keystroke: &str, action: TypeId| {
+            let (matched, _) =
+                keymap.bindings_for_input(&[Keystroke::parse(keystroke).unwrap()], &typing);
+            matched
+                .iter()
+                .any(|binding| binding.action().as_any().type_id() == action)
+        };
+        assert!(fires("secondary-k", TypeId::of::<TogglePalette>()));
+        assert!(fires("secondary-,", TypeId::of::<ToggleSettings>()));
+        assert!(fires("secondary-r", TypeId::of::<Refresh>()));
+        assert!(
+            !fires("b", TypeId::of::<ToggleSidebar>()),
+            "a letter typed into the box must reach the box"
+        );
+        assert!(
+            !fires("escape", TypeId::of::<Back>()),
+            "the box has its own escape"
+        );
     }
 
     /// The predicates are assembled from the identifiers; the contexts are

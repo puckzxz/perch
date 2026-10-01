@@ -10,7 +10,8 @@ use super::{Page, RootView, Toast, ToastAction};
 use crate::browse::Tab;
 use crate::{channel_page, controls, motion, sidebar, theme};
 
-/// How long a "went live" toast stays up.
+/// How long a toast stays up: time to read a "went live" and reach for it,
+/// or to take back a forget.
 const TOAST_LIFETIME: Duration = Duration::from_secs(8);
 
 /// Thumbnail width in the now-playing bar. Small on purpose, and not only for
@@ -145,8 +146,10 @@ impl RootView {
             // The text opens what the toast names, when it names something:
             // the same lift under the pointer a channel's name gets in a
             // pane header, so it reads as the link it is.
-            let text = match &toast.action {
-                Some(ToastAction::Watch(_)) => div()
+            let watch = matches!(toast.action, Some(ToastAction::Watch(_)));
+            let undo = matches!(toast.action, Some(ToastAction::Undo(_)));
+            let text = if watch {
+                div()
                     .id(("toast-open", id))
                     .cursor_pointer()
                     .hover(|style| style.text_color(theme::accent()))
@@ -154,8 +157,9 @@ impl RootView {
                         this.act_on_toast(id, true, window, cx)
                     }))
                     .child(toast.text.clone())
-                    .into_any_element(),
-                None => div().child(toast.text.clone()).into_any_element(),
+                    .into_any_element()
+            } else {
+                div().child(toast.text.clone()).into_any_element()
             };
             let card = div()
                 // Per card rather than on the stack: the stack is
@@ -179,11 +183,19 @@ impl RootView {
                 .child(text)
                 // Beside what is playing, when something is: the same offer
                 // a card makes, in the same words.
-                .when(can_add && toast.action.is_some(), |card| {
+                .when(can_add && watch, |card| {
                     card.child(
                         controls::pill(("toast-add", id), "+ add", controls::Variant::Pill)
                             .on_click(cx.listener(move |this, _event, window, cx| {
                                 this.act_on_toast(id, false, window, cx)
+                            })),
+                    )
+                })
+                .when(undo, |card| {
+                    card.child(
+                        controls::pill(("toast-undo", id), "undo", controls::Variant::Pill)
+                            .on_click(cx.listener(move |this, _event, window, cx| {
+                                this.act_on_toast(id, true, window, cx)
                             })),
                     )
                 });
@@ -192,8 +204,9 @@ impl RootView {
         stack
     }
 
-    /// Do what toast `id` offers — watch alone, or add beside — and take the
-    /// toast down, since it has been answered.
+    /// Do what toast `id` offers — watch alone or add beside, or undo — and
+    /// take the toast down, since it has been answered. `solo` means nothing
+    /// to an undo.
     fn act_on_toast(&mut self, id: u64, solo: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(index) = self.toasts.iter().position(|toast| toast.id == id) else {
             return;
@@ -201,6 +214,7 @@ impl RootView {
         let toast = self.toasts.remove(index);
         match toast.action {
             Some(ToastAction::Watch(login)) => self.open_channel(login, solo, window, cx),
+            Some(ToastAction::Undo(forgotten)) => self.restore_history(forgotten, cx),
             None => {}
         }
         cx.notify();

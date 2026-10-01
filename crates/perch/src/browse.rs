@@ -508,7 +508,10 @@ fn card<V: 'static>(
                 // The other thing a channel has besides the stream on its
                 // card: what it broadcast before. Revealed the way `+ add`
                 // is, on the opposite corner, so a card at rest is still a
-                // picture.
+                // picture. Both are hidden rather than transparent: at zero
+                // opacity a control still takes a click, and a tap with no
+                // hover before it — a touchscreen's — landed on one nobody
+                // could see.
                 .child(
                     controls::pill(
                         ("card-videos", index),
@@ -518,8 +521,8 @@ fn card<V: 'static>(
                     .absolute()
                     .top(px(theme::GAP_TIGHT))
                     .left(px(theme::GAP_TIGHT))
-                    .opacity(0.0)
-                    .group_hover("card", |style| style.opacity(1.0))
+                    .invisible()
+                    .group_hover("card", |style| style.visible())
                     .on_click(cx.listener(move |view, _event, window, cx| {
                         cx.stop_propagation();
                         on_videos(view, channel.clone(), window, cx)
@@ -531,8 +534,8 @@ fn card<V: 'static>(
                             .absolute()
                             .top(px(theme::GAP_TIGHT))
                             .right(px(theme::GAP_TIGHT))
-                            .opacity(0.0)
-                            .group_hover("card", |style| style.opacity(1.0))
+                            .invisible()
+                            .group_hover("card", |style| style.visible())
                             .tooltip(|window, cx| {
                                 gpui_component::tooltip::Tooltip::new("Open beside what is playing")
                                     .build(window, cx)

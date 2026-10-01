@@ -44,7 +44,7 @@ use gpui::{
     Subscription, Task, Window,
 };
 use gpui_component::input::{InputEvent, InputState};
-use settings::history::History;
+use settings::history::{Forgotten, History};
 use settings::Settings;
 use twitch_api::{Channel, LiveStream};
 
@@ -110,6 +110,8 @@ enum ToastAction {
     /// Watch this channel: alone from the text, or beside what is playing
     /// from the `+ add` pill next to it.
     Watch(String),
+    /// Put back what was just taken off the history, from the `undo` pill.
+    Undo(Forgotten),
 }
 
 /// A recording named by a link, waiting to be looked up. A link carries an

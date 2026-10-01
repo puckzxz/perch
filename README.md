@@ -108,8 +108,10 @@ Player keys act on the pane you last pointed at, or last clicked — clicking
 anywhere in a pane, video or chat, makes it the one the keyboard is talking to,
 and with more than one pane open its header is underlined to say so. `1` to
 `4` name a pane by its place in the grid and `Tab` steps along them, for when
-the mouse is nowhere near. All of them stand aside while the cursor is in a
-text box. The same list is in the settings sheet. Double-clicking the video is
+the mouse is nowhere near. The keys stand aside while the cursor is in a text
+box — all but `Ctrl+K`, `Ctrl+,` and `Ctrl+R`, which type nothing, so the
+palette is one keystroke away straight after a search. The same list is in the
+settings sheet. Double-clicking the video is
 fullscreen too. `Esc` from the watch page goes back to whichever tab, category
 or channel you left the browse page on — and first closes a pane's quality
 menu, if one is open.
@@ -298,9 +300,9 @@ at the bar and it says what time is under the pointer before you click; click
 it or drag its thumb, and `←` and `→` skip ten seconds. A jump takes a second
 or so, because the player is reopened at the new place rather than seeked —
 the reason is the player's and `HANDOFF.md` has it. The header says `replay`
-— or `highlight`, or `upload` — names the video, and opens it on twitch.tv; when the recording ends the pane
-says so and offers to start over. A channel's live stream and one of its
-recordings can be open side by side.
+— or `highlight`, or `upload` — names the video, and opens it on twitch.tv;
+when the recording ends the pane says so and offers to start over. A channel's
+live stream and one of its recordings can be open side by side.
 
 Every recording you open is kept on the **history** tab, newest first: the ones
 you are part-way through under *continue watching*, each saying where you left
@@ -309,9 +311,11 @@ channel's page, or from the palette — picks up where you left it, and the pane
 says so while it opens; one watched to within a minute of its end starts from
 the top, and a link with a `?t=` goes where the link says. Cards on a channel's
 page carry the same bar along the bottom of the picture, so you can see which
-ones you have seen. **forget** on a card's picture takes one off; **clear
-history** takes the lot. The list is `history.json` beside the settings, and
-deleting it forgets what was watched and nothing else.
+ones you have seen; on the history tab a highlight or an upload says which it is
+under its title. **forget** on a card's picture takes one off; **clear
+history** takes the lot. Either says so in a toast with an **undo**, which puts
+them back where they were, places and all. The list is `history.json` beside
+the settings, and deleting it forgets what was watched and nothing else.
 
 Resuming a recording left paused for half a minute or more takes a second: it is
 reopened where it was, because the connection it was using may have gone while

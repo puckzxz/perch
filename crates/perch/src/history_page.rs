@@ -73,11 +73,7 @@ pub fn video(watched: &Watched, now: DateTime<Utc>) -> Video {
         stream_id: None,
         user_id: watched.channel_id.clone(),
         user_login: watched.channel_login.clone(),
-        user_name: if watched.channel_name.is_empty() {
-            watched.channel_login.clone()
-        } else {
-            watched.channel_name.clone()
-        },
+        user_name: watched.channel().to_string(),
         title: watched.title.clone(),
         created_at: watched.created_at.clone(),
         length_secs: watched.length_secs,
@@ -94,17 +90,24 @@ pub fn video(watched: &Watched, now: DateTime<Utc>) -> Video {
     video
 }
 
-/// A history entry's line under its title: whose it is, and when it was.
+/// A history entry's line under its title: whose it is, what it is unless it
+/// is a past broadcast, and when it was.
+///
+/// The kind because the list mixes them now that a channel's page offers its
+/// highlights and uploads too, and a minute-long highlight looked like a
+/// broadcast that had barely begun. A past broadcast is most of the list and
+/// says nothing, the way a channel's page says nothing on its first shelf.
 fn byline(watched: &Watched, now: DateTime<Utc>) -> String {
-    let name = if watched.channel_name.is_empty() {
-        watched.channel_login.clone()
-    } else {
-        watched.channel_name.clone()
-    };
-    std::iter::once(name)
-        .chain(channel_page::when(&watched.created_at, now))
-        .collect::<Vec<_>>()
-        .join(" · ")
+    let kind = VideoKind::parse(&watched.kind);
+    [
+        Some(watched.channel().to_string()),
+        (kind != VideoKind::Archive).then(|| channel_page::kind_tag(kind).to_string()),
+        channel_page::when(&watched.created_at, now),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(" · ")
 }
 
 /// The tab: what is part-watched first, since picking one of those up is the
@@ -122,7 +125,9 @@ pub fn view<V: 'static>(
     if history.videos.is_empty() {
         return browse::notice(
             "Nothing watched yet".into(),
-            "Past broadcasts you open are kept here, each one where you left it.".into(),
+            "Past broadcasts, highlights and uploads you open are kept here, each one \
+             where you left it."
+                .into(),
             false,
         )
         .into_any_element();
@@ -308,11 +313,29 @@ mod tests {
 
         let nameless = Watched {
             channel_name: String::new(),
-            ..kept
+            ..kept.clone()
         };
         assert_eq!(
             byline(&nameless, at("2026-09-27T12:00:00Z")),
             "xqc · yesterday"
+        );
+
+        // Anything but a past broadcast says what it is.
+        let highlight = Watched {
+            kind: VideoKind::Highlight.as_str().into(),
+            ..kept.clone()
+        };
+        assert_eq!(
+            byline(&highlight, at("2026-09-27T12:00:00Z")),
+            "xQc · highlight · yesterday"
+        );
+        let upload = Watched {
+            kind: VideoKind::Upload.as_str().into(),
+            ..kept
+        };
+        assert_eq!(
+            byline(&upload, at("2026-09-27T12:00:00Z")),
+            "xQc · upload · yesterday"
         );
     }
 }

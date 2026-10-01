@@ -9,10 +9,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use chrono::Utc;
 use gpui::{App, Context, Task};
-use settings::history;
+use settings::history::{self, Forgotten};
 use twitch_api::Video;
 
-use super::RootView;
+use super::{RootView, ToastAction};
 use crate::channel_page;
 use crate::history_page;
 use crate::watch::{Slot, Source, StreamState};
@@ -141,20 +141,37 @@ impl RootView {
         }
     }
 
-    /// Take one recording off the history.
+    /// Take one recording off the history, with a toast that can put it back.
     pub(super) fn forget_video(&mut self, id: &str, cx: &mut Context<Self>) {
-        if self.history.forget(id) {
-            self.save_history_soon(cx);
-            cx.notify();
-        }
+        let forgotten = self.history.forget(id);
+        let Some(watched) = forgotten.only() else {
+            return;
+        };
+        let text = format!("took {}'s recording off your history", watched.channel());
+        self.save_history_soon(cx);
+        self.toast_with(text, Some(ToastAction::Undo(forgotten)), cx);
     }
 
-    /// Take every recording off the history.
+    /// Take every recording off the history, with a toast that can put them
+    /// back.
     ///
-    /// Anything playing goes back on as it plays: it is still open, and
-    /// forgetting what is on screen would only last until the next note.
+    /// Anything still playing stays off too: noting a place only moves an
+    /// entry the history has, and it is opening that puts one there. Watching
+    /// on after clearing is not a reason to take the clearing back.
     pub(super) fn clear_history(&mut self, cx: &mut Context<Self>) {
-        if self.history.clear() {
+        let forgotten = self.history.clear();
+        let text = match forgotten.len() {
+            0 => return,
+            1 => "cleared 1 recording from your history".to_string(),
+            count => format!("cleared {count} recordings from your history"),
+        };
+        self.save_history_soon(cx);
+        self.toast_with(text, Some(ToastAction::Undo(forgotten)), cx);
+    }
+
+    /// Put back what a forget or a clear took off: the toast's `undo`.
+    pub(super) fn restore_history(&mut self, forgotten: Forgotten, cx: &mut Context<Self>) {
+        if self.history.restore(forgotten) {
             self.save_history_soon(cx);
             cx.notify();
         }

@@ -312,8 +312,8 @@ pub(crate) fn card<V: 'static>(
                             .absolute()
                             .top(px(theme::GAP_TIGHT))
                             .left(px(theme::GAP_TIGHT))
-                            .opacity(0.0)
-                            .group_hover("video-card", |style| style.opacity(1.0))
+                            .invisible()
+                            .group_hover("video-card", |style| style.visible())
                             .tooltip(|window, cx| {
                                 gpui_component::tooltip::Tooltip::new(
                                     "Take this off your history, and where you left it",
@@ -334,8 +334,8 @@ pub(crate) fn card<V: 'static>(
                             .absolute()
                             .top(px(theme::GAP_TIGHT))
                             .right(px(theme::GAP_TIGHT))
-                            .opacity(0.0)
-                            .group_hover("video-card", |style| style.opacity(1.0))
+                            .invisible()
+                            .group_hover("video-card", |style| style.visible())
                             .tooltip(|window, cx| {
                                 gpui_component::tooltip::Tooltip::new("Open beside what is playing")
                                     .build(window, cx)

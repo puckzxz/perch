@@ -864,15 +864,18 @@ grep -nE "\.(p|px|py|pt|pb|pl|pr|gap|gap_x|gap_y)\(px\([1-9]" *.rs root/*.rs | g
 grep -nE "\b(rgb|rgba|hsla|hsl)\(" *.rs root/*.rs | grep -v "^theme.rs\|^widget_theme.rs"
 grep -ohE "\.text_(xs|sm|base|lg|xl)\(\)|FontWeight::[A-Z_]+" *.rs root/*.rs | sort | uniq -c
 grep -nE "Duration::from_(millis|secs)" *.rs root/*.rs
+grep -nE "\.opacity\(0(\.0*)?\)" *.rs root/*.rs | grep -v "^motion.rs"
 ```
 
 The first four should return nothing outside `theme.rs` (the colour one also
 shows a test in `controls.rs` building a grey to measure against). The second
 and third are newer than the rest: the first only ever caught gpui's named
 spacings, so a `.py(px(3.))` and an `rgb(0xffffff)` sat in two card badges
-through every audit until a review read the code. The last will show genuine
+through every audit until a review read the code. The fifth will show genuine
 timings — the follows poll, the toast lifetime, an mpv frame wait — but no
-*animation* duration should appear outside `theme.rs`.
+*animation* duration should appear outside `theme.rs`. The last should return
+nothing: a control at zero opacity still takes clicks (see "Things not to
+redo"), and only `motion` fades one there, on its way to `invisible()`.
 
 ### Where controls live
 
@@ -1022,6 +1025,17 @@ With nothing typed, the palette leads with the newest part-watched recording
 when its channel also leads the recents, which is what it looks like when the
 last thing opened was that recording: Ctrl+K then Enter carries on with it.
 
+**Forgetting can be taken back.** `History::forget` and `clear` return what
+they took — each entry with the place it stood (`history::Forgotten`) — and
+the toast that says so carries it as `ToastAction::Undo`; its `undo` hands it
+to `History::restore`, which puts each back where it was. One opened again in
+between is already back with a newer place, and keeps it. An entry is only
+ever *added* by opening: noting a place moves one the history has, so a
+recording still playing after a clear stays off rather than creeping back. The
+history's cards name their kind when it is not a past broadcast — the list has
+held highlights and uploads since a channel's page offered them, and a
+minute-long highlight read as a broadcast barely begun.
+
 Everything the user does there arrives as one `browse::Action` rather than one
 callback per control: the page is generic over its owner, so each extra closure
 would be another type parameter threaded through every helper.
@@ -1100,6 +1114,13 @@ field is focused while it is open, that field's context is deeper than the
 root's, and the keymap deliberately stands aside for a focused input — which is
 the behaviour that keeps typing working everywhere else. A binding cannot win
 that argument, so `on_key_down` reads the event on the way past instead.
+
+The three chords on the command key — `Ctrl+K`, `Ctrl+,`, `Ctrl+R` — are the
+exception, and do not stand aside. They type nothing, and no gpui-component
+widget binds them, so the guard only ever cost something: a search leaves the
+cursor in the header box, and the palette was dead until the page was clicked.
+They are still scoped to the app rather than `None`, so a widget that ever
+claimed one would win it back. `keys` has a test asking gpui's own keymap.
 
 **Avatars are a second request.** `/streams` carries a stream's preview, not the
 channel's picture, so the rail gets its faces from `/users` — batched at Helix's
@@ -1571,8 +1592,8 @@ history that followed it — where each recording was left, resuming there from
 anywhere, the history tab, the time under the pointer on the seek bar, and
 getting a stalled recording going again — are built, as are a channel's
 highlights and uploads beside its past broadcasts, offline channels in search,
-and the live follows holding their order under the pointer. Ranked by what
-would be noticed, roughly:
+the live follows holding their order under the pointer, and undo for forgetting
+a recording. Ranked by what would be noticed, roughly:
 
 1. **Rewind a live stream.** A "from the start" control on a live pane that
    opens the in-progress archive in place. The archive is in the channel's
@@ -1720,11 +1741,16 @@ None of these is being worked on; all of them are real.
   faster, by also forcing bilinear scaling, which every pane in a grid downscales
   through: picture quality spent on a number that is mostly not real. Forcing
   `scale=bilinear` on its own measured *slower* than the default.
-- Do not derive control visibility from `group_hover` or from `on_hover`'s value.
+- Do not derive the video's controls' visibility from `group_hover` or from
+  `on_hover`'s value; see the hover trap. A card's reveal of its own pills can
+  ride `group_hover`, since all a drag elsewhere costs it is a moment hidden.
 - Do not hide a control with opacity alone. At zero it is still there to be
   clicked: the watch page's "← browse" pill went on navigating from a corner
-  that looked empty. `motion::Fade` ends hidden as `invisible()`, which gpui
-  does not paint and registers no listeners for.
+  that looked empty, and a tap on a card's corner — a touchscreen's, with no
+  hover first — could forget a recording through a pill nobody saw.
+  `motion::Fade` ends hidden as `invisible()`, which gpui does not paint and
+  registers no listeners for, and the cards' pills are `invisible()` until
+  their card is hovered.
 - Do not name a display in `WindowOptions` on macOS, and do not leave it out on
   Windows. The two platforms read saved window bounds opposite ways; see "The
   window remembers where it was".

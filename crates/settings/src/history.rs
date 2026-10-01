@@ -78,6 +78,16 @@ pub struct Watched {
 }
 
 impl Watched {
+    /// Whose it is, as the list says it: the channel's name as it writes it,
+    /// or its login for an entry that never learned the name.
+    pub fn channel(&self) -> &str {
+        if self.channel_name.is_empty() {
+            &self.channel_login
+        } else {
+            &self.channel_name
+        }
+    }
+
     /// How much of it has been watched, from nothing to all of it. A length
     /// Twitch never said is nothing rather than a division by zero.
     pub fn progress(&self) -> f32 {
@@ -96,6 +106,34 @@ impl Watched {
 #[serde(default)]
 pub struct History {
     pub videos: Vec<Watched>,
+}
+
+/// What [`History::forget`] or [`History::clear`] took off the list, each
+/// entry with the place it held, so [`History::restore`] can put it back
+/// there. A slip of the pointer onto "forget" used to lose where a twelve-hour
+/// broadcast was left, for good.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Forgotten {
+    /// In the order the entries stood, which is the order they go back in.
+    entries: Vec<(usize, Watched)>,
+}
+
+impl Forgotten {
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// The recording taken off, when it was just the one.
+    pub fn only(&self) -> Option<&Watched> {
+        match self.entries.as_slice() {
+            [(_, watched)] => Some(watched),
+            _ => None,
+        }
+    }
 }
 
 /// Where the history lives: beside the settings, as `history.json`.
@@ -211,18 +249,40 @@ impl History {
         true
     }
 
-    /// Forget one recording. Returns whether it was there.
-    pub fn forget(&mut self, id: &str) -> bool {
-        let before = self.videos.len();
-        self.videos.retain(|watched| watched.id != id);
-        self.videos.len() != before
+    /// Forget one recording, and say what was taken off: nothing, when it was
+    /// not there.
+    pub fn forget(&mut self, id: &str) -> Forgotten {
+        let entries = match self.videos.iter().position(|watched| watched.id == id) {
+            Some(index) => vec![(index, self.videos.remove(index))],
+            None => Vec::new(),
+        };
+        Forgotten { entries }
     }
 
-    /// Forget everything. Returns whether there was anything.
-    pub fn clear(&mut self) -> bool {
-        let had = !self.videos.is_empty();
-        self.videos.clear();
-        had
+    /// Forget everything, and say what that was.
+    pub fn clear(&mut self) -> Forgotten {
+        Forgotten {
+            entries: std::mem::take(&mut self.videos)
+                .into_iter()
+                .enumerate()
+                .collect(),
+        }
+    }
+
+    /// Put back what was forgotten, each entry where it stood. One opened
+    /// again since is already back, with a newer place than the one
+    /// forgotten, and keeps it. Returns whether anything went back.
+    pub fn restore(&mut self, forgotten: Forgotten) -> bool {
+        let mut changed = false;
+        for (index, watched) in forgotten.entries {
+            if self.get(&watched.id).is_some() {
+                continue;
+            }
+            self.videos.insert(index.min(self.videos.len()), watched);
+            changed = true;
+        }
+        self.videos.truncate(HISTORY_LIMIT);
+        changed
     }
 }
 
@@ -383,16 +443,76 @@ mod tests {
         );
     }
 
+    fn ids(history: &History) -> Vec<&str> {
+        history.videos.iter().map(|w| w.id.as_str()).collect()
+    }
+
     #[test]
     fn one_can_be_forgotten_or_all_of_them() {
         let mut history = History::default();
         history.opened(watched("1", 0));
         history.opened(watched("2", 0));
-        assert!(history.forget("1"));
-        assert!(!history.forget("1"), "already gone");
-        assert!(history.clear());
-        assert!(!history.clear(), "nothing left to clear");
+        let forgotten = history.forget("1");
+        assert_eq!(forgotten.only().map(|w| w.id.as_str()), Some("1"));
+        assert!(history.forget("1").is_empty(), "already gone");
+        assert_eq!(history.clear().len(), 1);
+        assert!(history.clear().is_empty(), "nothing left to clear");
         assert!(history.videos.is_empty());
+    }
+
+    /// Undo: one forgotten goes back where it stood, and so does a whole
+    /// list, in its order, with where each was left.
+    #[test]
+    fn what_was_forgotten_goes_back_where_it_was() {
+        let mut history = History::default();
+        history.opened(watched("1", 100));
+        history.opened(watched("2", 200));
+        history.opened(watched("3", 300));
+        assert_eq!(ids(&history), ["3", "2", "1"]);
+
+        let forgotten = history.forget("2");
+        assert_eq!(ids(&history), ["3", "1"]);
+        assert!(history.restore(forgotten));
+        assert_eq!(ids(&history), ["3", "2", "1"]);
+
+        let cleared = history.clear();
+        assert_eq!(cleared.len(), 3);
+        assert_eq!(cleared.only(), None, "three, not one");
+        assert!(history.restore(cleared));
+        assert_eq!(ids(&history), ["3", "2", "1"]);
+        assert_eq!(history.resume_at("2"), Some(200.0));
+    }
+
+    /// Opened again between the forgetting and the undo, a recording is
+    /// already back with a newer place, and the undo leaves that alone
+    /// while still putting back the rest.
+    #[test]
+    fn an_undo_keeps_what_was_opened_again_since() {
+        let mut history = History::default();
+        history.opened(watched("1", 4_000));
+        history.opened(watched("2", 600));
+        let cleared = history.clear();
+
+        history.opened(watched("1", 4_500));
+        assert!(history.restore(cleared));
+        assert_eq!(history.resume_at("1"), Some(4_500.0), "the newer place");
+        assert_eq!(ids(&history), ["2", "1"]);
+
+        let forgotten = history.forget("2");
+        history.opened(watched("2", 700));
+        assert!(!history.restore(forgotten), "nothing to put back");
+        assert_eq!(history.resume_at("2"), Some(700.0));
+    }
+
+    #[test]
+    fn a_name_is_shown_as_the_channel_writes_it_or_by_login() {
+        let named = watched("1", 0);
+        assert_eq!(named.channel(), "Someone");
+        let nameless = Watched {
+            channel_name: String::new(),
+            ..named
+        };
+        assert_eq!(nameless.channel(), "someone");
     }
 
     #[test]
