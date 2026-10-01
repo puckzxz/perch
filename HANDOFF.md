@@ -72,12 +72,13 @@ App modules:
 | `instance/` | one perch per settings file: the claim, and a later launch handing its arguments to the running one — a named pipe on Windows, `flock` and a socket on Unix |
 | `launch.rs` | what a launch's arguments ask for, read the one way at startup and on a handover (pure, tested) |
 | `trail.rs` | back and forward: the places behind and ahead, what a step passes over, and forgetting a place that is gone (pure, tested) |
-| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams`, `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `prefs`, `chrome` (pills, toasts, the rail), `mini_player` (what plays on while you browse, in the corner of the page), `title_bar` (the bar Perch draws across the top of the window — the rail button, back and forward, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`) |
-| `target.rs` | what a typed or pasted thing means: a login, or a twitch.tv link to a channel or a recording (pure, tested) |
+| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams`, `pane_actions` (what a pane asks for, by its key: a press on it or one of its controls, which takes the keys back for the root first, and its player's requests), `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `prefs`, `chrome` (pills, toasts, the rail), `mini_player` (what plays on while you browse, in the corner of the page), `title_bar` (the bar Perch draws across the top of the window — the rail button, back and forward, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`) |
+| `target.rs` | what a typed or pasted thing means: a login, or a twitch.tv link to a channel or a recording; and `link`, its inverse and the one place a twitch.tv URL is written (pure, tested) |
 | `browse.rs` | the picker page: following, popular, categories, search; which of them is on screen (`Discovery::place`) and which lists are still being waited on |
 | `channel_page.rs` | one channel's past broadcasts, and when each was; the recording card both pages use |
 | `history_page.rs` | the history tab, and the one translation between a video and a history entry |
-| `watch.rs` | the grid of panes; `Slot` lives here |
+| `watch.rs` | the grid of panes; `Slot` lives here, made by `Slot::new`, and `PaneAction`, everything a pane asks of the root |
+| `watch/status.rs` | a pane with no picture: `Showing`, the one reading of its state that the pane's sentence and the mini player's word both come from, and the screen drawn from it (tested) |
 | `layout.rs` | derives grid shape from window aspect; the page's `Body`, the title bar's height and drag edge, and the mini player's tiles, how far in it floats clear of the scrollbar, and the `Room` a browse list leaves for it (pure, tested) |
 | `video_view.rs` | player element + overlay controls; drawn full or as a compact mini-player tile |
 | `loudness.rs` | one pane's level and the Mute all hush over it: what mpv hears, and the only level ever reported to be remembered (pure, tested) |
@@ -333,7 +334,7 @@ Three things that took finding:
   fetches the playlist once per segment and *appends* what is new to the file
   the player is reading — appending never disturbs what the demuxer has read —
   and appends `#EXT-X-ENDLIST` when Twitch does, after which the player reaches
-  the end the ordinary way and the pane says "finished". `live_start_index=0`
+  the end the ordinary way and the pane says "Finished". `live_start_index=0`
   keeps the demuxer from starting three segments from the end of a playlist
   with no end marker, which is its default for anything live. And the
   rewritten playlist says `#EXT-X-PLAYLIST-TYPE:EVENT` while it grows, as
@@ -359,7 +360,8 @@ recording's end moves smoothly rather than in ten-second steps.
 The replaced file's end arrives as `MPV_EVENT_END_FILE` with reason `Stop`,
 which `Stopped::from_end` already ignores — the same reason a closing pane
 sees. `Eof` is the only end that finishes a recording, and the pane reads it
-as "finished" rather than "ended the stream" by looking at what it was playing.
+as "Finished" rather than "ended the stream" by looking at what it was playing
+(`watch::showing`, which the mini player's tile word reads too).
 
 `mpv-frames` deliberately has no `seek`. `seek_to_live` is the percent seek for
 the live edge; an absolute one was added for recordings and removed when the
@@ -1011,11 +1013,16 @@ unconsidered.
   either way, and a domain keeps its case (`Search Twitch for “…”`, `Open
   twitch.tv/activate`). There was no rule at first, and three controls and the
   settings sheet's buttons drifted into title case; then the rule was that a
-  thing you click is lowercase, until the UI overhaul turned it round. Not
-  swept yet, so do not take them for the rule: the passive words that state
-  a fact — a pane header's `muted`, `paused` and `replay` tags, chat's
-  `deleted`, the line a pane says while it starts or after it stops, toasts
-  and chat's notices, the palette's kind column — are still lowercase.
+  thing you click is lowercase, until the UI overhaul turned it round. The
+  line a pane words itself while it starts or after it stops is a sentence
+  too (`Starting…`, `Forsen is offline`, `Finished`), since it sits over a
+  sentence-case pill and beside the mini player's words for the same
+  states. Not swept yet, so do not take them for the rule: the passive words
+  that state a fact — a pane header's `muted`, `paused` and `replay` tags,
+  chat's `deleted`, toasts and chat's notices, the palette's kind column —
+  are still lowercase, and so is a failed pane's line, which is the failure
+  in the words of whatever failed (streamlink, mpv, the streamlink crate or
+  the player), passed through as is by `Showing::sentence`.
   `channel_page::kind_tag` is also read mid-sentence, in a palette row's
   `(replay)` and a history byline, so it cannot simply take a capital.
 - **Layout reads a `layout::Body`, never the viewport.** The body is the window
@@ -1051,7 +1058,19 @@ unconsidered.
   fail that on two of three surfaces while carrying game names, offline channel
   names and the whole of the settings help. `readable()` bisects a username's
   lightness until it *measures* legible rather than stopping at a fixed one —
-  the flat floor it replaced left pure blue at 2.7:1.
+  the flat floor it replaced left pure blue at 2.7:1. Text on a picture is
+  held to the brightest picture there is, a white frame under its wash
+  (`theme::over_white`), by
+  `every_tier_drawn_on_a_picture_reads_over_a_white_frame`. Two washes, two
+  jobs: `video_chrome()` (`#000000e0`) carries every tier — text 13.3,
+  `text_muted` 5.8, `text_dim` 4.7, accent 5.2, danger 6.8:1 — and is what
+  the player's control bar sits on; `overlay()` (`#000000cc`) carries
+  `text()` alone (10.2:1), because `text_muted`, `text_dim` and the accent
+  all fail on it over white, and is for badges only. `Variant::OnVideo`
+  rests at `text_muted` and lifts to `text()` under the pointer — the hover
+  wash alone is four percent white and all but invisible on the bar — and
+  `controls.rs`'s `sits_on` measures it on that white frame under
+  `video_chrome()`, not on black, where light text never fails.
 - **Motion** — three durations named by job (`MOTION_HOVER`, `MOTION_ENTER`,
   `MOTION_VIDEO`) plus the waiting pulse, and two easings (`ease_fade` for
   two-way changes, `ease_enter` for arrivals). Motion says *that something
@@ -1077,8 +1096,9 @@ The list comes from git rather than from a glob, because the glob was
 the next directory too. Keep the `:(glob)` magic: in a plain pathspec `**/`
 needs a slash after `src/`, so it drops every file at the top of the crate.
 
-The first four should return nothing outside `theme.rs` (the colour one also
-shows a test in `controls.rs` building a grey to measure against). The second
+The first four should return nothing outside `theme.rs`; the tests that
+measure text over a picture build their backdrop with `theme::over_white`
+rather than a grey of their own. The second
 and third are newer than the rest: the first only ever caught gpui's named
 spacings, so a `.py(px(3.))` and an `rgb(0xffffff)` sat in two card badges
 through every audit until a review read the code. The fifth, literal sizes, is
@@ -2310,6 +2330,10 @@ None of these is being worked on; all of them are real.
   perch owns — the log first of all — and do not answer a handover before its
   arguments are queued for a window that still exists. See "One perch".
 - Do not key animated-image element ids on position.
+- Do not write a twitch.tv URL with a `format!` of its own. `target::link` is
+  the one builder, and the tested inverse of `target::parse`
+  (`a_link_reads_back_as_what_it_names`), so a link Perch hands out opens the
+  same thing, at the same moment, when it is pasted back.
 - Do not use `--stream-url` to skip streamlink's pipeline for a *live* stream.
   A recording is resolved that way on purpose, and reads its playlist itself;
   see the Recordings trap.

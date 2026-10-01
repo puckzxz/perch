@@ -846,6 +846,29 @@ pub fn parse_duration(text: &str) -> Option<u64> {
     Some(total)
 }
 
+/// A number of seconds in the grammar [`parse_duration`] reads, and so its
+/// inverse: `1h2m3s`, `45s`, `1h`, `2m`.
+///
+/// Units that come to zero are left out rather than written as `0m`, the way
+/// Twitch writes them itself, and nothing at all is written as `0s` — the
+/// grammar has no empty duration, and an empty string would read back as no
+/// duration rather than as none of one. `durations_round_trip` holds the two
+/// to each other.
+pub fn format_duration(secs: u64) -> String {
+    if secs == 0 {
+        return "0s".to_string();
+    }
+    let (hours, minutes, seconds) = (secs / 3600, secs % 3600 / 60, secs % 60);
+    let mut text = String::new();
+    for (value, unit) in [(hours, 'h'), (minutes, 'm'), (seconds, 's')] {
+        if value > 0 {
+            text.push_str(&value.to_string());
+            text.push(unit);
+        }
+    }
+    text
+}
+
 fn parse_videos(json: &Value) -> Vec<Video> {
     entries(json)
         .filter_map(|entry| {
@@ -1579,6 +1602,24 @@ mod tests {
         assert_eq!(parse_duration("1h1h"), None, "repeated");
         assert_eq!(parse_duration("PT1H"), None, "the ISO form Helix claims");
         assert_eq!(parse_duration("1h 2m"), None, "a space");
+    }
+
+    /// What `format_duration` writes, `parse_duration` reads back as the same
+    /// number — which is what lets a copied link to a moment open at that
+    /// moment when it is pasted back.
+    #[test]
+    fn durations_round_trip() {
+        for secs in [0, 45, 60, 3600, 3723, 36000] {
+            assert_eq!(
+                parse_duration(&format_duration(secs)),
+                Some(secs),
+                "{secs}s wrote {:?}",
+                format_duration(secs)
+            );
+        }
+        assert_eq!(format_duration(3600), "1h", "units at zero are left out");
+        assert_eq!(format_duration(3723), "1h2m3s");
+        assert_eq!(format_duration(0), "0s");
     }
 
     /// The reference's own example, plus the two things a real list has that

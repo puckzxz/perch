@@ -15,6 +15,7 @@
 //! | `browsing` | the browse page's requests: tabs, search, categories, channels |
 //! | `navigation` | back and forward: where the app is as a `Route`, recording each step on the trail (`crate::trail`), and the three ways along it |
 //! | `streams` | opening, restarting and closing panes |
+//! | `pane_actions` | what a pane asks for: its controls, and its player's requests |
 //! | `launches` | what the command line named, at startup and from later launches |
 //! | `history` | what has been watched: noting where each recording got to, resuming there |
 //! | `prefs` | the settings sheet, the divider drag, the rail folding and what is pinned to it |
@@ -37,6 +38,7 @@ mod launches;
 mod mini_player;
 mod navigation;
 mod pages;
+mod pane_actions;
 mod prefs;
 mod shortcuts;
 mod streams;

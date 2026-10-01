@@ -6,9 +6,14 @@
 //! line and the palette both take these, and they agree on what a thing
 //! means because they both ask here — and here asks the one definition of a
 //! login, `twitch_chat::is_login`, rather than keeping a second one.
+//!
+//! The other way round lives here too: [`link`] is the one place Perch writes
+//! a twitch.tv URL, and it is the inverse of [`parse`], so a link Perch hands
+//! out — a recording's, at the moment you were at — opens the same thing at
+//! the same moment when it is pasted back.
 
 use settings::channel_key;
-use twitch_api::parse_duration;
+use twitch_api::{format_duration, parse_duration};
 use twitch_chat::is_login;
 
 /// Somewhere on Twitch the app can open.
@@ -100,6 +105,27 @@ fn start_of(query: &str) -> Option<u64> {
         .and_then(parse_duration)
 }
 
+/// The twitch.tv page for `target`: what [`parse`] reads back as `target`.
+///
+/// The `www` host, which is what the site itself links to; `parse` takes it
+/// with or without. A recording carries `?t=` only from its first second on:
+/// a start at zero is the start, and writing it would hand out a link that
+/// says less than it seems to.
+pub fn link(target: &Target) -> String {
+    match target {
+        Target::Channel(login) => format!("https://www.twitch.tv/{login}"),
+        Target::Video { id, start_secs } => match start_secs {
+            Some(secs) if *secs > 0 => {
+                format!(
+                    "https://www.twitch.tv/videos/{id}?t={}",
+                    format_duration(*secs)
+                )
+            }
+            _ => format!("https://www.twitch.tv/videos/{id}"),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -148,6 +174,41 @@ mod tests {
         assert_eq!(parse("twitch.tv/videos/v123"), video("123", None));
         // A start the link garbles is no start, not a refusal.
         assert_eq!(parse("twitch.tv/videos/5?t=soon"), video("5", None));
+    }
+
+    /// Every link Perch writes opens what it names, at the moment it names.
+    #[test]
+    fn a_link_reads_back_as_what_it_names() {
+        let targets = [
+            Target::Channel("forsen".into()),
+            Target::Video {
+                id: "2868644730".into(),
+                start_secs: None,
+            },
+            Target::Video {
+                id: "2868644730".into(),
+                start_secs: Some(45),
+            },
+            Target::Video {
+                id: "2868644730".into(),
+                start_secs: Some(3723),
+            },
+        ];
+        for target in targets {
+            assert_eq!(parse(&link(&target)), Some(target.clone()), "{target:?}");
+        }
+    }
+
+    /// A start at zero is the start, so it is written as no time at all.
+    #[test]
+    fn a_link_at_the_start_carries_no_time() {
+        let at_zero = Target::Video {
+            id: "5".into(),
+            start_secs: Some(0),
+        };
+        let written = link(&at_zero);
+        assert!(!written.contains("t="), "{written}");
+        assert_eq!(parse(&written), video("5", None));
     }
 
     #[test]

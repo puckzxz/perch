@@ -23,7 +23,7 @@ use super::{Page, RootView};
 use crate::assets::Icon;
 use crate::controls::{self, Variant};
 use crate::layout::{self, MiniLayout};
-use crate::watch::{Slot, StreamState};
+use crate::watch::{self, Showing, Slot};
 use crate::{loudness, motion, theme};
 
 /// The group a tile's close watches for the pointer, so it shows only while
@@ -156,6 +156,7 @@ impl RootView {
         let key = slot.key.clone();
         let close_key = slot.key.clone();
         let name = self.display_name(slot);
+        let showing = watch::showing(slot);
 
         div()
             // By key, never by position: closing a tile moves the ones after
@@ -178,12 +179,14 @@ impl RootView {
             .bg(theme::player_bg())
             .cursor_pointer()
             .children(slot.video().cloned())
-            .when_some(state_word(slot), |tile, word| {
+            // The pane's own reading of itself, said in a word: a tile is a
+            // few words wide, and the pane says the whole of it a click away.
+            .when_some(showing.word(), |tile, word| {
                 let word = div()
                     .text_size(px(theme::TEXT_META))
                     .text_color(theme::text_dim())
                     .child(word);
-                tile.child(if matches!(slot.state, StreamState::Starting) {
+                tile.child(if matches!(showing, Showing::Starting { .. }) {
                     // Breathing like the pane's own starting state: a still
                     // word reads as a hang.
                     motion::waiting(ElementId::Name(format!("mini-starting-{key}").into()), word)
@@ -246,21 +249,6 @@ impl RootView {
                 this.focus.focus(window);
                 on_click(this, cx);
             }))
-    }
-}
-
-/// What a tile with no picture says instead: short, because a tile is a few
-/// words wide. The pane says the whole of it, one click away.
-fn state_word(slot: &Slot) -> Option<&'static str> {
-    let recording = !slot.is_live();
-    match slot.state {
-        StreamState::Playing(_) => None,
-        StreamState::Starting => Some("Starting…"),
-        StreamState::Offline if recording => Some("Unavailable"),
-        StreamState::Offline => Some("Offline"),
-        StreamState::Ended if recording => Some("Finished"),
-        StreamState::Ended => Some("Ended"),
-        StreamState::Failed(_) => Some("Failed"),
     }
 }
 

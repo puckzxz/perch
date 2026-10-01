@@ -115,8 +115,11 @@ variants! {
     /// A pill that is currently the answer — the open tab, the chosen quality.
     Selected,
     /// On top of live video, where a filled background would be one more thing
-    /// covering the picture. Carries its own weight through text alone until
-    /// hovered.
+    /// covering the picture. Rests at `text_muted` on the bar's wash and lifts
+    /// to full text under the pointer: the hover fill alone is a white wash at
+    /// four percent, which on a dark bar over a moving picture is all but
+    /// invisible, so the label's own lift is the cue that it will take the
+    /// press. Measured on the brightest picture rather than on black.
     OnVideo,
     /// The one thing to do in a view: sign in, jump to live. Bordered in the
     /// accent rather than filled with it, so it reads as important without
@@ -145,8 +148,8 @@ impl Variant {
 
     fn foreground(self) -> gpui::Hsla {
         match self {
-            Variant::Pill | Variant::Chrome => theme::text_muted(),
-            Variant::Selected | Variant::OnVideo | Variant::Primary => theme::text(),
+            Variant::Pill | Variant::Chrome | Variant::OnVideo => theme::text_muted(),
+            Variant::Selected | Variant::Primary => theme::text(),
             Variant::Quiet | Variant::Destructive => theme::text_dim(),
         }
     }
@@ -471,7 +474,8 @@ pub fn tag(label: impl Into<SharedString>) -> gpui::Div {
 /// seek bar. A row, so a live dot can sit in front of the number.
 ///
 /// It lands on whatever the picture is doing, so it brings its own contrast:
-/// the `overlay` wash, and text at full strength. There were three of these,
+/// the `overlay` wash, and text at full strength — the only tier that passes
+/// on that wash over a white frame. There were three of these,
 /// drawn by hand in three files at three different paddings, and two with a
 /// white of their own rather than the app's.
 pub fn badge() -> gpui::Div {
@@ -533,9 +537,11 @@ mod tests {
     /// What is actually behind a variant's label, rather than its
     /// `background()`: the selected variant's fill is a wash, so the surface
     /// under it is what decides. The ones with no background of their own are
-    /// measured against the darkest thing they can land on, which for
-    /// `OnVideo` is a black picture, for `Quiet` the pane surface and for
-    /// `Chrome` the title bar.
+    /// measured against the worst thing they can land on: for `Quiet` the pane
+    /// surface, for `Chrome` the title bar, and for `OnVideo` the brightest
+    /// picture there is — a white frame under the bar's `video_chrome` wash.
+    /// Not a black picture: light text on video fails on the light frames,
+    /// never on the dark ones.
     ///
     /// A `match`, so a new variant does not compile until somebody has said
     /// where it sits. And it is measured as soon as it exists: the test walks
@@ -546,7 +552,7 @@ mod tests {
             Variant::Selected | Variant::Quiet | Variant::Destructive | Variant::Chrome => {
                 theme::surface()
             }
-            Variant::OnVideo => theme::player_bg(),
+            Variant::OnVideo => theme::over_white(theme::video_chrome()),
         }
     }
 
@@ -566,14 +572,33 @@ mod tests {
     /// worst one: pure white under the wash, where the wash is at its lightest.
     #[test]
     fn a_badge_reads_on_the_brightest_picture() {
-        // Black at the wash's alpha over white leaves a grey whose channels
-        // are what the wash lets through.
-        let through = 1.0 - theme::overlay().a;
-        let behind = gpui::hsla(0.0, 0.0, through, 1.0);
-        let ratio = theme::contrast(theme::text(), behind);
+        let ratio = theme::contrast(theme::text(), theme::over_white(theme::overlay()));
         assert!(
             ratio >= theme::MIN_CONTRAST,
             "a badge reads {ratio:.2}:1 over a white picture"
+        );
+    }
+
+    /// An on-video control rests quiet and lifts to full text under the
+    /// pointer, so the lifted label has to read on the bar with the hover wash
+    /// on it, and with the press on it too: a press always comes with the
+    /// pointer over the control, so a pressed label is a lifted one. Measured
+    /// on the brightest picture, like the resting label.
+    #[test]
+    fn an_on_video_control_lifts_under_the_pointer() {
+        let bar = theme::over_white(theme::video_chrome());
+        let lifted = Variant::OnVideo.hover_foreground();
+        for (state, fill) in [("hovered", theme::hover()), ("pressed", theme::pressed())] {
+            let ratio = theme::contrast(lifted, bar.blend(fill));
+            assert!(
+                ratio >= theme::MIN_CONTRAST,
+                "a {state} on-video label reads {ratio:.2}:1 over a white picture"
+            );
+        }
+        assert_ne!(
+            Variant::OnVideo.foreground(),
+            lifted,
+            "an on-video label has to lift under the pointer, or the hover              wash is its only cue"
         );
     }
 }

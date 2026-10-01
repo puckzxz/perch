@@ -141,14 +141,41 @@ pub fn scrim() -> Hsla {
     rgba(0x00000099).into()
 }
 
-/// Behind anything drawn on top of a picture: the control bar, a viewer count
-/// on a thumbnail.
+/// Behind a badge on a picture: a viewer count on a thumbnail, a recording's
+/// length, the seek bar's time under the pointer.
 ///
 /// Darker than [`scrim`], because this one is not dimming what is behind it —
 /// it is making its own contrast on top of an image that could be any colour at
-/// all in the next frame.
+/// all in the next frame. But not dark enough for every tier: over the worst
+/// picture, a white frame, only [`text`] passes on it (10.2:1). `text_muted`
+/// (4.4), `text_dim` (3.6) and the accent (4.0) all fall under the bar there,
+/// so nothing but full-strength text is ever drawn on this wash. Controls and
+/// quieter tiers go on [`video_chrome`], which carries them all.
 pub fn overlay() -> Hsla {
     rgba(0x000000cc).into()
+}
+
+/// Behind controls and pane facts drawn over a playing picture: the player's
+/// control bar, and anything else that has to carry more than one tier of text
+/// on top of video.
+///
+/// Denser than [`overlay`] because it carries every tier, not just full text,
+/// and each one is measured against the worst picture there is — a white frame
+/// under the wash: text 13.3, text_muted 5.8, text_dim 4.7, accent 5.2 and
+/// danger 6.8:1. `every_tier_drawn_on_a_picture_reads_over_a_white_frame` holds
+/// it there. One wash for everything on a picture, so two strips over the same
+/// frame never disagree about how dark the video behind them is.
+pub fn video_chrome() -> Hsla {
+    rgba(0x000000e0).into()
+}
+
+/// The brightest a picture can be under this wash: a white frame with the wash
+/// drawn over it. The one spelling of "the worst case for text on video", for
+/// every test that measures something drawn on a picture. `blend` draws its
+/// argument over the colour it is called on.
+#[cfg(test)]
+pub(crate) fn over_white(wash: Hsla) -> Hsla {
+    Hsla::from(rgb(0xffffff)).blend(wash)
 }
 
 // ── Lines ────────────────────────────────────────────────────────────
@@ -159,9 +186,9 @@ pub fn border() -> Hsla {
 }
 
 /// The seek bar's rail: the part of a recording not yet played. It sits on
-/// the control bar's overlay, over live video, so it is a wash rather than a
-/// colour of its own, and a stronger one than a divider because a four-pixel
-/// line has to survive whatever the picture is doing behind it.
+/// the control bar's [`video_chrome`], over live video, so it is a wash rather
+/// than a colour of its own, and a stronger one than a divider because a
+/// four-pixel line has to survive whatever the picture is doing behind it.
 pub fn seek_rail() -> Hsla {
     rgba(0xffffff40).into()
 }
@@ -577,6 +604,39 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Anything drawn on a picture is held to the brightest picture there is:
+    /// a white frame, under the wash it is drawn on.
+    ///
+    /// Every tier passes on [`video_chrome`], which is why the control bar and
+    /// anything else carrying quieter text over video use it. On [`overlay`]
+    /// only full-strength text passes; `text_muted`, `text_dim` and the accent
+    /// all fall under the bar there, which is why badges carry `text()` and
+    /// nothing else.
+    #[test]
+    fn every_tier_drawn_on_a_picture_reads_over_a_white_frame() {
+        let chrome = over_white(video_chrome());
+        let tiers: [(&str, Hsla); 5] = [
+            ("text", text()),
+            ("text_muted", text_muted()),
+            ("text_dim", text_dim()),
+            ("accent", accent()),
+            ("danger", danger()),
+        ];
+        for (tier, color) in tiers {
+            let ratio = contrast(color, chrome);
+            assert!(
+                ratio >= MIN_CONTRAST,
+                "{tier} reads {ratio:.2}:1 on video_chrome over a white frame"
+            );
+        }
+
+        let ratio = contrast(text(), over_white(overlay()));
+        assert!(
+            ratio >= MIN_CONTRAST,
+            "text reads {ratio:.2}:1 on overlay over a white frame"
+        );
     }
 
     /// The tiers have to stay *apart*, or three names for one grey is all they

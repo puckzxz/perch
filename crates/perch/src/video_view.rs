@@ -591,8 +591,12 @@ impl VideoView {
             .px(px(theme::PANEL_PAD))
             .py(px(theme::GAP_TIGHT))
             // Sits over live video, so it carries its own contrast rather than
-            // relying on whatever happens to be on screen behind it.
-            .bg(theme::overlay())
+            // relying on whatever happens to be on screen behind it. The
+            // denser of the two picture washes, because the bar carries more
+            // than full-strength text: the resting labels and the volume
+            // figure are `text_muted`, which only passes over a white frame
+            // on this one.
+            .bg(theme::video_chrome())
             .children(self.seek_row(cx))
             .child(self.button_row(cx))
     }

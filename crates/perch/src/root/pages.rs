@@ -206,20 +206,8 @@ impl RootView {
             self.settings.chat_width,
             self.settings.video_share,
             self.active_slot(),
-            |this: &mut RootView, index, window, cx| this.close_slot(index, window, cx),
-            |this: &mut RootView, index, window, cx| {
-                if let Some(key) = this.slots.get(index).map(|slot| slot.key.clone()) {
-                    this.retry_stream(&key, window, cx);
-                }
-            },
-            |this: &mut RootView, index, cx| {
-                let Some(key) = this.slots.get(index).map(|slot| slot.key.clone()) else {
-                    return;
-                };
-                if this.active.as_deref() != Some(key.as_str()) {
-                    this.active = Some(key);
-                    cx.notify();
-                }
+            |this: &mut RootView, key: &str, action, window, cx| {
+                this.on_pane_action(key, action, window, cx)
             },
             |this: &mut RootView, start, window, cx| this.start_resize(start, window, cx),
             |this: &mut RootView, index, hovered, cx| {

@@ -30,7 +30,7 @@ pub const HISTORY_LIMIT: usize = 50;
 ///
 /// Not the very end: a broadcast's last minute is a goodbye and an outro, and
 /// a viewer who closes the pane there has finished with it. Picking up
-/// thirty seconds from the end would open straight onto "finished".
+/// thirty seconds from the end would open straight onto "Finished".
 pub const FINISHED_WITHIN_SECS: f64 = 60.0;
 
 /// Whether playback that got to `position` of a `length`-second recording has

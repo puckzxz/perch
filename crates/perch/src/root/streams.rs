@@ -12,7 +12,7 @@ use super::navigation::Route;
 use super::{Page, RootView};
 use crate::chat::{ChatView, Feed};
 use crate::video::{self, Playback, PositionHandle, Stopped, VideoStream};
-use crate::video_view::{Qualities, Start, VideoEvent, VideoView};
+use crate::video_view::{Qualities, Start, VideoView};
 use crate::watch::{Slot, Source, StreamState, MAX_PANES};
 use crate::{layout, settings_view};
 
@@ -69,21 +69,14 @@ impl RootView {
                     cx,
                 )
             });
-            this.slots.push(Slot {
-                key: channel.clone(),
-                channel: channel.clone(),
-                source: Source::Live,
-                quality_override: None,
-                state: StreamState::Starting,
-                chat: Some(chat),
-                resume_at: 0.0,
-                supervisor: None,
-                pump: None,
-                hovered: false,
-                chat_hidden: this.settings.chat_hidden_for(&channel),
-                quiet: false,
-                stalled_at: None,
-            });
+            this.slots.push(Slot::new(
+                channel.clone(),
+                channel.clone(),
+                Source::Live,
+                Some(chat),
+                0.0,
+                this.settings.chat_hidden_for(&channel),
+            ));
 
             // Remembered for the palette, which leads with it next time.
             if this.settings.note_watched(&channel) {
@@ -179,26 +172,21 @@ impl RootView {
                     )
                 })
             });
-            this.slots.push(Slot {
-                key: key.clone(),
-                channel: channel.clone(),
-                source: Source::Video {
+            // Chat hidden is remembered against the channel, like a live
+            // pane's: hiding chat is a statement about the streamer, not the
+            // broadcast.
+            let chat_hidden = this.settings.chat_hidden_for(&channel);
+            this.slots.push(Slot::new(
+                key.clone(),
+                channel.clone(),
+                Source::Video {
                     video: Box::new(video),
                     position,
                 },
-                quality_override: None,
-                state: StreamState::Starting,
                 chat,
-                resume_at: start_at,
-                supervisor: None,
-                pump: None,
-                hovered: false,
-                // Remembered against the channel, like a live pane's: hiding
-                // chat is a statement about the streamer, not the broadcast.
-                chat_hidden: this.settings.chat_hidden_for(&channel),
-                quiet: false,
-                stalled_at: None,
-            });
+                start_at,
+                chat_hidden,
+            ));
 
             // A recording counts as watching its channel, for the palette.
             if this.settings.note_watched(&channel) {
@@ -353,46 +341,14 @@ impl RootView {
                                 stream, frames, qualities, volume, start, window, cx,
                             )
                         });
+                        // What the player asks for, resolved by the pane's key
+                        // when it arrives; see `on_video_event`.
                         let owner = key.to_string();
                         cx.subscribe_in(
                             &view,
                             window,
-                            move |this: &mut RootView, _, event, window, cx| match event {
-                                VideoEvent::VolumeChanged(volume) => {
-                                    // Remembered against the channel rather
-                                    // than globally, so coming back to a
-                                    // streamer finds them where you left them.
-                                    // The channel, not the pane's key: for a
-                                    // recording that is `vod:<id>`, and a level
-                                    // kept there was never read back — the
-                                    // pane opens at its *channel's* level.
-                                    // A slider drag emits a change per pixel,
-                                    // so the write waits for the run to end.
-                                    //
-                                    // A level somebody chose is also the end
-                                    // of Mute all for this pane: the player
-                                    // has already let its hush go.
-                                    let index = this.slot_index(&owner);
-                                    if let Some(index) = index {
-                                        this.slots[index].quiet = false;
-                                    }
-                                    let channel =
-                                        index.map(|index| this.slots[index].channel.clone());
-                                    if let Some(channel) = channel {
-                                        if this.settings.set_volume_for(&channel, *volume) {
-                                            this.save_settings_soon(cx);
-                                        }
-                                    }
-                                    cx.notify();
-                                }
-                                VideoEvent::QualityRequested(name) => {
-                                    if let Some(index) = this.slot_index(&owner) {
-                                        this.request_quality(index, name.clone(), window, cx);
-                                    }
-                                }
-                                VideoEvent::Stopped(reason) => {
-                                    this.stream_stopped(&owner, reason.clone(), cx)
-                                }
+                            move |this: &mut RootView, _, event, window, cx| {
+                                this.on_video_event(&owner, event, window, cx)
                             },
                         )
                         .detach();
@@ -504,7 +460,7 @@ impl RootView {
     }
 
     /// Ask for a pane's stream again: after it stopped, or after the channel
-    /// came back on. Whatever the pane was showing becomes "starting…".
+    /// came back on. Whatever the pane was showing becomes "Starting…".
     pub(super) fn retry_stream(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(index) = self.slot_index(key) else {
             return;

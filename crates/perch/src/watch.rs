@@ -5,6 +5,14 @@
 //! streams, not one with a picture-in-picture. The arrangement comes from
 //! [`crate::layout`], which derives a grid from the window rather than looking
 //! one up per stream count.
+//!
+//! A pane with no picture is `status`'s: the one reading of what it is
+//! showing ([`Showing`]), which the mini player's tiles read too, and the
+//! screen drawn from it. Whatever a pane asks of its owner — a close, a retry,
+//! a press that makes it the active one — is a [`PaneAction`], addressed by
+//! the pane's key.
+
+mod status;
 
 use chrono::{DateTime, Utc};
 use gpui::{
@@ -15,13 +23,14 @@ use streamlink::StreamSupervisor;
 
 use twitch_api::{LiveStream, Video};
 
+pub use self::status::{showing, Showing};
+
 use crate::browse;
 use crate::channel_page;
 use crate::chat::ChatView;
 use crate::controls;
 use crate::layout;
-use crate::motion;
-use crate::seek_bar;
+use crate::target::{self, Target};
 use crate::theme;
 use crate::video::PositionHandle;
 use crate::video_view::VideoView;
@@ -121,6 +130,38 @@ pub struct Slot {
 }
 
 impl Slot {
+    /// A pane that has just been asked for: starting, with nothing running
+    /// yet, nothing picked from its menu, and the pointer not on it.
+    ///
+    /// The one way a slot is made. Both kinds of pane come through here, so a
+    /// field added to `Slot` gets its first value once, rather than once per
+    /// place a pane is opened from — and a test can make one without a
+    /// window. `start_stream` gives it its streamlink and pump.
+    pub fn new(
+        key: String,
+        channel: String,
+        source: Source,
+        chat: Option<Entity<ChatView>>,
+        resume_at: f64,
+        chat_hidden: bool,
+    ) -> Self {
+        Self {
+            key,
+            channel,
+            source,
+            quality_override: None,
+            state: StreamState::Starting,
+            chat,
+            resume_at,
+            supervisor: None,
+            pump: None,
+            hovered: false,
+            chat_hidden,
+            quiet: false,
+            stalled_at: None,
+        }
+    }
+
     pub fn video(&self) -> Option<&Entity<VideoView>> {
         match &self.state {
             StreamState::Playing(view) => Some(view),
@@ -170,66 +211,22 @@ pub struct PaneInfo<'a> {
     pub name: SharedString,
 }
 
-/// What a pane shows in place of a picture.
-struct Status {
-    text: SharedString,
-    /// Something is still happening. Distinct from `error` because the two
-    /// need opposite treatment: one should look alive, the other should sit
-    /// still and be read.
-    working: bool,
-    error: bool,
-    /// Whether there is anything to do about it, and what the control says.
-    /// Not the same as `error`: a stream that ended is not a fault, and asking
-    /// for it again is still the one useful move — a channel that dropped out
-    /// comes back, and one that is really finished says so through the
-    /// offline state. A recording that has finished offers to start over.
-    retry: Option<&'static str>,
-}
-
-fn status_message(slot: &Slot, name: &str) -> Option<Status> {
-    // Spelled out per state rather than through a four-argument constructor.
-    // Three of the four fields are booleans, and `(false, false, true)` at a
-    // call site says nothing about which state is which.
-    let waiting_on_it = |text: SharedString| Status {
-        text,
-        working: true,
-        error: false,
-        retry: None,
-    };
-    let over = |text: SharedString, again: &'static str| Status {
-        text,
-        working: false,
-        error: false,
-        retry: Some(again),
-    };
-    // The same events, read for what was playing. streamlink says "no
-    // playable streams" both for a channel that is off and for a recording
-    // that has expired, and mpv's end of file is a broadcast finishing or a
-    // recording reaching its end; only the pane knows which it asked for.
-    let recording = !slot.is_live();
-    match &slot.state {
-        StreamState::Playing(_) => None,
-        // Where it is opening, when that is not the top: picked up from the
-        // history, a link's moment, or a quality change part-way through.
-        StreamState::Starting if recording && slot.resume_at >= 1.0 => Some(waiting_on_it(
-            format!("opening at {}…", seek_bar::timecode(slot.resume_at)).into(),
-        )),
-        StreamState::Starting if recording => Some(waiting_on_it("opening the recording…".into())),
-        StreamState::Starting => Some(waiting_on_it("starting stream…".into())),
-        StreamState::Offline if recording => Some(over(
-            "this recording is no longer available".into(),
-            "Try again",
-        )),
-        StreamState::Offline => Some(over(format!("{name} is offline").into(), "Try again")),
-        StreamState::Ended if recording => Some(over("finished".into(), "Watch again")),
-        StreamState::Ended => Some(over(format!("{name} ended the stream").into(), "Try again")),
-        StreamState::Failed(reason) => Some(Status {
-            text: reason.clone(),
-            working: false,
-            error: true,
-            retry: Some("Try again"),
-        }),
-    }
+/// What a pane asks of whoever owns it: its controls, and a press on it.
+///
+/// One vocabulary, so a new thing a pane can ask for is a variant here and an
+/// arm in `RootView::on_pane_action`, rather than one more callback threaded
+/// through `page`, `pane` and the header. Always sent with the pane's key,
+/// never its position: a press can land after the panes have moved — one
+/// closed, another opened — and an index read when the pane was drawn would
+/// then name its neighbour (see [`pane_id`]).
+#[derive(Clone, Debug)]
+pub enum PaneAction {
+    /// Close the pane: its header's close.
+    Close,
+    /// Ask for its stream again: the pill a stopped pane offers.
+    Retry,
+    /// Make it the pane the keys talk to: a press anywhere in it.
+    Activate,
 }
 
 /// How every pane in the current grid is arranged. Identical for all of them,
@@ -350,13 +347,13 @@ fn divider<V: 'static>(
 /// and static information on a moving picture is the thing you end up staring
 /// past for three hours. Chat is already a panel, so it costs nothing here.
 fn chat_header<V: 'static>(
-    index: usize,
     slot: &Slot,
     pane: &PaneInfo,
     active: bool,
-    on_close: impl Fn(&mut V, usize, &mut Window, &mut Context<V>) + 'static,
+    on_pane: impl Fn(&mut V, &str, PaneAction, &mut Window, &mut Context<V>) + 'static,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
+    let key = slot.key.clone();
     let recording = slot.recording();
     let info = pane.stream;
     let name = pane.name.clone();
@@ -438,17 +435,21 @@ fn chat_header<V: 'static>(
         })
         .unwrap_or((false, false));
     // The name opens what the pane is playing: the channel, or this one
-    // recording.
-    let (url, tooltip) = match recording {
+    // recording, from its start — the name says which, never when.
+    let (target, tooltip) = match recording {
         Some(video) => (
-            format!("https://twitch.tv/videos/{}", video.id),
+            Target::Video {
+                id: video.id.clone(),
+                start_secs: None,
+            },
             SharedString::from("Open this broadcast on twitch.tv"),
         ),
         None => (
-            format!("https://twitch.tv/{}", slot.channel),
+            Target::Channel(slot.channel.clone()),
             SharedString::from(format!("Open twitch.tv/{}", slot.channel)),
         ),
     };
+    let url = target::link(&target);
 
     div()
         .flex_none()
@@ -536,7 +537,7 @@ fn chat_header<V: 'static>(
                 .child(
                     controls::destructive(pane_id(&slot.key, "close"), "Close").on_click(
                         cx.listener(move |view, _event, window, cx| {
-                            on_close(view, index, window, cx)
+                            on_pane(view, &key, PaneAction::Close, window, cx)
                         }),
                     ),
                 ),
@@ -599,71 +600,21 @@ fn pane<V: 'static>(
     info: &PaneInfo,
     layout: PaneLayout,
     active: bool,
-    on_close: impl Fn(&mut V, usize, &mut Window, &mut Context<V>) + 'static,
-    on_retry: impl Fn(&mut V, usize, &mut Window, &mut Context<V>) + 'static,
-    on_activate: impl Fn(&mut V, usize, &mut Context<V>) + 'static,
+    on_pane: impl Fn(&mut V, &str, PaneAction, &mut Window, &mut Context<V>) + Clone + 'static,
     on_resize: impl Fn(&mut V, ResizeStart, &mut Window, &mut Context<V>) + 'static,
     on_hover: impl Fn(&mut V, usize, bool, &mut Context<V>) + 'static,
     cx: &mut Context<V>,
 ) -> gpui::AnyElement {
-    let video = match (&slot.state, status_message(slot, &info.name)) {
-        (StreamState::Playing(view), _) => view.clone().into_any_element(),
-        (_, Some(status)) => {
-            let retry = status.retry;
-            // Title-sized: this is the only thing in a pane that can be a
-            // thousand pixels wide, and body text in the middle of it read as
-            // a caption on a picture that had not arrived rather than as the
-            // pane's own state.
-            let label = div()
-                .text_size(px(theme::TEXT_TITLE))
-                .text_color(if status.error {
-                    theme::danger()
-                } else {
-                    theme::text_dim()
-                })
-                .child(status.text);
-
-            div()
-                .size_full()
-                .flex()
-                .flex_col()
-                .gap(px(theme::GAP))
-                .items_center()
-                .justify_center()
-                // Only the states that are going somewhere breathe. A pulsing
-                // error would be both irritating and a repaint that never
-                // stops.
-                .child(if status.working {
-                    motion::waiting(pane_id(&slot.key, "status"), label).into_any_element()
-                } else {
-                    label.into_any_element()
-                })
-                // Every state that is not going anywhere on its own gets
-                // this, and until it existed the only way to ask again was to
-                // close the pane and open the channel a second time.
-                .when_some(retry, |pane, again| {
-                    pane.child(
-                        controls::pill(
-                            pane_id(&slot.key, "retry"),
-                            again,
-                            controls::Variant::Primary,
-                        )
-                        .on_click(cx.listener(
-                            move |view, _event, window, cx| on_retry(view, index, window, cx),
-                        )),
-                    )
-                })
-                .into_any_element()
-        }
-        _ => div().into_any_element(),
+    let video = match &slot.state {
+        StreamState::Playing(view) => view.clone().into_any_element(),
+        _ => status::screen(slot, &info.name, on_pane.clone(), cx),
     };
 
     let header = chat_header(
-        index,
         slot,
         info,
         layout.mark_active && active,
-        on_close,
+        on_pane.clone(),
         cx,
     );
 
@@ -753,11 +704,12 @@ fn pane<V: 'static>(
     // whichever pane fills the corner the tile was in, would hand that pane
     // the keys instead. Any later press of a run is within a few pixels of
     // the first, so on a pane the first press already chose.
+    let key = slot.key.clone();
     let cell = div().flex_1().min_w_0().min_h_0().flex().on_mouse_down(
         MouseButton::Left,
-        cx.listener(move |view, event: &MouseDownEvent, _window, cx| {
+        cx.listener(move |view, event: &MouseDownEvent, window, cx| {
             if event.click_count <= 1 {
-                on_activate(view, index, cx);
+                on_pane(view, &key, PaneAction::Activate, window, cx);
             }
         }),
     );
@@ -835,9 +787,7 @@ pub fn page<V: 'static>(
     chat_width: f32,
     video_share: f32,
     active: Option<usize>,
-    on_close: impl Fn(&mut V, usize, &mut Window, &mut Context<V>) + Clone + 'static,
-    on_retry: impl Fn(&mut V, usize, &mut Window, &mut Context<V>) + Clone + 'static,
-    on_activate: impl Fn(&mut V, usize, &mut Context<V>) + Clone + 'static,
+    on_pane: impl Fn(&mut V, &str, PaneAction, &mut Window, &mut Context<V>) + Clone + 'static,
     on_resize: impl Fn(&mut V, ResizeStart, &mut Window, &mut Context<V>) + Clone + 'static,
     on_hover: impl Fn(&mut V, usize, bool, &mut Context<V>) + Clone + 'static,
     cx: &mut Context<V>,
@@ -879,9 +829,7 @@ pub fn page<V: 'static>(
                 info,
                 cell,
                 active == Some(index),
-                on_close.clone(),
-                on_retry.clone(),
-                on_activate.clone(),
+                on_pane.clone(),
                 on_resize.clone(),
                 on_hover.clone(),
                 cx,
@@ -890,4 +838,87 @@ pub fn page<V: 'static>(
         grid = grid.child(line);
     }
     grid
+}
+
+#[cfg(test)]
+mod tests {
+    use twitch_api::VideoKind;
+
+    use super::*;
+
+    /// A pane over `source`, the way `Slot::new` makes one. No chat: nothing
+    /// here reads it, and a chat is an entity, which needs a window.
+    fn slot(key: String, source: Source, resume_at: f64) -> Slot {
+        Slot::new(key, "forsen".into(), source, None, resume_at, false)
+    }
+
+    /// A channel's live pane, just asked for.
+    pub(super) fn live() -> Slot {
+        slot("forsen".into(), Source::Live, 0.0)
+    }
+
+    /// A pane on one of the channel's past broadcasts, just asked for and
+    /// opening `resume_at` seconds in.
+    pub(super) fn recording(resume_at: f64) -> Slot {
+        let video = Video {
+            id: "2868644730".into(),
+            stream_id: Some("318576165606".into()),
+            user_id: "22484632".into(),
+            user_login: "forsen".into(),
+            user_name: "Forsen".into(),
+            title: "Games and stuff".into(),
+            created_at: "2026-09-30T18:00:00Z".into(),
+            length_secs: 4 * 3600,
+            thumbnail_url: String::new(),
+            view_count: 0,
+            kind: VideoKind::Archive,
+            muted_segments: Vec::new(),
+        };
+        slot(
+            Slot::video_key(&video.id),
+            Source::Video {
+                video: Box::new(video),
+                position: PositionHandle::starting_at(resume_at),
+            },
+            resume_at,
+        )
+    }
+
+    /// Whatever opened it, a new pane is waiting for its stream and has
+    /// nothing of its own running yet: `start_stream` gives it those, and
+    /// everything else a pane picks up — a quality from its menu, the
+    /// pointer, Mute all — comes later.
+    #[test]
+    fn a_new_slot_is_starting_with_nothing_running() {
+        for slot in [live(), recording(42.0)] {
+            assert!(matches!(slot.state, StreamState::Starting));
+            assert!(slot.supervisor.is_none() && slot.pump.is_none());
+            assert!(slot.video().is_none());
+            assert_eq!(slot.quality_override, None);
+            assert!(!slot.hovered && !slot.quiet);
+            assert_eq!(slot.stalled_at, None);
+        }
+        assert_eq!(recording(42.0).resume_at, 42.0);
+        assert_eq!(recording(42.0).key, "vod:2868644730");
+    }
+
+    /// Every state with nothing playing notes when it began, which is what a
+    /// later poll compares a broadcast's start against; asking again clears
+    /// it.
+    #[test]
+    fn set_state_notes_when_a_pane_stalls() {
+        let mut slot = live();
+        for stopped in [
+            StreamState::Offline,
+            StreamState::Ended,
+            StreamState::Failed("streamlink exited".into()),
+        ] {
+            slot.set_state(StreamState::Starting);
+            assert_eq!(slot.stalled_at, None);
+            slot.set_state(stopped);
+            assert!(slot.stalled_at.is_some());
+        }
+        slot.set_state(StreamState::Starting);
+        assert_eq!(slot.stalled_at, None, "asking again is not a stall");
+    }
 }
