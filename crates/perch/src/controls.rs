@@ -187,10 +187,26 @@ impl Variant {
     /// The fill under the pointer. A chosen pill stays chosen: the hover wash
     /// used to replace its tint, so the tab you had just clicked looked like
     /// every other tab for as long as the pointer rested on it.
+    ///
+    /// A filled control gets the wash laid over its own fill, never the bare
+    /// wash in its place. The wash is translucent, which is right for a
+    /// control with no fill of its own and wrong for one with: on a card's
+    /// picture the "Past broadcasts" pill went see-through the moment the
+    /// pointer reached it, the opposite of a control lighting up.
     fn hover_background(self) -> gpui::Hsla {
-        match self {
-            Variant::Selected => theme::accent_dim(),
-            _ => theme::hover(),
+        match (self, self.background()) {
+            (Variant::Selected, _) => theme::accent_dim(),
+            (_, Some(fill)) => fill.blend(theme::hover()),
+            (_, None) => theme::hover(),
+        }
+    }
+
+    /// The fill while held down: the press wash over the control's own fill,
+    /// for the same reason as [`Variant::hover_background`].
+    fn pressed_background(self) -> gpui::Hsla {
+        match self.background() {
+            Some(fill) => fill.blend(theme::pressed()),
+            None => theme::pressed(),
         }
     }
 
@@ -246,12 +262,13 @@ pub fn pill(
     // variant decides what the pointer does rather than a caller adding to it.
     let hover_text = variant.hover_foreground();
     let hover_fill = variant.hover_background();
+    let pressed_fill = variant.pressed_background();
     control
         .hover(move |style| style.bg(hover_fill).text_color(hover_text))
         // Stronger than hover rather than a different colour, so a press reads
         // as more of the same gesture. On video there is no shadow or border to
         // deform, so this is the only channel a press has.
-        .active(|style| style.bg(theme::pressed()))
+        .active(move |style| style.bg(pressed_fill))
         .child(label.into())
 }
 
@@ -265,6 +282,7 @@ pub fn pill(
 /// given only the square's would never lift under the pointer.
 pub fn icon_button(id: impl Into<ElementId>, icon: Icon, variant: Variant) -> Stateful<Div> {
     let hover_fill = variant.hover_background();
+    let pressed_fill = variant.pressed_background();
     let hover_glyph = variant.hover_foreground();
     variant
         .dress(
@@ -281,7 +299,7 @@ pub fn icon_button(id: impl Into<ElementId>, icon: Icon, variant: Variant) -> St
         )
         // The one `hover`; see `pill`.
         .hover(move |style| style.bg(hover_fill))
-        .active(|style| style.bg(theme::pressed()))
+        .active(move |style| style.bg(pressed_fill))
         .child(
             svg()
                 .path(icon.path())
@@ -621,6 +639,28 @@ mod tests {
                 ratio >= theme::MIN_CONTRAST,
                 "a {state} × reads {ratio:.2}:1 on the band over a white picture"
             );
+        }
+    }
+
+    /// A control with a fill of its own keeps it opaque under the pointer and
+    /// while held. The washes are translucent so that they can lie over
+    /// anything, and laid in place of a fill they let the picture under a
+    /// card's pill show straight through it on hover.
+    #[test]
+    fn a_filled_control_stays_opaque_under_the_pointer() {
+        for &variant in Variant::ALL {
+            if variant.background().is_none() || variant == Variant::Selected {
+                continue;
+            }
+            for (state, fill) in [
+                ("hovered", variant.hover_background()),
+                ("pressed", variant.pressed_background()),
+            ] {
+                assert_eq!(
+                    fill.a, 1.0,
+                    "a {state} {variant:?} control lets the picture through"
+                );
+            }
         }
     }
 
