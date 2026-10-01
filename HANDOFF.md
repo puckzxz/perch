@@ -1745,13 +1745,15 @@ test asking gpui's own keymap.
 **Avatars are a second request.** `/streams` carries a stream's preview, not the
 channel's picture, so the rail gets its faces from `/users` — batched at Helix's
 hundred per request, sent after the live list rather than with it, and merged
-into what the UI already holds so the rail fills in rather than blinking. Only
-live follows are looked up. An offline or pinned row in the rail shows a
-picture only if `avatars` already has one from earlier in the session, and
-asks for none of its own: a `/users` call per hundred offline follows would
-cost every poll as many requests again as fetching the offline list does, for
-faces on a list that starts folded. A recommended row brings its own picture,
-70x70 already, and goes through the same `ImageCache`.
+into what the UI already holds so the rail fills in rather than blinking. Live
+follows are looked up on every poll, because that list is short and changes.
+Offline follows are looked up once a session (`twitch::unpictured`, the
+worker's `pictured` set), after the followed list is handed over: a hundred
+offline follows cost two requests on the first poll and none after it until
+somebody new is followed, where asking every poll would have cost as many
+requests again as fetching the offline list does. A failed lookup is not
+marked, so the next poll tries again. A recommended row brings its own
+picture, 70x70 already, and goes through the same `ImageCache`.
 
 **The rail's Recommended group reads Twitch's unofficial sidebar query.**
 Helix has nothing like it. `twitch_api::recommend` asks the website's

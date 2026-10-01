@@ -330,8 +330,8 @@ under the pointer as the live list does. Then everyone else you follow, folded
 under Offline and a count — click the count to unfold them, and again to fold
 them away; they start folded each time Perch starts. Click a live channel,
 followed or recommended, to watch it, or `+` to open it beside what is already
-playing; click anyone else for their channel's page. An offline name has a
-picture only if Perch saw that channel live earlier in the session.
+playing; click anyone else for their channel's page. Offline names get their
+pictures too, asked for once each time Perch starts.
 
 Recommendations start from the channels open in your panes and the ones you
 watched most recently, six at most. For each, Twitch says who else its viewers

@@ -15,6 +15,7 @@
 //! asks for in between, which is what the request channel is: `recv_timeout`
 //! against the next poll deadline is both the wait and the mailbox.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
@@ -732,7 +733,23 @@ fn similar_to_each(
     Some(Ok(answers))
 }
 
-/// Ask who is live, then who is followed at all.
+/// The followed channels whose picture has not been asked for this session.
+///
+/// A live channel's picture comes with every poll, because the live list is
+/// short and changes; an offline channel's is asked once and kept, because the
+/// list is long — a hundred and more — and a profile picture changes about as
+/// often as a name. So a hundred offline follows cost two requests on the
+/// first poll and none after it, until somebody new is followed.
+fn unpictured(channels: &[Channel], asked: &HashSet<String>) -> Vec<String> {
+    channels
+        .iter()
+        .map(|channel| channel.login.to_lowercase())
+        .filter(|login| !asked.contains(login))
+        .collect()
+}
+
+/// Ask who is live, then who is followed at all, then the pictures of the
+/// followed channels the rail has not yet got one for.
 ///
 /// Two calls because Helix has no endpoint that answers both, and at most one
 /// complaint: on a real outage they fail together, and saying so twice is twice
@@ -742,11 +759,15 @@ fn similar_to_each(
 /// that is not about shutdown latency — it is about not spending a second
 /// multi-page request, and not sending its results, for a service that has
 /// already been dropped.
+///
+/// `pictured` is the worker's record of the offline pictures already asked
+/// for; see [`unpictured`].
 fn poll_follows(
     client_id: &str,
     session: &Session,
     tx: &mpsc::UnboundedSender<TwitchEvent>,
     stop: &AtomicBool,
+    pictured: &mut HashSet<String>,
 ) {
     let token = &session.access_token;
     let mut failure = None;
@@ -782,7 +803,22 @@ fn poll_follows(
 
     match twitch_api::followed_channels(client_id, token, &session.user_id) {
         Ok(channels) => {
+            let missing = unpictured(&channels, pictured);
             let _ = tx.unbounded_send(TwitchEvent::FollowedChannels(channels));
+
+            // After the names, for the same reason as the live pictures: the
+            // rail shows the names at once and fills the faces in. Marked as
+            // asked only once answered, so a failed request is tried again at
+            // the next poll rather than leaving the rail faceless all session.
+            if !missing.is_empty() && !stop.load(Ordering::Relaxed) {
+                match twitch_api::profile_images(client_id, token, &missing) {
+                    Ok(images) => {
+                        pictured.extend(missing);
+                        let _ = tx.unbounded_send(TwitchEvent::Avatars(images));
+                    }
+                    Err(e) => eprintln!("avatars (offline): {e}"),
+                }
+            }
         }
         Err(e) => failure = failure.or_else(|| Some(e.to_string())),
     }
@@ -820,13 +856,16 @@ fn run(
     });
 
     let mut next_poll = Instant::now();
+    // Whose offline picture has been asked for; see `unpictured`. Per worker,
+    // so a new sign-in starts it over, which is when the follows can change.
+    let mut pictured = HashSet::new();
 
     while !stop.load(Ordering::Relaxed) {
         if Instant::now() >= next_poll {
             if !keep_session_fresh(&mut session, &client_id, &settings_path, &tx, &stop) {
                 return;
             }
-            poll_follows(&client_id, &session, &tx, &stop);
+            poll_follows(&client_id, &session, &tx, &stop, &mut pictured);
             next_poll = Instant::now() + POLL_INTERVAL;
         }
 
@@ -854,7 +893,7 @@ fn run(
                     // done by hand there would be repeated automatically a few
                     // seconds later, for two of everything.
                     Request::Follows => {
-                        poll_follows(&client_id, &session, &tx, &stop);
+                        poll_follows(&client_id, &session, &tx, &stop, &mut pictured);
                         next_poll = Instant::now() + POLL_INTERVAL;
                     }
                     other => serve(other, &client_id, &session, &tx),
@@ -870,6 +909,33 @@ fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn channel(login: &str) -> Channel {
+        Channel {
+            login: login.to_string(),
+            user_id: String::new(),
+            display_name: login.to_string(),
+        }
+    }
+
+    /// An offline follow's picture is asked for once a session, so the rail
+    /// fills in on the first poll and a hundred follows cost two requests,
+    /// not two a minute. Compared lowercase, the way Helix answers.
+    #[test]
+    fn offline_pictures_are_asked_for_once() {
+        let follows = [channel("Asmongold"), channel("forsen"), channel("Lirik")];
+        let mut asked = HashSet::new();
+        assert_eq!(
+            unpictured(&follows, &asked),
+            ["asmongold", "forsen", "lirik"]
+        );
+
+        asked.extend(unpictured(&follows, &asked));
+        assert!(unpictured(&follows, &asked).is_empty());
+
+        let more = [channel("forsen"), channel("NewFollow")];
+        assert_eq!(unpictured(&more, &asked), ["newfollow"]);
+    }
 
     /// Every request the browse page makes names the list it fills, and the
     /// four that fill none say so. A request with no key would leave its list
