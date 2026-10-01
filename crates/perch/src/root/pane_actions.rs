@@ -210,10 +210,19 @@ impl RootView {
                     self.request_quality(index, name.clone(), window, cx);
                 }
             }
+            // Only ever about the stream on screen: a stream getting ready
+            // beside it that stops is a swap that failed (`video_view::swap`).
             VideoEvent::Stopped(reason) => self.stream_stopped(owner, reason.clone(), cx),
             // The bar's own: the same route as the pane's header and the
             // palette, by the key the player was subscribed with.
             VideoEvent::Pane(action) => self.on_pane_action(owner, action.clone(), window, cx),
+            // A new rendition took over in place, or was given up on; see
+            // `renditions`.
+            VideoEvent::Swapped { generation } => self.on_swapped(owner, *generation, cx),
+            VideoEvent::SwapFailed {
+                generation,
+                quality,
+            } => self.on_swap_failed(owner, *generation, quality, cx),
         }
     }
 }

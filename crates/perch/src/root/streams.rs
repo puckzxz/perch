@@ -4,17 +4,19 @@
 //! which rendition and when it restarts for one, which is `renditions`; how
 //! it is drawn is `crate::watch`.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use gpui::{prelude::*, App, Context, Focusable, SharedString, Window};
 use settings::QualityPreference;
-use streamlink::{StreamEvent, StreamOptions, StreamSupervisor};
+use streamlink::{Playlist, StreamEvent, StreamOptions, StreamSupervisor};
 use twitch_api::{LiveStream, Video, VideoKind};
 
 use super::navigation::Route;
 use super::{Page, RootView};
 use crate::chat::{ChatView, Feed};
 use crate::video::{Playback, PositionHandle, SizeHandle, StartOptions, Stopped, VideoStream};
-use crate::video_view::{ChatButton, Qualities, Start, VideoView};
-use crate::watch::{LiveInfo, Lookup, Slot, Source, StreamState, MAX_PANES};
+use crate::video_view::{self, ChatButton, Qualities, Start, VideoView, Wake};
+use crate::watch::{LiveInfo, Lookup, PendingStart, Restart, Slot, Source, StreamState, MAX_PANES};
 use crate::{settings_view, vod};
 
 /// Starting render size. Each pane measures itself on the first layout pass and
@@ -22,6 +24,62 @@ use crate::{settings_view, vod};
 /// frame or two look like.
 const RENDER_WIDTH: u32 = 1280;
 const RENDER_HEIGHT: u32 = 720;
+
+/// What a recording's pane says when streamlink resolved it with no
+/// playlist to open.
+pub(super) const NO_PLAYLIST: &str = "the recording came without a playlist";
+
+/// How a pane's stream is started: in place of whatever the pane had, or
+/// beside the picture on screen, to take over from it in place.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum How {
+    /// The pane's one stream: opening, `Try again`, the settings sheet's
+    /// restarts, and a restart of a pane with no picture yet. Whatever was
+    /// resolving beside the pane is dropped.
+    Cold,
+    /// Beside the stream on screen, as `Slot::pending`, for the reason
+    /// given; its player is started inside the pane's view once it resolves
+    /// (`renditions`, `video_view::swap`).
+    Beside(Restart),
+}
+
+/// Numbers every start of every pane's stream, for the life of the
+/// process; see `Slot::generation`. One counter rather than one per pane, so
+/// a number is never handed out twice — not even after the start it went to
+/// was dropped — and so a log line's number names one start.
+static GENERATIONS: AtomicU64 = AtomicU64::new(0);
+
+/// The next start's number. Never zero, which is a slot that has had none.
+fn next_generation() -> u64 {
+    GENERATIONS.fetch_add(1, Ordering::Relaxed) + 1
+}
+
+/// What a player of a pane on `source` is handed: the relay at `url` for a
+/// live stream, or a recording's `playlist`, opened `start_at` seconds in.
+/// `None` for a recording that came without its playlist.
+///
+/// The one place a recording's player is given its label, which is the
+/// player's alone (`vod::playlist_label`), so no other player of the
+/// recording — one started beside it at another rendition included — writes
+/// or deletes its files.
+pub(super) fn playback(
+    source: &Source,
+    url: String,
+    quality: &str,
+    playlist: Option<Playlist>,
+    start_at: f64,
+) -> Option<Playback> {
+    match (source, playlist) {
+        (Source::Video { video, position }, Some(playlist)) => Some(Playback::Vod {
+            playlist,
+            start_at,
+            label: vod::playlist_label(&video.id, quality),
+            position: position.clone(),
+        }),
+        (Source::Video { .. }, None) => None,
+        (Source::Live, _) => Some(Playback::Live { url }),
+    }
+}
 
 impl RootView {
     /// Open `channel`. With `solo`, it becomes the only pane; otherwise it is
@@ -86,7 +144,7 @@ impl RootView {
             // fewer to recommend.
             this.update_recommended();
             this.active = Some(channel.clone());
-            this.start_stream(channel, window, cx);
+            this.start_stream(channel, How::Cold, window, cx);
             this.restage(cx);
             // The others share the window with one more pane now.
             this.sync_quality(window, cx);
@@ -159,7 +217,7 @@ impl RootView {
             // And for the rail's recommendations.
             this.update_recommended();
             this.active = Some(key.clone());
-            this.start_stream(key, window, cx);
+            this.start_stream(key, How::Cold, window, cx);
             this.restage(cx);
             this.sync_quality(window, cx);
         })
@@ -266,7 +324,7 @@ impl RootView {
         slot.take_over_from(&self.slots[index]);
         self.slots[index] = slot;
         self.active = Some(video_key.clone());
-        self.start_stream(video_key, window, cx);
+        self.start_stream(video_key, How::Cold, window, cx);
         self.restage(cx);
         self.sync_quality(window, cx);
         cx.notify();
@@ -291,10 +349,17 @@ impl RootView {
         }
     }
 
-    /// Start, or restart, streamlink for an existing slot.
+    /// Start, or restart, streamlink for an existing slot, as `how` says:
+    /// as the pane's one stream, or beside the one on screen.
+    ///
+    /// Every start is numbered (`Slot::generation`), and its events carry
+    /// the number, so each reaches the start it came from — the pane's
+    /// stream, or the one resolving beside it — and none reaches a pane that
+    /// has moved on from it ([`apply_stream_event`](Self::apply_stream_event)).
     pub(super) fn start_stream(
         &mut self,
         key: String,
+        how: How,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -333,12 +398,13 @@ impl RootView {
             .volume_override
             .unwrap_or_else(|| self.settings.volume_for(&channel));
 
+        let generation = next_generation();
         let pump = cx.spawn_in(window, async move |this, cx| {
             use futures::StreamExt as _;
             while let Some(event) = events.next().await {
                 let key = key.clone();
                 let ok = this.update_in(cx, |this: &mut RootView, window, cx| {
-                    this.apply_stream_event(&key, event, volume, window, cx)
+                    this.apply_stream_event(&key, generation, event, volume, window, cx)
                 });
                 if ok.is_err() {
                     break;
@@ -346,13 +412,41 @@ impl RootView {
             }
         });
 
-        self.slots[index].supervisor = Some(supervisor);
-        self.slots[index].pump = Some(pump);
+        let slot = &mut self.slots[index];
+        match how {
+            How::Cold => {
+                slot.supervisor = Some(supervisor);
+                slot.pump = Some(pump);
+                slot.generation = generation;
+                slot.pending = None;
+                if let Some(view) = slot.video() {
+                    view.update(cx, |view, _| view.cancel_swap());
+                }
+            }
+            // The stream on screen keeps its streamlink: killing it would
+            // end the picture the new player is getting ready to replace.
+            // One resolving already is dropped, superseded.
+            How::Beside(reason) => {
+                slot.pending = Some(PendingStart {
+                    supervisor,
+                    pump,
+                    generation,
+                    for_height: pane_height,
+                    reason,
+                });
+            }
+        }
     }
 
+    /// What streamlink said about the start `generation` of the pane `key`
+    /// names. The pane's own stream's events change the pane; those of a
+    /// start resolving beside it are `renditions`'s (`pending_event`); and
+    /// those of a start the pane has moved on from go nowhere, by the rule
+    /// the player's frame wakes go by (`video_view::route`).
     pub(super) fn apply_stream_event(
         &mut self,
         key: &str,
+        generation: u64,
         event: StreamEvent,
         volume: u8,
         window: &mut Window,
@@ -363,6 +457,13 @@ impl RootView {
         let Some(index) = self.slot_index(key) else {
             return;
         };
+        let slot = &self.slots[index];
+        let pending = slot.pending.as_ref().map(|pending| pending.generation);
+        match video_view::route(generation, slot.generation, pending) {
+            Wake::Current => {}
+            Wake::Pending => return self.pending_event(index, event, cx),
+            Wake::Stale => return,
+        }
 
         match event {
             StreamEvent::Resolving => self.set_slot_state(index, StreamState::Starting, cx),
@@ -386,33 +487,23 @@ impl RootView {
                 slot.broadcast = if slot.is_live() { broadcast } else { None };
                 // What the player is handed: the relay for a live stream, or
                 // the recording's playlist and where to open it.
-                let playback = match (&self.slots[index].source, playlist) {
-                    (Source::Video { video, position }, Some(playlist)) => Playback::Vod {
-                        playlist,
-                        start_at: self.slots[index].resume_at,
-                        // This player's alone, so no other player of the
-                        // recording writes or deletes its files.
-                        label: vod::playlist_label(&video.id, &quality),
-                        position: position.clone(),
-                    },
-                    (Source::Video { .. }, None) => {
-                        self.set_slot_state(
-                            index,
-                            StreamState::Failed("the recording came without a playlist".into()),
-                            cx,
-                        );
-                        return;
-                    }
-                    (Source::Live, _) => Playback::Live { url },
+                let start_at = self.slots[index].resume_at;
+                let Some(playback) =
+                    playback(&self.slots[index].source, url, &quality, playlist, start_at)
+                else {
+                    self.set_slot_state(index, StreamState::Failed(NO_PLAYLIST.into()), cx);
+                    return;
                 };
                 // A pane Mute all is holding starts silent, at the level its
-                // slider will show; and one started while you browse — the
-                // re-pick after a resize, a quality change from the settings —
-                // starts as the tile it replaces, not as a big player with
-                // its controls up in the corner of the browse page. One
-                // started in a pop-out starts there, with its window's focus.
+                // slider will show; and one started while you browse — a
+                // quality change from the settings, a restart of a pane with
+                // no picture yet — starts as the tile it replaces, not as a
+                // big player with its controls up in the corner of the browse
+                // page. One started in a pop-out starts there, with its
+                // window's focus.
                 let quiet = self.slots[index].quiet;
                 let start = Start {
+                    key: SharedString::from(key.to_string()),
                     place: self.place_of(key),
                     quiet,
                     focus: self.focus_of(key),
@@ -432,14 +523,11 @@ impl RootView {
                 };
                 match VideoStream::start(options, playback) {
                     Ok((stream, frames)) => {
-                        let qualities = Qualities {
-                            playing: SharedString::from(quality),
-                            available,
-                            default: settings_view::quality_label(&self.settings.quality),
-                            picked: self.slots[index].quality_override.is_some(),
-                        };
+                        let qualities = self.qualities(index, quality, available);
                         let view = cx.new(|cx| {
-                            VideoView::from_stream(stream, frames, qualities, volume, start, cx)
+                            VideoView::from_stream(
+                                stream, frames, qualities, volume, generation, start, cx,
+                            )
                         });
                         // What the player asks for, resolved by the pane's key
                         // when it arrives; see `on_video_event`.
@@ -469,6 +557,23 @@ impl RootView {
             }
         }
         cx.notify();
+    }
+
+    /// What the menu of the pane at `index` offers, with `quality` playing
+    /// out of `available`: for its first player, and for one started beside
+    /// it.
+    pub(super) fn qualities(
+        &self,
+        index: usize,
+        quality: String,
+        available: Vec<String>,
+    ) -> Qualities {
+        Qualities {
+            playing: SharedString::from(quality),
+            available,
+            default: settings_view::quality_label(&self.settings.quality),
+            picked: self.slots[index].quality_override.is_some(),
+        }
     }
 
     /// Everything the app currently knows about a channel it is watching.
@@ -584,6 +689,9 @@ impl RootView {
         // starts both again.
         self.slots[index].supervisor = None;
         self.slots[index].pump = None;
+        // And whatever was resolving beside it: there is no picture left to
+        // take over from, and `Try again` starts afresh.
+        self.slots[index].pending = None;
         // Replacing the state drops the player, and with it the frozen frame.
         let state = match reason {
             Stopped::Ended => StreamState::Ended,
@@ -620,7 +728,7 @@ impl RootView {
             return;
         };
         self.set_slot_state(index, StreamState::Starting, cx);
-        self.start_stream(key.to_string(), window, cx);
+        self.start_stream(key.to_string(), How::Cold, window, cx);
         cx.notify();
     }
 

@@ -177,8 +177,9 @@ mod tests {
         assert_eq!(loudness.audible(), 65);
     }
 
-    /// A pane rebuilt while Mute all holds — a quality change, a re-pick
-    /// after a resize — starts silent, with the level its slider should show.
+    /// A pane rebuilt while Mute all holds — a quality change from the
+    /// settings, `Try again` — starts silent, with the level its slider
+    /// should show.
     #[test]
     fn a_pane_born_quiet_is_silent_but_keeps_its_level() {
         let loudness = Loudness::new(40, true);

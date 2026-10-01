@@ -29,11 +29,19 @@
 //! can move between the main window and a pop-out — through
 //! [`VideoView::set_place`] and nothing else — and be drawn by exactly one
 //! window at a time; see `crate::stage`.
+//!
+//! Nor is a player one stream for life. A new rendition is started beside
+//! the stream on screen, inside the same view, and takes over in place once
+//! it is ready — `swap`, which also routes each stream's wakes — so a
+//! quality change keeps the picture, the fade that brought it in, the level
+//! and everything holding the view.
 
 mod bar;
 mod menu;
+mod swap;
 
 pub use menu::Menu;
+pub use swap::{route, Wake, SWAP_LEAD};
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -51,7 +59,7 @@ use crate::motion;
 use crate::seek_bar;
 use crate::stage::Place;
 use crate::theme;
-use crate::video::{Stopped, VideoStream};
+use crate::video::{SizeHandle, Stopped, VideoStream};
 use crate::watch::PaneAction;
 
 pub enum VideoEvent {
@@ -59,8 +67,8 @@ pub enum VideoEvent {
     VolumeChanged(u8),
     /// The user picked a quality from the pane's menu: a rendition, or `None`
     /// to hand the pane back to whatever the settings pick at its size.
-    /// Switching means restarting streamlink, so the root handles it rather
-    /// than the player.
+    /// Switching means starting streamlink again, so the root handles it
+    /// rather than the player.
     QualityRequested(Option<String>),
     /// The stream stopped and will not resume. The root handles it because
     /// what is left to do - retire this player, take streamlink down with it,
@@ -70,6 +78,19 @@ pub enum VideoEvent {
     /// player's: its chat, its link. Answered by `RootView::on_pane_action`,
     /// as the pane's own controls are, for the pane this player belongs to.
     Pane(PaneAction),
+    /// The player started beside this one for the pane's start `generation`
+    /// has taken over (`swap`), and the stream it replaced has been stopped.
+    /// The root keeps that start's streamlink as the pane's and drops the
+    /// old one's, which until now was feeding the old player.
+    Swapped { generation: u64 },
+    /// The player started beside this one for `generation`, at `quality`,
+    /// was given up on; the one on screen plays on as it was. The root drops
+    /// that start's streamlink, and says so when the rendition was picked by
+    /// hand.
+    SwapFailed {
+        generation: u64,
+        quality: SharedString,
+    },
 }
 
 /// What the bar's chat glyph offers: to hide the pane's chat, to show it, or
@@ -121,7 +142,18 @@ pub struct Qualities {
 }
 
 pub struct VideoView {
+    /// The pane's key (`watch::Slot::key`), which names this player in the
+    /// log. A pane's key never changes in place, so neither does this.
+    key: SharedString,
+    /// The stream on screen.
     stream: VideoStream,
+    /// The root's number for the start of the pane's stream that `stream`
+    /// came from: what its frame wakes carry, so they reach it and not a
+    /// stream that replaced it (`swap::route`).
+    generation: u64,
+    /// A new rendition getting ready beside `stream`, to take over in place;
+    /// see `swap`.
+    pending: Option<swap::Pending>,
     /// The stream's frame as the sprite atlas knows it.
     ///
     /// Every frame from one stream carries the same `ImageId` (see
@@ -132,7 +164,9 @@ pub struct VideoView {
     ///
     /// Each window has an atlas of its own, so this is the tile in the window
     /// that drew the view last. `set_place` empties it, and the next draw —
-    /// in whichever window — uploads the frame afresh.
+    /// in whichever window — uploads the frame afresh. A swap's new stream
+    /// has an id of its own, and `render` frees the old one's tile when the
+    /// first frame with the new id arrives.
     current: Option<Arc<RenderImage>>,
     /// When `current` was first filled: the moment the first frame began
     /// to fade in, which [`covers`](Self::covers) counts from.
@@ -205,6 +239,7 @@ pub struct VideoView {
     /// every window — so a release build keeps none.
     #[cfg(debug_assertions)]
     drawn_in: Option<gpui::AnyWindowHandle>,
+    /// The frame pump of `stream`; a swap hands over the new stream's.
     _pump: Task<()>,
     /// Keeps the release hook alive; see [`VideoView::from_stream`].
     _release: Subscription,
@@ -213,9 +248,14 @@ pub struct VideoView {
 impl EventEmitter<VideoEvent> for VideoView {}
 
 /// How a player is born, which is how its pane already is: a player rebuilt
-/// while you browse — a quality change, the re-pick after a resize — has to
-/// come up as the tile it is replacing, not as a watch-page player.
+/// while you browse — a quality change from the settings, a restart of a pane
+/// with no picture yet — has to come up as the tile it is replacing, not as
+/// a watch-page player. A rendition swapped in place is no new player, and
+/// keeps all of this (`swap`).
 pub struct Start {
+    /// The pane's key, which names the player in the log; see
+    /// `VideoView::key`.
+    pub key: SharedString,
     /// Where it is drawn; see `VideoView::place`.
     pub place: Place,
     /// Held silent by Mute all; see `Loudness`.
@@ -235,34 +275,19 @@ impl VideoView {
     /// too unless `start.quiet`, in which case the stream started silent and
     /// the slider still shows `level`. Taken rather than read off the stream
     /// for that reason.
+    ///
+    /// `generation` is the root's number for the start the stream came from,
+    /// which its frame wakes carry; see `swap::route`.
     pub fn from_stream(
         stream: VideoStream,
-        mut frames: futures::channel::mpsc::Receiver<()>,
+        frames: futures::channel::mpsc::Receiver<()>,
         qualities: Qualities,
         level: u8,
+        generation: u64,
         start: Start,
         cx: &mut Context<Self>,
     ) -> Self {
-        // Bound to no window, so the player can move between windows: a
-        // task bound to the main one would stop waking it the moment the
-        // main window went, with a pop-out still drawing it.
-        let pump = cx.spawn(async move |this, cx| {
-            use futures::StreamExt as _;
-            while frames.next().await.is_some() {
-                // The same wake carries both: a new frame to draw, and - once
-                // - the news that there will not be another. See
-                // `VideoStream::stopped`.
-                let alive = this.update(cx, |this, cx| {
-                    if let Some(reason) = this.stream.take_stopped() {
-                        cx.emit(VideoEvent::Stopped(reason));
-                    }
-                    cx.notify();
-                });
-                if alive.is_err() {
-                    break;
-                }
-            }
-        });
+        let pump = Self::pump(frames, generation, cx);
 
         let loudness = Loudness::new(level, start.quiet);
         let volume_slider = cx.new(|_| {
@@ -283,9 +308,11 @@ impl VideoView {
         // `sprite_atlas.remove`, so the one tile this stream owns stays
         // resident for the life of the window unless it is freed here. This
         // view is destroyed on every ordinary action — Ctrl+W, closing a pane,
-        // going back to browse, and every quality or credentials change, which
-        // replace `Playing` with `Starting` — so each would otherwise leak a
-        // full-size frame. `Drop` cannot do this; it has no `App`.
+        // going back to browse, and every cold restart, which replaces
+        // `Playing` with `Starting` — so each would otherwise leak a
+        // full-size frame. `Drop` cannot do this; it has no `App`. (A
+        // rendition swapped in place keeps the view; `render` frees the old
+        // stream's tile instead.)
         //
         // Through `App::drop_image`, which visits every window, rather than
         // the one window the view was made in: the view may be drawn in a
@@ -299,7 +326,10 @@ impl VideoView {
         });
 
         Self {
+            key: start.key,
             stream,
+            generation,
+            pending: None,
             current: None,
             first_frame: None,
             loudness,
@@ -346,8 +376,18 @@ impl VideoView {
         };
         let position = self.stream.position();
         let target = (position + delta).clamp(0.0, timeline.extent(position));
-        self.stream.seek_to(target);
+        self.seek_to(target);
         cx.notify();
+    }
+
+    /// Send the recording on screen to `secs`: every seek of the user's
+    /// comes through here. A rendition getting ready beside it is not sent
+    /// along — it is lined up with wherever the pane ends up, from scratch
+    /// (`swap`) — but takes the seek over if it takes over before the player
+    /// on screen has applied it (`swap`'s promote).
+    fn seek_to(&mut self, secs: f64) {
+        self.stream.seek_to(secs);
+        self.retarget_swap();
     }
 
     /// The pointer went down on the seek bar at `fraction` of its length.
@@ -364,7 +404,7 @@ impl VideoView {
         };
         if let Some(timeline) = self.stream.timeline() {
             let extent = timeline.extent(self.stream.position());
-            self.stream.seek_to(fraction as f64 * extent);
+            self.seek_to(fraction as f64 * extent);
         }
         self.sync_controls();
         cx.notify();
@@ -586,6 +626,19 @@ impl VideoView {
         cx.notify();
     }
 
+    /// Whether what plays was picked from the pane's own menu: what a pick
+    /// that could not be carried out goes back to.
+    pub fn picked(&self) -> bool {
+        self.qualities.picked
+    }
+
+    /// The render size the pane's probe asks for, which a rendition started
+    /// beside this player is handed so it renders at the pane's size from
+    /// its first frame (`video::StartOptions::size`).
+    pub fn size_handle(&self) -> SizeHandle {
+        self.stream.size_handle()
+    }
+
     /// What the pane's chat now is, after `RootView::toggle_chat` changed
     /// it; see [`ChatButton`] for why this is the only other way in.
     pub fn set_chat(&mut self, chat: ChatButton, cx: &mut Context<Self>) {
@@ -620,8 +673,9 @@ impl VideoView {
     /// drawing what it was waiting for under the player, which draws nothing
     /// before its first frame and only part of it during the fade — so the
     /// picture arrives over the poster, never over black. Once true it stays
-    /// true for the life of this player; a quality change makes a new one,
-    /// which starts over.
+    /// true for the life of this player, a rendition swapped in place
+    /// included (`swap`); a cold restart makes a new player, which starts
+    /// over.
     pub fn covers(&self) -> bool {
         covered(self.first_frame.map(|first| first.elapsed()))
     }
@@ -729,6 +783,15 @@ impl Render for VideoView {
             .as_ref()
             .is_none_or(|current| !Arc::ptr_eq(current, &frame));
         if is_new {
+            // A rendition swapped in place is a new stream, with an id of its
+            // own (`swap`): the tile the old one wrote goes now, or it would
+            // stay resident for the life of the window, since nothing else
+            // names that id again. From this window alone, the only one that
+            // has drawn this player since its last change of place, which
+            // emptied `current`.
+            if let Some(old) = self.current.take().filter(|old| old.id != frame.id) {
+                let _ = window.drop_image(old);
+            }
             // False on the first frame, and again once a resize changed the
             // frame's size, having left the atlas with no entry for the id;
             // `img` below then inserts it the ordinary way.

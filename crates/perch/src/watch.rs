@@ -85,6 +85,35 @@ pub enum StreamState {
     Failed(SharedString),
 }
 
+/// Why a pane's stream is being started again beside the one on screen,
+/// which decides what becomes of an answer that changes nothing and of a
+/// start that fails.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Restart {
+    /// The pane grew, and the settings now pick a sharper rendition
+    /// (`RootView::sync_quality`). Dropped if it resolves to the rendition
+    /// already playing, and dropped quietly if it fails: the next growth
+    /// asks again.
+    RePick,
+    /// A rendition picked from the pane's own menu, or the settings' choice
+    /// picked again there (`RootView::request_quality`). Carried out
+    /// whatever it resolves to, since somebody asked; a failure says so.
+    Pick,
+}
+
+/// A start of a pane's stream resolving beside the one on screen; see
+/// [`Slot::pending`].
+pub struct PendingStart {
+    pub supervisor: StreamSupervisor,
+    pub pump: Task<()>,
+    /// What its events carry; see [`Slot::generation`].
+    pub generation: u64,
+    /// The pane's height, in physical pixels, it was started for: a re-pick
+    /// for no taller a pane does not start it again (`renditions`).
+    pub for_height: u32,
+    pub reason: Restart,
+}
+
 /// One stream and everything that belongs to it.
 ///
 /// Dropping a slot stops its streamlink (the supervisor) and its mpv (the
@@ -109,11 +138,25 @@ pub struct Slot {
     /// a highlight is cut from ranges of a broadcast, so its offsets mean
     /// nothing, and an upload was never a broadcast at all.
     pub chat: Option<Entity<ChatView>>,
-    /// Where a recording picks up when its player is started again: after a
-    /// quality change, or from the top once it has finished.
+    /// Where a recording picks up when its player is started again cold:
+    /// after the settings sheet's quality change, or from the top once it
+    /// has finished. A rendition swapped in place starts from where the
+    /// player on screen is instead (`renditions`).
     pub resume_at: f64,
     pub supervisor: Option<StreamSupervisor>,
     pub pump: Option<Task<()>>,
+    /// The root's number for the start of this pane's stream that
+    /// `supervisor` and `pump` belong to, which its events carry
+    /// (`RootView::apply_stream_event`), so a start the pane has moved on
+    /// from is heard no more. Zero until the first start.
+    pub generation: u64,
+    /// A start of this pane's stream at another rendition, resolving beside
+    /// the one on screen, whose player will take over in place
+    /// (`video_view::swap`). `supervisor` is left running meanwhile: killing
+    /// it would end the stream the picture on screen is reading, and the
+    /// pane with it. Promoted into `supervisor` once its player has taken
+    /// over and the old one has been stopped (`RootView::on_swapped`).
+    pub pending: Option<PendingStart>,
     /// Whether the pointer is over this pane's video, measured rather than
     /// reported — see `VideoView::hovered` for why that distinction matters.
     /// Two things follow it: the rising edge makes the pane the one the keys
@@ -126,8 +169,10 @@ pub struct Slot {
     /// [`point`](Self::point) every frame the pane is drawn.
     ///
     /// The slot's rather than the player's, so it outlives the player: a
-    /// quality change builds a new one, and a pane with no player at all —
-    /// starting, offline, ended — still has a header to show.
+    /// cold restart — the settings sheet's, or `Try again` — builds a new
+    /// one, and a pane with no player at all — starting, offline, ended —
+    /// still has a header to show. A rendition swapped in place keeps its
+    /// player (`video_view::swap`).
     pub header: motion::Fade,
     /// Brought up for a moment by a key, without the pointer: a pane key
     /// made this the pane the keys talk to, or `C` hid its chat and sent its
@@ -142,8 +187,8 @@ pub struct Slot {
     /// channel you watch for the game is not a statement about the next one.
     pub chat_hidden: bool,
     /// Held silent by Mute all: a mute that is not a preference. The slot's
-    /// rather than the player's, so it outlives the player — a quality change
-    /// or a re-pick builds a new one, which is born quiet from this — and it
+    /// rather than the player's, so it outlives the player — a cold restart
+    /// builds a new one, which is born quiet from this — and it
     /// goes on to a recording that takes the pane's place
     /// ([`take_over_from`](Self::take_over_from)). Ends at the pane's first
     /// deliberate change of level, and is never saved.
@@ -278,6 +323,8 @@ impl Slot {
             resume_at,
             supervisor: None,
             pump: None,
+            generation: 0,
+            pending: None,
             hovered: false,
             header: motion::Fade::hidden(),
             revealed: false,
@@ -1113,6 +1160,7 @@ mod tests {
         for slot in [live(), recording(42.0)] {
             assert!(matches!(slot.state, StreamState::Starting));
             assert!(slot.supervisor.is_none() && slot.pump.is_none());
+            assert!(slot.pending.is_none(), "nothing resolving beside it");
             assert!(slot.video().is_none());
             assert_eq!(slot.quality_override, None);
             assert!(!slot.hovered && !slot.quiet && !slot.revealed);

@@ -519,15 +519,24 @@ last bit instead, which is effectively free.
 
 The choice is made again whenever a pane changes size — another pane opening
 or closing, the rail folding, the window resizing or going fullscreen — and
-only ever upwards: a pane that has grown restarts on a sharper rendition,
-since a restart is a few seconds of black and worth it for the picture, and a
+only ever upwards: a pane that has grown moves to a sharper rendition, and a
 pane that has shrunk keeps what it has. A quality picked from a pane's own
 menu is left alone; that choice was about the pane, whatever its size. The
 menu's first row is the settings' own choice, in the settings' words for it —
 `Auto (matches the video pane)`, `Best available`, or whatever quality the
-settings name — and picking it hands the pane back, restarting it only if that
-changes what plays. A press anywhere else, or `Esc`, closes the menu. With
-the pointer elsewhere, the palette's `Choose quality for …` opens it.
+settings name — and picking it hands the pane back, changing what plays only
+if that picks something else. A press anywhere else, or `Esc`, closes the
+menu. With the pointer elsewhere, the palette's `Choose quality for …` opens
+it.
+
+Changing rendition keeps the picture. Streamlink cannot switch mid-stream, so
+the new rendition is started beside the one playing, silently, and takes over
+in place once it has a picture: at once on a live stream, and on a recording
+once it has caught up with where you are, so the seek bar and the chat replay
+carry on without a jump. Pause and volume carry over. For those few seconds
+the pane is fetching and decoding two streams. A quality change in the
+settings still starts every pane over, each saying it is starting until its
+new picture arrives.
 
 ## Layout
 

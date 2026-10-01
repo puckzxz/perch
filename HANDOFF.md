@@ -76,16 +76,17 @@ App modules:
 | `trail.rs` | back and forward: the places behind and ahead, what a step passes over, and forgetting a place that is gone (pure, tested) |
 | `stage.rs` | where each pane is drawn — a pane, a mini-player tile, or a window of its own (`Place`) — and which panes are popped out (`Stage`): the one owner of the answer both windows ask before drawing a player (pure, tested) |
 | `os_window.rs` | what Perch asks of a window that gpui does not: its platform handle, and keeping a pop-out above every other app (`keep_on_top`, Windows only) |
-| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams` (opening, restarting, closing, and `replace_with_video`, a recording swapped in for a live pane in place), `renditions` (what each pane plays, and when it restarts: the quality chosen against each pane's own height, `pane_height_for`, the upward re-pick when the grid changes, `sync_quality`, a pick from the pane's own menu, and the restart each ends in), `panes` (where each pane is drawn, applied: `restage`, the one funnel every change of a pane's state, of which panes there are, of the page and of what is popped out ends in; `set_slot_state`, the only write of a pane's state, which a test holds the root to; `video_in_main`, the only way the main window reaches a player), `pop_out` (a pane's picture in a window of its own, on top of other apps: the `PopOut` view, opening and closing it through `cx.defer`, `to_root`, the only way back to the root from it, and `offered`, Windows only), `broadcasts` (what a stopped live pane asks about its channel's past broadcasts, and whether it may offer to start by itself), `pane_actions` (what a pane asks for, by its key: a press on it or one of its controls, which takes the keys back for the root first, and its player's requests; and the moment a pane key brings a pane's header up over its picture), `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `prefs`, `recommended` (the rail's Recommended group: when to ask the worker, what its answer becomes, and the hooks that call it), `chrome` (pills, toasts, the rail), `mini_player` (what plays on while you browse, in the corner of the page), `title_bar` (the bar Perch draws across the top of the window — the rail button, back and forward, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`) |
+| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams` (opening, restarting, closing, and `replace_with_video`, a recording swapped in for a live pane in place), `renditions` (what each pane plays, and when it restarts: the quality chosen against each pane's own height, `pane_height_for`, the upward re-pick when the grid changes, `sync_quality`, a pick from the pane's own menu, and how each changes what plays, `change_rendition` — beside a picture that covers the pane, to take over in place, and cold otherwise; and the root's half of that swap: what a start resolving beside a pane does with its events, `pending_event`, and what the pane keeps once its player has taken over or been given up on, `on_swapped` and `on_swap_failed`; tested), `panes` (where each pane is drawn, applied: `restage`, the one funnel every change of a pane's state, of which panes there are, of the page and of what is popped out ends in; `set_slot_state`, the only write of a pane's state, which a test holds the root to; `video_in_main`, the only way the main window reaches a player), `pop_out` (a pane's picture in a window of its own, on top of other apps: the `PopOut` view, opening and closing it through `cx.defer`, `to_root`, the only way back to the root from it, and `offered`, Windows only), `broadcasts` (what a stopped live pane asks about its channel's past broadcasts, and whether it may offer to start by itself), `pane_actions` (what a pane asks for, by its key: a press on it or one of its controls, which takes the keys back for the root first, and its player's requests; and the moment a pane key brings a pane's header up over its picture), `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `prefs`, `recommended` (the rail's Recommended group: when to ask the worker, what its answer becomes, and the hooks that call it), `chrome` (pills, toasts, the rail), `mini_player` (what plays on while you browse, in the corner of the page), `title_bar` (the bar Perch draws across the top of the window — the rail button, back and forward, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`) |
 | `target.rs` | what a typed or pasted thing means: a login, or a twitch.tv link to a channel or a recording; `link`, its inverse and the one place a twitch.tv URL is written, and `moment`, the second a link to a recording starts at (pure, tested) |
 | `browse.rs` | the picker page: following, popular, categories, search; which of them is on screen (`Discovery::place`) and which lists are still being waited on |
 | `channel_page.rs` | one channel's past broadcasts, and when each was; the recording card both pages use, and a stopped pane too; a recording's poster, and `archive_of`, which finds the recording of a broadcast that just ended (tested) |
 | `history_page.rs` | the history tab, and the one translation between a video and a history entry |
-| `watch.rs` | the grid of panes; `Slot` lives here, made by `Slot::new`, and `PaneAction`, everything a pane asks of the root; the band a header rides over the picture on, and when it is up (`Slot::point`, `band_wanted`, tested) |
+| `watch.rs` | the grid of panes; `Slot` lives here, made by `Slot::new`, with `PendingStart`, a start of its stream resolving beside the picture, and `PaneAction`, everything a pane asks of the root; the band a header rides over the picture on, and when it is up (`Slot::point`, `band_wanted`, tested) |
 | `watch/header.rs` | a pane's header — name, numbers, what is on, `muted`/`paused`, the × that names its key — and `Placement`, the one rule for where it goes: the chat panel, or over the picture with no chat on screen (tested) |
 | `watch/status.rs` | a pane with no picture: `Showing`, the one reading of its state that the pane's sentence and the mini player's word both come from, and the screen drawn from it under the player — a starting pane's poster, a stopped one's next steps and what room it has for them (`next_up_room`), and `Elsewhere`, a pane whose picture is in a window of its own, with `Bring back` (tested) |
 | `layout.rs` | derives grid shape from window aspect, as `Grid::of`, the one grid the watch page, the divider drag and each pane's quality read; `quality_height`, the height a pane asks a rendition for; the page's `Body`, the title bar's height and drag edge, and the mini player's tiles, how far in it floats clear of the scrollbar, and the `Room` a browse list leaves for it; where a pop-out opens, stacked clear of where the open ones really are (`pop_out_bounds`) (pure, tested) |
 | `video_view.rs` | the player element: its sound, its hover, the picture; drawn as a pane, a mini-player tile or in a pop-out (`stage::Place`), moved between them only by `set_place`, and belonging to no window |
+| `video_view/swap.rs` | a rendition swapped in place: the new stream started beside the one on screen inside the same view, held to it by `align` (tested) and promoted once it has a picture and, on a recording, has caught up; `route`, the one rule a stream's frame wakes and its streamlink events reach the right start by (tested) |
 | `video_view/bar.rs` | the control bar over a playing picture: the seek row on a recording, the icons and their key-naming tooltips, what fits at the pane's width (`fit`, tested), the one anchor menus open from; a pop-out's own right-hand end, Bring back and Close |
 | `video_view/menu.rs` | the bar's menus, the quality and More: which is open (`Menu`, one at a time), the box, rows that act on the press (tested), and `run_guard`, which swallows the rest of a double-click a row took (tested) |
 | `loudness.rs` | one pane's level and the Mute all hush over it: what mpv hears, and the only level ever reported to be remembered (pure, tested) |
@@ -171,7 +172,8 @@ changed size (a pane resize), having removed the key on the way out, so the
 `Window::drop_image` is the only thing that calls `sprite_atlas.remove`, so the
 one tile a `VideoView` owns stays resident for the life of the window unless the
 view hands it back — and the view dies on every ordinary action, including each
-quality change. `Drop` cannot do it; it has no `App`. `cx.on_release` can, and
+cold restart. `Drop` cannot do it; it has no `App`. (A rendition swapped in
+place keeps the view, and `render` frees the old stream's tile instead.) `cx.on_release` can, and
 the `Subscription` it returns has to be kept in a field or the hook is dropped
 immediately. The player's hook calls `App::drop_image(frame, None)`, which
 visits every window, because the player may be drawn in a pop-out by then and
@@ -290,11 +292,13 @@ which is free. This was introduced *and* reintroduced once; do not undo it.
 **Quality is chosen again when the grid changes, and only ever upwards.**
 `RootView::sync_quality` runs after a pane opens or closes, when the rail
 toggles, and 750 ms after the last window resize (`observe_window_bounds`, so
-fullscreen and maximise count) — and restarts only a pane whose Auto or Fixed
+fullscreen and maximise count) — and changes only a pane whose Auto or Fixed
 choice now names a *sharper* rendition; a pane that shrank keeps what it has,
-and a choice made from the pane's own menu is left alone. A restart is the
-only way to change rendition, since streamlink is resolved again, so it costs
-a few seconds of black: worth it for a picture that was soft, not for a CPU
+and a choice made from the pane's own menu is left alone. Changing rendition
+means resolving the stream again, since streamlink cannot switch mid-stream;
+on a pane with a picture the new one plays beside the old one and takes over
+in place (the next trap), so it costs a second stream for a few seconds
+rather than any black: worth it for a picture that was soft, not for a CPU
 saving in a pane that hides nothing — which is also why the re-pick waits for
 a resize to settle rather than running per event. Each pane is measured on its
 own, by its key (`RootView::pane_height_for`, in `root/renditions.rs` with the
@@ -307,14 +311,100 @@ rendition. The mini player is not one of the sizes it chooses for:
 `pane_height_for` measures the watch grid whichever page is up, so a tile
 never feeds it, the rendition playing in the corner is the one you go back
 to, and going back to watching never restarts a stream.
-A player that does restart off the watch page — the re-pick after a resize, a
-quality change from the settings — is born where its pane is drawn
+A player that is started cold off the watch page — a quality change from the
+settings, a re-pick of a pane with no picture yet — is born where its pane is drawn
 (`video_view::Start::place`, from `RootView::place_of`): a tile, as the one it
 replaces, or in its pane's pop-out, with that window's focus
 (`RootView::focus_of`). A pane in a window of its own is left out of the
 re-pick (`sync_quality`), since the grid's cell is not what it is drawn in,
 until its quality follows its own window (P3-06); the settings sheet's
 restarts still reach it.
+
+**A rendition change keeps the picture: the new stream is swapped in under
+it.** When a pane whose picture covers it changes rendition — the re-pick
+above, or a pick from its menu — `RootView::change_rendition` starts
+streamlink again *beside* the stream on screen (`How::Beside`, kept as
+`Slot::pending`) and leaves `Slot::supervisor` running. **Never kill a pane's
+supervisor while its player is live:** the old mpv is reading that relay,
+and with the relay gone it hits end of file, which `stream_stopped` reads as
+the stream ending — it retires the pane and drops the new start with it. Every start is
+numbered from one process-wide counter (`Slot::generation`), and both its
+streamlink events and its player's frame wakes carry the number;
+`video_view::route` sends each to the stream on screen, the one getting
+ready, or nowhere, so a superseded start's last events cannot reach the pane.
+A pending start's `Resolving` changes nothing — setting `Starting` would drop
+the picture — and its failure leaves the pane as it was (`pending_event`).
+When it resolves, the new player is started inside the same `VideoView`
+(`VideoView::begin_swap`): silent, with the view's own `SizeHandle`,
+publishing no position, and a recording `SWAP_LEAD` (4 s) ahead of a playing
+pane or at a paused one's place. Pause, volume and seeks act on the player on
+screen alone and are never forwarded; instead the pure, tested
+`video_view::swap::align` holds the new player to the one on screen on every
+wake of either and on a 100 ms tick.
+
+What `align` does: a live stream takes over on its first frame, since two
+low-latency sessions sit at different distances from the edge and cannot be
+lined up. A recording is held still once it has a frame until the pane
+reaches it, and takes over when it is at most 0.1 s ahead and 0.5 s behind;
+fallen behind (it took longer to open than its lead), it is sent further
+ahead each time; far further ahead than any lead it was given, the pane
+jumped back, and it is sent just ahead of the pane again; with the pane
+paused, it takes over within 1.5 s ahead and 0.5 s behind and is otherwise
+sent to the pane's place. Those windows sit inside the chat replay's seek
+slack (one second back, two forward), so the replay keeps its lines. After
+three sends it takes over wherever it is, logged "unaligned", and a seek of
+the user's starts the count over rather than giving up. A send is waited for
+until the player has played on from its target (0.2 to 1 s past it) or for
+3 s: its position says the target as soon as its render thread takes the
+seek, between frames, while the picture is still the old one for the second a
+reopen takes. And the new player is only ever paused
+after it has a frame, since whether mpv draws a first frame for a file it
+opens paused is unverified.
+
+Taking over (`promote`) carries the pause and the level the pane is heard at
+(`Loudness`, so `M` and Mute all's hold survive, and `--volume` does not come
+back), and a seek of the user's the old player has not applied yet
+(`VideoStream::take_seek`). That last is easy to have: `VideoStream::seek_to`
+only fills a slot, which the render thread takes once a pass, and a paused
+player's pass sits up to 200 ms waiting for a frame that never comes; a
+stopped thread checks `stop` before it reaches the slot, so the arrow press
+on a paused recording just before the hand-over would be lost. `align`
+decided on the pane's place before that seek, so the new player takes over
+there and then goes where the user asked. Then it publishes the new player's
+position, swaps the stream and adopts its
+frame pump, drops the old stream, and emits `VideoEvent::Swapped`; only then
+does the root make the pending start the pane's (`on_swapped`), killing the
+old streamlink after its player has been stopped. `first_frame` is left
+alone, so nothing fades in again, `covers` stays true and no poster comes
+back. `render` frees the old stream's tile, from the one window drawing the
+player, when the first frame with the new id arrives. A swap whose stream
+stops, whose channel closes, or that is not done in `SWAP_CEILING` (45 s)
+leaves the old player playing and emits `SwapFailed`; the root drops the
+start, and for a pick from the menu says so in a toast and hands the pane's
+override back to what plays. A re-pick that fails waits for the next growth,
+with no retry loop. A re-pick that resolves to the rendition already playing
+is dropped, and `sync_quality` leaves a pane alone while a start for a
+rendition at least as tall resolves beside it (`wants_swap`). Still cold:
+opening, `Try again`, the settings sheet's quality and credential restarts
+(a swap per pane there would be two players and two Twitch sessions per pane
+at once), and a pane whose picture does not cover it yet. Each step is in the
+log under the pane's key — `starting 1080p60 beside 480p`, `holding 1080p60
+at 616.40 for the pane at 613.90`, `reseeking`, and `swapped 480p->1080p60
+after 3930 ms; position 616.31->616.40`, with `, then 700.00` when it carried
+a seek — and `SWAP_LEAD`, `SWAP_CEILING` and `MAX_RESEEKS`, all three
+estimates, are to be tuned from it. `SWAP_LEAD` has only the new player's
+open to cover, since the pane's position is read once streamlink has
+resolved (`pending_event`): a swap's first `holding` line says what was left
+of the lead when the new player had a picture (its position less the
+pane's, 2.5 s in the example), and a first `reseeking` from behind the pane
+says the lead was not enough. Not the `swapped` line's time: it runs from
+the new player's start to the hand-over, so on a playing recording it comes
+out at about `SWAP_LEAD` whenever the lead was enough, however quickly the
+player opened. Not yet known:
+whether Twitch serves two live sessions on one token (if it does not, a live
+swap fails and the pane keeps what it plays, and live panes would go back to
+cold restarts), and what the audio does at the moment of taking over, which
+cannot be captured.
 
 **Animated GIFs need an `ElementId`.** From gpui's `img.rs`:
 
@@ -416,8 +506,9 @@ asks the player on screen. A pane's one player publishes from the start
 (`StartOptions::publish`, as `start_stream` asks), so nothing changes for it;
 the gate is for a second player of the pane started beside the one on screen,
 whose position moving would otherwise reset the replay to a moment nobody is
-watching and note that moment in the history. Nothing starts one yet; the
-quality swap that keeps the picture will. `Positions::publish` hands the pane
+watching and note that moment in the history. The quality swap starts one
+(see "A rendition change keeps the picture" under Video), and publishes it
+as it takes over (`VideoStream::publish_position`). `Positions::publish` hands the pane
 where the player is at that moment, not where it next reports. Such a player
 is also handed the pane's `SizeHandle` (`StartOptions::size`): a stream keeps
 the handle it is given rather than a copy of the size, so two players of one
@@ -742,7 +833,7 @@ press is hit-tested against the frame on screen. A row acts on the first
 press and its menu is gone by the second, which then reaches what was under
 the row: the picture, whose double-click is fullscreen; a recording's seek
 track, which seeks; or the quality menu that More's quality row has just
-opened in its place, which would pick a rendition and restart the stream.
+opened in its place, which would pick a rendition and change the stream.
 So a row acts only on a run's first press and marks the run
 (`VideoView::row_run`), and `menu::run_guard`, a window-level listener held
 ahead of the bar, stops every later press of that run in the capture phase,
@@ -1413,7 +1504,7 @@ header rests over it. The split:
   `video_chrome`, the bar's wash, which every text tier passes on over a
   white frame. The band is drawn by `watch::pane`, mounted every frame —
   empty while the header is in the panel — and faded by `Slot::header`, the
-  slot's so it outlives a player rebuilt for a quality change. It is up
+  slot's so it outlives a player rebuilt by a cold restart. It is up
   while the pointer is on the pane, during a pane key's reveal, and at rest
   whenever there is no picture to cover (`band_wanted`); it steps aside while
   one of the bar's menus is open. VideoView owns the bar's hover; the slot
@@ -1462,7 +1553,9 @@ header rests over it. The split:
   — and `VideoView::covers` turns true only once that frame has faded in
   (`theme::MOTION_VIDEO`), so `watch::showing` reads a player before then as
   still starting and the first frame fades in over the poster rather than
-  out of black. Starting, the screen is the picture being waited for: the
+  out of black. A rendition change on a playing pane never brings this
+  back: the new stream takes over inside the same player, which already
+  covers (`video_view::swap`); only a cold restart does. Starting, the screen is the picture being waited for: the
   channel's live preview (`browse::stream_preview`, the card's own URL and
   cache entry, resolved in `watch_page` from `stream_info` after the
   retired-preview drain), or a recording's own thumbnail
@@ -2175,7 +2268,8 @@ replay of a broadcast still being recorded grows.
 
 **The position is the pane's, not the player's.** `video::PositionHandle` is
 made in `open_video_at`, lives on `Source::Video`, and is handed to every
-`VideoStream` the pane starts, so a quality change — a new player — carries
+`VideoStream` the pane starts, so a quality change — a new player, cold or
+swapped in place — carries
 the position across and the replay sees playback continue rather than a jump.
 It is made already holding the place the pane opens at
 (`PositionHandle::starting_at`): the replay starts following it seconds before
@@ -2602,8 +2696,11 @@ trying to measure. For the waiting pulse the tell is the *ratio*: trough over
 peak came out at 0.45, which is `PULSE_FLOOR` exactly.
 
 To reach a state that only exists briefly, drive the app into it rather than
-racing a restart — switching quality puts a pane back into `Starting` with the
-window already open and stable.
+racing a restart — changing quality in the settings sheet, still a cold
+restart, puts every pane back into `Starting` with the window already open
+and stable. A pick from a pane's own menu or the palette no longer does: on a
+pane whose picture has faded in, it swaps the new rendition in place and the
+pane never leaves `Playing`.
 
 **Measure the pixels, do not read the screenshot.** Two separate wrong diagnoses
 of the emote overlap came from looking at a zoomed crop and believing it. What
@@ -2845,10 +2942,17 @@ None of these is being worked on; all of them are real.
    scrolled back reading them. Raised from 500 when the pane started opening
    with a backlog; a row is a `ChatMessage` and a few `SharedString`s, and only
    the visible ones are ever laid out, so it can go further if it needs to.
-3. **A quality change is a restart.** The rendition is chosen again, upwards
-   only, whenever a pane grows; changing it means resolving the stream again
-   — a few seconds of black — because streamlink has no way to switch
-   mid-stream, and a pane that shrinks is left on the rendition it has.
+3. **A quality change runs two streams for a few seconds.** The rendition
+   is chosen again, upwards only, whenever a pane grows, and streamlink has
+   no way to switch mid-stream, so the new rendition is resolved and played
+   beside the old one until it takes over in place (the swap trap under
+   Video): two streamlink sessions, two decoders and two audio outputs for
+   the overlap, and a live cut that cannot be lined up, so it can step a
+   little. Whether Twitch serves a second live session on one token is
+   unverified. The settings sheet's quality and credential changes still
+   start every pane over cold, each back to its starting screen until its
+   new picture arrives, and a pane that shrinks is left on the rendition it
+   has.
 4. **No sign-out**, and no way to clear a bad token except editing the field.
 5. **Animated WebP** (7TV, some BTTV) may render as stills. Twitch's own
    animated emotes are GIF and animate correctly.

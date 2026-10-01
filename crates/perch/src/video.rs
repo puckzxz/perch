@@ -869,6 +869,14 @@ impl VideoStream {
         self.positions.get()
     }
 
+    /// From now on the pane hears where this player is, starting with where
+    /// it is now: for a player started beside the one on screen
+    /// (`StartOptions::publish` false), at the moment it takes over. See
+    /// [`Positions::publish`].
+    pub fn publish_position(&self) {
+        self.positions.publish();
+    }
+
     /// Ask a recording to jump to `secs`. Applied between frames, like volume;
     /// a second request before the first is applied replaces it. Ignored on a
     /// live stream, which has nowhere to go.
@@ -877,6 +885,17 @@ impl VideoStream {
             return;
         }
         *self.seek.lock().unwrap() = Some(secs.max(0.0));
+    }
+
+    /// Take back a seek the render thread has not applied yet, if there is
+    /// one. The thread takes the slot once a pass, and a pass can sit up to
+    /// 200 ms waiting for a frame that a paused player never sends, so a seek
+    /// asked for just now is usually still here, and `position` does not say
+    /// it yet. For a player being replaced (`VideoView::promote`): a stopped
+    /// thread checks `stop` before it would reach the slot, so a request left
+    /// in it is lost unless the player taking over is handed it.
+    pub fn take_seek(&self) -> Option<f64> {
+        self.seek.lock().unwrap().take()
     }
 
     /// The stream's resolution, once known. Width over height is the shape a

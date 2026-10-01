@@ -15,7 +15,7 @@
 //! | `browsing` | the browse page's requests: tabs, search, categories, channels |
 //! | `navigation` | back and forward: where the app is as a `Route`, recording each step on the trail (`crate::trail`), and the three ways along it |
 //! | `streams` | opening, restarting and closing panes, and swapping one for a recording in place |
-//! | `renditions` | what each pane plays, and when it restarts: the quality chosen against each pane's own height (`pane_height_for`), the upward re-pick when the grid changes, a pick from the pane's menu |
+//! | `renditions` | what each pane plays, and when it restarts: the quality chosen against each pane's own height (`pane_height_for`), the upward re-pick when the grid changes, a pick from the pane's menu; a new rendition resolved beside the picture and kept once its player has taken over in place (`video_view::swap`) |
 //! | `panes` | where each pane is drawn, applied: `restage`, the one funnel every change of state, membership, page or pop-out ends in; `set_slot_state`, the only write of a pane's state; `video_in_main`, the only way the main window reaches a player; `retire_homeless`, the one rule for which panes stop when nothing in the main window would draw them |
 //! | `pop_out` | a pane in a window of its own, on top of other apps: moving its picture there and back, the window, and `to_root`, the only way back from it |
 //! | `broadcasts` | what a stopped live pane asks about its channel's past broadcasts, and whether it can start by itself |

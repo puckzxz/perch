@@ -237,7 +237,7 @@ impl VideoView {
     /// Under a row that was the picture, whose double-click is fullscreen; a
     /// recording's seek track, which seeks; or, after More's quality row, the
     /// quality menu that opened in More's place, where the press would pick a
-    /// rendition and restart the stream. So a row marks its run (`row_run`),
+    /// rendition and change the stream. So a row marks its run (`row_run`),
     /// and this stops every later press of that run in the capture phase,
     /// before anything under the pointer hears it. The bubble phase, where a
     /// click begins, never comes, so the release makes no click either. The
@@ -296,8 +296,10 @@ fn quality_option(
         label,
         selected,
         move |_this, _window, cx| {
-            // Choosing what is already chosen changes nothing, and asking
-            // anyway would restart the stream to arrive where it was.
+            // Choosing what is already chosen changes nothing. Asking anyway
+            // could still change the stream: the settings' choice, asked for
+            // again, is made for the pane's size now, which a pane that has
+            // shrunk does not play (`RootView::request_quality`).
             if !selected {
                 cx.emit(VideoEvent::QualityRequested(request.clone()));
             }
