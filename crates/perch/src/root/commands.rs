@@ -5,10 +5,11 @@
 use gpui::{App, Context, IntoElement, KeyDownEvent, Window};
 use gpui_component::input::Input;
 
-use super::RootView;
+use super::{Page, RootView};
 use crate::channel_page;
 use crate::history_page;
 use crate::palette;
+use crate::video_view::Menu;
 
 impl RootView {
     /// Everything the palette could run right now, in the order it shows them.
@@ -32,6 +33,9 @@ impl RootView {
                     ),
                     None => self.display_name(slot),
                 },
+                // A picture, not just a player: one still buffering draws no
+                // bar, so it has no menu to offer (`VideoView::open_menu`).
+                playing: slot.video().is_some_and(|view| view.read(cx).has_picture()),
             })
             .collect();
         palette::entries(
@@ -124,6 +128,7 @@ impl RootView {
             palette::Command::Watch(channel) => self.open_channel(channel, true, window, cx),
             palette::Command::Add(channel) => self.open_channel(channel, false, window, cx),
             palette::Command::Close(index) => self.close_slot(index, window, cx),
+            palette::Command::ChooseQuality(index) => self.choose_quality(index, cx),
             palette::Command::Videos {
                 login,
                 display_name,
@@ -151,6 +156,48 @@ impl RootView {
             palette::Command::Refresh => self.refresh(cx),
         }
         cx.notify();
+    }
+
+    /// Open the quality menu of the pane at `index`, from the palette.
+    ///
+    /// The keyboard's way to it, and so also the way posted input can reach
+    /// the bar: an open menu holds the bar up wherever the pointer is. From
+    /// the browse page it goes back to watching first, with that pane the
+    /// one the keys talk to, as a press on its tile would; on the watch page
+    /// that pane takes the keys. Any other pane's menu closes, since a menu
+    /// opened from here comes with no press elsewhere to dismiss the last.
+    /// Nothing at all for a pane with no picture yet, which the palette
+    /// offers no row for either: the menu would not open, so neither does
+    /// the page change for it.
+    fn choose_quality(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(slot) = self.slots.get(index) else {
+            return;
+        };
+        let Some(view) = slot
+            .video()
+            .filter(|view| view.read(cx).has_picture())
+            .cloned()
+        else {
+            return;
+        };
+        let key = slot.key.clone();
+        if self.page == Page::Watch {
+            self.active = Some(key);
+        } else {
+            self.go_watch_pane(key, cx);
+        }
+        let others: Vec<_> = self
+            .slots
+            .iter()
+            .filter_map(|slot| slot.video().cloned())
+            .filter(|other| *other != view)
+            .collect();
+        for other in others {
+            other.update(cx, |other, cx| {
+                other.close_menu(cx);
+            });
+        }
+        view.update(cx, |video, cx| video.open_menu(Menu::Quality, cx));
     }
 
     /// The palette, when it is open.

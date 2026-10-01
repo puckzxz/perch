@@ -46,6 +46,9 @@ pub enum Command {
     Add(String),
     /// Close the pane at this index.
     Close(usize),
+    /// Open the quality menu of the pane at this index: the keyboard's way
+    /// to the one control on the player's bar no key reaches.
+    ChooseQuality(usize),
     /// Look at a channel's past broadcasts.
     Videos {
         login: String,
@@ -79,15 +82,21 @@ pub struct OpenPane {
     /// What a row about the pane calls it: the channel's name as it writes
     /// it, with the kind of recording after it for one — "(replay)".
     pub title: String,
+    /// Whether it has a picture up, and so a control bar with a quality menu
+    /// to open. A pane starting, still waiting for its first frame, stopped or
+    /// offline has neither.
+    pub playing: bool,
 }
 
-/// A live pane known only by its login, which is all the tests need.
+/// A live pane known only by its login, playing, which is all the tests
+/// need.
 #[cfg(test)]
 impl From<&str> for OpenPane {
     fn from(login: &str) -> Self {
         Self {
             login: Some(login.to_string()),
             title: login.to_string(),
+            playing: true,
         }
     }
 }
@@ -373,6 +382,29 @@ pub fn entries(
         }
     }
 
+    // A pane's quality, by name, for a pane with a picture to choose it for.
+    // Only once something is typed: with nothing typed it would be a row per
+    // pane between the recents and the commands, for a thing done now and
+    // then. After every `Close` row rather than beside its pane's, because
+    // the letters of "quality" answer to most short queries: `c quin` is
+    // still Enter away from closing quin69 rather than opening some other
+    // pane's menu.
+    if !query.is_empty() {
+        for (index, pane) in watching.iter().enumerate() {
+            if !pane.playing {
+                continue;
+            }
+            let title = format!("Choose quality for {}", pane.title);
+            if matches(&title, query) {
+                entries.push(Entry {
+                    command: Command::ChooseQuality(index),
+                    title: SharedString::from(title),
+                    kind: "pane".into(),
+                });
+            }
+        }
+    }
+
     // One row per tab, each named for the tab it opens. There used to be one
     // "Go to follows", which went to whichever tab had been left open — the
     // history, as often as not — and said otherwise.
@@ -610,6 +642,70 @@ mod tests {
         let entries = entries("close quin", &[], &[], &[], &[], &watching, true);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].command, Command::Close(1));
+    }
+
+    /// A close abbreviated the way the matcher invites still closes. Every
+    /// letter of `c quin` is somewhere in "Choose quality for forsen", so
+    /// with the quality rows beside their panes Enter on it opened forsen's
+    /// menu rather than closing quin69.
+    #[test]
+    fn an_abbreviated_close_leads_with_the_close() {
+        let watching: Vec<OpenPane> = vec!["forsen".into(), "quin69".into()];
+        for query in ["c quin", "cl quin", "clo quin"] {
+            let found = entries(query, &[], &[], &[], &[], &watching, true);
+            assert_eq!(found[0].command, Command::Close(1), "for {query:?}");
+        }
+    }
+
+    /// The quality menu is the one control on the player's bar no key
+    /// reaches, so each playing pane offers it by name: by the words of the
+    /// row, matched the way every row is.
+    #[test]
+    fn a_playing_pane_offers_its_quality_by_name() {
+        let watching: Vec<OpenPane> = vec!["forsen".into(), "quin69".into()];
+        let found = entries("quality quin", &[], &[], &[], &[], &watching, true);
+        let row = found
+            .iter()
+            .find(|entry| entry.command == Command::ChooseQuality(1))
+            .expect("the second pane offers its quality");
+        assert_eq!(row.title, "Choose quality for quin69");
+        assert_eq!(row.kind, "pane");
+        assert!(
+            !found
+                .iter()
+                .any(|entry| entry.command == Command::ChooseQuality(0)),
+            "a pane the query does not name offered its quality"
+        );
+    }
+
+    /// An empty palette leads with what to watch. A row per open pane for its
+    /// quality would push that down for a thing done now and then, so those
+    /// rows wait to be typed for.
+    #[test]
+    fn pane_rows_wait_for_a_query() {
+        let watching: Vec<OpenPane> = vec!["forsen".into(), "quin69".into()];
+        let blank = entries("", &[], &[], &[], &[], &watching, true);
+        assert!(!blank
+            .iter()
+            .any(|entry| matches!(entry.command, Command::ChooseQuality(_))));
+    }
+
+    /// A pane that is starting, still waiting for its first frame, offline or
+    /// stopped has no bar and no menu to open, so it offers none; it can
+    /// still be closed. A menu opened over a player with no bar drawn would
+    /// be invisible and still take the next `Esc` (see
+    /// `VideoView::open_menu`).
+    #[test]
+    fn a_pane_without_a_picture_offers_no_quality() {
+        let waiting = OpenPane {
+            playing: false,
+            .."forsen".into()
+        };
+        let found = entries("forsen", &[], &[], &[], &[], &[waiting], true);
+        assert!(!found
+            .iter()
+            .any(|entry| matches!(entry.command, Command::ChooseQuality(_))));
+        assert!(found.iter().any(|entry| entry.command == Command::Close(0)));
     }
 
     /// Filtering by login matters as much as by display name: they differ for

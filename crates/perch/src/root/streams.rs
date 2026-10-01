@@ -326,6 +326,7 @@ impl RootView {
                 let start = Start {
                     compact: self.page != Page::Watch,
                     quiet,
+                    focus: self.focus.clone(),
                 };
                 let audible = if quiet { 0 } else { volume };
                 match VideoStream::start(RENDER_WIDTH, RENDER_HEIGHT, audible, playback) {

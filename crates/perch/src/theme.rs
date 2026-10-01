@@ -532,6 +532,15 @@ pub const SEEK_RAIL: f32 = 4.0;
 pub const SEEK_THUMB: f32 = 12.0;
 pub const SEEK_HIT: f32 = 18.0;
 
+/// The player's menus (`video_view::menu`): the least width one takes,
+/// however short its rows; where it rests above the bar's right-hand
+/// cluster, an icon button's height and a word's gap up from the cluster's
+/// foot so it clears the button it came from; and how much lower than that
+/// it starts as it rises into place.
+pub const MENU_MIN_WIDTH: f32 = 120.0;
+pub const MENU_BOTTOM: f32 = ICON_BUTTON + GAP_WORD;
+pub const MENU_RISE: f32 = 6.0;
+
 /// The live indicator's diameter. Small enough to read as a status mark
 /// beside a number rather than as a control.
 pub const LIVE_DOT: f32 = 6.0;

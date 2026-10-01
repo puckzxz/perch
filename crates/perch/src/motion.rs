@@ -70,12 +70,24 @@ impl Fade {
         true
     }
 
+    /// Whether this is showing, or on its way to showing: what an element
+    /// that blocks the pointer asks before it does so (see `apply`).
+    pub fn is_visible(&self) -> bool {
+        self.visible
+    }
+
     /// Wrap `element` so its opacity follows this state.
     ///
     /// `id` only has to separate this fade from the others in the same view;
     /// GPUI already scopes element state per entity. The flip count is folded
     /// in here rather than by the caller, since that is mechanism rather than
     /// meaning.
+    ///
+    /// Keep the wrapped element mounted on every frame, or start the fade over
+    /// with [`Fade::hidden`] when the element goes away. gpui keeps an
+    /// animation's state only from one frame to the next, so an element that
+    /// comes back after a frame without it replays its last flip from the
+    /// start: a bar that was hidden long ago fades out all over again.
     pub fn apply<E>(&self, id: impl Into<ElementId>, duration: Duration, element: E) -> AnyElement
     where
         E: Styled + IntoElement + 'static,
@@ -88,6 +100,13 @@ impl Fade {
         // to the pointer too — at rest, and from the last frame of a fade-out,
         // which a finished animation goes on rendering for as long as it is on
         // screen.
+        //
+        // Gone to the listeners, not to the hit test. gpui still lays an
+        // invisible element out and inserts its hitbox, which it does in
+        // prepaint, before paint returns early for it (div.rs:1676-1680 and
+        // 1809). So something under here that blocks the pointer goes on
+        // blocking it while hidden, with nothing drawn: `.occlude()` only
+        // while `is_visible`.
         if self.flips == 0 {
             return if self.visible {
                 element.into_any_element()
@@ -191,6 +210,19 @@ mod tests {
         let mut fade = Fade::entering();
         assert!(!fade.set(true));
         assert_eq!(fade.flips, 1);
+    }
+
+    /// What an occluder asks before it blocks the pointer, so it has to
+    /// change the moment `set` does, ahead of the fade it starts.
+    #[test]
+    fn is_visible_follows_set() {
+        let mut fade = Fade::hidden();
+        assert!(!fade.is_visible());
+        fade.set(true);
+        assert!(fade.is_visible());
+        fade.set(false);
+        assert!(!fade.is_visible());
+        assert!(Fade::entering().is_visible());
     }
 
     #[test]

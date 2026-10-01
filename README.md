@@ -124,8 +124,10 @@ palette is one keystroke away straight after a search. A search typed on the
 watch page leaves it for the results, the way `Esc` does. The same list is in
 the settings sheet. Double-clicking the video is
 fullscreen too. `Esc` from the watch page goes back to whichever tab, category
-or channel you left the browse page on — and first closes a pane's quality
-menu, if one is open.
+or channel you left the browse page on — and first closes a pane's open menu,
+if there is one. A playing pane's quality menu is in the palette as well:
+type `quality` and some of the pane's name, and `Choose quality for …` opens
+it.
 
 Back and forward work the way they do in a browser. `Alt+←` and `Alt+→`, the
 arrows in the title bar or the mouse's side buttons walk back through the
@@ -310,7 +312,9 @@ than aimed at. It filters what the app already knows, so it costs nothing and
 runs on every keystroke; the search box in the title bar is the one that asks
 Twitch. `qb` finds QuickyBaby. Offline follows are in it too, once you have
 typed something, and open the channel's page, as their names do on the
-Following tab; a live channel's past broadcasts are a row of their own. Every
+Following tab; a live channel's past broadcasts are a row of their own. A
+playing pane's quality menu is a row too, once you have typed something:
+`Choose quality for …` brings the pane's controls up with the menu open. Every
 tab is a `Go to` row, and going back to watching or stopping everything is
 offered once something is playing. `Ctrl+K` does nothing while the settings
 sheet is open; close the sheet first.
@@ -461,7 +465,8 @@ menu is left alone; that choice was about the pane, whatever its size. The
 menu's first row is the settings' own choice, in the settings' words for it —
 `Auto (matches the video pane)`, `Best available`, or whatever quality the
 settings name — and picking it hands the pane back, restarting it only if that
-changes what plays. A press anywhere else, or `Esc`, closes the menu.
+changes what plays. A press anywhere else, or `Esc`, closes the menu. With
+the pointer elsewhere, the palette's `Choose quality for …` opens it.
 
 ## Layout
 

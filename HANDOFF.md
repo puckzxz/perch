@@ -80,7 +80,9 @@ App modules:
 | `watch.rs` | the grid of panes; `Slot` lives here, made by `Slot::new`, and `PaneAction`, everything a pane asks of the root |
 | `watch/status.rs` | a pane with no picture: `Showing`, the one reading of its state that the pane's sentence and the mini player's word both come from, and the screen drawn from it (tested) |
 | `layout.rs` | derives grid shape from window aspect; the page's `Body`, the title bar's height and drag edge, and the mini player's tiles, how far in it floats clear of the scrollbar, and the `Room` a browse list leaves for it (pure, tested) |
-| `video_view.rs` | player element + overlay controls; drawn full or as a compact mini-player tile |
+| `video_view.rs` | the player element: its sound, its hover, the picture; drawn full or as a compact mini-player tile |
+| `video_view/bar.rs` | the control bar over a playing picture: the seek row on a recording, the buttons, the one anchor menus open from |
+| `video_view/menu.rs` | the bar's menus: which is open (`Menu`, one at a time), the box, rows that act on the press (tested) |
 | `loudness.rs` | one pane's level and the Mute all hush over it: what mpv hears, and the only level ever reported to be remembered (pure, tested) |
 | `seek_bar.rs` | the bar on a recording, and the arithmetic behind it |
 | `video.rs` | render thread; owns the mpv `Player` |
@@ -634,6 +636,40 @@ Hover probes are immune to all of this: `gpui::canvas` inserts no hitbox and
 reads `window.mouse_position()` directly, so the video and pane probes keep
 working through any occluder.
 
+**An invisible element still blocks the pointer if it occludes.** `invisible()`
+returns from paint before any listener is registered (div.rs:1809), but the
+hitbox went in during prepaint (div.rs:1676-1680), `BlockMouse` and all. So a
+faded-out overlay that occludes goes on swallowing presses where nothing is
+drawn. The player's control bar occludes only while its fade
+`is_visible()`. A real pointer over the picture always has the bar up, so this
+mattered to synthetic input and to a press in the fade's last moments, but the
+next overlay may not be so lucky.
+
+**An occluder hides presses from the root's `track_focus`**, which is
+hover-gated like any mouse-down listener (div.rs:2025-2037), so whatever
+occludes over the watch page has to hand the keys back itself, or a cursor
+left in the search box keeps them and `Space` types a space. The control bar
+and the player's menus do it with `capture_any_mouse_down`
+(`VideoView::return_keys`), in the capture phase on purpose: gpui-component's
+`Slider` thumb calls `stop_propagation` on its press
+(gpui-component-0.5.1 slider.rs:464-466), so a bubble-phase handler on the bar
+never hears a drag of the volume.
+
+**A menu's rows act on the press, never on a click.** A menu dismisses itself
+with `on_mouse_down_out` on its anchor, which fires in the capture phase when
+the press is outside the anchor's *own* bounds (div.rs:226-236), and a menu
+hanging above its button is outside them. So a press on a row closes the menu
+first. gpui synthesises a click from the press and the release, and fires it
+from the listeners of the frame current at the release (div.rs:2213-2245),
+which, a frame or more after the press, no longer has the row in it. The
+quality menu's rows were `on_click` until phase two, so a pick could only
+take if the release came before the next frame (read from source, not
+reproduced). The press, though, is dispatched against the frame it landed
+on, and its bubble phase still finds the row, so `menu::menu_row` acts in
+`on_mouse_down`. A test reads `menu.rs` and fails on an `on_click` in it.
+The box itself occludes, since it rises out of the bar's own hitbox, or a
+press on a row would also reach the picture's double-click.
+
 **`gpui_component::init(cx)` must run before any widget**, and `Root::new` must
 wrap the window's first view or overlays have nowhere to render.
 
@@ -928,6 +964,14 @@ comes back as a *finished* animation holding its last value. That is why a
 two-way fade has to mint a new id on every flip (`Fade`), and why a one-shot
 arrival needs no state at all — mounting the element is the whole trigger.
 
+The flip side: GPUI keeps that state only from one frame to the next. An
+element missing for a frame comes back as a stranger, so a `Fade` that is
+not drawn for a while replays its last flip from the start when it is drawn
+again. That is a bar long since hidden fading out all over again, over the
+picture. Keep a faded wrapper mounted on every frame, or start its fade over
+with `Fade::hidden()` when its element goes away, as `VideoView::set_compact`
+does for the bar, which a mini-player tile never draws.
+
 **Element ids are namespaced by every ancestor that has one**, plus an implicit
 `ElementId::View(entity_id)` per entity. So `"controls"` is unique inside a
 `VideoView` even with four of them on screen, but anything rendered by
@@ -1106,11 +1150,11 @@ newer still, and is a ledger rather than a clean sheet: it shows the debt that
 was there when it was added, and the list should only get shorter. That is
 the `max_w(px(420.))` on the text of an empty list's notice and of the
 sign-in code's (both in `browse.rs`), the settings sheet's `w(px(480.))`, the
-quality menu's `min_w(px(120.))`, the volume slider's `w(px(120.))` and the
-`w(px(38.))` of the figure beside it (`video_view.rs`), and chat's one-pixel
-time-break rule, `h(px(1.))`. A zero (`px(0.)`) is left out on purpose: the
-divider seams and the seek bar's time label hang off zero-sized anchors by
-design. The sixth will show genuine timings — the follows poll, the toast
+volume slider's `w(px(120.))` and the `w(px(38.))` of the figure beside it
+(`video_view/bar.rs`), and chat's one-pixel time-break rule, `h(px(1.))`. The
+quality menu's `min_w(px(120.))` was on it and is `theme::MENU_MIN_WIDTH`
+now. A zero (`px(0.)`) is left out on purpose: the divider seams and the seek
+bar's time label hang off zero-sized anchors by design. The sixth will show genuine timings — the follows poll, the toast
 lifetime, an mpv frame wait — but no *animation* duration should appear
 outside `theme.rs`. The last should return nothing: a control at zero opacity
 still takes clicks (see "Things not to redo"), and only `motion` fades one
@@ -1746,10 +1790,11 @@ cannot hear takes focus back by hand: the bar's buttons, a toast
 (`act_on_toast`), the mini player and the side buttons. A pane opened with
 no press on the page at all — a launch handed over, a linked recording
 arriving — takes it back in `RootView::show_watch_page`, but only from the
-search box, so a field on the settings sheet keeps the cursor. Not covered:
-a press on a pane's own control bar after `Ctrl+F` on the watch page, which
-the bar occludes from the root and the player cannot answer for, leaves the
-cursor in the box until the page is clicked.
+search box, so a field on the settings sheet keeps the cursor. A press on a
+pane's own control bar or menu, which hide it from the root, gives the keys
+back from the player (`VideoView::return_keys`, holding the root's handle
+from `Start::focus`); see the GPUI traps for why it listens in the capture
+phase.
 
 **A key context and a key predicate are different grammars.** A context is
 whitespace-separated identifiers (`Perch Watch`); a predicate is a
@@ -1820,7 +1865,8 @@ returns early, rather than flipping a setting nothing on screen shows, which
 would only surface on leaving fullscreen. The mouse's way out is a
 double-click on the video, which brings the bar back.
 The double-click lives on the pane's root element; the control bar over it is
-`.occlude()`d so a double-click on `Pause` does not also reach it.
+`.occlude()`d while it is up, so a double-click on `Pause` does not also reach
+it.
 A single click deliberately does nothing there — it is how a pane is made the
 active one, and pausing on a click would turn choosing a pane into stopping it.
 
@@ -1833,12 +1879,24 @@ to whatever is playing — the other direction from the watch page's `Esc`,
 each scoped to its own page. It was `Back` until there was a trail, and was
 renamed so the two meanings cannot share a name: `StepOut` goes up from
 where you are, however you got there, where `NavigateBack` goes to wherever
-you were before. The watch page's `Esc` closes an open quality menu
-before it leaves: that menu is hand-rolled, so it has no key context to catch
-`Esc` itself, and `RootView::on_go_browse` asks every pane to close its menu
-first. A press anywhere else closes it too — `on_mouse_down_out` on the menu's
-anchor rather than the menu, or the press on the button that opened it would
-count as elsewhere and the click after it would open it straight back up.
+you were before. The watch page's `Esc` closes a pane's open menu before it
+leaves: the menus are hand-rolled (`video_view/menu.rs`), so they have no key
+context to catch `Esc` themselves, and `RootView::on_go_browse` asks every
+pane to close its menu first. A pane has one menu open at most, and every one
+opens from the bar's right-hand cluster, which is also the menus' one anchor.
+A press anywhere else closes it — `on_mouse_down_out` on that anchor rather
+than the menu, or the press on the button that opened it would count as
+elsewhere and the click after it would open it straight back up. A menu's
+button toggles it and closes nothing first, for the same reason; the rows act
+on the press (see the GPUI traps). The quality menu has no key of its own: the
+palette's `Choose quality for …`, offered once something is typed for each
+pane with a picture up, opens it, and with it the bar, which an open menu holds
+up wherever the pointer is. From the browse page that goes back to watching
+first, and any other pane's menu closes. A pane still buffering is offered no
+row and `open_menu` refuses it: it draws no bar, so the menu would be invisible
+and would still take the next `Esc`. The rows come after every `Close` row,
+because the letters of "quality" answer to most short queries and `c quin`
+should stay a close.
 
 **Back and forward are `Alt+←` and `Alt+→`** (`⌥` on macOS), as well as
 the title bar's arrows and the mouse's side buttons. The keys are bound
@@ -2353,7 +2411,11 @@ None of these is being worked on; all of them are real.
 - Do not put a repeating animation on a state that can persist.
 - Do not assume an overlay blocks input because it covers something; use
   `occlude` / `block_mouse_except_scroll`, and put it on the smallest thing that
-  is actually opaque.
+  is actually opaque. And only while it is drawn: an `invisible()` occluder
+  still blocks the pointer.
+- Do not make a menu row act on a click. The press closes the menu, and the
+  click would come from a frame with no row in it; `menu::menu_row` acts on
+  the press, and `menu_rows_act_on_the_press` holds `menu.rs` to it.
 - Do not take `.occlude()` off the title bar, give a caption button a handler,
   or wrap the bar's controls in its drag area. Each one hands the platform's
   press to gpui, which reports it handled, and the window stops dragging,

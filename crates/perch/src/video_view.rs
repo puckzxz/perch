@@ -5,27 +5,32 @@
 //! in its own OS window that always paints above everything, so nothing can
 //! overlap it. Here the video is just an element, and UI composites over it
 //! like any other layer.
+//!
+//! This file is the player: what it starts with, its sound, its hover, the
+//! switch to a mini-player tile, and the picture. What is drawn over the
+//! picture lives beside it, in child modules that see the player's private
+//! fields: `bar`, the control bar along the bottom, and `menu`, the menus that
+//! bar opens, which one is open, and how their rows take a press.
+
+mod bar;
+mod menu;
+
+pub use menu::Menu;
 
 use std::sync::Arc;
 
 use gpui::{
-    canvas, div, img, prelude::*, px, Animation, AnimationExt, Bounds, ClickEvent, Context, Div,
-    ElementId, Entity, EventEmitter, Hsla, Pixels, Point, RenderImage, SharedString, Stateful,
-    Subscription, Task, Window,
+    canvas, div, img, prelude::*, Animation, AnimationExt, Bounds, ClickEvent, Context, ElementId,
+    Entity, EventEmitter, FocusHandle, Hsla, MouseDownEvent, Pixels, Point, RenderImage,
+    SharedString, Subscription, Task, Window,
 };
-use gpui_component::slider::{Slider, SliderEvent, SliderState};
+use gpui_component::slider::{SliderEvent, SliderState};
 
-use crate::controls;
 use crate::loudness::Loudness;
 use crate::motion;
 use crate::seek_bar;
 use crate::theme;
 use crate::video::{Stopped, VideoStream};
-
-/// Where the quality menu rests above the control bar, and how far below that
-/// it starts when opening.
-const MENU_BOTTOM: f32 = 32.0;
-const MENU_RISE: f32 = 6.0;
 
 pub enum VideoEvent {
     /// The user changed volume; worth persisting to settings.
@@ -72,7 +77,12 @@ pub struct VideoView {
     loudness: Loudness,
     volume_slider: Entity<SliderState>,
     qualities: Qualities,
-    quality_menu_open: bool,
+    /// The menu open over the control bar, if any: one at a time, so opening
+    /// one is closing whichever was open (`menu::toggled`).
+    menu: Option<Menu>,
+    /// The root's focus, which a press on the bar or on a menu hands the keys
+    /// back to; see `return_keys`.
+    root_focus: FocusHandle,
     /// Whether the pointer is over this player, measured from the pane's own
     /// bounds rather than taken from GPUI's `on_hover`.
     ///
@@ -91,7 +101,7 @@ pub struct VideoView {
     /// mouse move. Asking where the pointer is fixes both.
     hovered: bool,
     /// Whether the control bar is up, and how far through fading it is.
-    /// Derived from `hovered` and the quality menu by `sync_controls`.
+    /// Derived from `hovered` and the open menu by `sync_controls`.
     controls: motion::Fade,
     /// True while the player is a tile in the mini player on the browse page.
     /// Presentation only: a compact player draws no control bar, answers no
@@ -125,6 +135,8 @@ pub struct Start {
     pub compact: bool,
     /// Held silent by Mute all; see `Loudness`.
     pub quiet: bool,
+    /// The root's focus handle, kept as `VideoView::root_focus`.
+    pub focus: FocusHandle,
 }
 
 impl VideoView {
@@ -197,7 +209,8 @@ impl VideoView {
             loudness,
             volume_slider,
             qualities,
-            quality_menu_open: false,
+            menu: None,
+            root_focus: start.focus,
             hovered: false,
             controls: motion::Fade::hidden(),
             compact: start.compact,
@@ -330,17 +343,23 @@ impl VideoView {
     /// big player is let go here, because the tile will never hear the
     /// release — a held scrub in particular would go on asking for a frame
     /// every frame for as long as the tile was up.
+    ///
+    /// The bar's fade starts over, hidden, rather than being set hidden. The
+    /// tile never draws the bar, and gpui keeps an animation's state only
+    /// from one frame to the next, so a fade that came back with its history
+    /// would replay its last flip from the start on the first frame of the
+    /// big player: the bar flashing up and fading away over the picture.
     pub fn set_compact(&mut self, compact: bool, cx: &mut Context<Self>) {
         if self.compact == compact {
             return;
         }
         self.compact = compact;
-        self.quality_menu_open = false;
+        self.menu = None;
         self.hovered = false;
         self.pointing = None;
         self.scrub = None;
         self.track = None;
-        self.sync_controls();
+        self.controls = motion::Fade::hidden();
         cx.notify();
     }
 
@@ -364,14 +383,27 @@ impl VideoView {
     /// Recompute whether the control bar should be up, and report whether that
     /// changed anything.
     ///
-    /// It stays up while the quality menu is open even after the pointer
-    /// leaves, or reaching for an option would dismiss the menu on the way.
+    /// It stays up while a menu is open even after the pointer leaves, or
+    /// reaching for an option would dismiss the menu on the way. That is also
+    /// what lets the palette open a menu with the pointer nowhere near.
     fn sync_controls(&mut self) -> bool {
         // And while the thumb is held, wherever the pointer has dragged it:
         // a bar that faded out mid-scrub would take the thumb with it.
         let visible =
-            !self.compact && (self.hovered || self.quality_menu_open || self.scrub.is_some());
+            !self.compact && (self.hovered || self.menu.is_some() || self.scrub.is_some());
         self.controls.set(visible)
+    }
+
+    /// Hand the keys back to the root, for a press on the control bar or on
+    /// a menu.
+    ///
+    /// Both block the pointer from what is under them, the root included,
+    /// and the root's `track_focus` takes focus back only on a press it
+    /// hears. Without this, a cursor left in the title bar's search box would
+    /// keep the keys through a press on the bar, and the next `Space` would
+    /// type a space into the search rather than pause.
+    fn return_keys(&mut self, _: &MouseDownEvent, window: &mut Window, _: &mut Context<Self>) {
+        self.root_focus.focus(window);
     }
 
     /// Report where the pointer is, from the probe. Returns whether this needs
@@ -418,16 +450,12 @@ impl VideoView {
         cx.notify();
     }
 
-    /// Close the quality menu, if it is open. Returns whether it was, so
-    /// `Esc` can take back the menu before it takes you off the page.
-    pub fn close_menu(&mut self, cx: &mut Context<Self>) -> bool {
-        if !self.quality_menu_open {
-            return false;
-        }
-        self.quality_menu_open = false;
-        self.sync_controls();
-        cx.notify();
-        true
+    /// Whether a frame has decoded, and so whether `render` draws the picture
+    /// and the bar over it rather than the word "buffering". Asks what
+    /// `render` asks, so the two cannot disagree; once true it stays true for
+    /// the life of the stream.
+    pub fn has_picture(&self) -> bool {
+        self.stream.latest_frame().is_some()
     }
 
     /// Width over height of the stream itself, once a frame has decoded.
@@ -439,240 +467,6 @@ impl VideoView {
         self.stream
             .source_size()
             .map(|(width, height)| width as f32 / height as f32)
-    }
-
-    fn quality_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut menu = div()
-            .absolute()
-            .right_0()
-            .flex()
-            .flex_col()
-            .min_w(px(120.))
-            .rounded(px(theme::RADIUS_LG))
-            .overflow_hidden()
-            .bg(theme::surface_raised())
-            .border_1()
-            .border_color(theme::border());
-
-        // The settings' choice first, ruled off from the renditions: picking a
-        // rendition holds it for as long as the pane is open, and until this
-        // row existed nothing handed the pane back short of closing it.
-        let picked = self.qualities.picked;
-        menu = menu.child(
-            self.quality_option(
-                "quality-default",
-                self.qualities.default.clone(),
-                !picked,
-                None,
-                cx,
-            )
-            .border_b_1()
-            .border_color(theme::border()),
-        );
-
-        for (index, name) in self.qualities.available.iter().enumerate() {
-            let selected = picked && name.as_str() == self.qualities.playing.as_ref();
-            menu = menu.child(self.quality_option(
-                ("quality-option", index),
-                SharedString::from(name.clone()),
-                selected,
-                Some(name.clone()),
-                cx,
-            ));
-        }
-
-        // Rises the last few pixels into place, so it reads as coming out of
-        // the button rather than being stamped over the video. It is mounted
-        // only while open, which is what makes a plain one-shot enough: there
-        // is no closed state to animate back to.
-        menu.with_animation(
-            ElementId::from("quality-menu"),
-            Animation::new(theme::MOTION_ENTER).with_easing(theme::ease_enter()),
-            |menu, delta| {
-                menu.opacity(delta)
-                    .bottom(px(MENU_BOTTOM - MENU_RISE * (1.0 - delta)))
-            },
-        )
-    }
-
-    /// One row of the quality menu. `request` is what choosing it asks for:
-    /// a rendition, or `None` for the settings' choice.
-    fn quality_option(
-        &self,
-        id: impl Into<ElementId>,
-        label: SharedString,
-        selected: bool,
-        request: Option<String>,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        div()
-            .id(id.into())
-            .px(px(theme::PANEL_PAD))
-            .py(px(theme::CONTROL_PAD_Y))
-            .text_size(px(theme::TEXT_LABEL))
-            .font_weight(theme::weight_label())
-            // One line, however long: the menu hangs from a button narrower
-            // than it, so its width is whatever its rows say, and the first
-            // row says the settings' choice in the sheet's words — `Auto
-            // (matches the video pane)` — which would otherwise wrap at the
-            // menu's least width.
-            .whitespace_nowrap()
-            .cursor_pointer()
-            .text_color(if selected {
-                theme::accent()
-            } else {
-                theme::text()
-            })
-            .hover(|style| style.bg(theme::hover()))
-            .active(|style| style.bg(theme::pressed()))
-            .child(label)
-            .on_click(cx.listener(move |this, _event, _window, cx| {
-                this.close_menu(cx);
-                // Choosing what is already chosen changes nothing, and asking
-                // anyway would restart the stream to arrive where it was.
-                if !selected {
-                    cx.emit(VideoEvent::QualityRequested(request.clone()));
-                }
-            }))
-    }
-
-    /// The seek bar, on a recording. A live stream has no timeline and gets
-    /// nothing here, so its control bar is exactly what it was.
-    fn seek_row(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let timeline = self.stream.timeline()?;
-        let position = self.stream.position();
-        let extent = timeline.extent(position);
-        // While the thumb is held the left-hand time follows it rather than
-        // the playhead: that is the number the scrub is choosing.
-        let shown = self
-            .scrub
-            .map(|fraction| fraction as f64 * extent)
-            .unwrap_or(position);
-        // Mid-scrub the label rides the thumb, whatever the pointer has since
-        // wandered over: the time being chosen is the one worth reading.
-        let hover = self
-            .scrub
-            .or(self.pointing)
-            .map(|fraction| seek_bar::Hover {
-                fraction,
-                time: seek_bar::timecode(fraction as f64 * extent).into(),
-            });
-        let state = seek_bar::State {
-            played: (position / extent) as f32,
-            scrub: self.scrub,
-            hover,
-            position: seek_bar::timecode(shown).into(),
-            extent: seek_bar::timecode(extent).into(),
-        };
-        Some(seek_bar::element(
-            state,
-            |this: &mut Self, fraction, _window, cx| this.begin_scrub(fraction, cx),
-            |this: &mut Self, _window, cx| this.end_scrub(cx),
-            |this: &mut Self, bounds| this.track = Some(bounds),
-            cx,
-        ))
-    }
-
-    fn control_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .absolute()
-            .bottom_0()
-            .left_0()
-            .right_0()
-            // Clicks on the bar stay on the bar. Hit-testing is flat, so
-            // without this a click on `Pause` would also reach the pane
-            // underneath, where a double-click now means fullscreen. The hover
-            // probe is a canvas and sees through it, so the bar still counts
-            // as "over the video" for the purpose of staying visible.
-            .occlude()
-            .flex()
-            .flex_col()
-            .gap(px(theme::GAP_TIGHT))
-            .px(px(theme::PANEL_PAD))
-            .py(px(theme::GAP_TIGHT))
-            // Sits over live video, so it carries its own contrast rather than
-            // relying on whatever happens to be on screen behind it. The
-            // denser of the two picture washes, because the bar carries more
-            // than full-strength text: the resting labels and the volume
-            // figure are `text_muted`, which only passes over a white frame
-            // on this one.
-            .bg(theme::video_chrome())
-            .children(self.seek_row(cx))
-            .child(self.button_row(cx))
-    }
-
-    /// Pause, mute, volume and quality: the row every stream has.
-    fn button_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        // The figure is the level chosen, beside the slider showing it; the
-        // pill says what a press would do, which for a hushed pane is unmute.
-        let volume = self.loudness.level();
-        let muted = self.is_muted();
-        let paused = self.stream.is_paused();
-
-        div()
-            .w_full()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(theme::GAP_TIGHT))
-            .child(
-                controls::pill(
-                    "pause",
-                    if paused { "Play" } else { "Pause" },
-                    controls::Variant::OnVideo,
-                )
-                .on_click(cx.listener(|this, _event, _window, cx| this.toggle_playback(cx))),
-            )
-            .child(
-                controls::pill(
-                    "mute",
-                    if muted { "Unmute" } else { "Mute" },
-                    controls::Variant::OnVideo,
-                )
-                .on_click(cx.listener(|this, _event, window, cx| this.toggle_mute(window, cx))),
-            )
-            .child(
-                div()
-                    .w(px(120.))
-                    .child(Slider::new(&self.volume_slider).horizontal()),
-            )
-            .child(
-                div()
-                    .w(px(38.))
-                    .text_size(px(theme::TEXT_META))
-                    .text_right()
-                    .text_color(theme::text_muted())
-                    .child(SharedString::from(format!("{volume}%"))),
-            )
-            .child(div().flex_1())
-            .child(
-                div()
-                    .relative()
-                    // A press anywhere else closes the menu, the way every menu
-                    // does. On the anchor rather than the menu, so a press on
-                    // the button is not "elsewhere" — that would close the menu
-                    // and the click that followed would open it straight again.
-                    .on_mouse_down_out(cx.listener(|this, _event, _window, cx| {
-                        this.close_menu(cx);
-                    }))
-                    .child(
-                        controls::pill(
-                            "quality",
-                            self.qualities.playing.clone(),
-                            controls::Variant::OnVideo,
-                        )
-                        .on_click(cx.listener(
-                            |this, _event, _window, cx| {
-                                this.quality_menu_open = !this.quality_menu_open;
-                                this.sync_controls();
-                                cx.notify();
-                            },
-                        )),
-                    )
-                    .when(self.quality_menu_open, |anchor| {
-                        anchor.child(self.quality_menu(cx))
-                    }),
-            )
     }
 }
 
