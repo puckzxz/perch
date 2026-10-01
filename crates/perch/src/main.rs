@@ -29,6 +29,7 @@ mod instance;
 mod keys;
 mod launch;
 mod layout;
+mod loudness;
 mod motion;
 mod palette;
 mod root;
@@ -37,6 +38,7 @@ mod settings_view;
 mod sidebar;
 mod target;
 mod theme;
+mod trail;
 mod twitch;
 mod video;
 mod video_view;
@@ -225,9 +227,10 @@ fn main() {
         .and_then(|settings| settings.window)
         .filter(WindowPlacement::is_usable);
 
-    // The assets are the widget library's icons; see `assets`. Without them
-    // every chevron, eye and clear button in the app renders as nothing, and
-    // silently — a missing asset is not an error anywhere in that path.
+    // The assets are the icons, the widget library's and Perch's own; see
+    // `assets`. Without them every chevron, eye and clear button in the app,
+    // and every button on the title bar, renders as nothing, and silently — a
+    // missing asset is not an error anywhere in that path.
     Application::new()
         .with_assets(assets::Icons)
         .run(move |cx: &mut App| {
@@ -244,10 +247,22 @@ fn main() {
             let options = WindowOptions {
                 window_bounds: Some(bounds),
                 display_id,
+                // Perch draws its own title bar; see `root::title_bar`. The
+                // platform's is made transparent rather than left out: the
+                // title still names the window to the taskbar and Alt+Tab,
+                // and on macOS `titlebar: None` would also take away the
+                // close, resize and minimise the window is entitled to.
                 titlebar: Some(TitlebarOptions {
                     title: Some(APP_NAME.into()),
-                    ..Default::default()
+                    appears_transparent: true,
+                    traffic_light_position: Some(point(
+                        px(theme::TRAFFIC_LIGHT_X),
+                        px(theme::TRAFFIC_LIGHT_Y),
+                    )),
                 }),
+                // No narrower than the bar Perch draws, or its caption buttons
+                // run off the window's right edge; see `root::title_bar`.
+                window_min_size: Some(root::window_min_size()),
                 ..Default::default()
             };
 

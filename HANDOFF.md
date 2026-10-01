@@ -4,7 +4,7 @@ For whoever picks this up next. `README.md` covers *using* it; this covers
 *working on* it — the architecture, the traps, and the things that cost real
 time to discover and would cost the same again.
 
-Roughly 26,000 lines across seven crates. `cargo test --workspace`,
+Roughly 32,000 lines across seven crates. `cargo test --workspace`,
 `cargo clippy --workspace --all-targets` and `cargo fmt --all --check` are all
 expected to pass; if one does not, that is the change you are looking at, not
 the baseline.
@@ -71,14 +71,16 @@ App modules:
 | `main.rs` | the process: first perch or a launch to hand over, the window, where stderr goes |
 | `instance/` | one perch per settings file: the claim, and a later launch handing its arguments to the running one — a named pipe on Windows, `flock` and a socket on Unix |
 | `launch.rs` | what a launch's arguments ask for, read the one way at startup and on a handover (pure, tested) |
-| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `browsing`, `streams`, `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `prefs`, `chrome`, `pages` |
+| `trail.rs` | back and forward: the places behind and ahead, what a step passes over, and forgetting a place that is gone (pure, tested) |
+| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams`, `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `prefs`, `chrome` (pills, toasts, the rail), `mini_player` (what plays on while you browse, in the corner of the page), `title_bar` (the bar Perch draws across the top of the window — the rail button, back and forward, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`) |
 | `target.rs` | what a typed or pasted thing means: a login, or a twitch.tv link to a channel or a recording (pure, tested) |
-| `browse.rs` | the picker page: following, popular, categories, search |
+| `browse.rs` | the picker page: following, popular, categories, search; which of them is on screen (`Discovery::place`) and which lists are still being waited on |
 | `channel_page.rs` | one channel's past broadcasts, and when each was; the recording card both pages use |
 | `history_page.rs` | the history tab, and the one translation between a video and a history entry |
 | `watch.rs` | the grid of panes; `Slot` lives here |
-| `layout.rs` | derives grid shape from window aspect (pure, tested) |
-| `video_view.rs` | player element + overlay controls |
+| `layout.rs` | derives grid shape from window aspect; the page's `Body`, the title bar's height and drag edge, and the mini player's tiles, how far in it floats clear of the scrollbar, and the `Room` a browse list leaves for it (pure, tested) |
+| `video_view.rs` | player element + overlay controls; drawn full or as a compact mini-player tile |
+| `loudness.rs` | one pane's level and the Mute all hush over it: what mpv hears, and the only level ever reported to be remembered (pure, tested) |
 | `seek_bar.rs` | the bar on a recording, and the arithmetic behind it |
 | `video.rs` | render thread; owns the mpv `Player` |
 | `vod.rs` | positions a recording by rewriting its playlist; the keeper for one still growing |
@@ -86,13 +88,13 @@ App modules:
 | `chat_text.rs` | what a word in a message is — link, mention or plain (pure, tested) |
 | `settings_view.rs` | settings sheet |
 | `twitch.rs` | the worker: sign-in, follows polling, browse requests |
-| `keys.rs` | the keymap: actions, bindings, contexts, and the listing |
+| `keys.rs` | the keymap: actions, bindings, contexts, the listing, and the keys a tooltip may name (`Hint`) |
 | `theme.rs` | **all** colour, spacing, type and motion tokens |
-| `sidebar.rs` | the follows rail down the left of both pages |
+| `sidebar.rs` | the follows rail down the left, beside both pages: Pinned, Live, then Offline folded under a count (`groups`, pure, tested) |
 | `palette.rs` | the command palette, and what it can run |
-| `controls.rs` | the one button, and the variants it comes in |
+| `controls.rs` | the one button, the variants it comes in, the icon button, the heading that folds (`fold`) and the plain one it sits among (`group_heading`), and the window's caption buttons |
 | `widget_theme.rs` | hands `theme.rs` to `gpui-component`'s own palette |
-| `assets.rs` | the icons `gpui-component` asks the host for |
+| `assets.rs` | the icons: the ones `gpui-component` asks the host for, and Perch's own, typed as `assets::Icon` |
 | `motion.rs` | the four animation shapes, and the state one of them needs |
 | `diagnostics.rs` | where stderr goes when there is no console |
 | `clock.rs` | the system's short time format, for chat stamps |
@@ -264,7 +266,13 @@ and a choice made from the pane's own menu is left alone. A restart is the
 only way to change rendition, since streamlink is resolved again, so it costs
 a few seconds of black: worth it for a picture that was soft, not for a CPU
 saving in a pane that hides nothing — which is also why the re-pick waits for
-a resize to settle rather than running per event.
+a resize to settle rather than running per event. The mini player is not one
+of the sizes it chooses for: `pane_height` measures the watch grid whichever
+page is up, so a tile never feeds it, the rendition playing in the corner is
+the one you go back to, and going back to watching never restarts a stream.
+A player that does restart while you browse — the re-pick after a resize, a
+quality change from the settings — is born compact, as the tile it replaces
+(`video_view::Start`).
 
 **Animated GIFs need an `ElementId`.** From gpui's `img.rs`:
 
@@ -535,6 +543,37 @@ rather than through its own load-and-save. `two_writers_never_lose_each_others_f
 hammers the two from two threads; without the lock it fails within a few hundred
 rounds.
 
+**The settings sheet saves only what it owns.** The sheet used to work on a
+copy of the whole of `Settings` taken when it opened, and its `Saved` replaced
+the root's settings with that copy wholesale — so whatever the app wrote while
+it was up went back. Less can land under the sheet than it looks: its scrim
+covers the rail, the title bar's veil covers the rail button, and the sheet's
+key context keeps `B`, the volume keys and `Ctrl+K` off. The palette is drawn
+under the sheet and used to open there, where a channel watched from it wrote
+`recent` and its rail row folded the rail; see "Keyboard". What still gets
+through is `recent`, from a handed-over launch. Pins, volumes, the rail and
+the window's placement cannot change while the sheet is up — the window is
+written only on the way out — but they are why the sheet owns a list of
+fields rather than the root keeping a list of exceptions: whatever the app
+writes outside the sheet, now or later, has to survive saving it. The sheet is
+handed `settings::SheetFields` — the client id, the auth-token cookie,
+quality, chat history and the mini player — and hands the same type back, so
+it never holds the rest to hand back; `Settings::adopt_sheet` takes those
+five and nothing else, and `adopting_the_sheet_keeps_everything_it_does_not_own`
+holds it to exactly that, pins, volumes and placement included. A field the
+sheet gains does not compile until both ends handle it: the panel builds the
+type with a struct literal, and `adopt_sheet` takes it apart with no `..`.
+The sign-in is kept apart from all of this by `save_preferences` (above).
+
+**An older build drops what it does not know.** Every save writes the fields
+the running build has and nothing else: serde ignores an unknown field on load,
+so it is never written back. Run a build from before `pinned` existed after
+this one — `instance` stops two copies at once, not one after the other — and
+its first save writes the file without the pins. Nothing in this build can
+prevent that, and a field added later costs the same against this one. Keeping
+fields a build does not know would take a `#[serde(flatten)]` catch-all on
+`Settings`, which nothing has needed yet.
+
 ### GPUI / gpui-component
 
 **`gpui-component 0.5.1` differs from its main-branch docs.** Read the vendored
@@ -562,17 +601,30 @@ Two things worth keeping in mind:
 
 - **Occlude the smallest thing that is actually opaque.** Put it on a container
   and you block its whole bounding box, including empty space. Toast cards are
-  occluded individually for that reason. The now-playing bar needs none of it:
-  it is docked at the bottom of the browse page rather than floating over the
-  grid, so there is nothing underneath it to block. It used to be a strip of
-  220px thumbnails in the bottom-right corner, which covered two cards at
-  1000px and would have laid 900px of tiles over the bottom row with four
-  streams open.
+  occluded individually for that reason, and the mini player carries
+  `block_mouse_except_scroll` on its own box and nothing larger. It floats over
+  the browse grid, which is the arrangement that failed twice before: a strip
+  of 220px thumbnails in the bottom-right corner covered two cards at 1000px
+  and let clicks through to them, and the docked now-playing bar that replaced
+  it never had room for more than a 96px muted thumbnail. Floating works now
+  for two reasons together — the box blocks the pointer from what is under it,
+  and every browse list leaves `layout::mini_reserve` at its foot through
+  `browse::scroller`, so its last row can always be scrolled out from under
+  the player. The player is a fixed `MINI_PLAYER_WIDTH` and grows by rows, so
+  four streams make it taller rather than wider. It stands in from the page's
+  right edge by `layout::mini_player_right`, past the list's scrollbar, so
+  the whole track stays the list's to drag; gpui-component keeps the track's
+  width private, so `theme::SCROLLBAR_WIDTH` copies it, and a test fails when
+  `Cargo.lock` moves the library on. And it is placed against the page's own
+  column rather than the row the rail is in, so in a narrow window it is cut
+  off at its left rather than reaching over the rail's last rows, which have
+  no room at their foot to be scrolled out from under it. At a narrow window
+  it still covers part of the visible grid until that is scrolled.
 - **`block_mouse_except_scroll` for overlays on the browse page**, so the wheel
   still reaches the grid underneath; plain `occlude` for the modal, where the
   page behind should not scroll either.
 
-`browse.rs`'s `cx.stop_propagation()` on "+ add" is *not* the same pattern and
+`browse.rs`'s `cx.stop_propagation()` on "+ Add" is *not* the same pattern and
 must stay as it is: that button is a descendant of the card, not an overlay, and
 occluding it would kill the card's own hover and the group-hover that reveals it.
 
@@ -582,6 +634,107 @@ working through any occluder.
 
 **`gpui_component::init(cx)` must run before any widget**, and `Root::new` must
 wrap the window's first view or overlays have nowhere to render.
+
+**The title bar is Perch's own, and the platform's behaviour has to be earned
+back piece by piece.** `TitlebarOptions::appears_transparent` hides the
+platform's bar; `root/title_bar.rs` draws the replacement. Every one of these
+fails silently, and each was read out of gpui 0.2.2's source:
+
+- **The bar must `.occlude()`.** The root's `track_focus` installs a
+  mouse-down handler that calls `prevent_default` on every press it hears
+  (div.rs:2025-2037), and the Windows backend reports a non-client press whose
+  default was prevented as handled (events.rs:976) — so `DefWindowProc` never
+  sees it. Without the occluder a drag, a double-click to maximise and the top
+  resize edge all do nothing.
+- **`WindowControlArea::Drag` goes only on an empty spacer** that is a sibling
+  of every control, never an ancestor. The hit test answers with the first
+  window-control hitbox under the pointer in paint order, parent before child
+  (window.rs:1138-1141), so a drag area around the controls answers for them.
+- **The drag and caption areas start `layout::drag_top` down.** gpui asks for
+  a window control before it asks Windows about the frame, so an area reaching
+  y=0 takes the top resize edge with it. When maximised `drag_top` is 0: gpui
+  skips its `HTTOP` band there (events.rs:918), and a pointer flung to the top
+  of the screen has to land on the bar. A caption button lights that area and
+  nothing above it. Lit to the top, the strip over it turned Close red under a
+  resize cursor, and a press there — the start of a resize, whose release the
+  platform's size loop keeps — left the button looking pressed for having
+  done nothing (`controls::caption_button`; read from source, not watched).
+- **Caption buttons carry no handlers.** No `on_click`, no `stop_propagation`,
+  no focus: anything that handles the press stops the platform acting on it,
+  by the same events.rs:976. And never reach for `zoom_window`, which
+  maximises but never restores (windows/window.rs:790-798), or
+  `remove_window`, which skips `on_window_should_close` and so never saves the
+  window's place.
+- **Caption buttons light only while `window.is_window_hovered()`.** gpui
+  hears the pointer leave the window as a flag and a repaint, never a move
+  (events.rs:318-327), so the next frame hit-tests the last position it saw.
+  The buttons sit in the corner the pointer usually leaves by, so Close would
+  stay red with the pointer off the window. A press is worse: a press on a
+  caption button is non-client, gpui captures nothing for it
+  (events.rs:986-997), and one dragged off the window and let go outside never
+  comes back as a release, so `.active` would hold until the next release
+  anywhere in the window. `caption_button` drops its hover and press styles while the
+  window is not hovered, and its id follows the flag, so the first frame drawn
+  then forgets the press with the rest of the element's state. What is left:
+  the flag is one bit for the whole window, and if Windows sends the page's
+  leave after the first move over a caption button, a pointer that crosses
+  onto one in a single move and stops leaves it dark until it moves again.
+  Read from source; not yet watched with the real cursor.
+- **Nothing that takes a press of its own sits in a drag area**, the search
+  box least of all: a press in a drag area is the platform's, and the moves
+  after it arrive as non-client moves with no button held (events.rs:938-942),
+  so drag-selecting the box's text would break. The box and the rail button
+  are siblings of the spacer, at its left, and being a sibling is not enough
+  on its own. Their group shrinks with the bar, and below the button plus
+  `SEARCH_MIN_WIDTH` the box ran on past the group under the spacer. The
+  spacer is painted later, so its drag area answered the platform's hit test
+  there, which broke drag-selecting, and in a narrow enough window the box
+  covered the whole strip and then the minimise button, where a press only
+  focused the box. The group is `overflow_hidden`, which clips hit testing as
+  well as painting (window.rs:779), so the box is cut off at the strip
+  instead. While the sheet or the palette is up the group sits under an
+  `occlude`d veil (`title_bar_leading`). The veil stops only the pointer. The
+  keyboard is kept off the box because `toggle_settings` takes focus back to
+  the root when the sheet opens. `Ctrl+,` stands aside for no text box, so
+  without that it opened the sheet with the cursor still in the box: `Enter`
+  ran a search behind the sheet, which on the watch page left the page, and
+  `Esc` could not close the sheet. Between the veil and the focus, nothing in
+  the bar changes the page behind a modal. The gear, the drag strip and the
+  caption buttons stay live.
+- **Modals, toasts and the mini player live in the root's id-less content
+  wrapper** — the player inside the page's column there — under the bar, so
+  their `inset_0` starts below it by construction, and the wrapper is
+  `overflow_hidden`, so nothing in it can grow back over the bar. That
+  matters because `block_mouse_except_scroll` does not take a drag area or a
+  caption button out of the hit test: gpui goes on collecting hitbox ids past
+  it (window.rs:775-796) and answers the platform with the first
+  window-control area among them (window.rs:1138-1141).
+  A toast laid over the spacer would drag the window; and the mini player,
+  anchored to the bottom and growing upward, reached the bar in a window under
+  about 280px tall, where pressing a picture moved, maximised or closed the
+  window. The clip bounds hit testing as well as painting — each hitbox is
+  intersected with its content mask (window.rs:779) — and adds no hitbox of
+  its own. Tooltips and a text box's menu are drawn by the window after the
+  tree, so they still reach past it.
+- **A drag that must survive the pointer leaving its element listens on the
+  window.** An element's `on_mouse_move`/`on_mouse_up` hear only the pointer
+  over its own unblocked hitbox (div.rs:173-187, 263-273), so the root's went
+  deaf over the occluded bar. The divider drag is followed by
+  `RootView::drag_listeners`, a hitbox-less `canvas` that registers
+  `window.on_mouse_event` as it paints; gpui captures the mouse on a press
+  (events.rs:451), so the window hears the whole drag. The mouse's back and
+  forward buttons are heard the same way (`RootView::side_buttons`) for the
+  same reason: over the bar, a toast, the mini player or a pane's control
+  bar, the root's own handlers hear nothing.
+- **An `svg` paints only with its own `text_color`** (svg.rs:110) and inherits
+  none, so a glyph never given one draws nothing. `controls::icon_button`,
+  `caption_button` and `fold` colour the glyph themselves and lift it with
+  `group_hover`.
+- **macOS drags only by AppKit's native strip.** `window_control_area` is a
+  no-op there in 0.2.2, so the spacer asks for `titlebar_double_click` by
+  hand — through `on_click`, which needs an id, so the spacer's `.id()` is
+  unconditional: adding one inside `.when(cfg!(..))` changes the element's
+  type halfway through the chain and does not compile.
 
 **Neither `group_hover` nor `on_hover` means "the pointer is over this."** Both
 resolve through the same expression:
@@ -648,7 +801,7 @@ UI thread, `mpv-render` is `video.rs`, `worker`/`demux`/`vo`/`core` are libmpv,
 static page repainting sixty times a second is a bug and looks identical to a
 busy one in a CPU number. And `child_pct` is streamlink and its python, because
 Task Manager folds a parent's children into its row — so a stream left playing
-as a browse thumbnail reads as perch using CPU when none of it is perch's.
+in the mini player reads as perch using CPU when none of it is perch's.
 
 What it said the first time it ran, which is the baseline to compare against:
 
@@ -661,8 +814,10 @@ What it said the first time it ran, which is the baseline to compare against:
 The first row is the important one: gpui does not repaint a page that has not
 changed, so an idle perch is genuinely idle. Every bit of the rest is the
 *stream*, and going back to the follows page does not stop one — the pane
-becomes a muted thumbnail and mpv keeps decoding at full source resolution,
-because the render size follows the element but the decode does not.
+becomes a tile in the mini player, still with its sound, and mpv keeps
+decoding at full source resolution, because the render size follows the
+element but the decode does not. The second row was measured with the old
+96px thumbnail; the tile is larger, so measure again before quoting it.
 
 **A windowed app still gets console windows from its children.** streamlink is a
 console-subsystem program, so every one we spawn came with its own console — and
@@ -673,11 +828,12 @@ absence of conhost, or you will conclude the fix did not work.
 
 **The icon is an embedded resource**, stamped on by `build.rs` via
 `winresource`, because gpui 0.2.2 has no window-icon API and Windows takes the
-taskbar and titlebar icons from the executable anyway. It needs `rc.exe` from
-the Windows SDK; a build without one warns and produces an icon-less binary
-rather than failing. `assets/make-icon.ps1` regenerates the `.ico` — entries up
-to 128px are DIBs and 256 is a PNG, because GDI+ cannot read a PNG-payload entry
-back, so a PNG-only file is one you cannot open to check.
+taskbar and Alt+Tab icons from the executable anyway; the title bar is
+Perch's own and draws none. It needs `rc.exe` from the Windows SDK; a build
+without one warns and produces an icon-less binary rather than failing.
+`assets/make-icon.ps1` regenerates the `.ico` — entries up to 128px are DIBs
+and 256 is a PNG, because GDI+ cannot read a PNG-payload entry back, so a
+PNG-only file is one you cannot open to check.
 
 ### Motion
 
@@ -808,34 +964,72 @@ unconsidered.
   default: mute is something you do to one stream, usually to hear another, and
   a channel that opens silent reads as broken. That is also why the stored value
   is an `Option<u8>` — `Some(0)` (deliberately muted) and `None` (never opened)
-  must not collapse into each other. Keys go through `settings::channel_key`,
-  because the app does not agree with itself about case: Helix says `forsen`,
-  the command line says whatever was typed.
+  must not collapse into each other. Mute all and the compact mini player never
+  write a level at all, 0 or otherwise: a pane's `Loudness` keeps the level
+  the user chose apart from the hush Mute all lays over it, and only a chosen
+  level is ever reported to be remembered (`loudness.rs`, tested there). The
+  hush is per pane and for the session — it outlives a player rebuilt under
+  it, ends at that pane's first deliberate change of level, never un-mutes a
+  pane muted by hand, and a pane opened afterwards starts audible. Keys go
+  through `settings::channel_key`, because the app does not agree with itself
+  about case: Helix says `forsen`, the command line says whatever was typed.
 - **Spacing** — named by role (`PAGE_PAD`, `PANEL_PAD`, `CONTROL_PAD_*`,
   `GAP_TIGHT`, `GAP`, `GAP_SECTION`, `PANE_GAP`, `ROW_PAD_*`), not by size.
 - **Controls come from `controls.rs`.** There were ten hand-rolled buttons in
   six shapes — the tokens were shared the whole time and the component was not,
   which is the same drift one file down. A control that needs a shape not on
-  that list is a new variant there, not an eleventh `div`. The same file owns
+  that list is a new variant there, not an eleventh `div`, declared in
+  `variants!` so the contrast test measures it the moment it exists. The same
+  file owns
   the things that are not buttons but were drawn by hand in three places each:
   `live_dot`; `tag`, the passive `muted` / `paused` word in a pane header; and
   `badge`, a fact drawn on a picture — a thumbnail's viewers, a recording's
   length, the seek bar's time — which was three recipes at three paddings, two
   of them with a white of their own. The settings sheet uses these too: it was
   the one place with the widget library's buttons, and so the one place a
-  primary control was filled rather than bordered.
-- **Casing** — a thing you click is lowercase: `refresh`, `open settings`,
-  `save`, `← browse`. A thing you read is written as a sentence: titles,
-  notices, field labels, tooltips, palette rows. Proper nouns keep their
-  capitals either way (`search Twitch for “…”`). There was no rule, and three
-  controls and the settings sheet's buttons had drifted into title case.
+  primary control was filled rather than bordered. A picture rather than a
+  word is `icon_button`, the same variants in a square, and the title bar's
+  gear wears `Variant::Chrome` — no fill until the pointer is on it.
+  `icon_waiting` is that square with nothing to offer — back with nowhere to
+  go: a `text_dim` glyph with no hover, no pointer and no handler, in the
+  same place so the bar does not shift, and never a control faded to look
+  disabled (see "Things not to redo").
+  `caption_button` is the window's minimise, maximise and close: drawn here,
+  pressed by the platform (see the title-bar trap). `fold` is a heading that
+  folds away the rows under it — the rail's offline follows — with a chevron
+  that says which way it is and no fill until hovered. It is built on
+  `group_heading`, the box the rail's `Pinned` and `Live` headings sit in, so
+  the fold and the headings above it share one recipe rather than two that
+  had to be restyled together.
+- **Casing** — words on controls are sentence case: `Refresh`, `Open
+  settings`, `Save`, `+ Add`, `← Back`, `Try again`, the browse tabs, the
+  channel page's shelves. That covers a control's stand-in too — the
+  `Loading…` a Load more row says while its page is out, chat's `Chat
+  paused` where its jump-to-live pill goes, a switch's `On` and `Off`. A
+  thing you read is written as a sentence: titles and headings, notices,
+  field labels, tooltips, palette rows. Proper nouns keep their capitals
+  either way, and a domain keeps its case (`Search Twitch for “…”`, `Open
+  twitch.tv/activate`). There was no rule at first, and three controls and the
+  settings sheet's buttons drifted into title case; then the rule was that a
+  thing you click is lowercase, until the UI overhaul turned it round. Not
+  swept yet, so do not take them for the rule: the passive words that state
+  a fact — a pane header's `muted`, `paused` and `replay` tags, chat's
+  `deleted`, the line a pane says while it starts or after it stops, toasts
+  and chat's notices, the palette's kind column — are still lowercase.
+  `channel_page::kind_tag` is also read mid-sentence, in a palette row's
+  `(replay)` and a history byline, so it cannot simply take a capital.
 - **Layout reads a `layout::Body`, never the viewport.** The body is the window
-  less the rail when it is open, and it is a type made in one place —
-  `RootView::body` — so nothing laying out a page can be handed the viewport by
-  mistake. The watch grid was, once: with the rail out, every stacked pane
-  carried a 66px black band under its picture, because its 16:9 box was derived
-  from a cell wider than the one it was drawn in. A test in `layout.rs` keeps
-  the number.
+  less the rail and the title bar when each is drawn — neither is in
+  fullscreen (`layout::rail_shown`, `layout::title_bar_height`) — and it
+  is a type made in one place — `RootView::body` — so nothing laying out a page
+  can be handed the viewport by mistake. The watch grid was, once: with the
+  rail out, every stacked pane carried a 66px black band under its picture,
+  because its 16:9 box was derived from a cell wider than the one it was drawn
+  in. `a_body_is_the_viewport_less_the_rail` keeps that number, and
+  `a_body_is_also_less_the_title_bar` holds the rows to the room under the
+  bar. The bar itself is drawn at `layout::title_bar_height`, the number the
+  body takes off — whether there is a bar at all included — so the two are one
+  decision (`the_bar_is_as_tall_as_the_room_the_page_leaves_it`).
 - **Sizes the user dragged are settings, not view state.** `chat_width` and
   `video_share` live in `settings.json`, and the drag writes them on mouse *up*
   rather than on every move — a drag is hundreds of events and each save is a
@@ -866,24 +1060,41 @@ unconsidered.
 Audit commands, worth re-running after UI work:
 
 ```bash
-cd crates/perch/src
-grep -ohE "\.(p|px|py|gap|gap_x|gap_y)_[0-9p]+\(\)" *.rs root/*.rs | sort | uniq -c
-grep -nE "\.(p|px|py|pt|pb|pl|pr|gap|gap_x|gap_y)\(px\([1-9]" *.rs root/*.rs | grep -v "^theme.rs"
-grep -nE "\b(rgb|rgba|hsla|hsl)\(" *.rs root/*.rs | grep -v "^theme.rs\|^widget_theme.rs"
-grep -ohE "\.text_(xs|sm|base|lg|xl)\(\)|FontWeight::[A-Z_]+" *.rs root/*.rs | sort | uniq -c
-grep -nE "Duration::from_(millis|secs)" *.rs root/*.rs
-grep -nE "\.opacity\(0(\.0*)?\)" *.rs root/*.rs | grep -v "^motion.rs"
+# From the repo root. Every source file the crate has, in every directory,
+# new ones included before they are added.
+files=$(git ls-files --cached --others --exclude-standard ':(glob)crates/perch/src/**/*.rs')
+grep -ohE "\.(p|px|py|gap|gap_x|gap_y)_[0-9p]+\(\)" $files | sort | uniq -c
+grep -nE "\.(p|px|py|pt|pb|pl|pr|gap|gap_x|gap_y)\(px\([1-9]" $files | grep -v "/theme.rs:"
+grep -nE "\b(rgb|rgba|hsla|hsl)\(" $files | grep -v "/theme.rs:\|/widget_theme.rs:"
+grep -nE "\.text_(xs|sm|base|lg|xl)\(\)|FontWeight::[A-Z_]+" $files | grep -v "/theme.rs:"
+grep -nE "\.(w|h|min_w|max_w|min_h|max_h|size|top|left|right|bottom)\(px\([1-9]" $files | grep -v "/theme.rs:"
+grep -nE "Duration::from_(millis|secs)" $files
+grep -nE "\.opacity\(0(\.0*)?\)" $files | grep -v "/motion.rs:"
 ```
+
+The list comes from git rather than from a glob, because the glob was
+`*.rs root/*.rs` and quietly skipped `instance/` — and would have skipped
+the next directory too. Keep the `:(glob)` magic: in a plain pathspec `**/`
+needs a slash after `src/`, so it drops every file at the top of the crate.
 
 The first four should return nothing outside `theme.rs` (the colour one also
 shows a test in `controls.rs` building a grey to measure against). The second
 and third are newer than the rest: the first only ever caught gpui's named
 spacings, so a `.py(px(3.))` and an `rgb(0xffffff)` sat in two card badges
-through every audit until a review read the code. The fifth will show genuine
-timings — the follows poll, the toast lifetime, an mpv frame wait — but no
-*animation* duration should appear outside `theme.rs`. The last should return
-nothing: a control at zero opacity still takes clicks (see "Things not to
-redo"), and only `motion` fades one there, on its way to `invisible()`.
+through every audit until a review read the code. The fifth, literal sizes, is
+newer still, and is a ledger rather than a clean sheet: it shows the debt that
+was there when it was added, and the list should only get shorter. That is
+the `max_w(px(420.))` on the text of an empty list's notice and of the
+sign-in code's (both in `browse.rs`), the settings sheet's `w(px(480.))`, the
+quality menu's `min_w(px(120.))`, the volume slider's `w(px(120.))` and the
+`w(px(38.))` of the figure beside it (`video_view.rs`), and chat's one-pixel
+time-break rule, `h(px(1.))`. A zero (`px(0.)`) is left out on purpose: the
+divider seams and the seek bar's time label hang off zero-sized anchors by
+design. The sixth will show genuine timings — the follows poll, the toast
+lifetime, an mpv frame wait — but no *animation* duration should appear
+outside `theme.rs`. The last should return nothing: a control at zero opacity
+still takes clicks (see "Things not to redo"), and only `motion` fades one
+there, on its way to `invisible()`.
 
 ### Where controls live
 
@@ -903,16 +1114,57 @@ there. The split:
   minute, and an uptime still counting beside "ended the stream" is the same lie
   the frozen last frame used to tell.
 - **Over the video**, hover-revealed only: the playback bar (pause, mute,
-  volume, quality), and in the top-left the "← browse" pill plus, when the rail
-  is folded away, the control that brings it back. "browse" rather than a
-  tab's name, because it goes back to whichever tab, category or channel the
-  browse page was left on; it said "follows" when that was the history. Point at the video and they
-  come up; look away and the picture is all that is left.
+  volume, quality). Point at the video and it comes up; look away and the
+  picture is all that is left. Nothing page-level is drawn over the panes.
+- **The title bar** (`root/title_bar.rs`), on both pages and gone in
+  fullscreen: the rail button, back and forward — each drawn waiting while
+  the trail has nowhere to go that way — and the search box at the left,
+  then the drag strip, then — while nobody is signed in — what the sign-in
+  is waiting for in words ("Enter CODE at twitch.tv/activate" has to stay up
+  on either page while you go and do it), the gear, and on Windows the
+  caption buttons. The gear is the account control too: once signed in, who
+  is rides on its tooltip rather than taking room in the bar. A search typed
+  in the box on the watch page leaves it for the results the way `Esc` does
+  (`run_search`), and `Ctrl+F` reaches the box from either page.
+- **The browse page's tab strip**: the four tabs, then Refresh, left-aligned
+  so the toasts at the top-right reach Refresh only in a narrow window — and
+  the browse toast offset (`TAB_STRIP_HEIGHT`) keeps them off it even then.
+- **The rail** (`sidebar.rs`): a row is a click — a live channel watches,
+  anyone else opens their page — and under the pointer it reveals more at
+  its right-hand end, over the viewer count where there is one: the pin,
+  filled on a pinned row, where it unpins, and `+` on a live row while
+  something plays and there is room beside it. Both stop propagation, or the
+  row under them would fire as well. The offline group's heading is
+  `controls::fold`, which unfolds it for the session.
 
-The back pill follows the *panes'* hover, not the window's, so resting the
-pointer in chat does not keep it on screen. An earlier arrangement put the
-channel name and close over the video at the pane's top-right; that is gone, and
-with it the collision that let one click both close a pane and navigate away.
+- **The mini player**, on the browse page while something plays
+  (`root/mini_player.rs`): the pictures, and under them a bar with what is
+  playing — names and how many are paused, in words, never over the video —
+  and three icon controls for all of it: Mute all / Unmute all, Back to
+  watching and Stop all. A click on a picture goes back to watching with that
+  pane active, even when the pointer lands on another pane's video: a pane's
+  measured hover makes it active on a rising edge, so `go_watch_pane` counts
+  every pane as already pointed at for the first frame. A `×` revealed on the
+  picture under the pointer closes that one pane through `close_slot`, looked
+  up by key at the click, so the per-stream close the docked bar had is not
+  lost. The players in it are compact (`VideoView::set_compact`): no control
+  bar, no hover, no double-click fullscreen. So a double-click on a picture is
+  two separate things: the first click puts the watch page under the second,
+  which lands on whatever the page has in that corner — chat, in most
+  layouts, so nothing more happens. Only a pane with no chat beside it puts
+  its video there, and then it is that pane's double-click, fullscreen.
+  Either way the second press leaves the keys with the pane whose picture was
+  clicked: a pane's press makes it active only on the first press of a run
+  (`watch::pane`). The player's controls take focus back for the root,
+  since the player blocks the root's own mouse-down.
+
+The watch page used to float a back pill and, with the rail folded away, the
+control that brought it back, in its top-left corner, revealed with the video
+controls by the panes' hover; the first pane's header kept a reserve clear for
+them. Both left the page — the rail's for the title bar, as its button — and
+the reserve went with them. An earlier arrangement put the channel name and
+close over the video at the pane's top-right; that is gone, and with it the
+collision that let one click both close a pane and navigate away.
 
 Everything in the header but the name comes from a `LiveStream` — the same
 record the browse cards use — looked up by login at render time rather than
@@ -959,10 +1211,11 @@ background that used to sit there were, once the box matched the picture, the
 only gap left, and it read as one.
 
 Left-anchoring the pane controls put the first pane's close button underneath
-the page navigation, and since neither called `cx.stop_propagation()` a single
-click closed a pane *and* navigated away. Top-right is the only anchor that
-clears the corner for every grid shape `layout.rs` can derive — with four
-columns, the third pane's *left* edge also lands under a centred nav.
+the page navigation that then floated in that corner, and since neither called
+`cx.stop_propagation()` a single click closed a pane *and* navigated away.
+Top-right is the only anchor that cleared the corner for every grid shape
+`layout.rs` can derive — with four columns, the third pane's *left* edge also
+landed under a centred nav.
 
 ### Browsing
 
@@ -991,9 +1244,10 @@ Both followed endpoints paginate — see the Networking trap — and
 `/channels/followed` is the one whose `first` defaults to 20 rather than 100:
 forget the parameter and a long follows list quietly shows a fifth of itself.
 
-**Refresh means "this list", not "follows".** One control, whichever list is up,
-because the discovery tabs are otherwise fetched once and kept forever, which is
-right for a page you glance at and wrong for one left open all evening.
+**Refresh means "this list", not "follows".** One control, beside the tabs,
+whichever list is up, because the discovery tabs are otherwise fetched once and
+kept forever, which is right for a page you glance at and wrong for one left
+open all evening.
 `Request::Follows` is intercepted in `run` rather than handled in `serve`,
 because `serve` cannot see the poll timer: answered there, the poll just done by
 hand would be repeated automatically seconds later, for two of everything. And a
@@ -1007,7 +1261,39 @@ Three lists on one page — following, popular, categories — because they are 
 same question asked three ways, so they share one grid and one card. Only
 categories look different, and only because box art is 3:4 rather than 16:9.
 Opening a category *replaces* the page rather than nesting inside the tab, so
-there is only ever one thing to scroll.
+there is only ever one thing to scroll. Which takeover is up is
+`Discovery::place`, the one copy of the order they stack in — a channel's
+page over a search over a category over the tab — read by the page, refresh,
+Load more, `Esc` and the trail alike.
+
+**Back and forward walk a trail; `Esc` steps out.** `Alt+←`/`Alt+→`, the
+title bar's arrows and the mouse's side buttons go back through the tabs,
+categories, searches, channel pages and the watch page you have been on, the
+way a browser does. The trail (`trail.rs`, driven from `root/navigation.rs`)
+is history and nothing more: a `Route` is *read* from `page` and `Discovery`
+and never kept beside them, so there is no second account of what the window
+shows to fall out of step with the first. `RootView::record` wraps the
+functions that move the view — `go_to_tab`, `show_tab`, `run_search`,
+`on_browse_action`, `open_channel_page`, `open_channel`, `open_video_at`,
+`go_browse`, `go_watch` — so a card, the rail, the palette, a toast, a
+launch, `Esc` and a context bar's back pill are all steps without knowing it.
+Nested calls record one step, and it needs no `Window`, because the search
+box searches from a subscription that has none. Going back replays a route
+through the same functions with recording held off, doing only what differs:
+back from the watch page to the list that opened it asks Twitch nothing. A
+takeover whose list has been replaced since is asked for again and opens at
+the top — a new category, search or channel page always does
+(`ScrollHandle::set_offset`), rather than at whatever offset its shared
+handle was left at; the tabs keep their own lists and scroll positions all
+session. A route is its identity: a channel's id filled in by the first
+reply, or a switch of shelf, is not a new place (the hand-written
+`PartialEq`). The watch page drops off the trail both ways once nothing
+plays — `retire_slots` forgets it — and a watch page left with nothing on it
+is never recorded, so back never stops on an empty page. `Esc` and the
+context bars' `← Back` / `← Categories` keep their meaning, out of the
+takeover to its tab or else to watching, and back takes either back. A
+fifth pane is refused where you are, with the toast; the page used to flip
+to watching before the count was checked.
 
 **The fourth tab, history, is the app's own memory and asks Twitch nothing.**
 It is `settings::history`, kept in `history.json` beside the settings rather
@@ -1035,7 +1321,7 @@ last thing opened was that recording: Ctrl+K then Enter carries on with it.
 
 **Forgetting can be taken back.** `History::forget` and `clear` return what
 they took — each entry with the place it stood (`history::Forgotten`) — and
-the toast that says so carries it as `ToastAction::Undo`; its `undo` hands it
+the toast that says so carries it as `ToastAction::Undo`; its `Undo` hands it
 to `History::restore`, which puts each back where it was. One opened again in
 between is already back with a newer place, and keeps it. An entry is only
 ever *added* by opening: noting a place moves one the history has, so a
@@ -1048,14 +1334,40 @@ Everything the user does there arrives as one `browse::Action` rather than one
 callback per control: the page is generic over its owner, so each extra closure
 would be another type parameter threaded through every helper.
 
-Two things worth keeping:
+Three things worth keeping:
 
 - A category's streams are dropped if the reply arrives after the user has left
-  it. Without that check a slow response repopulates the page behind them.
-- `RootView::fetch` refuses to set `loading` when there is nobody to answer —
-  before sign-in, or after the worker has stopped. A request made while signed
-  out would otherwise sit in the queue behind the device-code poll and pulse
-  "Loading…" indefinitely. `fill_tab` picks it up once sign-in lands.
+  it, and so are a search's and a channel's videos. Without that check a slow
+  response repopulates the page behind them.
+- **Loading and errors belong to the list that asked.** Every browse request
+  names the list it fills — `Request::list_key`, a `twitch::ListKey` that
+  leaves out the `after` cursor, so a page of a list and the list are one —
+  and `Discovery` waits on lists by key. `pending` holds an entry per request
+  out and each answer takes one away (`finish`), so a refresh sent while the
+  first ask is still out is a second answer to wait for. `is_loading` and
+  `shown_error` ask only about the list on screen (`shown_key`). That key is
+  read off `Place::first_page`, the request that fills the list on screen,
+  through `Request::list_key`, so the list the page waits on and the list the
+  request is waited on as come from one derivation rather than two matches
+  kept agreeing by hand; `fill_shown` and `refresh` ask for that same first
+  page. The reply arms in `follows` still name their list from the fields the
+  reply carries back. With one flag for everything, a reply for a list you
+  had left took "Loading…" off the one you went to, and a failure said
+  "Could not reach Twitch" on whichever list was up when it landed — both
+  routine once back and forward made leaving a list mid-request ordinary.
+  `BrowseError` carries the key for the same reason; `serve` reads it before
+  the request is taken apart.
+- `RootView::fetch` refuses to wait when there is nobody to answer — before
+  sign-in, or after the worker has stopped — and says why on the list that
+  asked. A request made while signed out would otherwise sit in the queue
+  behind the device-code poll and pulse "Loading…" indefinitely.
+  `fill_shown` asks for whatever list is on screen once sign-in lands — a
+  tab, a category, a search or a channel's shelf — so one opened while
+  signed out does not go on saying it needs a sign-in that has happened.
+  The other way round, the worker's terminal `Error` empties `pending`: it
+  can stop with a request taken off the queue and never answered, and a key
+  left waiting would pulse "Loading…" for good, since `fill_shown` does not
+  ask again for a list it thinks is on its way.
 
 Lists are fetched once per tab and kept, and grow a page at a time on Load
 more — see "Paging, and what is not paged" for the cursor's route out to the
@@ -1076,8 +1388,16 @@ by the page that is not drawing it — the watch page for the Following tab, a
 folded rail for the rail — because an unpainted probe says nothing, and the
 pointer was always on the card that opened the watch page.
 
+The offline names hold the same way, since both lists show them: a fresh
+`FollowedChannels` goes through `follows::offline_after`, which filters out
+whoever is live and, while either probe is pointed at, merges with the same
+`keep_order` — so somebody whose stream ended joins the end of the names
+rather than landing in the middle and pushing the rest down. On release
+`hold_live` puts them back in name order with `twitch_api::by_name`, the one
+rule `followed_channels` sorts by.
+
 **A went-live toast is the way to the channel**, not only news of it:
-`Toast::action`, watch from the text and `+ add` from the pill beside it. And
+`Toast::action`, watch from the text and `+ Add` from the pill beside it. And
 a pane that stalled — streamlink said the channel was off, or the broadcast
 ended — is retried by `on_streams` when a poll lists the channel live with a
 `started_at` later than `Slot::stalled_at`. The timestamp is the whole trick:
@@ -1124,16 +1444,23 @@ the behaviour that keeps typing working everywhere else. A binding cannot win
 that argument, so `on_key_down` reads the event on the way past instead.
 
 The three chords on the command key — `Ctrl+K`, `Ctrl+,`, `Ctrl+R` — are the
-exception, and do not stand aside. They type nothing, and no gpui-component
-widget binds them, so the guard only ever cost something: a search leaves the
-cursor in the header box, and the palette was dead until the page was clicked.
-They are still scoped to the app rather than `None`, so a widget that ever
-claimed one would win it back. `keys` has a test asking gpui's own keymap.
+exception, and do not stand aside for a text box (though `Ctrl+K` waits for
+the settings sheet to close; see "Keyboard"). They type nothing, and no
+gpui-component widget binds them, so the guard only ever cost something: a
+search leaves the cursor in the title bar's box, and the palette was dead
+until the page was clicked. They are still scoped to the app rather than
+`None`, so a widget that ever claimed one would win it back. `keys` has a
+test asking gpui's own keymap.
 
 **Avatars are a second request.** `/streams` carries a stream's preview, not the
 channel's picture, so the rail gets its faces from `/users` — batched at Helix's
 hundred per request, sent after the live list rather than with it, and merged
-into what the UI already holds so the rail fills in rather than blinking.
+into what the UI already holds so the rail fills in rather than blinking. Only
+live follows are looked up. An offline or pinned row in the rail shows a
+picture only if `avatars` already has one from earlier in the session, and
+asks for none of its own: a `/users` call per hundred offline follows would
+cost every poll as many requests again as fetching the offline list does, for
+faces on a list that starts folded.
 
 **Card width is derived from the window**, by `browse::card_width`, and the row
 is filled rather than merely fitted. A fixed 300px card left 306px of gutter
@@ -1373,7 +1700,7 @@ time break between two of last Tuesday's minutes), and is what turns an empty
 pane's pulsing "loading chat replay…" into a still "nothing said here yet". A
 request that fails says "chat replay interrupted: … — retrying" once per
 streak and backs off to thirty seconds; the pill at the bottom of a scrolled
-replay says "newest", since nothing about it is live.
+replay says "↓ Newest", since nothing about it is live.
 
 ### Keyboard
 
@@ -1388,6 +1715,21 @@ whose context stack is empty — and an empty stack fails every predicate. So
 what happens when the settings sheet closes and takes its buttons with it. That
 listener fires only when the path empties, not when focus moves, so it cannot
 loop. Without either half, every binding is dead and nothing says so.
+
+**The title bar's search box outlives a change of page.** While the box was
+in the browse header, leaving that page took it off screen and
+`on_focus_lost` handed the keys back to the root. In the bar it is on both
+pages, so nothing does that any more, and a cursor left in it — where a
+search leaves it — makes every key on the watch page stand aside for it,
+Space typing a space into the search. So whatever the root's own mouse-down
+cannot hear takes focus back by hand: the bar's buttons, a toast
+(`act_on_toast`), the mini player and the side buttons. A pane opened with
+no press on the page at all — a launch handed over, a linked recording
+arriving — takes it back in `RootView::show_watch_page`, but only from the
+search box, so a field on the settings sheet keeps the cursor. Not covered:
+a press on a pane's own control bar after `Ctrl+F` on the watch page, which
+the bar occludes from the root and the player cannot answer for, leaves the
+cursor in the box until the page is clicked.
 
 **A key context and a key predicate are different grammars.** A context is
 whitespace-separated identifiers (`Perch Watch`); a predicate is a
@@ -1413,9 +1755,17 @@ Three more things worth keeping:
   mouse-down handler that re-arms shortcuts after a click — while a click on an
   input still focuses the input, because the inner handler calls
   `prevent_default` first.
-- **The sheet replaces the page name in the context rather than adding to it**,
-  so a page-scoped shortcut cannot fire through a modal and no binding has to
-  remember to write `!Modal`.
+- **A modal replaces the page name in the context rather than adding to it**,
+  so a page-scoped shortcut cannot fire through one and no binding has to
+  remember to write `!Modal`. The settings sheet's context also says `Sheet`
+  (`keys::CONTEXT_SHEET`), for the one key that has to tell it from the
+  palette: `Ctrl+K` is bound on `Perch && !Sheet`, so it closes the palette
+  it opened and does nothing over the sheet. The palette is drawn under the
+  sheet, so `Ctrl+K` there used to open a box nobody could see with the
+  keyboard in it: typing went into the hidden box, and `Enter` opened a
+  channel behind the sheet. The two never stack now — the gear and `Ctrl+,`
+  already put the sheet in the palette's place — and
+  `the_palette_key_waits_for_the_settings_sheet_to_close` asks gpui's keymap.
 
 There is deliberately **no transient feedback** for pause, mute or volume. Each
 one announces itself through the thing it controls, so a flash of UI would only
@@ -1424,15 +1774,33 @@ pane header carries `muted` and `paused` tags, read off the `VideoView` at
 render time. Those used to be visible only while the pointer was over the
 video, so a channel saved muted opened silent with nothing on screen to say so.
 The quality is deliberately not there — it is on the control bar, and a 340px
-header with a name, a count, an uptime, a tag and `close` in it has no room for
+header with a name, a count, an uptime, a tag and `Close` in it has no room for
 a fifth thing; the count reads `358 · 8h 20m` beside the live dot, the card's
 shape, for the same reason. The shortcut list lives in the settings sheet and
 is read from `keys::SHORTCUTS`, beside the bindings, so a documented key is a
-bound one.
+bound one. The README's keyboard table is held to the same list:
+`the_readme_lists_every_shortcut` wants a row in it for each label the sheet
+shows, the label verbatim and in backticks as the row's first cell. It looks
+for the cell, `` | `Esc` | ``, rather than the label, because most labels are
+in the README's prose too and would hide a dropped row. Off macOS only, since
+the README writes `Ctrl` and `Alt` once and says what a Mac draws instead.
+The `RUNNING` pages are shorter on purpose and are kept in step by hand.
 
 **Fullscreen** is `f` on the watch page, `F11` on either, and a double-click on
-the video. The double-click lives on the pane's root element; the control bar
-over it is `.occlude()`d so a double-click on `pause` does not also reach it.
+the video. The title bar goes with it, and `layout::title_bar_height` gives
+its height back to the page — and with it the search box, so `Ctrl+F`, bound
+on both pages because the box is over both, does nothing there:
+`on_focus_search` returns early rather than focusing a box that is not drawn,
+whose focus would only be lost on the next frame and handed back to the root.
+The rail goes too, folded or not (`layout::rail_shown`, read by `body` and the
+render alike). Its only control is the button in the bar, and left on screen
+in fullscreen it was a column the mouse could neither fold nor bring back. So
+`B` and the palette's rail row do nothing there either: `toggle_sidebar`
+returns early, rather than flipping a setting nothing on screen shows, which
+would only surface on leaving fullscreen. The mouse's way out is a
+double-click on the video, which brings the bar back.
+The double-click lives on the pane's root element; the control bar over it is
+`.occlude()`d so a double-click on `Pause` does not also reach it.
 A single click deliberately does nothing there — it is how a pane is made the
 active one, and pausing on a click would turn choosing a pane into stopping it.
 
@@ -1440,14 +1808,38 @@ active one, and pausing on a click would turn choosing a pane into stopping it.
 `keys::ActivatePane` — the one action here that carries data, derived with
 `no_json` because nothing builds this keymap from a file. `PANE_KEYS` is sized
 by `MAX_PANES`, so a fifth pane cannot arrive without a key. `Esc` on the
-browse page is `Back`: out of a channel page, a search or a category, else to
-whatever is playing — the other direction from the watch page's `Esc`, each
-scoped to its own page. The watch page's `Esc` closes an open quality menu
+browse page is `StepOut`: out of a channel page, a search or a category, else
+to whatever is playing — the other direction from the watch page's `Esc`,
+each scoped to its own page. It was `Back` until there was a trail, and was
+renamed so the two meanings cannot share a name: `StepOut` goes up from
+where you are, however you got there, where `NavigateBack` goes to wherever
+you were before. The watch page's `Esc` closes an open quality menu
 before it leaves: that menu is hand-rolled, so it has no key context to catch
 `Esc` itself, and `RootView::on_go_browse` asks every pane to close its menu
 first. A press anywhere else closes it too — `on_mouse_down_out` on the menu's
 anchor rather than the menu, or the press on the button that opened it would
 count as elsewhere and the click after it would open it straight back up.
+
+**Back and forward are `Alt+←` and `Alt+→`** (`⌥` on macOS), as well as
+the title bar's arrows and the mouse's side buttons. The keys are bound
+twice, on the watch and browse predicates, never on `anywhere`, which a
+modal's context also satisfies; and they carry `TYPING` although they are
+chords, because Option and an arrow moves the cursor a word in a Mac text
+box. The listing gives them two rows — `Alt+← / →` would not fit the key
+column — and `alt!` writes the modifier the way `secondary!` does, held to
+the keystroke beside it by `the_listing_names_the_modifier_it_binds`. The
+side buttons are heard by `RootView::side_buttons`, a window-level listener
+like the divider drag's (see the GPUI traps). It acts in the capture phase,
+on the press, since a Mac's swipe sends no release; once it has moved the
+app it stops the press, so nothing under the pointer takes it too, and takes
+focus back for the root by hand. A press with nowhere to go is left to land
+as any click would (`go_back` and `go_forward` say whether they stepped):
+over the page the root's mouse-down takes the keyboard back from a text box,
+as a left click there does, and only over the box itself, the bar or an
+overlay that blocks the pointer does the box keep the cursor. With the sheet
+or the palette up it does nothing, like the keys and the bar's arrows — all
+three ask `RootView::modal_open`. On Windows it is deaf over the
+bar's empty strip and the caption buttons; see "Known limits".
 
 **The window remembers where it was.** `Settings::window` is written from
 `on_window_should_close` with the platform's restore bounds, so a maximised or
@@ -1456,6 +1848,32 @@ used only if some display still intersects it — a monitor unplugged since is
 the common way to lose a window — and otherwise the default is centred and
 fitted to the primary display, which the old fixed 1600×920 was not: it opened
 with its bottom edge off a laptop screen.
+
+The switch to a client-drawn title bar costs one jog. On Windows the saved
+bounds are gpui's client area, worked out from the frame with the border
+offset gpui measures, and turned back into a frame the same way on open. That
+offset shrank when the platform's caption went, so the first launch after the
+switch opens about a caption height shorter (derived from
+windows/window.rs:1259-1325, not observed). After that it holds, with one
+exception, also derived from source and not observed. With the platform's
+caption gone, gpui's frame is thicker at the top while maximised than while
+windowed (events.rs:1509-1544), and gpui measures the offset again only at
+creation, on a DPI change and on a system settings change (window.rs:471,
+events.rs:786, events.rs:1116) — never on a restore. A settings change that
+lands while the window is maximised, such as the taskbar or a display moving
+the work area, leaves the maximised offset in use after the restore, and a
+close before the next re-measure saves the restore bounds about 7px shorter
+and 4px lower at 100% scale, more when scaled; each time it happens the window
+comes back a little smaller. The fix is a patch to the vendored gpui (skip the
+re-measure while maximised), which has not been made; see "Known limits".
+With the native frame the two offsets were the same, so nothing drifted.
+
+The window has a least size, `root::window_min_size`, set in `main`: as wide
+as the title bar with nothing that must stay on it pushed off — on Windows
+the caption buttons, the gear, the least of the drag strip and the rail
+button and arrows — and as tall as the bar. Without one, Windows let the
+window narrow until Maximise and Close ran off its right edge, where nothing
+could press them, which the platform's own caption never allowed.
 
 **On Windows the display has to be named.** gpui keeps saved bounds only when
 their centre is on the display in `WindowOptions::display_id`, and with none
@@ -1550,9 +1968,25 @@ PowerShell + `System.Drawing`, then reading the PNG. The pattern:
 2. `SetCursorPos` to reveal hover-only UI
 3. `CopyFromScreen` into a bitmap, save, then `Read` the PNG
 
-`GetWindowRect` includes invisible resize borders — trim ~8px. `SetForegroundWindow`
-is often refused by Windows; use topmost instead. This loop caught the pill/chat
-overlap, the chat-off-screen bug, and the channel-order verification.
+`GetWindowRect` includes invisible resize borders at the sides and bottom —
+trim ~8px there. There is no caption to trim at the top any more: the title bar
+is Perch's and part of the client area. `SetForegroundWindow` is often refused
+by Windows; use topmost instead. This loop caught the pill/chat overlap, the
+chat-off-screen bug, and the channel-order verification.
+
+**A test build can run beside the user's own perch.** Start
+`target/debug/perch.exe` with `APPDATA` and `LOCALAPPDATA` pointed at scratch
+directories: settings come from `APPDATA` (`settings::default_path`), the image
+cache from `LOCALAPPDATA` (`root::image_cache_dir`), and the one-perch pipe is
+named for a hash of the settings directory (`instance/windows.rs`, `key`), so
+the two share no files and nothing is handed over.
+
+**Check the title bar's hit tests with `WM_NCHITTEST`, after a posted
+`WM_MOUSEMOVE` and a short wait.** gpui answers from the last mouse event it
+processed (window.rs:1133-1141), not from the message's own point, and a sent
+message jumps the posted queue — so a probe sent straight after the move reads
+the previous position. Never post a bare `WM_NCLBUTTONDOWN` with `HTCAPTION`:
+`DefWindowProc`'s move loop would follow the real mouse.
 
 **Verify animation by measuring, not by looking.** One still cannot tell a fade
 from a cut. Extend the same loop to burst-capture with a stopwatch and reduce a
@@ -1644,8 +2078,46 @@ anywhere, the history tab, the time under the pointer on the seek bar, and
 getting a stalled recording going again — are built, as are a channel's
 highlights and uploads beside its past broadcasts, offline channels in search,
 the live follows holding their order under the pointer, undo for forgetting a
-recording, and one perch at a time, a later launch handing over to it. Ranked
-by what would be noticed, roughly:
+recording, and one perch at a time, a later launch handing over to it.
+
+So is the first phase of the UI overhaul: a title bar Perch draws itself,
+holding the rail button, back and forward, the search box and the gear; back
+and forward through tabs, categories, searches, channel pages and the watch
+page, from the bar, `Alt+←`/`Alt+→` and the mouse's side buttons; a mini
+player in the corner of the browse page that keeps each stream's sound, with
+Mute all; the browse tabs as a strip with Refresh at its end; loading and
+errors kept to the list that asked; the rail as Pinned, Live and Offline,
+pinned from the rail itself; a settings sheet that saves only what it owns;
+and sentence case on every control.
+
+**The overhaul's later phases are agreed in outline**, and phase 1 left a
+seam for each. An omnibox takes the place of the title bar's search box,
+which is one element in `title_bar_leading` so it can be swapped whole. A
+guide, and a Recommended group in the rail read from Twitch's unofficial
+`SideNav` query, with the unpublished-query risk the chat replay already
+carries (see "Known limits"). A pop-out player that stays on top — whether a
+`VideoView`'s pump and its atlas tile can move between windows is not known
+yet, and is the first thing to find out. Sound and chat stay per pane
+throughout.
+
+Left over from phase 1, smallest first:
+
+- The mini player's Mute all tooltip keeps its old words after a click, until
+  the pointer leaves the button. Seen live; not yet looked into.
+- The passive words the casing pass left alone — tags, toasts, a pane's
+  status line; see "Casing".
+- Pin from a card, the channel page or the palette. `palette::entries` takes
+  seven positional arguments, its tests call it nearly thirty times, and it
+  wants an inputs struct before it takes an eighth. Pinning a channel you do
+  not follow needs the worker to poll it, since it asks Twitch about follows
+  only.
+- A look at the title bar on a Mac: the traffic-light position, the room
+  left for it and the bar's height are guesses. If dragging by AppKit's strip
+  alone is not enough, porting Zed's `start_window_move` into the vendored
+  gpui is the fix (a `PERCH PATCH`, and `scripts/verify-vendor.sh` told about
+  the file). `Cmd+[` and `Cmd+]` for back and forward were left unbound.
+
+Ranked by what would be noticed, roughly:
 
 1. **Rewind a live stream.** A "from the start" control on a live pane that
    opens the in-progress archive in place. The archive is in the channel's
@@ -1740,7 +2212,9 @@ None of these is being worked on; all of them are real.
    stacks chat below video, the logic is unit-tested, but nobody has seen it.
 9. **The offline follows list has no cap.** Someone following several hundred
     channels gets several hundred names. There is a filter now, on the tab and
-    in the palette, so they can be found; the wall is still a wall.
+    in the palette, so they can be found; the wall is still a wall. The rail
+    folds it under its count and builds no rows folded, but unfolded it is the
+    whole wall again — up to a thousand rows, none of them virtualised.
 10. **Every settings save is a read-modify-write of the whole file.** Runs of
     changes — a volume drag — are coalesced into one write after they settle
     (`RootView::save_settings_soon`); single changes still write at once.
@@ -1753,9 +2227,12 @@ None of these is being worked on; all of them are real.
     rows around the selection, so arrowing scrolls it; the wheel works and
     nothing says so. The settings sheet, the browse lists and the rail now draw
     gpui-component's `Scrollbar` over a tracked `ScrollHandle`.
-14. **The rail lists live channels only.** Offline follows are on the browse
-    page and in the palette, which is the same gap as limit 9 seen from the
-    other side.
+14. **Pins know only what the follows lists know.** A pin for a channel no
+    longer followed shows as its bare login, live or not: the worker reads
+    the settings once when it starts and asks Twitch about follows only, so
+    nothing polls such a channel. Pinning is from the rail only, so a channel
+    you do not follow can be pinned only by hand in `settings.json`; and an
+    offline row has a picture only if this session saw the channel live.
 15. **A recording's thumbnail is 320x180**, the one size Twitch serves for a
     video, scaled up onto a card that is wider than that.
 16. **A jump inside a recording takes about a second**, because it is a reopen
@@ -1778,6 +2255,26 @@ None of these is being worked on; all of them are real.
     And it is written every fifteen seconds while a recording plays, so a
     crash picks up at most that much early; closing a pane or the window
     writes it at once.
+19. **A Mac window drags only by AppKit's own strip.** gpui 0.2.2 ignores
+    window-control areas on macOS, so only the part of Perch's title bar that
+    AppKit's native strip lies under moves the window. A double-click anywhere
+    on the bar's empty stretch is handed to the platform by hand. The
+    traffic-light position, the room left for it and the bar's height are
+    guesses until someone tunes them on a Mac.
+20. **The mouse's side buttons do nothing over the title bar's empty strip
+    or its caption buttons, on Windows.** Those answer the platform's hit
+    test as non-client areas, so a press there arrives as `WM_NCXBUTTONDOWN`,
+    which gpui 0.2.2 does not translate (events.rs:84-91). Everywhere else in
+    the window — the bar's own controls included — they go back and forward.
+    Accepted rather than patched in the vendored gpui.
+21. **The saved window size can creep smaller on Windows.** Worked out from
+    the vendored gpui and not observed: a system settings change or a DPI
+    change that lands while the window is maximised leaves gpui measuring its
+    frame as maximised after the restore, and the next close saves the
+    restore bounds a few pixels shorter and lower than the window was (about
+    7px and 4px at 100% scale), each time it happens. The fix belongs in
+    `vendor/gpui` — re-measure only while not maximised — and waits on a
+    decision to patch it; see "The window remembers where it was".
 
 ## Things not to redo
 
@@ -1797,7 +2294,7 @@ None of these is being worked on; all of them are real.
   `on_hover`'s value; see the hover trap. A card's reveal of its own pills can
   ride `group_hover`, since all a drag elsewhere costs it is a moment hidden.
 - Do not hide a control with opacity alone. At zero it is still there to be
-  clicked: the watch page's "← browse" pill went on navigating from a corner
+  clicked: the watch page's old back pill went on navigating from a corner
   that looked empty, and a tap on a card's corner — a touchscreen's, with no
   hover first — could forget a recording through a pill nobody saw.
   `motion::Fade` ends hidden as `invisible()`, which gpui does not paint and
@@ -1833,6 +2330,20 @@ None of these is being worked on; all of them are real.
 - Do not assume an overlay blocks input because it covers something; use
   `occlude` / `block_mouse_except_scroll`, and put it on the smallest thing that
   is actually opaque.
+- Do not take `.occlude()` off the title bar, give a caption button a handler,
+  or wrap the bar's controls in its drag area. Each one hands the platform's
+  press to gpui, which reports it handled, and the window stops dragging,
+  maximising, resizing from the top or closing — silently. See the title-bar
+  trap.
+- Do not put a modal, a toast or anything else that floats outside the root's
+  content wrapper, and do not give that wrapper an id. Under the bar is what
+  keeps them off the drag strip and the caption buttons, and an id there would
+  re-namespace every element id beneath it.
+- Do not let Mute all or the mini player write a volume. The hush lives in
+  `Loudness` beside the level the user chose, and only a chosen level is
+  reported to be remembered; a hush saved as `Some(0)` opens that channel
+  silent next time, which is the bug muting never becoming the default exists
+  to prevent.
 - Do not cache an image whose URL is stable but whose content is not, and do not
   refresh one in place — GPUI decodes per path.
 - Do not derive anything per-row from a row's index; the backlog drains from the
@@ -1845,6 +2356,11 @@ None of these is being worked on; all of them are real.
   `on_focus_lost` — focus is never reassigned when the focused element vanishes.
 - Do not merge offline follows into `Vec<LiveStream>`; three separate things
   read that list as "who is live".
+- Do not give the settings sheet the whole of `Settings`, or take more than
+  `SheetFields` back from it. A whole copy was as old as the sheet, so
+  whatever the app wrote since — the channel a handed-over launch opened —
+  went back with it; `adopt_sheet` takes the fields the sheet owns. See "The
+  settings sheet saves only what it owns".
 - Do not answer `Request::Follows` in `serve`, which cannot reset the poll timer.
 - Do not report a failed follows poll as `TwitchEvent::Error`; the UI reads that
   as "signed out".
@@ -1901,7 +2417,9 @@ None of these is being worked on; all of them are real.
   `icons/<name>.svg` and ships none, so with no `AssetSource` every chevron,
   eye and clear button renders as nothing — and silently, since a missing asset
   is not an error anywhere in that path. The clickable ones are still there and
-  still clickable, which is worse than absent.
+  still clickable, which is worse than absent. Perch's own controls draw from
+  the same table now, by `assets::Icon` rather than by path, and an `svg`
+  still needs its own `text_color` to draw at all.
 - Do not let `gpui_component::init` have the last word on the palette. It seeds
   itself from `cx.window_appearance()`, which is the *operating system's*
   light/dark setting, and nothing else in this app asks the OS anything. Call

@@ -1,4 +1,4 @@
-//! The icons the widget library asks for.
+//! The icons: the ones the widget library asks for, and the ones Perch draws.
 //!
 //! `gpui-component` draws its chevrons, its eye and its clear button by asking
 //! the *host* for `icons/<name>.svg` — the crate ships none of its own. With no
@@ -8,11 +8,21 @@
 //! credential fields had an invisible-but-clickable eye at their right edge.
 //! Silent, because a missing asset is not an error anywhere in that path.
 //!
-//! So they live here, hand-drawn rather than vendored: eleven paths in a 24×24
-//! box is less to carry than an icon set, and gpui only keeps the alpha anyway
-//! — [`gpui::SvgRenderer`] rasterises and throws the colour away, tinting the
-//! mask with whatever `text_color` the widget asked for. That is also why these
-//! are stroked in flat black: nothing downstream ever sees it.
+//! So they live here, hand-drawn rather than vendored: twenty-one paths in a
+//! 24×24 box is less to carry than an icon set, and gpui only keeps the alpha
+//! anyway — [`gpui::SvgRenderer`] rasterises and throws the colour away,
+//! tinting the mask with whatever `text_color` the element asked for. That is
+//! also why these are stroked in flat black: nothing downstream ever sees it.
+//!
+//! Perch's own controls draw from the same table — the title bar's rail
+//! toggle, back, forward and settings gear, the window's caption buttons, the
+//! mini player's, and the rail's pin and the fold over its offline follows —
+//! through [`Icon`], so a control names an icon by a variant the compiler
+//! checks rather than by a path string nothing does. A variant is named for
+//! what it means, not what it looks like, and a file can serve a variant and
+//! the widget library both: the fold's chevrons are the dropdown's.
+//! An `svg` element paints with its *own* `text_color` and nothing inherited,
+//! so a glyph that was not given one draws nothing; see `controls`.
 
 use std::borrow::Cow;
 
@@ -36,19 +46,78 @@ macro_rules! icon {
 /// Anything not on this list is answered `None`, which is exactly what the app
 /// did for all of them until now — so an icon nobody drew degrades to the
 /// blank it already was rather than to a crash.
-const ICONS: [(&str, &[u8]); 11] = [
+const ICONS: [(&str, &[u8]); 21] = [
+    icon!("arrow-left"),
+    icon!("arrow-right"),
     icon!("chevron-down"),
     icon!("chevron-left"),
     icon!("chevron-right"),
     icon!("chevron-up"),
     icon!("circle-x"),
     icon!("close"),
+    icon!("expand"),
     icon!("eye"),
     icon!("inbox"),
     icon!("minus"),
+    icon!("panel-left"),
+    icon!("pin"),
     icon!("plus"),
     icon!("search"),
+    icon!("settings"),
+    icon!("volume"),
+    icon!("volume-off"),
+    icon!("window-maximize"),
+    icon!("window-restore"),
 ];
+
+/// Declares the icons Perch draws itself, once, as `Variant => "file-stem"`,
+/// and derives the rest from that one list: the [`Icon`] enum, the path each
+/// variant asks [`Icons`] for, and — for the tests only — every variant.
+///
+/// `ALL` is `cfg(test)` because this crate is a binary with no library half:
+/// a constant only the tests read is dead code to `clippy --all-targets`.
+macro_rules! perch_icons {
+    ($($variant:ident => $stem:literal),* $(,)?) => {
+        /// An icon one of Perch's own controls draws. Each names a file on
+        /// the [`ICONS`] table; `every_icon_perch_draws_is_on_the_table`
+        /// holds every variant to that.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub enum Icon {
+            $($variant),*
+        }
+
+        impl Icon {
+            #[cfg(test)]
+            const ALL: &'static [Icon] = &[$(Icon::$variant),*];
+
+            /// The asset path, in the form `svg().path(..)` hands to
+            /// [`Icons::load`].
+            pub fn path(self) -> &'static str {
+                match self {
+                    $(Icon::$variant => concat!("icons/", $stem, ".svg")),*
+                }
+            }
+        }
+    };
+}
+
+// Only what something draws: an unused variant is dead code like any other.
+perch_icons! {
+    Rail => "panel-left",
+    Back => "arrow-left",
+    Forward => "arrow-right",
+    Settings => "settings",
+    Minimize => "minus",
+    Maximize => "window-maximize",
+    Restore => "window-restore",
+    Close => "close",
+    Volume => "volume",
+    VolumeOff => "volume-off",
+    Expand => "expand",
+    Folded => "chevron-right",
+    Unfolded => "chevron-down",
+    Pin => "pin",
+}
 
 /// What `Application::new().with_assets(..)` is handed.
 pub struct Icons;
@@ -112,6 +181,20 @@ mod tests {
             assert!(
                 Icons.load(path).unwrap().is_some(),
                 "{path} resolves to nothing"
+            );
+        }
+    }
+
+    /// Perch's own icons are asked for by a path the macro builds, so a stem
+    /// with a typo compiles and draws nothing. Every variant has to resolve
+    /// through the same loader the renderer uses.
+    #[test]
+    fn every_icon_perch_draws_is_on_the_table() {
+        for icon in Icon::ALL {
+            assert!(
+                Icons.load(icon.path()).unwrap().is_some(),
+                "{icon:?} asks for {}, which is not on the table",
+                icon.path()
             );
         }
     }

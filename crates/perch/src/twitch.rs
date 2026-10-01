@@ -60,6 +60,47 @@ pub enum Request {
     Video { id: String },
 }
 
+/// Which browse list a request fills, so its answer — or its failure — can
+/// be told apart from another list's.
+///
+/// Not the request itself: `after` is left out, because a page of a list and
+/// the list's first page fill the same list, and the page waits on it either
+/// way. Two requests for one list are two of the same key, and each answer
+/// takes one away; see `Discovery::finish`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ListKey {
+    Popular,
+    Categories,
+    /// A category's streams, by the category's id.
+    Category(String),
+    /// What a search found, by the query as it was sent.
+    Search(String),
+    /// One kind of one channel's videos — one shelf of its page.
+    Videos {
+        login: String,
+        kind: VideoKind,
+    },
+}
+
+impl Request {
+    /// The browse list this fills, or `None` for the two that fill none: the
+    /// follows poll, whose lists are not the browse page's, and a recording
+    /// looked up for a link, whose failure is a toast.
+    pub fn list_key(&self) -> Option<ListKey> {
+        match self {
+            Request::Follows | Request::Video { .. } => None,
+            Request::Popular { .. } => Some(ListKey::Popular),
+            Request::Categories { .. } => Some(ListKey::Categories),
+            Request::Category { category, .. } => Some(ListKey::Category(category.id.clone())),
+            Request::Search(query) => Some(ListKey::Search(query.clone())),
+            Request::Videos { login, kind, .. } => Some(ListKey::Videos {
+                login: login.clone(),
+                kind: *kind,
+            }),
+        }
+    }
+}
+
 /// A page of a browse list, and what the UI should do with it.
 ///
 /// `append` rather than letting the receiver work it out: a reply carries no
@@ -142,8 +183,14 @@ pub enum TwitchEvent {
     /// Sign-in itself failed, so nothing works.
     Error(String),
     /// One browse request failed. The session is fine; only that list is empty,
-    /// and saying so there beats blanking the whole page.
-    BrowseError(String),
+    /// and saying so there beats blanking the whole page. `list` says which,
+    /// so the failure is said on that list and nowhere else: by the time it
+    /// arrives the user may be on another, and back and forward make that
+    /// routine.
+    BrowseError {
+        list: Option<ListKey>,
+        reason: String,
+    },
 }
 
 pub struct TwitchService {
@@ -444,6 +491,9 @@ fn serve(
     tx: &mpsc::UnboundedSender<TwitchEvent>,
 ) {
     let token = &session.access_token;
+    // Read before the request is taken apart below, for a failure to say
+    // which list it was.
+    let list = request.list_key();
     let result = match request {
         // Intercepted by the caller, which owns the poll timer.
         Request::Follows => return,
@@ -480,7 +530,10 @@ fn serve(
         }
     };
 
-    let _ = tx.unbounded_send(result.unwrap_or_else(|e| TwitchEvent::BrowseError(e.to_string())));
+    let _ = tx.unbounded_send(result.unwrap_or_else(|e| TwitchEvent::BrowseError {
+        list,
+        reason: e.to_string(),
+    }));
 }
 
 /// Three requests behind one result.
@@ -670,6 +723,59 @@ fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every request the browse page makes names the list it fills, and the
+    /// two that fill none say so. A request with no key would leave its list
+    /// with nothing to wait on, and its failure with nowhere to be said.
+    #[test]
+    fn every_browse_request_names_its_list() {
+        let category = Category {
+            id: "509658".into(),
+            name: "Just Chatting".into(),
+            box_art_url: String::new(),
+        };
+        let cases = [
+            (Request::Follows, None),
+            (Request::Video { id: "1".into() }, None),
+            (Request::Popular { after: None }, Some(ListKey::Popular)),
+            (
+                Request::Popular {
+                    after: Some("page2".into()),
+                },
+                Some(ListKey::Popular),
+            ),
+            (
+                Request::Categories { after: None },
+                Some(ListKey::Categories),
+            ),
+            (
+                Request::Category {
+                    category,
+                    after: Some("page2".into()),
+                },
+                Some(ListKey::Category("509658".into())),
+            ),
+            (
+                Request::Search("zomboid".into()),
+                Some(ListKey::Search("zomboid".into())),
+            ),
+            (
+                Request::Videos {
+                    login: "someone".into(),
+                    user_id: None,
+                    kind: VideoKind::Highlight,
+                    after: None,
+                },
+                Some(ListKey::Videos {
+                    login: "someone".into(),
+                    kind: VideoKind::Highlight,
+                }),
+            ),
+        ];
+        for (request, key) in cases {
+            assert_eq!(request.list_key(), key, "{request:?}");
+        }
+    }
 
     fn a_session(login: &str) -> Session {
         Session {

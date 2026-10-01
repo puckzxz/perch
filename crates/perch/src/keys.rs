@@ -1,9 +1,10 @@
 //! Keyboard shortcuts.
 //!
-//! Every control in this app that you reach for while watching — pause, mute,
-//! volume, close, back — is a hover-revealed overlay on the video. That is the
-//! right place for them when you are already holding the mouse, and no place at
-//! all when you are not, which for a window left open for hours is most of the
+//! The controls you reach for while watching — pause, mute, volume — are a
+//! hover-revealed overlay on the video, a pane's Close sits in its header, and
+//! the rest live in the title bar or the settings sheet. That is the right
+//! place for them when you are already holding the mouse, and no place at all
+//! when you are not, which for a window left open for hours is most of the
 //! time.
 //!
 //! GPUI's keyboard stack has two gates, and both are easy to get subtly wrong:
@@ -48,11 +49,12 @@ actions!(
         ToggleSidebar,
         /// Close the active pane.
         ClosePane,
-        /// Leave the watch page, keeping the streams as muted thumbnails.
+        /// Leave the watch page, keeping the streams playing, with their
+        /// sound, in the mini player — or stopping them, with it turned off.
         GoBrowse,
         /// Open the settings sheet, or close it if it is already open.
         ToggleSettings,
-        /// Put the cursor in the search box.
+        /// Put the cursor in the title bar's search box.
         FocusSearch,
         /// Ask Twitch again for whichever list is on screen.
         Refresh,
@@ -71,8 +73,16 @@ actions!(
         PreviousPane,
         /// One step out of wherever the browse page has got to: a channel's
         /// page, a search or a category closes; with none open, back to
-        /// whatever is playing.
-        Back,
+        /// whatever is playing. Out, not back: it goes up from where you
+        /// are, whichever way you came, where [`NavigateBack`] retraces your
+        /// steps. Named apart so the two meanings cannot share a handler.
+        StepOut,
+        /// Back along the trail of places the app has been: a tab, a
+        /// category, a channel's page, a search, the watch page. See
+        /// `crate::trail`.
+        NavigateBack,
+        /// Forward again along the trail, after going back.
+        NavigateForward,
     ]
 );
 
@@ -112,16 +122,20 @@ const APP: &str = "Perch";
 const WATCH: &str = "Watch";
 const BROWSE: &str = "Browse";
 const MODAL: &str = "Modal";
+const SHEET: &str = "Sheet";
 
-/// What `RootView` reports while watching, browsing, and with the settings
-/// sheet open.
+/// What `RootView` reports while watching, browsing, with the palette open,
+/// and with the settings sheet open.
 ///
-/// The sheet replaces the page name rather than adding to it, so a shortcut
-/// scoped to a page cannot fire through a modal without anybody having to
-/// remember to write `!Modal`.
+/// A modal replaces the page name rather than adding to it, so a shortcut
+/// scoped to a page cannot fire through one without anybody having to
+/// remember to write `!Modal`. The sheet is a modal that also says which it
+/// is, for the one key that has to tell the two apart: `Ctrl+K` closes the
+/// palette it opened, and does nothing over the sheet (see `bindings`).
 pub const CONTEXT_WATCH: &str = "Perch Watch";
 pub const CONTEXT_BROWSE: &str = "Perch Browse";
 pub const CONTEXT_MODAL: &str = "Perch Modal";
+pub const CONTEXT_SHEET: &str = "Perch Modal Sheet";
 
 /// Everything in gpui-component that claims keys for itself while it is
 /// focused. A binding guarded by this cannot swallow a keystroke meant for the
@@ -150,10 +164,20 @@ fn bindings() -> Vec<KeyBinding> {
     // the widgets' own bindings, these three included if one ever took them.
     let anywhere = APP;
     let browsing = format!("{APP} && {BROWSE}");
+    // The palette's key, anywhere but over the settings sheet. The palette is
+    // drawn under the sheet, so opening it there put a box nobody could see
+    // behind the sheet with the keyboard in it: typing went into the hidden
+    // box, and `Enter` could open a channel behind the sheet. So the key does
+    // nothing until the sheet is closed: the two never stack, as the gear and
+    // `Ctrl+,` already make sure from the other side by putting the sheet in
+    // the palette's place.
+    let unless_sheet = format!("{APP} && !{SHEET}");
 
     let mut bindings = vec![
         // Watching. Bare letters and arrows are safe here only because of the
-        // guard: nothing on the watch page takes typed input.
+        // guard. The title bar's search box is over the watch page too, and
+        // `Ctrl+F` puts the cursor in it there, so without `TYPING` an `m`
+        // typed into a search would mute the stream instead.
         KeyBinding::new("space", TogglePlayback, Some(&watch)),
         KeyBinding::new("m", ToggleMute, Some(&watch)),
         KeyBinding::new("c", ToggleChat, Some(&watch)),
@@ -167,19 +191,21 @@ fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("escape", GoBrowse, Some(&watch)),
         // The rail is on both pages, so its key is too — twice rather than in
         // the `app` context, which a modal's own context also satisfies. A
-        // bare letter is safe on the browse page for the same reason it is on
-        // the watch page: `TYPING` stands the whole keymap aside while the
-        // search box has the cursor.
+        // bare letter is safe on either page for one reason: `TYPING` stands
+        // the whole keymap aside while a text box has the cursor.
         KeyBinding::new("b", ToggleSidebar, Some(&watch)),
         KeyBinding::new("b", ToggleSidebar, Some(&browse)),
-        // Browsing.
+        // The search box is in the title bar, over both pages, so its key is
+        // on both — twice, for the reason the rail's is. A search typed on
+        // the watch page leaves it for the results, the way `Esc` would.
+        KeyBinding::new("secondary-f", FocusSearch, Some(&watch)),
         KeyBinding::new("secondary-f", FocusSearch, Some(&browse)),
         // Anywhere. `secondary-,` is the settings gesture on both platforms —
         // literally so on macOS, where ⌘, opens preferences in everything —
         // and it also closes the sheet, so the same key opens and dismisses it.
         KeyBinding::new("secondary-,", ToggleSettings, Some(anywhere)),
         KeyBinding::new("secondary-r", Refresh, Some(&browsing)),
-        KeyBinding::new("secondary-k", TogglePalette, Some(anywhere)),
+        KeyBinding::new("secondary-k", TogglePalette, Some(&unless_sheet)),
         // Only where the sizes exist. `secondary-0` is the reset gesture every
         // browser and editor already uses for the same kind of thing.
         KeyBinding::new("secondary-0", ResetLayout, Some(&watch)),
@@ -191,17 +217,28 @@ fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("f11", ToggleFullscreen, Some(&watch)),
         KeyBinding::new("f11", ToggleFullscreen, Some(&browse)),
         KeyBinding::new("escape", ToggleSettings, Some(&modal)),
-        // Back, on the browse page: out of a list that has taken the page
-        // over, or to whatever is playing. The watch page's `escape` is the
-        // other direction, and the two never meet: each is scoped to its page.
-        KeyBinding::new("escape", Back, Some(&browse)),
+        // Out, on the browse page: of a list that has taken the page over,
+        // or to whatever is playing. The watch page's `escape` is the other
+        // direction, and the two never meet: each is scoped to its page.
+        KeyBinding::new("escape", StepOut, Some(&browse)),
+        // Back and forward along the trail, on both pages — twice rather than
+        // `anywhere`, which a modal's own context satisfies too, and nothing
+        // should navigate behind the sheet. Guarded like the bare keys
+        // although they are chords: in a text box `alt-left` moves the cursor
+        // a word on macOS, where it is Option, and that is what somebody
+        // typing a search meant by it.
+        KeyBinding::new("alt-left", NavigateBack, Some(&watch)),
+        KeyBinding::new("alt-left", NavigateBack, Some(&browse)),
+        KeyBinding::new("alt-right", NavigateForward, Some(&watch)),
+        KeyBinding::new("alt-right", NavigateForward, Some(&browse)),
         // The pane the keys talk to, without reaching for the mouse: the next
         // one along, or the one before.
         KeyBinding::new("tab", NextPane, Some(&watch)),
         KeyBinding::new("shift-tab", PreviousPane, Some(&watch)),
     ];
     // Or its number. Bare digits are safe here for the reason the letters
-    // are: nothing on the watch page takes typed input.
+    // are: `TYPING` stands them aside while the title bar's search box has the
+    // cursor.
     for (index, key) in PANE_KEYS.iter().enumerate() {
         bindings.push(KeyBinding::new(key, ActivatePane { index }, Some(&watch)));
     }
@@ -245,6 +282,31 @@ macro_rules! secondary {
     };
 }
 
+/// How this platform writes the Alt modifier: `⌥` on macOS, where the key is
+/// Option and every app draws it as the glyph, and `Alt+` elsewhere. The
+/// same shape as [`secondary!`], for the same reason — a const table can only
+/// be built with `concat!` — and checked the same way, against what the
+/// keystroke beside it parses to.
+#[cfg(target_os = "macos")]
+macro_rules! alt {
+    () => {
+        "\u{2325}"
+    };
+    ($key:literal) => {
+        concat!(alt!(), $key)
+    };
+}
+
+#[cfg(not(target_os = "macos"))]
+macro_rules! alt {
+    () => {
+        "Alt+"
+    };
+    ($key:literal) => {
+        concat!(alt!(), $key)
+    };
+}
+
 /// What the settings sheet lists, so a shortcut nobody can discover is not the
 /// same as one that does not exist.
 ///
@@ -259,8 +321,12 @@ macro_rules! secondary {
 /// a label cannot claim `Ctrl` on a machine that binds `⌘`. That was the one
 /// way this table could still lie after the check below — the keystrokes
 /// normalise through `Keystroke::parse`, and the labels used to normalise
-/// through nothing at all.
-pub const SHORTCUTS: [(&[&str], &str, &str); 16] = [
+/// through nothing at all. The Alt modifier is held to the same rule through
+/// [`alt!`].
+///
+/// Back and forward are two rows rather than one `Alt+← / →`: the key column
+/// is sized for the longest label in it, and that one would not fit.
+pub const SHORTCUTS: [(&[&str], &str, &str); 18] = [
     (&["space"], "Space", "Pause or resume"),
     (&["m"], "M", "Mute or unmute"),
     (&["c"], "C", "Show or hide this chat"),
@@ -272,12 +338,91 @@ pub const SHORTCUTS: [(&[&str], &str, &str); 16] = [
     (&["tab", "shift-tab"], "Tab", "The next pane"),
     (&["secondary-w"], secondary!("W"), "Close this pane"),
     (&["escape"], "Esc", "Back to browsing, or to watching"),
+    (
+        &["alt-left"],
+        alt!("←"),
+        "Back (also the mouse's back button)",
+    ),
+    (&["alt-right"], alt!("→"), "Forward"),
     (&["secondary-f"], secondary!("F"), "Search"),
     (&["secondary-r"], secondary!("R"), "Refresh this list"),
     (&["secondary-,"], secondary!(","), "Settings"),
     (&["secondary-k"], secondary!("K"), "Command palette"),
     (&["secondary-0"], secondary!("0"), "Reset the pane sizes"),
 ];
+
+/// Declares [`Hint`] once, as `Variant => "keystroke" as Action`, and derives
+/// the rest from that one list: the enum, the keystroke each variant names,
+/// and — for the tests only — every variant and the action its key has to
+/// fire. The same shape as `assets::perch_icons!`, so a hint cannot exist
+/// without `every_hint_names_a_listed_and_bound_key` checking it; `ALL` and
+/// `action` are `cfg(test)` because only the tests read them, and this crate
+/// has no library half to excuse dead code.
+macro_rules! hints {
+    ($($(#[$doc:meta])* $variant:ident => $keystroke:literal as $action:ty),* $(,)?) => {
+        /// A key a control's tooltip names, as in `Settings (Ctrl+,)`.
+        ///
+        /// The tooltip does not spell the key itself. It names the keystroke
+        /// here, in the grammar `KeyBinding::new` takes, and borrows the label
+        /// [`SHORTCUTS`] already shows for it — so a tooltip cannot name a key
+        /// nothing binds, a key bound to some other action, or write `Ctrl` on
+        /// a machine that binds `⌘`, without
+        /// `every_hint_names_a_listed_and_bound_key` failing. Variants arrive
+        /// with the first control that names them: an unused one is dead code.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub enum Hint {
+            $($(#[$doc])* $variant),*
+        }
+
+        impl Hint {
+            #[cfg(test)]
+            const ALL: &'static [Hint] = &[$(Hint::$variant),*];
+
+            fn keystroke(self) -> &'static str {
+                match self {
+                    $(Hint::$variant => $keystroke),*
+                }
+            }
+
+            /// What the key has to do for the tooltip to be telling the
+            /// truth. A bound key is not enough: `Settings (Ctrl+R)` names a
+            /// real key, just not this control's.
+            #[cfg(test)]
+            fn action(self) -> std::any::TypeId {
+                match self {
+                    $(Hint::$variant => std::any::TypeId::of::<$action>()),*
+                }
+            }
+        }
+    };
+}
+
+hints! {
+    Rail => "b" as ToggleSidebar,
+    Back => "alt-left" as NavigateBack,
+    Forward => "alt-right" as NavigateForward,
+    Settings => "secondary-," as ToggleSettings,
+}
+
+impl Hint {
+    /// How the settings sheet writes this key: the label of the [`SHORTCUTS`]
+    /// row that lists its keystroke.
+    fn label(self) -> Option<&'static str> {
+        SHORTCUTS
+            .iter()
+            .find(|(keystrokes, _, _)| keystrokes.contains(&self.keystroke()))
+            .map(|(_, label, _)| *label)
+    }
+
+    /// `text`, then the key in brackets — or `text` alone, should the key ever
+    /// drop off the listing, rather than an empty pair of brackets.
+    pub fn tooltip(self, text: &str) -> String {
+        match self.label() {
+            Some(label) => format!("{text} ({label})"),
+            None => text.to_string(),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -290,33 +435,42 @@ mod tests {
     /// symptom is "the key does nothing", which is a poor thing to debug.
     #[test]
     fn every_binding_and_every_context_parses() {
-        assert_eq!(bindings().len(), 27);
-        for context in [CONTEXT_WATCH, CONTEXT_BROWSE, CONTEXT_MODAL] {
+        assert_eq!(bindings().len(), 32);
+        for context in [CONTEXT_WATCH, CONTEXT_BROWSE, CONTEXT_MODAL, CONTEXT_SHEET] {
             KeyContext::parse(context)
                 .unwrap_or_else(|e| panic!("{context} is not a key context: {e}"));
         }
     }
 
     /// With the cursor in a text box — where a search leaves it — the three
-    /// chords still answer, and a bare letter still goes to the box. Asked of
-    /// gpui's own keymap, so it is the resolution that runs, not a reading of
-    /// the predicates.
+    /// chords still answer, and a bare letter still goes to the box. And the
+    /// search box is a keystroke away from the watch page too, since the box
+    /// is in the title bar over both, so the watch page's letters, digits and
+    /// arrows have to stand aside for it there as well. Asked of gpui's own
+    /// keymap, so it is the resolution that runs, not a reading of the
+    /// predicates.
     #[test]
     fn the_chords_work_while_typing_and_the_letters_do_not() {
         use std::any::TypeId;
 
         let keymap = gpui::Keymap::new(bindings());
-        let typing = [
-            KeyContext::parse(CONTEXT_BROWSE).unwrap(),
-            KeyContext::parse("Input").unwrap(),
-        ];
-        let fires = |keystroke: &str, action: TypeId| {
+        let fires_in = |context: &[KeyContext], keystroke: &str, action: TypeId| {
             let (matched, _) =
-                keymap.bindings_for_input(&[Keystroke::parse(keystroke).unwrap()], &typing);
+                keymap.bindings_for_input(&[Keystroke::parse(keystroke).unwrap()], context);
             matched
                 .iter()
                 .any(|binding| binding.action().as_any().type_id() == action)
         };
+        let typing = [
+            KeyContext::parse(CONTEXT_BROWSE).unwrap(),
+            KeyContext::parse("Input").unwrap(),
+        ];
+        let fires = |keystroke: &str, action: TypeId| fires_in(&typing, keystroke, action);
+        let watching = [KeyContext::parse(CONTEXT_WATCH).unwrap()];
+        assert!(
+            fires_in(&watching, "secondary-f", TypeId::of::<FocusSearch>()),
+            "the title bar's search box is on the watch page too"
+        );
         assert!(fires("secondary-k", TypeId::of::<TogglePalette>()));
         assert!(fires("secondary-,", TypeId::of::<ToggleSettings>()));
         assert!(fires("secondary-r", TypeId::of::<Refresh>()));
@@ -325,9 +479,116 @@ mod tests {
             "a letter typed into the box must reach the box"
         );
         assert!(
-            !fires("escape", TypeId::of::<Back>()),
+            !fires("escape", TypeId::of::<StepOut>()),
             "the box has its own escape"
         );
+
+        // The same box on the watch page, where most of the bare keys are.
+        // Each would act on the page behind a search being typed.
+        let typing_while_watching = [
+            KeyContext::parse(CONTEXT_WATCH).unwrap(),
+            KeyContext::parse("Input").unwrap(),
+        ];
+        let fires_watching =
+            |keystroke: &str, action: TypeId| fires_in(&typing_while_watching, keystroke, action);
+        for (keystroke, action) in [
+            ("m", TypeId::of::<ToggleMute>()),
+            ("space", TypeId::of::<TogglePlayback>()),
+            ("c", TypeId::of::<ToggleChat>()),
+            ("f", TypeId::of::<ToggleFullscreen>()),
+            ("b", TypeId::of::<ToggleSidebar>()),
+            ("left", TypeId::of::<SeekBack>()),
+            ("up", TypeId::of::<VolumeUp>()),
+            ("1", TypeId::of::<ActivatePane>()),
+            ("tab", TypeId::of::<NextPane>()),
+            ("escape", TypeId::of::<GoBrowse>()),
+        ] {
+            assert!(
+                !fires_watching(keystroke, action),
+                "{keystroke} typed into the search box on the watch page must reach the box"
+            );
+        }
+        assert!(fires_watching("secondary-k", TypeId::of::<TogglePalette>()));
+        assert!(fires_watching(
+            "secondary-,",
+            TypeId::of::<ToggleSettings>()
+        ));
+
+        // Back and forward: on both pages, and on neither through a modal or
+        // into a text box, where `alt-left` is the box's own.
+        let browsing = [KeyContext::parse(CONTEXT_BROWSE).unwrap()];
+        let modal = [KeyContext::parse(CONTEXT_MODAL).unwrap()];
+        let sheet = [KeyContext::parse(CONTEXT_SHEET).unwrap()];
+        for (keystroke, action) in [
+            ("alt-left", TypeId::of::<NavigateBack>()),
+            ("alt-right", TypeId::of::<NavigateForward>()),
+        ] {
+            assert!(
+                fires_in(&watching, keystroke, action),
+                "{keystroke} watching"
+            );
+            assert!(
+                fires_in(&browsing, keystroke, action),
+                "{keystroke} browsing"
+            );
+            assert!(
+                !fires(keystroke, action),
+                "{keystroke} typed into the box must reach the box"
+            );
+            assert!(
+                !fires_watching(keystroke, action),
+                "{keystroke} typed into the box on the watch page must reach the box"
+            );
+            assert!(
+                !fires_in(&modal, keystroke, action),
+                "{keystroke} must not navigate behind a modal"
+            );
+            assert!(
+                !fires_in(&sheet, keystroke, action),
+                "{keystroke} must not navigate behind the settings sheet"
+            );
+        }
+    }
+
+    /// The palette is drawn under the settings sheet, so `Ctrl+K` does
+    /// nothing while the sheet is up — whether the keyboard is on the sheet
+    /// or in one of its fields — rather than opening a box nobody can see
+    /// with the cursor in it. It still closes the palette it opened, and the
+    /// sheet's own two keys still answer over the sheet.
+    #[test]
+    fn the_palette_key_waits_for_the_settings_sheet_to_close() {
+        use std::any::TypeId;
+
+        let keymap = gpui::Keymap::new(bindings());
+        let fires_in = |context: &[&str], keystroke: &str, action: TypeId| {
+            let context: Vec<KeyContext> = context
+                .iter()
+                .map(|context| KeyContext::parse(context).unwrap())
+                .collect();
+            let (matched, _) =
+                keymap.bindings_for_input(&[Keystroke::parse(keystroke).unwrap()], &context);
+            matched
+                .iter()
+                .any(|binding| binding.action().as_any().type_id() == action)
+        };
+        let palette = TypeId::of::<TogglePalette>();
+
+        assert!(!fires_in(&[CONTEXT_SHEET], "secondary-k", palette));
+        assert!(
+            !fires_in(&[CONTEXT_SHEET, "Input"], "secondary-k", palette),
+            "with the cursor in a field on the sheet"
+        );
+        assert!(
+            fires_in(&[CONTEXT_MODAL, "Input"], "secondary-k", palette),
+            "the palette's own key closes it"
+        );
+        for page in [CONTEXT_WATCH, CONTEXT_BROWSE] {
+            assert!(fires_in(&[page], "secondary-k", palette), "{page}");
+        }
+
+        let settings = TypeId::of::<ToggleSettings>();
+        assert!(fires_in(&[CONTEXT_SHEET], "secondary-,", settings));
+        assert!(fires_in(&[CONTEXT_SHEET], "escape", settings));
     }
 
     /// The predicates are assembled from the identifiers; the contexts are
@@ -338,6 +599,7 @@ mod tests {
         assert_eq!(CONTEXT_WATCH, format!("{APP} {WATCH}"));
         assert_eq!(CONTEXT_BROWSE, format!("{APP} {BROWSE}"));
         assert_eq!(CONTEXT_MODAL, format!("{APP} {MODAL}"));
+        assert_eq!(CONTEXT_SHEET, format!("{APP} {MODAL} {SHEET}"));
     }
 
     /// The listing is for humans, so it is not derived from the bindings — but
@@ -363,6 +625,7 @@ mod tests {
     #[test]
     fn the_listing_names_the_modifier_it_binds() {
         const PREFIX: &str = secondary!();
+        const ALT: &str = alt!();
 
         for (keystrokes, display, _) in SHORTCUTS {
             for keystroke in keystrokes {
@@ -372,6 +635,11 @@ mod tests {
                     parsed.modifiers.secondary(),
                     display.starts_with(PREFIX),
                     "{display} and {keystroke} disagree about the {PREFIX} modifier"
+                );
+                assert_eq!(
+                    parsed.modifiers.alt,
+                    display.starts_with(ALT),
+                    "{display} and {keystroke} disagree about the {ALT} modifier"
                 );
             }
         }
@@ -404,6 +672,64 @@ mod tests {
                     "the sheet lists {display} ({keystroke}), which nothing binds"
                 );
             }
+        }
+    }
+
+    /// A tooltip's key is held to the same two claims as the sheet's — that it
+    /// is listed, so the label it borrows exists, and that it is bound — and
+    /// to one more: that what it is bound to is the control's own action.
+    #[test]
+    fn every_hint_names_a_listed_and_bound_key() {
+        let bindings = bindings();
+
+        for &hint in Hint::ALL {
+            let label = hint.label().unwrap_or_default();
+            assert!(
+                !label.is_empty(),
+                "{hint:?} names {}, which the sheet does not list",
+                hint.keystroke()
+            );
+            let parsed = Keystroke::parse(hint.keystroke())
+                .unwrap_or_else(|e| panic!("{hint:?}: {} does not parse: {e}", hint.keystroke()))
+                .to_string();
+            assert!(
+                bindings.iter().any(|binding| {
+                    binding.action().as_any().type_id() == hint.action()
+                        && binding
+                            .keystrokes()
+                            .iter()
+                            .any(|keystroke| keystroke.inner().to_string() == parsed)
+                }),
+                "{hint:?} names {}, which nothing binds to its action",
+                hint.keystroke()
+            );
+            assert_eq!(hint.tooltip("Do it"), format!("Do it ({label})"));
+        }
+    }
+
+    /// The README's keyboard table is the third place a key is listed, after
+    /// the sheet and the tooltips, and the one a reader meets before the app
+    /// is even built. Each label the sheet shows has to start a row there,
+    /// exactly as the sheet writes it, in backticks — `↑ / ↓`, not `↑` `↓` —
+    /// so a shortcut cannot be added here and left out there. It is the row
+    /// that is looked for, `` | `Esc` | ``, not the label alone: most labels
+    /// are in the README's prose as well, and a row dropped from the table
+    /// would still find its key in a sentence further down.
+    ///
+    /// Not on macOS: the README spells the modifiers once, as `Ctrl` and
+    /// `Alt`, and says that a Mac writes them `⌘` and `⌥`, so the labels a Mac
+    /// build shows are deliberately not on the page. The `RUNNING` pages are
+    /// shorter lists on purpose, and are kept in step by hand.
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn the_readme_lists_every_shortcut() {
+        const README: &str = include_str!("../../../README.md");
+
+        for (_, display, _) in SHORTCUTS {
+            assert!(
+                README.contains(&format!("| `{display}` |")),
+                "the sheet lists `{display}`, and the README's keyboard table does not"
+            );
         }
     }
 }

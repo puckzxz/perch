@@ -2,7 +2,7 @@
 //!
 //! There were ten. `pill` and `tab_pill` in the shell, another `pill` on the
 //! video, the offline follow, the Load more row, the context bar's back, the
-//! card's `+ add`, the activate button, chat's jump-to-live and the pane's
+//! card's `+ Add`, the activate button, chat's jump-to-live and the pane's
 //! close — every one of them a `div` with its own padding, its own hover and
 //! its own idea of what a pressed control looks like. Six recipes for one
 //! control, which is the drift `theme.rs` opens by warning about: the *tokens*
@@ -11,9 +11,21 @@
 //! So: one builder, and a variant for each job a button in this app actually
 //! does. Anything that needs a shape not on this list is a new variant here
 //! rather than a tenth `div`.
+//!
+//! A picture instead of a word is the same control in a square,
+//! [`icon_button`], wearing the same variants, and [`icon_waiting`] while it
+//! is not on offer. A heading that folds away what it heads is [`fold`], built
+//! on [`group_heading`], the plain heading it sits among. The window's
+//! minimise, maximise and close are here too, as [`caption_button`], because
+//! they look like controls — but they are the platform's to press, not the
+//! app's.
 
-use gpui::{div, prelude::*, px, AnyView, App, ElementId, SharedString, Stateful, Window};
+use gpui::{
+    div, prelude::*, px, svg, AnyView, App, Div, ElementId, SharedString, Stateful, Window,
+    WindowControlArea,
+};
 
+use crate::assets::Icon;
 use crate::theme;
 
 /// How wide a tooltip carrying full text is.
@@ -76,10 +88,29 @@ pub fn full_text(
     }
 }
 
-/// What a control is *for*, which is what decides how it looks.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Variant {
-    /// The ordinary case: a filled pill on a panel. Refresh, settings, back.
+/// Declares [`Variant`] once and derives, for the tests only, the list of every
+/// variant from that same declaration — so a new one cannot exist without
+/// `every_variant_is_legible_where_it_sits` measuring it. The same shape as
+/// `assets::perch_icons!`, and `ALL` is `cfg(test)` for the same reason: this
+/// crate has no library half, so a constant only the tests read is dead code
+/// to `clippy --all-targets`.
+macro_rules! variants {
+    ($($(#[$doc:meta])* $variant:ident,)*) => {
+        /// What a control is *for*, which is what decides how it looks.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub enum Variant {
+            $($(#[$doc])* $variant,)*
+        }
+
+        impl Variant {
+            #[cfg(test)]
+            const ALL: &'static [Variant] = &[$(Variant::$variant),*];
+        }
+    };
+}
+
+variants! {
+    /// The ordinary case: a filled pill on a panel. Refresh, back.
     Pill,
     /// A pill that is currently the answer — the open tab, the chosen quality.
     Selected,
@@ -97,6 +128,10 @@ pub enum Variant {
     /// A control that destroys something. Drawn like `Quiet`, and turns the
     /// colour of the thing it is about to do only under the pointer.
     Destructive,
+    /// Furniture in the window's own frame — the title bar's gear. No fill
+    /// until the pointer is on it, because a bar of filled squares along the
+    /// top of the window is chrome you stare past for three hours.
+    Chrome,
 }
 
 impl Variant {
@@ -104,13 +139,13 @@ impl Variant {
         match self {
             Variant::Pill | Variant::Primary => Some(theme::surface_raised()),
             Variant::Selected => Some(theme::accent_dim()),
-            Variant::OnVideo | Variant::Quiet | Variant::Destructive => None,
+            Variant::OnVideo | Variant::Quiet | Variant::Destructive | Variant::Chrome => None,
         }
     }
 
     fn foreground(self) -> gpui::Hsla {
         match self {
-            Variant::Pill => theme::text_muted(),
+            Variant::Pill | Variant::Chrome => theme::text_muted(),
             Variant::Selected | Variant::OnVideo | Variant::Primary => theme::text(),
             Variant::Quiet | Variant::Destructive => theme::text_dim(),
         }
@@ -134,7 +169,28 @@ impl Variant {
             _ => theme::hover(),
         }
     }
+
+    /// The resting fill, and the accent border `Primary` wears: what a variant
+    /// does to any shape of control, a label's pill and an icon's square alike.
+    fn dress(self, mut control: Stateful<Div>) -> Stateful<Div> {
+        if let Some(background) = self.background() {
+            control = control.bg(background);
+        }
+        if self == Variant::Primary {
+            control = control.border_1().border_color(theme::accent());
+        }
+        control
+    }
 }
+
+/// The group an icon button's glyph watches for the pointer; see [`icon_button`].
+const ICON_GROUP: &str = "icon-button";
+
+/// The group a caption button's glyph watches; see [`caption_button`].
+const CAPTION_GROUP: &str = "caption-button";
+
+/// The group a fold's chevron watches; see [`fold`].
+const FOLD_GROUP: &str = "fold";
 
 /// A control, styled and ready for `.on_click(..)`.
 ///
@@ -146,24 +202,19 @@ pub fn pill(
     label: impl Into<SharedString>,
     variant: Variant,
 ) -> Stateful<gpui::Div> {
-    let mut control = div()
-        .id(id.into())
-        .flex_none()
-        .px(px(theme::CONTROL_PAD_X))
-        .py(px(theme::CONTROL_PAD_Y))
-        .rounded(px(theme::RADIUS))
-        .text_size(px(theme::TEXT_LABEL))
-        .font_weight(theme::weight_label())
-        .line_height(px(theme::LINE_TIGHT))
-        .text_color(variant.foreground())
-        .cursor_pointer();
-
-    if let Some(background) = variant.background() {
-        control = control.bg(background);
-    }
-    if variant == Variant::Primary {
-        control = control.border_1().border_color(theme::accent());
-    }
+    let control = variant.dress(
+        div()
+            .id(id.into())
+            .flex_none()
+            .px(px(theme::CONTROL_PAD_X))
+            .py(px(theme::CONTROL_PAD_Y))
+            .rounded(px(theme::RADIUS))
+            .text_size(px(theme::TEXT_LABEL))
+            .font_weight(theme::weight_label())
+            .line_height(px(theme::LINE_TIGHT))
+            .text_color(variant.foreground())
+            .cursor_pointer(),
+    );
 
     // One `hover` call, and only here. gpui's `hover` may be set once per
     // element - a second call is a debug assertion, which is how a debug
@@ -177,6 +228,214 @@ pub fn pill(
         // as more of the same gesture. On video there is no shadow or border to
         // deform, so this is the only channel a press has.
         .active(|style| style.bg(theme::pressed()))
+        .child(label.into())
+}
+
+/// A control that is a picture rather than a word: a square of
+/// [`theme::ICON_BUTTON`] with an [`Icon`] in the middle. Same variants, same
+/// one `hover`, same press as [`pill`].
+///
+/// The glyph takes its colour through `group_hover` rather than from the
+/// square's hover, because an `svg` paints with its own `text_color` and
+/// inherits none — a glyph never given one draws nothing at all, and one
+/// given only the square's would never lift under the pointer.
+pub fn icon_button(id: impl Into<ElementId>, icon: Icon, variant: Variant) -> Stateful<Div> {
+    let hover_fill = variant.hover_background();
+    let hover_glyph = variant.hover_foreground();
+    variant
+        .dress(
+            div()
+                .id(id.into())
+                .group(ICON_GROUP)
+                .flex_none()
+                .size(px(theme::ICON_BUTTON))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(theme::RADIUS))
+                .cursor_pointer(),
+        )
+        // The one `hover`; see `pill`.
+        .hover(move |style| style.bg(hover_fill))
+        .active(|style| style.bg(theme::pressed()))
+        .child(
+            svg()
+                .path(icon.path())
+                .flex_none()
+                .size(px(theme::ICON))
+                .text_color(variant.foreground())
+                .group_hover(ICON_GROUP, move |style| style.text_color(hover_glyph)),
+        )
+}
+
+/// An [`icon_button`] that is not being offered right now: back with nowhere
+/// to go back to.
+///
+/// The same square in the same place, so the bar does not shift when it
+/// comes and goes, with the glyph in `text_dim` and no hover, no pointer and
+/// no handler — the picture's [`waiting`]. Never drawn at a lower opacity,
+/// which is a control that still takes the click (see `HANDOFF.md`, "Things
+/// not to redo"); this one has nothing to take it with.
+pub fn icon_waiting(icon: Icon) -> Div {
+    div()
+        .flex_none()
+        .size(px(theme::ICON_BUTTON))
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(
+            svg()
+                .path(icon.path())
+                .flex_none()
+                .size(px(theme::ICON))
+                .text_color(theme::text_dim()),
+        )
+}
+
+/// One of the minimise, maximise and close buttons on a title bar Perch draws
+/// itself, on Windows.
+///
+/// Deliberately not a clickable control. It has no click handler, no tooltip
+/// and takes no focus: the press belongs to the platform, which gpui hands it
+/// through `window_control_area` as `HTMINBUTTON`, `HTMAXBUTTON` or `HTCLOSE`.
+/// Anything here that handled the press would stop that — gpui reports a
+/// handled non-client press as done, and Windows never acts on it. Nor would
+/// gpui's own `zoom_window` and `remove_window` do as well by hand: the first
+/// maximises but never restores, and the second skips the close handler that
+/// saves where the window was.
+///
+/// The area starts `drag_top` below the top of the button rather than at it,
+/// so a windowed window keeps its top resize edge across the buttons too; see
+/// `layout::drag_top`. The hover and the press light that area and nothing
+/// above it. Lit across the button's full height, the strip over the area
+/// turned Close red under a resize cursor, and a press there — which the
+/// platform takes as the start of a resize, and whose release its size loop
+/// keeps — left the button showing pressed, for a button that had done
+/// nothing. The glyph rides in the area too, so it lifts with the area's
+/// hover, held at the middle of the whole bar by padding under it as tall as
+/// the strip over it.
+///
+/// Lit — hovered or pressed — only while `window_hovered`, which the caller
+/// takes from `window.is_window_hovered()`. gpui hears the pointer leave the
+/// window as a flag and nothing more: no move is sent, so the next frame
+/// hit-tests the last position it saw, and these buttons sit on the edge the
+/// pointer usually leaves by. Ungated, Close would stay red with the pointer
+/// off the window, and Minimize come back from the taskbar still lit. The id
+/// follows the flag for the press's sake. A press dragged off the window and
+/// let go outside never comes back as a release, so gpui would hold the
+/// button pressed until the next release anywhere in the window; the first
+/// frame drawn under the other id drops that with the rest of the element's
+/// state.
+pub fn caption_button(
+    area: WindowControlArea,
+    icon: Icon,
+    drag_top: f32,
+    window_hovered: bool,
+) -> Div {
+    let close = area == WindowControlArea::Close;
+    let (hover_fill, pressed_fill, hover_glyph) = if close {
+        (
+            theme::caption_close(),
+            theme::caption_close_pressed(),
+            theme::caption_close_glyph(),
+        )
+    } else {
+        (theme::hover(), theme::pressed(), theme::text())
+    };
+    let id = if window_hovered {
+        "caption-button"
+    } else {
+        "caption-button-at-rest"
+    };
+    // The button's slot in the bar, full height, drawing nothing itself: the
+    // strip above the area is the platform's resize edge, and stays dark.
+    div()
+        .relative()
+        .flex_none()
+        .w(px(theme::CAPTION_BUTTON_WIDTH))
+        .h_full()
+        .child(
+            // What answers as the button, and so the only part that lights.
+            div()
+                .id((id, area as usize))
+                .group(CAPTION_GROUP)
+                .absolute()
+                .top(px(drag_top))
+                .left_0()
+                .right_0()
+                .bottom_0()
+                .pb(px(drag_top))
+                .flex()
+                .items_center()
+                .justify_center()
+                .window_control_area(area)
+                .when(window_hovered, |button| {
+                    button
+                        .hover(move |style| style.bg(hover_fill))
+                        .active(move |style| style.bg(pressed_fill))
+                })
+                .child(
+                    svg()
+                        .path(icon.path())
+                        .flex_none()
+                        .size(px(theme::CAPTION_GLYPH))
+                        .text_color(theme::text_muted())
+                        .when(window_hovered, |glyph| {
+                            glyph.group_hover(CAPTION_GROUP, move |style| {
+                                style.text_color(hover_glyph)
+                            })
+                        }),
+                ),
+        )
+}
+
+/// The box a group's name sits in over the rows it heads, with nothing in it
+/// yet: the rail's `Pinned` and `Live`, and the start of a [`fold`] for its
+/// `Offline`. Not a control; here because [`fold`] is built on it, and the
+/// fold sits in the same column as the headings above it, at the same size,
+/// weight and colour, on the same inset. One recipe for both, so the fold
+/// cannot drift from them by somebody restyling one and not the other.
+pub fn group_heading() -> Div {
+    div()
+        .flex_none()
+        .px(px(theme::PANEL_PAD))
+        .py(px(theme::GAP_TIGHT))
+        .text_size(px(theme::TEXT_LABEL))
+        .font_weight(theme::weight_label())
+        .line_height(px(theme::LINE_TIGHT))
+        .text_color(theme::text_dim())
+}
+
+/// A heading that folds away the rows under it: the rail's offline follows,
+/// under their count. `open` says whether the rows are showing, and the
+/// chevron in front points at them when they are and away when they are not.
+///
+/// A heading first — a [`group_heading`], and no fill until the pointer is on
+/// it — because it sits in a column of channels, and a filled bar there would
+/// read as one more. The chevron takes its colour through `group_hover`, for
+/// the reason [`icon_button`]'s glyph does.
+pub fn fold(id: impl Into<ElementId>, label: impl Into<SharedString>, open: bool) -> Stateful<Div> {
+    let icon = if open { Icon::Unfolded } else { Icon::Folded };
+    group_heading()
+        .id(id.into())
+        .group(FOLD_GROUP)
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(theme::GAP_WORD))
+        .rounded(px(theme::RADIUS))
+        .cursor_pointer()
+        // The one `hover`; see `pill`.
+        .hover(|style| style.bg(theme::hover()).text_color(theme::text()))
+        .active(|style| style.bg(theme::pressed()))
+        .child(
+            svg()
+                .path(icon.path())
+                .flex_none()
+                .size(px(theme::ICON))
+                .text_color(theme::text_dim())
+                .group_hover(FOLD_GROUP, |style| style.text_color(theme::text())),
+        )
         .child(label.into())
 }
 
@@ -271,29 +530,34 @@ pub fn waiting(label: impl Into<SharedString>) -> gpui::Div {
 mod tests {
     use super::*;
 
-    /// Every variant has to be legible on the surface it is drawn on. The two
-    /// with no background of their own are checked against the darkest thing
-    /// they can land on, which for `OnVideo` is a black picture and for `Quiet`
-    /// is the pane surface.
+    /// What is actually behind a variant's label, rather than its
+    /// `background()`: the selected variant's fill is a wash, so the surface
+    /// under it is what decides. The ones with no background of their own are
+    /// measured against the darkest thing they can land on, which for
+    /// `OnVideo` is a black picture, for `Quiet` the pane surface and for
+    /// `Chrome` the title bar.
+    ///
+    /// A `match`, so a new variant does not compile until somebody has said
+    /// where it sits. And it is measured as soon as it exists: the test walks
+    /// `Variant::ALL`, which the enum's own declaration writes.
+    fn sits_on(variant: Variant) -> gpui::Hsla {
+        match variant {
+            Variant::Pill | Variant::Primary => theme::surface_raised(),
+            Variant::Selected | Variant::Quiet | Variant::Destructive | Variant::Chrome => {
+                theme::surface()
+            }
+            Variant::OnVideo => theme::player_bg(),
+        }
+    }
+
+    /// Every variant has to be legible on the surface it is drawn on.
     #[test]
     fn every_variant_is_legible_where_it_sits() {
-        let cases = [
-            (Variant::Pill, theme::surface_raised()),
-            (Variant::Selected, theme::surface()),
-            (Variant::OnVideo, theme::player_bg()),
-            (Variant::Primary, theme::surface_raised()),
-            (Variant::Quiet, theme::surface()),
-            (Variant::Destructive, theme::surface()),
-        ];
-
-        for (variant, behind) in cases {
-            // Against what is actually behind the label rather than against
-            // `background()`: the selected variant's fill is a wash, so the
-            // surface under it is what decides.
-            let ratio = theme::contrast(variant.foreground(), behind);
+        for &variant in Variant::ALL {
+            let ratio = theme::contrast(variant.foreground(), sits_on(variant));
             assert!(
                 ratio >= theme::MIN_CONTRAST,
-                "a control label reads {ratio:.2}:1 on what it sits on"
+                "a {variant:?} label reads {ratio:.2}:1 on what it sits on"
             );
         }
     }

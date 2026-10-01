@@ -977,7 +977,7 @@ impl Render for ChatView {
                         .flex()
                         .flex_row()
                         .justify_center()
-                        .child(controls::waiting("chat paused")),
+                        .child(controls::waiting("Chat paused")),
                 )
             })
             .when(!at_live, |pane| {
@@ -997,9 +997,9 @@ impl Render for ChatView {
                                 // bottom of its pane is what has been said
                                 // so far.
                                 if self.replay {
-                                    "↓ newest"
+                                    "↓ Newest"
                                 } else {
-                                    "↓ jump to live"
+                                    "↓ Jump to live"
                                 },
                                 controls::Variant::Primary,
                             )

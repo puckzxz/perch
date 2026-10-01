@@ -1,15 +1,17 @@
-//! The two pages, assembled: the browse page with its header and lists, and
-//! the watch page with its grid of panes. Each is one function that hands the
-//! root's state to the module that draws it.
+//! The two pages, assembled: the browse page with its tab strip and lists,
+//! and the watch page with its grid of panes. Each is one function that hands
+//! the root's state to the module that draws it, and each is only its own
+//! column — the title bar over it and the rail beside it are the root's, drawn
+//! once for both.
 
 use gpui::{canvas, div, prelude::*, px, Context, Div, IntoElement, Stateful, Window};
 use gpui_component::input::Input;
 
 use super::follows::LiveList;
 use super::RootView;
-use crate::browse::Tab;
+use crate::browse::{Place, Tab};
 use crate::watch::PaneInfo;
-use crate::{browse, sidebar, theme, watch, APP_NAME};
+use crate::{browse, layout, theme, watch};
 
 impl RootView {
     pub(super) fn browse_page(
@@ -17,87 +19,20 @@ impl RootView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let header = div()
-            .w_full()
-            .flex_none()
-            // Fixed rather than however tall its contents happen to be: the
-            // toast stack is anchored to the window and has to clear this, and
-            // one constant read by both is what makes them agree.
-            .h(px(theme::HEADER_HEIGHT))
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(theme::GAP))
-            .px(px(theme::PAGE_PAD))
-            .border_b_1()
-            .border_color(theme::border())
-            // Only when the rail is folded away. Open, it has its own control,
-            // and two of them would be two things that do one thing.
-            .when(self.settings.sidebar_collapsed, |header| {
-                header.child(sidebar::expand(
-                    |this: &mut RootView, window, cx| this.toggle_sidebar(window, cx),
-                    cx,
-                ))
-            })
-            .child(
-                div()
-                    .text_size(px(theme::TEXT_TITLE))
-                    .font_weight(theme::weight_title())
-                    .text_color(theme::text())
-                    .child(APP_NAME),
-            )
-            .child(
-                div()
-                    .min_w_0()
-                    .truncate()
-                    .text_size(px(theme::TEXT_META))
-                    .text_color(theme::text_dim())
-                    .child(self.sign_in.summary()),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .flex()
-                    .flex_row()
-                    .gap(px(theme::GAP_TIGHT))
-                    .children(Tab::ALL.map(|tab| self.tab_pill(tab, cx))),
-            )
-            .child(div().flex_1())
-            .child(
-                div()
-                    .flex_none()
-                    .w(px(260.))
-                    .child(Input::new(&self.search).cleanable(true)),
-            )
-            // No "watching 2" here. Whatever is playing while you browse is in
-            // the bar along the bottom, whose own control and thumbnails go
-            // back to it — and with the bar turned off, leaving the watch page
-            // stops the streams, so there is never anything else to go back to.
-            .child(self.pill(
-                "refresh",
-                if self.refreshing {
-                    "refreshing…".into()
-                } else {
-                    "refresh".into()
-                },
-                cx,
-                |this, _window, cx| this.refresh(cx),
-            ))
-            .child(self.pill(
-                "open-settings",
-                "settings".into(),
-                cx,
-                |this, window, cx| this.toggle_settings(window, cx),
-            ));
-
-        let width = self.body(window).width;
-        // Whether the live follows are what the page is showing — the
-        // Following tab with nothing taking it over — which is when resting
-        // the pointer on the page holds their order.
-        let following = self.discovery.tab == Tab::Following
-            && self.discovery.channel.is_none()
-            && self.discovery.search.is_none()
-            && self.discovery.open.is_none();
+        // The body's width, and room at the foot of every list for the mini
+        // player while it is up, so the last row can scroll out from under it.
+        let room = layout::Room {
+            width: self.body(window).width,
+            bottom: if self.mini_player_shows() {
+                layout::mini_reserve(self.slots.len())
+            } else {
+                0.0
+            },
+        };
+        // Whether the follows are what the page is showing — the Following
+        // tab with nothing taking it over — which is when resting the pointer
+        // on the page holds them where they stand, live and offline alike.
+        let following = matches!(self.discovery.place(), Place::Tab(Tab::Following));
         if !following {
             self.hold_live(LiveList::Following, false, cx);
         }
@@ -109,12 +44,6 @@ impl RootView {
             .as_ref()
             .is_some_and(|page| self.stream_info(&page.login).is_some());
 
-        let rail = self.follows_rail(cx);
-        let rail = rail.map(|rail| {
-            self.holding(LiveList::Rail, true, rail, cx)
-                .flex_none()
-                .h_full()
-        });
         let body = browse::page(
             &self.follows,
             &self.offline,
@@ -124,7 +53,7 @@ impl RootView {
             &self.sign_in,
             self.follows_loaded,
             &self.history,
-            width,
+            room,
             &self.cache,
             self.can_add(),
             &self.scrolls,
@@ -141,30 +70,68 @@ impl RootView {
 
         div()
             .size_full()
+            .relative()
             .flex()
-            .flex_row()
+            .flex_col()
             .bg(theme::bg())
-            .children(rail)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .relative()
-                    .flex()
-                    .flex_col()
-                    .child(header)
-                    .child(body)
-                    .children(self.now_playing(cx)),
-            )
+            .child(self.tab_strip(cx))
+            .child(body)
     }
 
-    /// A list of who is live, with a probe measuring every frame whether the
-    /// pointer is over it — measured the way chat measures its own hold, not
-    /// taken from `on_hover`, whose value a pointer that leaves the window
-    /// without a move never changes. The hover listener is only there to wake
-    /// a repaint, so the probe runs again when the pointer comes or goes.
+    /// The browse page's tabs, then Refresh: all that is left of the header
+    /// it used to have. The app's name is gone, and the search box and the
+    /// sign-in went up into the title bar, which is over both pages. There is
+    /// no "watching 2" either: whatever plays while you browse is in the mini
+    /// player, whose own controls and pictures go back to it.
+    ///
+    /// Left-aligned, Refresh included, rather than pushed to the far end: the
+    /// toasts arrive at the top-right, and the further from them Refresh sits
+    /// the narrower a window has to be before the two meet — see
+    /// [`theme::TAB_STRIP_HEIGHT`] for when they do.
+    fn tab_strip(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .w_full()
+            .flex_none()
+            // Fixed rather than however tall its contents happen to be; see
+            // the constant.
+            .h(px(theme::TAB_STRIP_HEIGHT))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(theme::GAP))
+            .px(px(theme::PAGE_PAD))
+            .border_b_1()
+            .border_color(theme::border())
+            .child(
+                div()
+                    .flex_none()
+                    .flex()
+                    .flex_row()
+                    .gap(px(theme::GAP_TIGHT))
+                    .children(Tab::ALL.map(|tab| self.tab_pill(tab, cx))),
+            )
+            // Beside the tabs because it means "this list", whichever tab or
+            // takeover is up; see `refresh`.
+            .child(self.pill(
+                "refresh",
+                if self.refreshing {
+                    "Refreshing…".into()
+                } else {
+                    "Refresh".into()
+                },
+                cx,
+                |this, _window, cx| this.refresh(cx),
+            ))
+    }
+
+    /// A list of follows, live and offline, with a probe measuring every
+    /// frame whether the pointer is over it — measured the way chat measures
+    /// its own hold, not taken from `on_hover`, whose value a pointer that
+    /// leaves the window without a move never changes. The hover listener is
+    /// only there to wake a repaint, so the probe runs again when the pointer
+    /// comes or goes.
     /// `active` false says the list is not what this element is showing.
-    fn holding(
+    pub(super) fn holding(
         &self,
         list: LiveList,
         active: bool,
@@ -226,109 +193,53 @@ impl RootView {
                 name: self.display_name(slot).into(),
             })
             .collect();
-        let grid = div()
-            .flex_1()
-            .min_w_0()
-            .relative()
-            .child(watch::page(
-                &self.slots,
-                &panes,
-                self.body(window),
-                self.settings.chat_width,
-                self.settings.video_share,
-                self.active_slot(),
-                |this: &mut RootView, index, window, cx| this.close_slot(index, window, cx),
-                |this: &mut RootView, index, window, cx| {
-                    if let Some(key) = this.slots.get(index).map(|slot| slot.key.clone()) {
-                        this.retry_stream(&key, window, cx);
-                    }
-                },
-                |this: &mut RootView, index, cx| {
-                    let Some(key) = this.slots.get(index).map(|slot| slot.key.clone()) else {
-                        return;
-                    };
-                    if this.active.as_deref() != Some(key.as_str()) {
-                        this.active = Some(key);
-                        cx.notify();
-                    }
-                },
-                |this: &mut RootView, start, window, cx| this.start_resize(start, window, cx),
-                |this: &mut RootView, index, hovered, cx| {
-                    // Only repaint when the pointer crosses a boundary; most
-                    // moves are within the pane it is already in.
-                    match this.slots.get_mut(index) {
-                        Some(slot) if slot.hovered != hovered => slot.hovered = hovered,
-                        _ => return,
-                    }
-                    // Sticky, unlike `hovered`: a keyboard shortcut has to keep
-                    // working once the pointer has moved into chat or off the
-                    // window entirely, and the pane you last looked at is the
-                    // one you meant.
-                    if hovered {
-                        this.active = this.slots.get(index).map(|slot| slot.key.clone());
-                    }
-                    let over_video = this.slots.iter().any(|slot| slot.hovered);
-                    this.nav.set(over_video);
+        // Nothing over the panes but their own controls. A back pill and the
+        // rail's button used to float in the top-left corner, over the first
+        // pane's header; the rail's button is in the title bar now. What
+        // leads off the page is `Esc`, a search from the box up there, and
+        // the palette's "Go to" rows. A row in the rail does not: it opens
+        // that channel here.
+        div().size_full().relative().child(watch::page(
+            &self.slots,
+            &panes,
+            self.body(window),
+            self.settings.chat_width,
+            self.settings.video_share,
+            self.active_slot(),
+            |this: &mut RootView, index, window, cx| this.close_slot(index, window, cx),
+            |this: &mut RootView, index, window, cx| {
+                if let Some(key) = this.slots.get(index).map(|slot| slot.key.clone()) {
+                    this.retry_stream(&key, window, cx);
+                }
+            },
+            |this: &mut RootView, index, cx| {
+                let Some(key) = this.slots.get(index).map(|slot| slot.key.clone()) else {
+                    return;
+                };
+                if this.active.as_deref() != Some(key.as_str()) {
+                    this.active = Some(key);
                     cx.notify();
-                },
-                cx,
-            ))
-            .child(
-                // The only page-level control on the watch page, in the corner
-                // a back control belongs in, and revealed by the same gesture
-                // as everything else: point at the video and the controls come
-                // up, look away and the picture is all that is left.
-                //
-                // Settings is not here on purpose: it is set once and forgotten,
-                // and per-stream quality already lives in the control bar. It is
-                // on the follows page, one click away.
-                self.nav.apply(
-                    "watch-nav",
-                    theme::MOTION_HOVER,
-                    div()
-                        .absolute()
-                        .top(px(theme::GAP_TIGHT))
-                        .left(px(theme::GAP_TIGHT))
-                        // Pinned to the width the pane header keeps clear for
-                        // it, so it cannot grow past the space reserved.
-                        .w(px(theme::NAV_RESERVE))
-                        .flex()
-                        .flex_row()
-                        .gap(px(theme::GAP_TIGHT))
-                        .child(
-                            // "browse" rather than a tab's name: this goes back
-                            // to whichever tab, category or channel was left
-                            // open, and it said "follows" when that was the
-                            // history as often as not.
-                            self.pill("back", "← browse".into(), cx, |this, _window, cx| {
-                                this.go_browse(cx)
-                            }),
-                        )
-                        // Bringing the rail back is chrome like everything else
-                        // here: it comes up with the video controls and goes
-                        // away with them, so a window left on one stream stays
-                        // the stream. Beside the back pill rather than in the
-                        // opposite corner, because that corner is chat's.
-                        .when(self.settings.sidebar_collapsed, |nav| {
-                            nav.child(sidebar::expand(
-                                |this: &mut RootView, window, cx| this.toggle_sidebar(window, cx),
-                                cx,
-                            ))
-                        }),
-                ),
-            );
-
-        let rail = self.follows_rail(cx);
-        let rail = rail.map(|rail| {
-            self.holding(LiveList::Rail, true, rail, cx)
-                .flex_none()
-                .h_full()
-        });
-        div()
-            .size_full()
-            .flex()
-            .flex_row()
-            .children(rail)
-            .child(grid)
+                }
+            },
+            |this: &mut RootView, start, window, cx| this.start_resize(start, window, cx),
+            |this: &mut RootView, index, hovered, cx| {
+                // Only a crossing matters; most moves are within the
+                // pane the pointer is already in.
+                match this.slots.get_mut(index) {
+                    Some(slot) if slot.hovered != hovered => slot.hovered = hovered,
+                    _ => return,
+                }
+                // Sticky, unlike `hovered`: a keyboard shortcut has to keep
+                // working once the pointer has moved into chat or off the
+                // window entirely, and the pane you last looked at is the
+                // one you meant. Coming in is the only crossing anything
+                // on screen follows, so it is the only one that repaints.
+                if hovered {
+                    this.active = this.slots.get(index).map(|slot| slot.key.clone());
+                    cx.notify();
+                }
+            },
+            cx,
+        ))
     }
 }

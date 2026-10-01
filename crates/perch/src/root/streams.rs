@@ -3,17 +3,18 @@
 //! stream resolves. Everything a pane is *playing* is decided here; how it is
 //! drawn is `crate::watch`.
 
-use gpui::{prelude::*, Context, SharedString, Window};
+use gpui::{prelude::*, App, Context, Focusable, SharedString, Window};
 use settings::QualityPreference;
 use streamlink::{quality, StreamEvent, StreamOptions, StreamSupervisor};
 use twitch_api::{LiveStream, Video, VideoKind};
 
+use super::navigation::Route;
 use super::{Page, RootView};
 use crate::chat::{ChatView, Feed};
-use crate::layout;
 use crate::video::{self, Playback, PositionHandle, Stopped, VideoStream};
-use crate::video_view::{Qualities, VideoEvent, VideoView};
+use crate::video_view::{Qualities, Start, VideoEvent, VideoView};
 use crate::watch::{Slot, Source, StreamState, MAX_PANES};
+use crate::{layout, settings_view};
 
 /// Starting render size. Each pane measures itself on the first layout pass and
 /// its render thread follows from then on, so this only decides what the first
@@ -23,7 +24,12 @@ const RENDER_HEIGHT: u32 = 720;
 
 impl RootView {
     /// Open `channel`. With `solo`, it becomes the only pane; otherwise it is
-    /// added alongside whatever is already playing.
+    /// added alongside whatever is already playing. One step on the trail.
+    ///
+    /// A fifth pane is refused where you are, with a toast, rather than on
+    /// the watch page: the page used to flip before the count was checked,
+    /// so a refused `+ Add` from the browse page took you away from it for
+    /// nothing.
     pub(super) fn open_channel(
         &mut self,
         channel: String,
@@ -31,61 +37,64 @@ impl RootView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.page = Page::Watch;
-
-        if self.slot_index(&channel).is_some() {
-            // Already open, so switch to it rather than restarting it. Solo
-            // closes the others; dropping them stops their streamlink and mpv.
-            if solo {
-                self.retire_slots(|slot| slot.channel == channel, cx);
+        self.record(|this| {
+            if this.slot_index(&channel).is_some() {
+                // Already open, so switch to it rather than restarting it. Solo
+                // closes the others; dropping them stops their streamlink and mpv.
+                this.show_watch_page(window, cx);
+                if solo {
+                    this.retire_slots(|slot| slot.channel == channel, cx);
+                }
+                this.set_compact(false, cx);
+                cx.notify();
+                return;
             }
-            self.set_background(false, cx);
-            cx.notify();
-            return;
-        }
 
-        if solo {
-            self.retire_slots(|_| false, cx);
-        } else if self.slots.len() >= MAX_PANES {
-            self.toast(format!("already watching {MAX_PANES} streams"), cx);
-            return;
-        }
+            if solo {
+                this.retire_slots(|_| false, cx);
+            } else if this.slots.len() >= MAX_PANES {
+                this.toast(format!("already watching {MAX_PANES} streams"), cx);
+                return;
+            }
+            this.show_watch_page(window, cx);
 
-        let chat = cx.new(|cx| {
-            ChatView::new(
-                Feed::Live {
-                    channel: channel.clone(),
-                    history: self.settings.chat_history,
-                },
-                self.cache.clone(),
-                window,
-                cx,
-            )
-        });
-        self.slots.push(Slot {
-            key: channel.clone(),
-            channel: channel.clone(),
-            source: Source::Live,
-            quality_override: None,
-            state: StreamState::Starting,
-            chat: Some(chat),
-            resume_at: 0.0,
-            supervisor: None,
-            pump: None,
-            hovered: false,
-            chat_hidden: self.settings.chat_hidden_for(&channel),
-            stalled_at: None,
-        });
+            let chat = cx.new(|cx| {
+                ChatView::new(
+                    Feed::Live {
+                        channel: channel.clone(),
+                        history: this.settings.chat_history,
+                    },
+                    this.cache.clone(),
+                    window,
+                    cx,
+                )
+            });
+            this.slots.push(Slot {
+                key: channel.clone(),
+                channel: channel.clone(),
+                source: Source::Live,
+                quality_override: None,
+                state: StreamState::Starting,
+                chat: Some(chat),
+                resume_at: 0.0,
+                supervisor: None,
+                pump: None,
+                hovered: false,
+                chat_hidden: this.settings.chat_hidden_for(&channel),
+                quiet: false,
+                stalled_at: None,
+            });
 
-        // Remembered for the palette, which leads with it next time.
-        if self.settings.note_watched(&channel) {
-            self.save_settings(cx);
-        }
-        self.active = Some(channel.clone());
-        self.start_stream(channel, window, cx);
-        self.set_background(false, cx);
-        // The others share the window with one more pane now.
-        self.sync_quality(window, cx);
+            // Remembered for the palette, which leads with it next time.
+            if this.settings.note_watched(&channel) {
+                this.save_settings(cx);
+            }
+            this.active = Some(channel.clone());
+            this.start_stream(channel, window, cx);
+            this.set_compact(false, cx);
+            // The others share the window with one more pane now.
+            this.sync_quality(window, cx);
+        })
     }
 
     /// Open a recording. With `solo`, it becomes the only pane; otherwise it
@@ -112,7 +121,8 @@ impl RootView {
     }
 
     /// [`open_video`](Self::open_video), from `start_at` seconds in: where a
-    /// link pointed, or where the history says it was left.
+    /// link pointed, or where the history says it was left. One step on the
+    /// trail, and refused where you are at four panes, as `open_channel` is.
     pub(super) fn open_video_at(
         &mut self,
         video: Video,
@@ -121,80 +131,103 @@ impl RootView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.page = Page::Watch;
-        let key = Slot::video_key(&video.id);
+        self.record(|this| {
+            let key = Slot::video_key(&video.id);
 
-        if self.slot_index(&key).is_some() {
-            if solo {
-                self.retire_slots(|slot| slot.key == key, cx);
+            if this.slot_index(&key).is_some() {
+                this.show_watch_page(window, cx);
+                if solo {
+                    this.retire_slots(|slot| slot.key == key, cx);
+                }
+                this.set_compact(false, cx);
+                cx.notify();
+                return;
             }
-            self.set_background(false, cx);
-            cx.notify();
-            return;
+
+            if solo {
+                this.retire_slots(|_| false, cx);
+            } else if this.slots.len() >= MAX_PANES {
+                this.toast(format!("already watching {MAX_PANES} streams"), cx);
+                return;
+            }
+            this.show_watch_page(window, cx);
+
+            // Into the history now rather than once it plays, so a recording
+            // opened and closed at once, or one that turns out to be gone, is
+            // still one you can find again.
+            this.note_opened(&video, start_at, cx);
+
+            let channel = video.user_login.clone();
+            // Already where the pane is opening, so the chat replay starts there
+            // rather than at the top and then jumping.
+            let position = PositionHandle::starting_at(start_at);
+            // Archives only. A highlight is cut from ranges of a broadcast, so
+            // its offsets mean nothing to a replay, and an upload had no chat to
+            // replay; both play as picture alone.
+            let chat = matches!(video.kind, VideoKind::Archive).then(|| {
+                cx.new(|cx| {
+                    ChatView::new(
+                        Feed::Replay {
+                            video_id: video.id.clone(),
+                            channel: channel.clone(),
+                            room_id: video.user_id.clone(),
+                            position: position.clone(),
+                        },
+                        this.cache.clone(),
+                        window,
+                        cx,
+                    )
+                })
+            });
+            this.slots.push(Slot {
+                key: key.clone(),
+                channel: channel.clone(),
+                source: Source::Video {
+                    video: Box::new(video),
+                    position,
+                },
+                quality_override: None,
+                state: StreamState::Starting,
+                chat,
+                resume_at: start_at,
+                supervisor: None,
+                pump: None,
+                hovered: false,
+                // Remembered against the channel, like a live pane's: hiding
+                // chat is a statement about the streamer, not the broadcast.
+                chat_hidden: this.settings.chat_hidden_for(&channel),
+                quiet: false,
+                stalled_at: None,
+            });
+
+            // A recording counts as watching its channel, for the palette.
+            if this.settings.note_watched(&channel) {
+                this.save_settings(cx);
+            }
+            this.active = Some(key.clone());
+            this.start_stream(key, window, cx);
+            this.set_compact(false, cx);
+            this.sync_quality(window, cx);
+        })
+    }
+
+    /// Onto the watch page, for a pane just opened or switched to, taking
+    /// the keyboard back from the title bar's search box if the box has it.
+    ///
+    /// The box is in the title bar, over both pages, so going to the watch
+    /// page no longer takes it off screen. When it lived on the browse page
+    /// it went with that page, and focus fell back to the root by itself.
+    /// Most ways here start with a press on the page, which hands focus to
+    /// the root anyway; a toast, a launch handed over and a linked recording
+    /// arriving do not, and left the cursor in the box — so every key on the
+    /// watch page stood aside for it, and Space typed a space into the search.
+    /// Only the box: a text box on the settings sheet keeps the cursor when a
+    /// launch opens a pane behind the sheet.
+    fn show_watch_page(&mut self, window: &mut Window, cx: &App) {
+        self.page = Page::Watch;
+        if self.search.focus_handle(cx).is_focused(window) {
+            self.focus.focus(window);
         }
-
-        if solo {
-            self.retire_slots(|_| false, cx);
-        } else if self.slots.len() >= MAX_PANES {
-            self.toast(format!("already watching {MAX_PANES} streams"), cx);
-            return;
-        }
-
-        // Into the history now rather than once it plays, so a recording
-        // opened and closed at once, or one that turns out to be gone, is
-        // still one you can find again.
-        self.note_opened(&video, start_at, cx);
-
-        let channel = video.user_login.clone();
-        // Already where the pane is opening, so the chat replay starts there
-        // rather than at the top and then jumping.
-        let position = PositionHandle::starting_at(start_at);
-        // Archives only. A highlight is cut from ranges of a broadcast, so
-        // its offsets mean nothing to a replay, and an upload had no chat to
-        // replay; both play as picture alone.
-        let chat = matches!(video.kind, VideoKind::Archive).then(|| {
-            cx.new(|cx| {
-                ChatView::new(
-                    Feed::Replay {
-                        video_id: video.id.clone(),
-                        channel: channel.clone(),
-                        room_id: video.user_id.clone(),
-                        position: position.clone(),
-                    },
-                    self.cache.clone(),
-                    window,
-                    cx,
-                )
-            })
-        });
-        self.slots.push(Slot {
-            key: key.clone(),
-            channel: channel.clone(),
-            source: Source::Video {
-                video: Box::new(video),
-                position,
-            },
-            quality_override: None,
-            state: StreamState::Starting,
-            chat,
-            resume_at: start_at,
-            supervisor: None,
-            pump: None,
-            hovered: false,
-            // Remembered against the channel, like a live pane's: hiding
-            // chat is a statement about the streamer, not the broadcast.
-            chat_hidden: self.settings.chat_hidden_for(&channel),
-            stalled_at: None,
-        });
-
-        // A recording counts as watching its channel, for the palette.
-        if self.settings.note_watched(&channel) {
-            self.save_settings(cx);
-        }
-        self.active = Some(key.clone());
-        self.start_stream(key, window, cx);
-        self.set_background(false, cx);
-        self.sync_quality(window, cx);
     }
 
     /// Start, or restart, streamlink for an existing slot.
@@ -296,16 +329,29 @@ impl RootView {
                     }
                     (Source::Live, _) => Playback::Live { url },
                 };
-                match VideoStream::start(RENDER_WIDTH, RENDER_HEIGHT, volume, playback) {
+                // A pane Mute all is holding starts silent, at the level its
+                // slider will show; and one started while you browse — the
+                // re-pick after a resize, a quality change from the settings —
+                // starts as the tile it replaces, not as a big player with
+                // its controls up in the corner of the browse page.
+                let quiet = self.slots[index].quiet;
+                let start = Start {
+                    compact: self.page != Page::Watch,
+                    quiet,
+                };
+                let audible = if quiet { 0 } else { volume };
+                match VideoStream::start(RENDER_WIDTH, RENDER_HEIGHT, audible, playback) {
                     Ok((stream, frames)) => {
                         let qualities = Qualities {
                             playing: SharedString::from(quality),
                             available,
-                            default: SharedString::from(self.settings.quality.name().to_string()),
+                            default: settings_view::quality_label(&self.settings.quality),
                             picked: self.slots[index].quality_override.is_some(),
                         };
                         let view = cx.new(|cx| {
-                            VideoView::from_stream(stream, frames, qualities, window, cx)
+                            VideoView::from_stream(
+                                stream, frames, qualities, volume, start, window, cx,
+                            )
                         });
                         let owner = key.to_string();
                         cx.subscribe_in(
@@ -322,9 +368,16 @@ impl RootView {
                                     // pane opens at its *channel's* level.
                                     // A slider drag emits a change per pixel,
                                     // so the write waits for the run to end.
-                                    let channel = this
-                                        .slot_index(&owner)
-                                        .map(|index| this.slots[index].channel.clone());
+                                    //
+                                    // A level somebody chose is also the end
+                                    // of Mute all for this pane: the player
+                                    // has already let its hush go.
+                                    let index = this.slot_index(&owner);
+                                    if let Some(index) = index {
+                                        this.slots[index].quiet = false;
+                                    }
+                                    let channel =
+                                        index.map(|index| this.slots[index].channel.clone());
                                     if let Some(channel) = channel {
                                         if this.settings.set_volume_for(&channel, *volume) {
                                             this.save_settings_soon(cx);
@@ -389,8 +442,8 @@ impl RootView {
     /// What a pane calls its channel: the name the channel writes itself as,
     /// from whichever list knows it, or the login when none does.
     ///
-    /// One answer for the pane header, its status line, the now-playing bar
-    /// and the palette. They used to ask different lists, so a channel you
+    /// One answer for the pane header, its status line, the mini player and
+    /// the palette. They used to ask different lists, so a channel you
     /// follow that was offline was "Nubzombie" in the palette and
     /// "nubzombie" in the pane it opened.
     pub(super) fn display_name(&self, slot: &Slot) -> String {
@@ -419,7 +472,7 @@ impl RootView {
         let Some(index) = self.slot_index(key) else {
             return;
         };
-        // Where "watch again" and "try again" start a recording from: the
+        // Where "Watch again" and "Try again" start a recording from: the
         // top once it has finished, and where it got to when it failed.
         self.slots[index].resume_at = match reason {
             Stopped::Ended => 0.0,
@@ -432,7 +485,7 @@ impl RootView {
         // server runs in the continuous mode by default, so it sits waiting
         // for another request that is never coming, holding a process and a
         // port. Dropping the supervisor kills it; dropping the pump stops
-        // listening to a worker that has nothing left to say. `try again`
+        // listening to a worker that has nothing left to say. `Try again`
         // starts both again.
         self.slots[index].supervisor = None;
         self.slots[index].pump = None;
@@ -600,39 +653,88 @@ impl RootView {
         cx.notify();
     }
 
-    /// Mute or unmute every pane at once, for moving between pages.
-    pub(super) fn set_background(&mut self, background: bool, cx: &mut Context<Self>) {
+    /// Draw every player as a tile, or as a pane, for moving between pages.
+    /// How they look and nothing else: see `VideoView::set_compact`.
+    pub(super) fn set_compact(&mut self, compact: bool, cx: &mut Context<Self>) {
         for slot in &self.slots {
             if let Some(view) = slot.video() {
-                view.update(cx, |video, cx| video.set_background(background, cx));
+                view.update(cx, |video, cx| video.set_compact(compact, cx));
             }
         }
     }
 
-    /// Leave the watch page.
+    /// Mute all, or unmute all: every pane held silent, or let go.
     ///
-    /// With the miniplayer on, the streams keep going as muted thumbnails —
-    /// genuinely cheaper, not just smaller, since render size follows the
-    /// element and a small one decodes into a small buffer. With it off they
-    /// stop, which is what somebody who came here to pick the next thing
-    /// wanted: a backgrounded stream is still decoding and still pulling bytes.
-    pub(super) fn go_browse(&mut self, cx: &mut Context<Self>) {
-        self.page = Page::Browse;
-        if self.settings.miniplayer {
-            self.set_background(true, cx);
-        } else {
-            self.retire_slots(|_| false, cx);
+    /// Per pane and for the session only. Each slot remembers it, so a player
+    /// rebuilt under it is born quiet; a pane's first deliberate change of
+    /// level ends it for that pane; and nothing of it reaches the settings —
+    /// Mute all is not somebody deciding a channel should open silent. Letting
+    /// go never un-mutes a pane that was muted by hand before it.
+    pub(super) fn set_quiet_all(&mut self, quiet: bool, cx: &mut Context<Self>) {
+        for slot in &mut self.slots {
+            slot.quiet = quiet;
+            if let Some(view) = slot.video() {
+                view.update(cx, |video, cx| video.set_hushed(quiet, cx));
+            }
         }
         cx.notify();
     }
 
+    /// Leave the watch page.
+    ///
+    /// With the miniplayer on, the streams keep going, with their sound, as
+    /// tiles in the mini player — cheaper to draw as well as smaller, since
+    /// render size follows the element and a small one is scaled into a small
+    /// buffer. Not cheaper to fetch: the rendition stays the one chosen for
+    /// the watch grid, because `pane_height` measures that grid whichever page
+    /// is up, so the tile never trades away the picture you go back to. With
+    /// the miniplayer off they stop, which is what somebody who came here to
+    /// pick the next thing wanted: a stream in a tile is still decoding and
+    /// still pulling bytes. One step on the trail — which `Alt+←` takes back
+    /// while something is still playing to go back to.
+    pub(super) fn go_browse(&mut self, cx: &mut Context<Self>) {
+        self.record(|this| {
+            this.page = Page::Browse;
+            if this.settings.miniplayer {
+                this.set_compact(true, cx);
+            } else {
+                this.retire_slots(|_| false, cx);
+            }
+            cx.notify();
+        })
+    }
+
+    /// Back to watching, when there is anything to watch. One step on the
+    /// trail.
     pub(super) fn go_watch(&mut self, cx: &mut Context<Self>) {
-        if self.slots.is_empty() {
-            return;
+        self.record(|this| {
+            if this.slots.is_empty() {
+                return;
+            }
+            this.page = Page::Watch;
+            this.set_compact(false, cx);
+            cx.notify();
+        })
+    }
+
+    /// Go back to watching with `key` the pane the keys talk to: what a click
+    /// on a mini-player tile asks for.
+    ///
+    /// The pointer arrives on the watch page where the tile was, which can be
+    /// over another pane's video. A pane's hover is measured every frame and
+    /// its rising edge makes it active (the watch page's `on_hover`), and
+    /// `Slot::hovered` is whatever it was when the watch page was last up — so
+    /// on the first frame that other pane would take the keys from the one
+    /// just clicked, and M, the arrows and Ctrl+W would land on it. Counting
+    /// every pane as already pointed at leaves that frame only falling edges,
+    /// which change nothing: the pane under the pointer becomes active the
+    /// next time the pointer comes into it.
+    pub(super) fn go_watch_pane(&mut self, key: String, cx: &mut Context<Self>) {
+        self.active = Some(key);
+        for slot in &mut self.slots {
+            slot.hovered = true;
         }
-        self.page = Page::Watch;
-        self.set_background(false, cx);
-        cx.notify();
+        self.go_watch(cx);
     }
 
     pub(super) fn stop_all(&mut self, cx: &mut Context<Self>) {
@@ -647,11 +749,20 @@ impl RootView {
     /// written down before its pane goes: the position lives on the slot,
     /// and a pane closed any other way takes the last few seconds of it with
     /// it. Dropping a slot stops its streamlink and its mpv.
+    ///
+    /// The last pane going takes the watch page off the trail too, both ways:
+    /// there is nothing there to go back to, and a step that skipped it would
+    /// be a press that seemed to do nothing. Every way the last pane goes
+    /// comes through here — a close, Stop all, leaving with the mini player
+    /// off, turning it off in the settings.
     pub(super) fn retire_slots(&mut self, keep: impl Fn(&Slot) -> bool, cx: &mut Context<Self>) {
         let recording_leaves = self.slots.iter().any(|slot| !slot.is_live() && !keep(slot));
         if recording_leaves && self.note_watching(cx) {
             self.save_history_soon(cx);
         }
         self.slots.retain(keep);
+        if self.slots.is_empty() {
+            self.trail.forget(|route| *route == Route::Watch);
+        }
     }
 }

@@ -6,7 +6,7 @@ use gpui::{Context, Window};
 use settings::Settings;
 
 use super::RootView;
-use crate::browse::Action;
+use crate::browse::{Action, Place};
 use crate::keys;
 
 impl RootView {
@@ -164,12 +164,22 @@ impl RootView {
         self.toggle_settings(window, cx);
     }
 
+    /// Put the cursor in the title bar's search box — on either page, since
+    /// the bar is over both.
+    ///
+    /// Not in fullscreen, where the bar is not drawn. The box would take focus
+    /// without being on screen, and focus held by an element that is not
+    /// rendered is lost on the next frame and handed back to the root, so the
+    /// press would do nothing but blink focus away and back.
     pub(super) fn on_focus_search(
         &mut self,
         _: &keys::FocusSearch,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if window.is_fullscreen() {
+            return;
+        }
         self.search.update(cx, |state, cx| state.focus(window, cx));
     }
 
@@ -256,24 +266,50 @@ impl RootView {
         cx.notify();
     }
 
-    /// One step back on the browse page: a channel's page, a search or a
+    /// One step out on the browse page: a channel's page, a search or a
     /// category closes first, since it took the page over; with none open,
     /// back to whatever is playing. `Esc` on the watch page goes the other
     /// way, which makes the key a toggle between the two pages when nothing
     /// else is in the way.
-    pub(super) fn on_back(&mut self, _: &keys::Back, window: &mut Window, cx: &mut Context<Self>) {
-        let leave = if self.discovery.channel.is_some() {
-            Some(Action::CloseChannel)
-        } else if self.discovery.search.is_some() {
-            Some(Action::CloseSearch)
-        } else if self.discovery.open.is_some() {
-            Some(Action::CloseCategory)
-        } else {
-            None
+    ///
+    /// Out rather than back: it goes to what is under the takeover, however
+    /// you got to it, where `Alt+←` goes to wherever you were before. Both
+    /// are steps on the trail, so `Alt+←` also takes an `Esc` back.
+    pub(super) fn on_step_out(
+        &mut self,
+        _: &keys::StepOut,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let leave = match self.discovery.place() {
+            Place::Channel(_) => Some(Action::CloseChannel),
+            Place::Search(_) => Some(Action::CloseSearch),
+            Place::Category(_) => Some(Action::CloseCategory),
+            Place::Tab(_) => None,
         };
         match leave {
             Some(action) => self.on_browse_action(action, window, cx),
             None => self.go_watch(cx),
         }
+    }
+
+    /// Back along the trail; see `navigation`.
+    pub(super) fn on_navigate_back(
+        &mut self,
+        _: &keys::NavigateBack,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.go_back(window, cx);
+    }
+
+    /// Forward along the trail, after going back.
+    pub(super) fn on_navigate_forward(
+        &mut self,
+        _: &keys::NavigateForward,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.go_forward(window, cx);
     }
 }

@@ -582,6 +582,16 @@ pub struct Channel {
     pub display_name: String,
 }
 
+/// Name order, ignoring case: `aimbot`, `Asmongold`, `zackrawrr`.
+///
+/// What [`followed_channels`] hands back, because Twitch returns them by when
+/// you followed, which is an order nobody remembers. Public for the same
+/// reason [`by_viewers`] is: a caller that held the list still for a while
+/// puts it back in this order, not in one of its own.
+pub fn by_name(channels: &mut [Channel]) {
+    channels.sort_by_key(|channel| channel.display_name.to_lowercase());
+}
+
 fn parse_followed_channels(json: &Value) -> Vec<Channel> {
     entries(json)
         .filter_map(|entry| {
@@ -645,13 +655,10 @@ pub fn profile_images(
     Ok(all)
 }
 
-/// Every channel the signed-in user follows, in name order.
+/// Every channel the signed-in user follows, in name order; see [`by_name`].
 ///
 /// Needs `user:read:follows`, the same scope the live list already uses, so
 /// this costs a request rather than another sign-in.
-///
-/// Sorted by name because Twitch returns them by when you followed, which is an
-/// order nobody remembers.
 pub fn followed_channels(
     client_id: &str,
     token: &str,
@@ -664,7 +671,7 @@ pub fn followed_channels(
         user_id,
         parse_followed_channels,
     )?;
-    all.sort_by_key(|channel| channel.display_name.to_lowercase());
+    by_name(&mut all);
     Ok(all)
 }
 
@@ -1362,6 +1369,27 @@ mod tests {
                 "the_asmongold_fan"
             ]
         );
+    }
+
+    /// A capital letter does not send a name to the front: Twitch's display
+    /// names are cased however the streamer likes, and a list sorted by raw
+    /// bytes put every capitalised name before every lowercase one.
+    #[test]
+    fn channels_sort_by_name_ignoring_case() {
+        let channel = |name: &str| Channel {
+            login: name.to_lowercase(),
+            user_id: String::new(),
+            display_name: name.into(),
+        };
+        let mut follows = [
+            channel("zackrawrr"),
+            channel("Asmongold"),
+            channel("aimbot"),
+            channel("Zizaran"),
+        ];
+        by_name(&mut follows);
+        let order: Vec<&str> = follows.iter().map(|c| c.display_name.as_str()).collect();
+        assert_eq!(order, ["aimbot", "Asmongold", "zackrawrr", "Zizaran"]);
     }
 
     #[test]

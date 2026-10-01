@@ -82,8 +82,10 @@ build is several times slower at it.
 
 ### Keyboard
 
-Everything you reach for while watching is a hover-revealed overlay on the
-video, which is no use when you are not holding the mouse.
+The player's controls are a hover-revealed overlay on the video, and the rest
+— the rail button, back and forward, search and settings — sit in the bar
+across the top of the window. Neither is any use when you are not holding the
+mouse.
 
 | | |
 |---|---|
@@ -91,23 +93,26 @@ video, which is no use when you are not holding the mouse.
 | `M` | Mute or unmute |
 | `C` | Show or hide this pane's chat |
 | `B` | Show or hide the follows rail |
-| `↑` `↓` | Volume |
-| `←` `→` | Skip ten seconds in a past broadcast |
-| `1` – `4` | Talk to that pane |
+| `↑ / ↓` | Volume |
+| `← / →` | Skip ten seconds in a past broadcast |
+| `1 – 4` | Talk to that pane |
 | `Tab` | The next pane |
 | `Ctrl+W` | Close this pane |
 | `Esc` | Back to browsing, or back to watching |
-| `Ctrl+F` | Search |
+| `Alt+←` | Back to where you were before — the mouse's back button too |
+| `Alt+→` | Forward again — the mouse's forward button too |
+| `Ctrl+F` | Search, from either page |
 | `Ctrl+R` | Refresh whichever list is on screen |
 | `Ctrl+,` | Settings |
 | `Ctrl+K` | Command palette |
 | `Ctrl+0` | Reset the pane sizes |
-| `F` / `F11` | Fullscreen, and back |
+| `F / F11` | Fullscreen, and back |
 
-On macOS every `Ctrl` on this page is `⌘` — the bindings are declared on gpui's
-`secondary` modifier, which is cmd there and ctrl everywhere else, so the two
-never drift apart. The settings sheet draws whichever one this machine actually
-binds, and a test holds it to that.
+On macOS every `Ctrl` on this page is `⌘` and every `Alt` is `⌥`. The `Ctrl`
+bindings are declared on gpui's `secondary` modifier, which is cmd there and
+ctrl everywhere else, so the two never drift apart. The settings sheet draws
+whichever one this machine actually binds, and a test holds it to that — and
+holds this table to the sheet, so a key the app lists is a key listed here.
 
 Player keys act on the pane you last pointed at, or last clicked — clicking
 anywhere in a pane, video or chat, makes it the one the keyboard is talking to,
@@ -115,13 +120,25 @@ and with more than one pane open its header is underlined to say so. `1` to
 `4` name a pane by its place in the grid and `Tab` steps along them, for when
 the mouse is nowhere near. The keys stand aside while the cursor is in a text
 box — all but `Ctrl+K`, `Ctrl+,` and `Ctrl+R`, which type nothing, so the
-palette is one keystroke away straight after a search. The same list is in the
-settings sheet. Double-clicking the video is
+palette is one keystroke away straight after a search. A search typed on the
+watch page leaves it for the results, the way `Esc` does. The same list is in
+the settings sheet. Double-clicking the video is
 fullscreen too. `Esc` from the watch page goes back to whichever tab, category
 or channel you left the browse page on — and first closes a pane's quality
 menu, if one is open.
 
-Every pane has a `close` in its header, a lone one included; closing the last
+Back and forward work the way they do in a browser. `Alt+←` and `Alt+→`, the
+arrows in the title bar or the mouse's side buttons walk back through the
+tabs, categories, searches, channel pages and the watch page you have been
+on, and forward again. `Esc` and the `← Back` beside a search or a channel's
+name still step out of whatever has taken the page over, and back takes that
+back too. The watch page drops out of the way once nothing is playing on it.
+A list you go back to is asked for again if it has been replaced since, and
+opens at the top. On Windows the side buttons do nothing over the title bar's
+empty strip or its window buttons, which belong to Windows rather than to
+the app.
+
+Every pane has a `Close` in its header, a lone one included; closing the last
 pane goes back to the browse page.
 
 The header above each chat says `muted` or `paused` when either is true, so a
@@ -202,7 +219,7 @@ including **Off**.
 
 Chat holds still while the pointer is over it. A link that moves as you reach
 for it is not much of a link, so while a pane is pointed at and following live
-its new messages wait — it says `chat paused` — and land the moment the pointer
+its new messages wait — it says `Chat paused` — and land the moment the pointer
 leaves. A pane you have scrolled back in is left alone; its position is already
 yours. A message a moderator deletes stays where it was, greyed and marked
 `deleted`, rather than vanishing from under your eye.
@@ -218,24 +235,27 @@ Live channels first, as cards; everyone else you follow below as names. A name
 opens the channel's page — its past broadcasts, and a control for its chat,
 which connects whether or not anyone is streaming.
 
-The list refreshes itself every minute. `Ctrl+R`, or the pill in the header,
+The list refreshes itself every minute. `Ctrl+R`, or Refresh beside the tabs,
 asks again now — for whichever list is on screen, not just follows.
 
 Who is live is sorted by viewers, and holds still while the pointer is on it,
 the way chat does: a refresh then updates the numbers where they stand, drops
 whoever ended and adds whoever started at the end, and the list is put back in
 order once the pointer leaves — so a card is never swapped for its neighbour
-between aiming at it and clicking. The rail does the same.
+between aiming at it and clicking. The rail does the same. So do the offline
+names, on the tab and in the rail: somebody whose stream ends joins the end of
+them until the pointer leaves, rather than landing in the middle and pushing
+every name after them down.
 
 When somebody you follow goes live, a notice says so in the corner; click it
-to watch them, or `+ add` beside it to open them next to what is playing. A
+to watch them, or `+ Add` beside it to open them next to what is playing. A
 pane left on a channel that was off, or whose broadcast ended, starts by
 itself when a later poll finds them on again — open a channel before they
 start and it begins without you.
 
 The box at the top of the Following tab filters both lists as you type, live
 and offline, by the same few-letters-of-a-name match the palette uses. It is
-the opposite of the search box in the header: that one asks Twitch, this one
+the opposite of the search box in the title bar: that one asks Twitch, this one
 asks the app, and nothing typed here leaves it — until nobody you follow
 matches, when it offers to ask Twitch instead.
 
@@ -245,19 +265,40 @@ down one side. Viewer count and uptime sit on the thumbnail; the name, title and
 game are underneath, each on one line and cut with an ellipsis where it does not
 fit. Resting the pointer on one shows the whole of it.
 
-Whatever is playing while you browse keeps playing, muted, in a bar along the
-bottom — each stream with what it is playing and its own close button, and one
-control back to watching. Settings can turn that off, in which case leaving the watch page
-stops the streams instead, which is the cheaper answer if you go to the follows
-page to pick the next thing rather than to glance at the list.
+Whatever is playing while you browse keeps playing, with its sound, in a small
+player in the bottom-right corner of the page, clear of the list's scrollbar:
+one picture, or up to four two to a row.
+Click a picture to go back to watching it; the `×` that appears on a picture
+under the pointer closes just that stream. The bar under the pictures says what
+is playing and has three controls for all of it — Mute all (or Unmute all),
+Back to watching and Stop all. Mute all silences the streams without touching
+anyone's volume: it is never saved, it lasts until you change a stream's volume
+yourself, and Unmute all leaves a stream you had muted muted. Every list leaves
+room at its foot, so nothing is stuck under the player. Settings can turn it
+off, in which case leaving the watch page stops the streams instead, which is
+the cheaper answer if you go to the follows page to pick the next thing rather
+than to glance at the list.
 
 ### The rail
 
-Who is live, down the left-hand edge of both pages: avatar, name, what they are
-playing, and how many people are there. Click to watch, or `+` to open beside
-what is already playing. It folds away with the arrow in its header and stays
-folded — a window left on one stream for three hours should be able to be just
-the stream.
+Down the left-hand edge of both pages, in three groups. First the channels you
+have pinned, in the order you pinned them, live or not. Then who else is live:
+avatar, name, what they are playing, and how many people are there. Then
+everyone else you follow, folded under Offline and a count — click the count
+to unfold them, and again to fold them away; they start folded each time Perch
+starts. Click a live channel to watch it, or `+` to open it beside what is
+already playing; click anyone else for their channel's page. An offline name
+has a picture only if Perch saw that channel live earlier in the session.
+
+The pin that appears on a row under the pointer pins that channel, and the
+same pin on a pinned row unpins it. Pins are kept in `settings.json`, as
+`pinned`, so they can be written there by hand too; a pin for a channel you no
+longer follow shows as just its login, with nothing to say whether it is live.
+
+It folds away with the rail button at the left of the title bar, or `B`, and
+stays folded — a window left on one stream for three hours should be able to
+be just the stream. Fullscreen hides it along with the title bar, folded or
+not, and `B` does nothing there.
 
 On the left, opposite chat. Chat belongs to the pane it is part of and sits on
 the right of it; the rail belongs to the window.
@@ -266,12 +307,13 @@ the right of it; the rail belongs to the window.
 
 `Ctrl+K` — a channel to open, a pane to close, a page to go to, typed rather
 than aimed at. It filters what the app already knows, so it costs nothing and
-runs on every keystroke; the search box in the header is the one that asks
+runs on every keystroke; the search box in the title bar is the one that asks
 Twitch. `qb` finds QuickyBaby. Offline follows are in it too, once you have
 typed something, and open the channel's page, as their names do on the
 Following tab; a live channel's past broadcasts are a row of their own. Every
 tab is a `Go to` row, and going back to watching or stopping everything is
-offered once something is playing.
+offered once something is playing. `Ctrl+K` does nothing while the settings
+sheet is open; close the sheet first.
 
 With nothing typed it leads with the channels you watched most recently, then
 who is live. Type a name none of your follows answer to and it offers to open
@@ -287,7 +329,7 @@ opened was a recording you had not finished, it leads the empty palette, so
 ## Past broadcasts
 
 Every channel has a page of what it broadcast before: click an offline name on
-the Following tab, the **past broadcasts** control that appears on a live card,
+the Following tab, the **Past broadcasts** control that appears on a live card,
 or the palette's row for it — or search for it by name, since a search lists
 the channels that answer to it and are not on, as names under the live ones.
 The recordings are cards like the streams are, with the length where a
@@ -295,8 +337,8 @@ stream's card has its viewer count, and how long ago it was underneath. One
 still being recorded carries the live dot and says how long it has been going
 so far; it can be watched from the start while the stream is on.
 
-A switch at the top of the page turns it to the channel's **highlights** or its
-**uploads**, each a list of its own. They play the way a broadcast does, but as
+A switch at the top of the page turns it to the channel's **Highlights** or its
+**Uploads**, each a list of its own. They play the way a broadcast does, but as
 picture alone: a highlight is cut from pieces of a broadcast and an upload was
 never one, so neither has a chat to replay.
 
@@ -309,16 +351,16 @@ the reason is the player's and `HANDOFF.md` has it. The header says `replay`
 when the recording ends the pane says so and offers to start over. A channel's
 live stream and one of its recordings can be open side by side.
 
-Every recording you open is kept on the **history** tab, newest first: the ones
-you are part-way through under *continue watching*, each saying where you left
+Every recording you open is kept on the **History** tab, newest first: the ones
+you are part-way through under *Continue watching*, each saying where you left
 it, then the ones you finished. Opening a recording again — from there, from its
 channel's page, or from the palette — picks up where you left it, and the pane
 says so while it opens; one watched to within a minute of its end starts from
 the top, and a link with a `?t=` goes where the link says. Cards on a channel's
 page carry the same bar along the bottom of the picture, so you can see which
-ones you have seen; on the history tab a highlight or an upload says which it is
-under its title. **forget** on a card's picture takes one off; **clear
-history** takes the lot. Either says so in a toast with an **undo**, which puts
+ones you have seen; on the History tab a highlight or an upload says which it is
+under its title. **Forget** on a card's picture takes one off; **Clear
+history** takes the lot. Either says so in a toast with an **Undo**, which puts
 them back where they were, places and all. The list is `history.json` beside
 the settings, and deleting it forgets what was watched and nothing else.
 
@@ -343,9 +385,17 @@ broadcast.
 
 ## Settings
 
-The gear in the title bar. Stored at `%APPDATA%/perch/settings.json` on Windows
-and `~/Library/Application Support/perch/settings.json` on macOS; changes apply
-immediately rather than needing a restart. What you have watched is beside it,
+The gear in the title bar, on either page, or `Ctrl+,`. Perch draws that bar
+itself: on Windows the gear sits just left of the minimise, maximise and close
+buttons, which Perch draws too, while macOS keeps its traffic lights. Resting
+the pointer on the gear says who is signed in; until somebody is, the bar says
+what the sign-in is waiting for beside it. The bar goes away in fullscreen with
+everything else. Stored at
+`%APPDATA%/perch/settings.json` on Windows and
+`~/Library/Application Support/perch/settings.json` on macOS; changes apply
+immediately rather than needing a restart. Saving the sheet changes only what
+the sheet shows, so anything else that changed while it was up — a channel a
+second launch opened, say — stays changed. What you have watched is beside it,
 in `history.json`.
 
 Volume is remembered per channel, because streamers are not consistent about
@@ -368,7 +418,8 @@ To create the Client ID: register an application, set **OAuth Redirect URL** to
 `http://localhost` (required by the form, unused by this app) and **Client Type**
 to **Public**. No client secret — sign-in uses the device code flow, so nothing
 secret is ever stored in the binary. Paste the Client ID into settings and the
-sidebar will show a code to enter at `twitch.tv/activate`.
+title bar will show a code to enter at `twitch.tv/activate`, on either page, until
+the sign-in lands; the Following tab shows it too.
 
 The auth-token cookie is a **full account credential**, and it is worth knowing
 exactly where it goes before you paste one in. It is stored in plain text, which
@@ -407,7 +458,8 @@ only ever upwards: a pane that has grown restarts on a sharper rendition,
 since a restart is a few seconds of black and worth it for the picture, and a
 pane that has shrunk keeps what it has. A quality picked from a pane's own
 menu is left alone; that choice was about the pane, whatever its size. The
-menu's first row is the settings' own choice — `auto`, or whatever quality the
+menu's first row is the settings' own choice, in the settings' words for it —
+`Auto (matches the video pane)`, `Best available`, or whatever quality the
 settings name — and picking it hands the pane back, restarting it only if that
 changes what plays. A press anywhere else, or `Esc`, closes the menu.
 

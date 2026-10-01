@@ -7,43 +7,68 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use gpui::{Context, Task, Window};
-use twitch_api::{LiveStream, Video};
+use twitch_api::{Channel, LiveStream, Video};
 
 use super::{LinkedVideo, RootView, ToastAction};
 
-/// A list of who is live that the pointer can rest on, and hold still.
+/// A list of follows that the pointer can rest on, and hold still.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum LiveList {
     Rail,
     Following,
 }
 
-/// The live follows as they stand on screen, brought up to date by a fresh
-/// poll without moving any of them: the ones still live keep their places,
-/// with the poll's numbers and titles; the ones that ended go; the ones that
-/// started join the end, most-watched first.
+/// A list of follows as it stands on screen, brought up to date by a fresh
+/// one without moving anybody: whoever is in both keeps their place, with the
+/// fresh copy's numbers and titles; whoever is only on screen goes; whoever
+/// is only in the fresh list joins the end, in the fresh list's order. `key`
+/// says who is who — a login either way.
 ///
 /// For while the pointer is over a list of them. Sorting by viewers every
 /// minute swapped neighbours whose counts crossed, so a card or a rail row
-/// could change under the pointer between aiming and clicking.
-fn keep_order(shown: &[LiveStream], fresh: Vec<LiveStream>) -> Vec<LiveStream> {
-    let mut fresh: Vec<Option<LiveStream>> = fresh.into_iter().map(Some).collect();
+/// could change under the pointer between aiming and clicking; and a channel
+/// that went offline used to land in the middle of the offline names, pushing
+/// down every name after it.
+fn keep_order<T>(shown: &[T], fresh: Vec<T>, key: impl Fn(&T) -> &str) -> Vec<T> {
+    let mut fresh: Vec<Option<T>> = fresh.into_iter().map(Some).collect();
     let mut kept = Vec::with_capacity(fresh.len());
     for old in shown {
-        let still = fresh.iter_mut().find(|stream| {
-            stream
-                .as_ref()
-                .is_some_and(|stream| stream.user_login == old.user_login)
-        });
-        if let Some(stream) = still.and_then(Option::take) {
-            kept.push(stream);
+        let still = fresh
+            .iter_mut()
+            .find(|entry| entry.as_ref().is_some_and(|entry| key(entry) == key(old)));
+        if let Some(entry) = still.and_then(Option::take) {
+            kept.push(entry);
         }
     }
     kept.extend(fresh.into_iter().flatten());
     kept
 }
+
+/// The offline follows once a fresh list of everyone followed has come in:
+/// that list less whoever is `live`, in the order on screen while `held`,
+/// and in the fresh list's name order otherwise.
+///
+/// Filtered against the live list rather than trusted: the two requests are
+/// seconds apart, so somebody can go live between them and would otherwise
+/// appear in both places at once.
+fn offline_after(
+    shown: &[Channel],
+    fresh: Vec<Channel>,
+    live: &HashSet<String>,
+    held: bool,
+) -> Vec<Channel> {
+    let fresh: Vec<Channel> = fresh
+        .into_iter()
+        .filter(|channel| !live.contains(&channel.login))
+        .collect();
+    if held {
+        keep_order(shown, fresh, |channel| channel.login.as_str())
+    } else {
+        fresh
+    }
+}
 use crate::browse::{SearchResults, SignIn};
-use crate::twitch::{Request, TwitchEvent, TwitchService};
+use crate::twitch::{ListKey, Request, TwitchEvent, TwitchService};
 
 impl RootView {
     pub(super) fn spawn_twitch(
@@ -88,18 +113,15 @@ impl RootView {
             TwitchEvent::SignedIn { login } => {
                 self.sign_in = SignIn::SignedIn(login.into());
                 // Whatever the user opened while signed out can be fetched now.
-                self.fill_tab();
+                self.fill_shown();
                 self.request_linked_videos();
             }
             TwitchEvent::Streams(streams) => self.on_streams(streams, window, cx),
             TwitchEvent::FollowedChannels(channels) => {
-                // Filtered against the live list rather than trusted: the two
-                // requests are seconds apart, so somebody can go live between
-                // them and would otherwise appear in both places at once.
-                self.offline = channels
-                    .into_iter()
-                    .filter(|channel| !self.known_live.contains(&channel.login))
-                    .collect();
+                // Held still under the pointer like the live list, in the
+                // rail and on the Following tab alike; see `hold_live`.
+                self.offline =
+                    offline_after(&self.offline, channels, &self.known_live, self.live_held());
                 self.refreshing = false;
                 self.follows_loaded = true;
                 cx.notify();
@@ -122,22 +144,31 @@ impl RootView {
             }
             TwitchEvent::Error(reason) => {
                 // Terminal: the worker has returned, so no refresh it was
-                // holding is ever going to be answered.
+                // holding is ever going to be answered — and no browse
+                // request either, including one it took off the queue and
+                // dropped on the way out. Left pending, a list would pulse
+                // "Loading…" for good, and `fill_shown` would never ask for it
+                // again. The list on screen, if it is empty, then says why.
                 self.refreshing = false;
                 self.sign_in = SignIn::Error(reason.into());
+                self.discovery.pending.clear();
+                self.fill_shown();
             }
 
+            // Each answer ends the wait for its own list and no other: a
+            // reply for a list the user has left must not take "Loading…"
+            // off the one they went to. See `Discovery::pending`.
             TwitchEvent::Popular(page) => {
                 self.discovery
                     .popular
                     .absorb(page.items, page.next, page.append);
-                self.discovery.loading = false;
+                self.discovery.finish(&ListKey::Popular);
             }
             TwitchEvent::Categories(page) => {
                 self.discovery
                     .categories
                     .absorb(page.items, page.next, page.append);
-                self.discovery.loading = false;
+                self.discovery.finish(&ListKey::Categories);
             }
             TwitchEvent::CategoryStreams { category, streams } => {
                 // A reply for a category the user has already left must not
@@ -152,7 +183,7 @@ impl RootView {
                         .streams
                         .absorb(streams.items, streams.next, streams.append);
                 }
-                self.discovery.loading = false;
+                self.discovery.finish(&ListKey::Category(category.id));
             }
             TwitchEvent::SearchResults {
                 query,
@@ -167,6 +198,7 @@ impl RootView {
                     .search
                     .as_ref()
                     .is_some_and(|open| open.query.as_ref() == query);
+                self.discovery.finish(&ListKey::Search(query.clone()));
                 if current {
                     self.discovery.search = Some(SearchResults {
                         query: query.into(),
@@ -175,7 +207,6 @@ impl RootView {
                         channels,
                     });
                 }
-                self.discovery.loading = false;
             }
             TwitchEvent::Videos {
                 login,
@@ -198,13 +229,21 @@ impl RootView {
                     page.shelf_mut(kind)
                         .absorb(videos.items, videos.next, videos.append);
                 }
-                self.discovery.loading = false;
+                self.discovery.finish(&ListKey::Videos { login, kind });
             }
             TwitchEvent::Video { id, result } => self.on_linked_video(id, result, window, cx),
-            TwitchEvent::BrowseError(reason) => {
-                self.discovery.error = Some(reason.into());
-                self.discovery.loading = false;
+            // Said on the list that failed, which may not be the one on
+            // screen by now; see `Discovery::shown_error`.
+            TwitchEvent::BrowseError {
+                list: Some(list),
+                reason,
+            } => {
+                self.discovery.finish(&list);
+                self.discovery.error = Some((list, reason.into()));
             }
+            // Nothing the worker sends: every request that fails into a
+            // `BrowseError` names its list. Kept out of the page all the same.
+            TwitchEvent::BrowseError { list: None, reason } => eprintln!("browse: {reason}"),
         }
         cx.notify();
     }
@@ -276,7 +315,7 @@ impl RootView {
 
         self.known_live = now_live;
         self.follows = if self.live_held() {
-            keep_order(&self.follows, streams)
+            keep_order(&self.follows, streams, |stream| stream.user_login.as_str())
         } else {
             streams
         };
@@ -284,19 +323,22 @@ impl RootView {
         cx.notify();
     }
 
-    /// Whether the pointer is over a list of who is live.
+    /// Whether the pointer is over a list of follows: the rail, or the
+    /// Following tab. Each shows the offline follows as well as who is live,
+    /// so either holds both.
     fn live_held(&self) -> bool {
         self.rail_pointed || self.following_pointed
     }
 
-    /// Note whether the pointer is over one of the lists of who is live, from
+    /// Note whether the pointer is over one of the lists of follows, from
     /// that list's probe — or, for a list that is not on screen, from the page
     /// that is not drawing it, since a probe that is not painted says nothing.
     ///
     /// The lists hold still while pointed at, the way chat does: a poll that
-    /// lands meanwhile updates them in place (see [`keep_order`]). When the
-    /// last of them is let go they are sorted by viewers again, out of the way
-    /// of the pointer rather than under it.
+    /// lands meanwhile updates them in place (see [`keep_order`]), the offline
+    /// names as well as who is live. When the last of them is let go they are
+    /// put back in order — who is live by viewers, the rest by name — out of
+    /// the way of the pointer rather than under it.
     pub(super) fn hold_live(&mut self, list: LiveList, pointed: bool, cx: &mut Context<Self>) {
         let was = self.live_held();
         match list {
@@ -305,6 +347,7 @@ impl RootView {
         }
         if was && !self.live_held() {
             twitch_api::by_viewers(&mut self.follows);
+            twitch_api::by_name(&mut self.offline);
             cx.notify();
         }
     }
@@ -407,6 +450,22 @@ mod tests {
         streams.iter().map(|s| s.user_login.as_str()).collect()
     }
 
+    fn by_login(stream: &LiveStream) -> &str {
+        &stream.user_login
+    }
+
+    fn channel(login: &str) -> Channel {
+        Channel {
+            login: login.into(),
+            user_id: String::new(),
+            display_name: login.into(),
+        }
+    }
+
+    fn channel_logins(channels: &[Channel]) -> Vec<&str> {
+        channels.iter().map(|c| c.login.as_str()).collect()
+    }
+
     /// A poll whose counts would reorder the list leaves it where it stands,
     /// with the new counts.
     #[test]
@@ -414,7 +473,7 @@ mod tests {
         let shown = [stream("a", 300), stream("b", 200), stream("c", 100)];
         let fresh = vec![stream("c", 900), stream("b", 250), stream("a", 10)];
 
-        let kept = keep_order(&shown, fresh);
+        let kept = keep_order(&shown, fresh, by_login);
         assert_eq!(logins(&kept), ["a", "b", "c"]);
         assert_eq!(kept[0].viewer_count, 10, "kept the old numbers");
         assert_eq!(kept[2].viewer_count, 900);
@@ -432,7 +491,45 @@ mod tests {
             stream("new_small", 5),
         ];
 
-        let kept = keep_order(&shown, fresh);
+        let kept = keep_order(&shown, fresh, by_login);
         assert_eq!(logins(&kept), ["a", "c", "new_big", "new_small"]);
+    }
+
+    /// Somebody whose stream just ended comes back in the fresh list among
+    /// the names. Held, they join the end and nobody already on screen moves;
+    /// let go, the list is the fresh one, in name order.
+    #[test]
+    fn offline_channels_keep_their_places_while_held() {
+        let shown = [channel("alice"), channel("carol"), channel("erin")];
+        let fresh = || {
+            vec![
+                channel("alice"),
+                channel("bob"),
+                channel("carol"),
+                channel("erin"),
+            ]
+        };
+        let nobody_live = HashSet::new();
+
+        let held = offline_after(&shown, fresh(), &nobody_live, true);
+        assert_eq!(channel_logins(&held), ["alice", "carol", "erin", "bob"]);
+
+        let let_go = offline_after(&shown, fresh(), &nobody_live, false);
+        assert_eq!(channel_logins(&let_go), ["alice", "bob", "carol", "erin"]);
+    }
+
+    /// Somebody who went live between the two requests is in the live list,
+    /// and must not stay among the names as well — held or not.
+    #[test]
+    fn channels_that_went_live_leave_the_held_offline_list() {
+        let shown = [channel("alice"), channel("bob"), channel("carol")];
+        let fresh = || vec![channel("alice"), channel("bob"), channel("carol")];
+        let live = HashSet::from(["bob".to_string()]);
+
+        let held = offline_after(&shown, fresh(), &live, true);
+        assert_eq!(channel_logins(&held), ["alice", "carol"]);
+
+        let let_go = offline_after(&shown, fresh(), &live, false);
+        assert_eq!(channel_logins(&let_go), ["alice", "carol"]);
     }
 }

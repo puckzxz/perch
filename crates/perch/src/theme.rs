@@ -231,13 +231,39 @@ pub fn accent_dim() -> Hsla {
 }
 
 /// The live dot. The only saturated red in the app, so it reads as status
-/// rather than decoration.
+/// rather than decoration — with one exception, [`caption_close`], which is
+/// the platform's red rather than the app's and only shows under the pointer.
 pub fn live() -> Hsla {
     rgb(0xe5534b).into()
 }
 
 pub fn danger() -> Hsla {
     rgb(0xf08a80).into()
+}
+
+// ── Window frame ─────────────────────────────────────────────────────
+
+/// The close button under the pointer, on a title bar Perch draws itself.
+///
+/// Windows' own red rather than [`live`] or [`danger`]: every other window on
+/// the desktop turns this colour under the pointer, and a close that turns a
+/// different one reads as a different control. Its own token because it is
+/// the platform's and not the app's, and it is never at rest on screen.
+pub fn caption_close() -> Hsla {
+    rgb(0xe81123).into()
+}
+
+/// The close button held down. Darker rather than lighter, the way the
+/// platform's own does it, so a press reads as the same red pushed in.
+pub fn caption_close_pressed() -> Hsla {
+    rgb(0xc50f1f).into()
+}
+
+/// The close glyph on either red. White, not [`text`]: the app's off-white
+/// measures about 3.7:1 on [`caption_close`], under [`MIN_CONTRAST`], and
+/// white clears it — `the_caption_close_glyph_reads_on_its_red` holds it there.
+pub fn caption_close_glyph() -> Hsla {
+    rgb(0xffffff).into()
 }
 
 // ── Type ─────────────────────────────────────────────────────────────
@@ -296,24 +322,65 @@ pub const RADIUS_LG: f32 = 8.0;
 
 /// Outer margin of a page.
 pub const PAGE_PAD: f32 = 20.0;
-/// Width kept clear at the top-left of the watch page for the "← browse"
-/// control.
+/// The height of the browse page's tab strip: the tabs, then Refresh.
 ///
-/// That control is an absolute overlay, so it lands on whatever a pane happens
-/// to draw in that corner. While chat was always beside the video that was the
-/// picture, which is where it is meant to be — with chat hidden it is the
-/// pane's header, and the pill sat on top of the channel's name. The nav is
-/// pinned to this width and the header reserves the same, so the two agree by
-/// construction rather than by both being nudged until they looked right.
-pub const NAV_RESERVE: f32 = 132.0;
-/// The browse header's height.
+/// Fixed rather than falling out of its padding, because the toast stack on
+/// the browse page is offset by it. Toasts are anchored to the top-right of
+/// the content area under the title bar, and the strip is left-aligned, so at
+/// a comfortable width the two never meet — but in a narrow window Refresh
+/// reaches the right-hand side, where a "went live" toast arriving on top of
+/// it would take the click meant for it. One constant read by both is what
+/// makes them agree by construction rather than by a number nudged until it
+/// looked right.
+pub const TAB_STRIP_HEIGHT: f32 = 52.0;
+/// How wide the title bar's search box is when the bar has the room: wide
+/// enough for a channel's name and a few words of a game.
+pub const SEARCH_WIDTH: f32 = 260.0;
+/// The least the search box shrinks to in a narrow window: still room for a
+/// name to be typed and seen. The bar's drag strip never shrinks below
+/// [`TITLE_BAR_DRAG_MIN`], so in a window narrower still the box does not
+/// take the strip's room. It is cut off at its right end instead; see
+/// `root::title_bar`.
+pub const SEARCH_MIN_WIDTH: f32 = 160.0;
+
+/// The title bar Perch draws in place of the platform's.
 ///
-/// Fixed rather than falling out of its padding, because the toast stack has to
-/// clear it: toasts are anchored to the *window*, and the header's search box
-/// and pills live in exactly the corner they arrive in. Pinning the height is
-/// what lets the two agree by construction rather than by a number nudged until
-/// it looked right — the same trick as [`NAV_RESERVE`].
-pub const HEADER_HEIGHT: f32 = 52.0;
+/// `layout::title_bar_height` and `layout::Body` take it off the window, so
+/// the pages, the watch grid and the divider maths all measure what is left
+/// under the bar; nothing else may assume the bar's height. Forty so the macOS
+/// traffic lights can sit centred in it — a choice still to be checked on a
+/// Mac, like the [`TRAFFIC_LIGHT_X`] numbers it is meant to agree with.
+pub const TITLE_BAR_HEIGHT: f32 = 40.0;
+/// The strip along the top of a windowed title bar left to the platform's
+/// resize edge rather than to dragging — about one logical `SM_CYFRAME`, which
+/// is the band gpui answers `HTTOP` in on Windows. `layout::drag_top` is the
+/// only reader, and it gives the strip back when the window is maximised.
+pub const TITLE_BAR_RESIZE_BAND: f32 = 4.0;
+/// The least of the title bar that stays empty for dragging, however much
+/// else the bar comes to hold. A window with nothing left to grab is one that
+/// can no longer be moved.
+pub const TITLE_BAR_DRAG_MIN: f32 = 48.0;
+/// One of the minimise, maximise and close buttons Perch draws on Windows:
+/// the platform's own width, so the three sit where a hand expects them.
+/// From memory rather than a measurement; check it against a native window.
+pub const CAPTION_BUTTON_WIDTH: f32 = 46.0;
+/// The box a caption button's glyph is drawn in, which is not the glyph's
+/// size: the icons leave about a quarter of their box empty on each side, so
+/// this draws the cross and the dash at about eight pixels with a stroke of a
+/// pixel and a third. Meant to sit near the platform's own glyphs, which is a
+/// recollection rather than a measurement; check it against a native window.
+pub const CAPTION_GLYPH: f32 = 16.0;
+/// An icon on a control, and the square control it sits in. The square is a
+/// comfortable target at the bar's height without filling it edge to edge.
+pub const ICON: f32 = 16.0;
+pub const ICON_BUTTON: f32 = 28.0;
+/// Where macOS puts the traffic lights, measured from the window's top-left,
+/// and how much of the bar's left end is kept clear for them. All three are
+/// unverified guesses until someone tunes them on a Mac; gpui measures the
+/// lights against AppKit's own title strip, not against this bar.
+pub const TRAFFIC_LIGHT_X: f32 = 13.0;
+pub const TRAFFIC_LIGHT_Y: f32 = 13.0;
+pub const TRAFFIC_LIGHT_INSET: f32 = 80.0;
 
 /// Inside a card, panel or sheet.
 pub const PANEL_PAD: f32 = 12.0;
@@ -396,6 +463,36 @@ pub const CHAT_WIDTH_MAX: f32 = 640.0;
 /// chat too short to read a sentence in.
 pub const VIDEO_SHARE_MIN: f32 = 0.3;
 pub const VIDEO_SHARE_MAX: f32 = 0.8;
+
+/// How wide the mini player's picture is: one tile with one stream playing,
+/// two side by side with more. Fixed, so the player grows by rows and never
+/// reaches further across the cards than this. `layout::mini_player` divides
+/// it into tiles.
+///
+/// Larger than the old 96px thumbnail on purpose — big enough to follow a
+/// game in — and render size follows the element, so a tile this wide is
+/// scaled into a buffer this wide. The rendition is not: see
+/// `RootView::go_browse`. The player is wider than this by its
+/// [`MINI_PLAYER_INSET`] either side and its border.
+pub const MINI_PLAYER_WIDTH: f32 = 320.0;
+/// The strip under the mini player's tiles: what is playing, and the three
+/// controls for all of it. Tall enough for an `ICON_BUTTON` with room round it.
+pub const MINI_BAR_HEIGHT: f32 = 36.0;
+/// How far inside the mini player's edge its tiles and bar sit. Enough to keep
+/// a tile's square corners inside the player's [`RADIUS_LG`] curve: gpui clips
+/// to rectangles, never to rounded corners, so a tile flush with the edge
+/// would square the player off with the picture's black.
+pub const MINI_PLAYER_INSET: f32 = 4.0;
+
+/// How wide a vertical scrollbar's track is, down the right edge of the list
+/// it scrolls: the thumb at its widest, eight pixels, with four either side.
+/// gpui-component draws it and keeps the number to itself (`WIDTH` in its
+/// `scroll/scrollbar.rs`), so it is written out here for what floats at a
+/// list's right edge and has to leave the track clear — the mini player; see
+/// `layout::mini_player_right`. Read from gpui-component 0.5.1, the version
+/// `Cargo.lock` holds, and `the_scrollbar_width_is_read_from_the_locked_library`
+/// fails once that version moves, so it is read again rather than trusted.
+pub const SCROLLBAR_WIDTH: f32 = 16.0;
 
 /// The grab area of a pane divider. Wider than the line it draws, because a
 /// 1px target is a game rather than a control.
@@ -495,6 +592,47 @@ mod tests {
                 "{louder:.2}:1 and {quieter:.2}:1 are too close to read as different tiers"
             );
         }
+    }
+
+    /// The close button's glyph has to read on both of its reds. Checked
+    /// against the reds rather than `surfaces()`, because those are the only
+    /// things it is ever drawn on — at rest it is an ordinary muted glyph.
+    ///
+    /// The app's own `text()` is deliberately not the glyph, nor `live()` the
+    /// red: `text()` measures about 3.7:1 on the hover red and about 3.0:1 on
+    /// `live()`, both under the bar.
+    #[test]
+    fn the_caption_close_glyph_reads_on_its_red() {
+        for (state, red) in [
+            ("hovered", caption_close()),
+            ("pressed", caption_close_pressed()),
+        ] {
+            let ratio = contrast(caption_close_glyph(), red);
+            assert!(
+                ratio >= MIN_CONTRAST,
+                "the close glyph reads {ratio:.2}:1 on its {state} red"
+            );
+        }
+    }
+
+    /// [`SCROLLBAR_WIDTH`] copies a number gpui-component keeps private, so
+    /// nothing can check it against the library directly. What can be checked
+    /// is that the library is still the version it was read from: when
+    /// `Cargo.lock` moves gpui-component on, this fails until somebody has
+    /// read the new `scroll/scrollbar.rs`, set the width to what it says, and
+    /// moved the version here to match.
+    #[test]
+    fn the_scrollbar_width_is_read_from_the_locked_library() {
+        const LOCK: &str = include_str!("../../../Cargo.lock");
+        let version = LOCK
+            .lines()
+            .skip_while(|line| *line != r#"name = "gpui-component""#)
+            .nth(1);
+        assert_eq!(
+            version,
+            Some(r#"version = "0.5.1""#),
+            "gpui-component has moved; read SCROLLBAR_WIDTH from it again"
+        );
     }
 
     /// Everything tinted with the accent has to come from the same value, or a

@@ -169,7 +169,7 @@ impl RootView {
         self.toast_with(text, Some(ToastAction::Undo(forgotten)), cx);
     }
 
-    /// Put back what a forget or a clear took off: the toast's `undo`.
+    /// Put back what a forget or a clear took off: the toast's `Undo`.
     pub(super) fn restore_history(&mut self, forgotten: Forgotten, cx: &mut Context<Self>) {
         if self.history.restore(forgotten) {
             self.save_history_soon(cx);

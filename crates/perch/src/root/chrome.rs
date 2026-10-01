@@ -1,23 +1,20 @@
-//! The shell's own furniture: the pills, the toasts, the now-playing bar
-//! along the bottom of the browse page, and the follows rail. None of it is a
-//! page; all of it is drawn by one.
+//! The shell's own furniture: the pills, the toasts and the follows rail.
+//! None of it is a page. The pills are drawn by the pages; the rail and the
+//! toasts by the root, beside and over whichever page is up, so they stay put
+//! when the page changes. What plays on while you browse is `mini_player`,
+//! drawn over the page the same way.
 
 use std::time::Duration;
 
-use gpui::{div, prelude::*, px, Context, ElementId, IntoElement, SharedString, Window};
+use gpui::{div, prelude::*, px, Context, IntoElement, SharedString, Window};
 
 use super::{Page, RootView, Toast, ToastAction};
 use crate::browse::Tab;
-use crate::{channel_page, controls, motion, sidebar, theme};
+use crate::{controls, motion, sidebar, theme};
 
 /// How long a toast stays up: time to read a "went live" and reach for it,
 /// or to take back a forget.
 const TOAST_LIFETIME: Duration = Duration::from_secs(8);
-
-/// Thumbnail width in the now-playing bar. Small on purpose, and not only for
-/// the room: render size follows the element, so a stream shown this big decodes
-/// into a buffer this big.
-const MINI_WIDTH: f32 = 96.0;
 
 impl RootView {
     pub(super) fn toast(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
@@ -61,11 +58,18 @@ impl RootView {
         cx.notify();
     }
 
-    /// The rail, and everything it needs to know about what is already open.
-    pub(super) fn follows_rail(&mut self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        // Folded away, the rail holds nothing still; see `hold_live`.
-        if self.settings.sidebar_collapsed {
+    /// The rail, and everything it needs to know about what is already open,
+    /// or nothing when it is not `shown`: folded away, or in fullscreen. See
+    /// `RootView::rail_shown`.
+    pub(super) fn follows_rail(
+        &mut self,
+        shown: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement> {
+        // Not drawn, the rail holds nothing still; see `hold_live`.
+        if !shown {
             self.hold_live(super::follows::LiveList::Rail, false, cx);
+            return None;
         }
         // Live panes only: a recording open beside the rail does not make
         // its channel's row "watching".
@@ -75,18 +79,27 @@ impl RootView {
             .filter(|slot| slot.is_live())
             .map(|slot| slot.channel.clone())
             .collect();
-        sidebar::rail(
-            &self.follows,
-            &self.avatars,
-            &watching,
-            self.can_add(),
-            self.settings.sidebar_collapsed,
+        Some(sidebar::rail(
+            sidebar::Rail {
+                follows: &self.follows,
+                offline: &self.offline,
+                pinned: &self.settings.pinned,
+                avatars: &self.avatars,
+                watching: &watching,
+                can_add: self.can_add(),
+                follows_loaded: self.follows_loaded,
+                offline_open: self.rail_offline_open,
+            },
             &self.cache,
             &self.rail_scroll,
-            |this: &mut RootView, window, cx| this.toggle_sidebar(window, cx),
             |this: &mut RootView, action, window, cx| this.on_browse_action(action, window, cx),
+            // For this session only; see the field.
+            |this: &mut RootView, _window, cx| {
+                this.rail_offline_open = !this.rail_offline_open;
+                cx.notify();
+            },
             cx,
-        )
+        ))
     }
 
     /// One of the shell's controls, wired to a method on this view.
@@ -107,8 +120,8 @@ impl RootView {
     /// A pill that says whether it is the list you are looking at.
     ///
     /// None is while search results are up: they come from the box in the
-    /// header, not from a tab, and the tab left lit behind them read as though
-    /// the results were part of it — the history's, as often as not.
+    /// title bar, not from a tab, and the tab left lit behind them read as
+    /// though the results were part of it — the history's, as often as not.
     pub(super) fn tab_pill(&self, tab: Tab, cx: &mut Context<Self>) -> impl IntoElement {
         let variant = if self.discovery.tab == tab && self.discovery.search.is_none() {
             controls::Variant::Selected
@@ -119,15 +132,21 @@ impl RootView {
             .on_click(cx.listener(move |this, _event, window, cx| this.show_tab(tab, window, cx)))
     }
 
-    /// Transient notices, top-right.
+    /// Transient notices, top-right of the page.
     ///
-    /// Offset below the browse header rather than pinned to the window, because
-    /// that corner is not empty there: the search box and the refresh and
-    /// settings pills are in it, and a "went live" toast landed squarely on top
-    /// of them. The watch page has no header, so there the offset is nothing.
+    /// Measured from the top of the content area rather than of the window:
+    /// the stack lives in the root's content area, which starts under the
+    /// title bar, so the bar's height is already accounted for and nothing
+    /// here repeats it. On the browse page it is offset below the tab strip
+    /// too. The strip is left-aligned, but in a narrow window its Refresh
+    /// reaches the right-hand side, where a "went live" toast would land on
+    /// top of it and take the click. The old header had the search box and
+    /// the refresh pill in that corner, and that is what toasts did to them.
+    /// The watch page has no strip, so there the offset is a gap and nothing
+    /// more.
     pub(super) fn toast_stack(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let top = match self.page {
-            Page::Browse => theme::HEADER_HEIGHT + theme::GAP_TIGHT,
+            Page::Browse => theme::TAB_STRIP_HEIGHT + theme::GAP_TIGHT,
             Page::Watch => theme::GAP,
         };
 
@@ -164,7 +183,7 @@ impl RootView {
             let card = div()
                 // Per card rather than on the stack: the stack is
                 // `items_end`, so its box is as wide as the widest
-                // toast and would blanket the search box beside it.
+                // toast and would blanket whatever is beside it.
                 .block_mouse_except_scroll()
                 .flex()
                 .flex_row()
@@ -185,7 +204,7 @@ impl RootView {
                 // a card makes, in the same words.
                 .when(can_add && watch, |card| {
                     card.child(
-                        controls::pill(("toast-add", id), "+ add", controls::Variant::Pill)
+                        controls::pill(("toast-add", id), "+ Add", controls::Variant::Pill)
                             .on_click(cx.listener(move |this, _event, window, cx| {
                                 this.act_on_toast(id, false, window, cx)
                             })),
@@ -193,7 +212,7 @@ impl RootView {
                 })
                 .when(undo, |card| {
                     card.child(
-                        controls::pill(("toast-undo", id), "undo", controls::Variant::Pill)
+                        controls::pill(("toast-undo", id), "Undo", controls::Variant::Pill)
                             .on_click(cx.listener(move |this, _event, window, cx| {
                                 this.act_on_toast(id, true, window, cx)
                             })),
@@ -207,7 +226,16 @@ impl RootView {
     /// Do what toast `id` offers — watch alone or add beside, or undo — and
     /// take the toast down, since it has been answered. `solo` means nothing
     /// to an undo.
+    ///
+    /// Takes the keyboard back for the root first, as every control the root
+    /// cannot hear does. A toast card blocks the pointer from the root, so
+    /// the root's own mouse-down never takes focus from a text box that had
+    /// it — and the title bar's search box, which a search leaves the cursor
+    /// in, stays on screen over the watch page a toast opens. Left there,
+    /// every key on that page stood aside for the box, and Space typed a
+    /// space into it.
     fn act_on_toast(&mut self, id: u64, solo: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.focus.focus(window);
         let Some(index) = self.toasts.iter().position(|toast| toast.id == id) else {
             return;
         };
@@ -218,134 +246,5 @@ impl RootView {
             None => {}
         }
         cx.notify();
-    }
-
-    /// What is playing while you browse: a bar along the bottom of the page,
-    /// or nothing at all when the miniplayer is turned off — in which case
-    /// there is nothing playing to put in it.
-    ///
-    /// This was a floating strip of 220px thumbnails in the bottom-right
-    /// corner, which worked at one window size. At 1000px it covered two cards;
-    /// four streams would have been 900px of tiles laid over the bottom row of
-    /// the grid — and every one of them needed its own `block_mouse` so that
-    /// clicking a thumbnail did not also open whatever card was underneath it.
-    ///
-    /// Docked, none of that is true: the grid ends where the bar begins, the
-    /// bar is a row rather than a wall, and each stream gets its own close
-    /// button, which the floating version never had room for — the only way
-    /// out of a stream from this page was to stop all of them.
-    pub(super) fn now_playing(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        if self.slots.is_empty() || !self.settings.miniplayer {
-            return None;
-        }
-
-        let mut bar = div()
-            .w_full()
-            .flex_none()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(theme::GAP))
-            .px(px(theme::PAGE_PAD))
-            .py(px(theme::GAP_TIGHT))
-            .bg(theme::surface())
-            .border_t_1()
-            .border_color(theme::border());
-
-        for (index, slot) in self.slots.iter().enumerate() {
-            let id = ElementId::from(SharedString::from(format!("mini-{}", slot.key)));
-            // The name the pane header uses; see `display_name`.
-            let name = self.display_name(slot);
-            // Under it, what is on, as the pane header's second line says it:
-            // the game for a stream, and that a recording is one. Every entry
-            // used to say "muted", which was true of all of them at once and
-            // is said once now, beside the controls.
-            let about = match slot.recording() {
-                Some(video) => channel_page::kind_tag(video.kind).to_string(),
-                None => self
-                    .stream_info(&slot.channel)
-                    .map(|stream| stream.game_name.clone())
-                    .unwrap_or_default(),
-            };
-            let mut entry = div()
-                .id(id)
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(theme::GAP_TIGHT))
-                .pr(px(theme::GAP_TIGHT))
-                .rounded(px(theme::RADIUS))
-                .cursor_pointer()
-                .hover(|style| style.bg(theme::hover()))
-                .active(|style| style.bg(theme::pressed()))
-                .on_click(cx.listener(|this, _event, _window, cx| this.go_watch(cx)));
-
-            // A pane still starting has no picture yet, and a placeholder the
-            // same size keeps the bar from reflowing when it arrives.
-            entry = entry.child(
-                div()
-                    .flex_none()
-                    .w(px(MINI_WIDTH))
-                    .h(px(MINI_WIDTH * 9.0 / 16.0))
-                    .rounded(px(theme::RADIUS))
-                    .overflow_hidden()
-                    .bg(theme::player_bg())
-                    .children(slot.video().cloned()),
-            );
-
-            entry = entry.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .child(
-                        div()
-                            .text_size(px(theme::TEXT_LABEL))
-                            .font_weight(theme::weight_label())
-                            .line_height(px(theme::LINE_TIGHT))
-                            .text_color(theme::text())
-                            .child(SharedString::from(name)),
-                    )
-                    .when(!about.is_empty(), |text| {
-                        text.child(
-                            div()
-                                .text_size(px(theme::TEXT_META))
-                                .line_height(px(theme::LINE_TIGHT))
-                                .text_color(theme::text_dim())
-                                .child(SharedString::from(about)),
-                        )
-                    }),
-            );
-
-            // The same word the pane header uses, and the same size: a lone
-            // `×` was a target a few pixels wide beside a thumbnail.
-            bar = bar.child(div().flex().flex_row().items_center().child(entry).child(
-                controls::destructive(("mini-close", index), "close").on_click(cx.listener(
-                    move |this: &mut Self, _event, window, cx| this.close_slot(index, window, cx),
-                )),
-            ));
-        }
-
-        Some(
-            bar.child(div().flex_1())
-                // Once for the bar, not once per stream: everything in it is.
-                .child(
-                    div()
-                        .flex_none()
-                        .text_size(px(theme::TEXT_META))
-                        .text_color(theme::text_dim())
-                        .child("muted while you browse"),
-                )
-                .child(self.pill(
-                    "mini-watch",
-                    "back to watching".into(),
-                    cx,
-                    |this, _w, cx| this.go_watch(cx),
-                ))
-                // Styled as what it is. It used to be a twin of the pill beside
-                // it, and the two read as two ways of going somewhere.
-                .child(controls::destructive("mini-stop", "stop all").on_click(
-                    cx.listener(|this: &mut Self, _event, _window, cx| this.stop_all(cx)),
-                )),
-        )
     }
 }

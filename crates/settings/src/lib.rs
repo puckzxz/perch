@@ -63,8 +63,8 @@ pub enum QualityPreference {
 
 impl QualityPreference {
     /// The preference in the words it is stored in: `auto`, or the quality
-    /// name — `best`, `1080p`. What a pane's quality menu calls the choice it
-    /// hands the pane back to.
+    /// name — `best`, `1080p`. A key to look a label up by, not the label:
+    /// what somebody reads is the settings sheet's wording for it.
     pub fn name(&self) -> &str {
         match self {
             QualityPreference::Auto => "auto",
@@ -255,6 +255,16 @@ pub struct Settings {
     /// was open yesterday.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub recent: Vec<String>,
+    /// The channels pinned to the top of the rail, by [`channel_key`], in the
+    /// order they were pinned.
+    ///
+    /// Pin order rather than viewers or names, because a pin is a statement
+    /// that these few come first whoever else is on, and a group that
+    /// reshuffled itself every minute would be the live list again. Tidied on
+    /// load and on every write (see `tidy_pinned`), since the file is
+    /// hand-editable and pins can be set there by hand.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pinned: Vec<String>,
     /// What `recent` was before it was a list. Every build up to 0.2.1 wrote
     /// the last channel opened here and nothing ever read it back; it is
     /// folded into `recent` on load and never written again.
@@ -272,12 +282,14 @@ pub struct Settings {
     /// which channels are being watched. That is the reason it is a setting
     /// rather than a constant.
     pub chat_history: usize,
-    /// Whether what is playing keeps playing while you browse.
+    /// Whether what is playing keeps playing, in the mini player in the
+    /// corner of the browse page, while you browse. The field keeps its
+    /// one-word name, which is what settings files already on disk say.
     ///
-    /// Off is a real answer rather than a tidiness preference: a backgrounded
-    /// stream is still decoding frames and still pulling bytes, and somebody
-    /// who goes to the follows page to *pick the next thing* would rather it
-    /// stopped. On, it is one click back into what you were watching.
+    /// Off is a real answer rather than a tidiness preference: a stream in the
+    /// mini player is still decoding frames and still pulling bytes, and
+    /// somebody who goes to the follows page to *pick the next thing* would
+    /// rather it stopped. On, it is one click back into what you were watching.
     #[serde(default = "yes")]
     pub miniplayer: bool,
     /// How much of a stacked cell the video keeps, 0.0 for "work it out".
@@ -318,6 +330,7 @@ impl Default for Settings {
             credentials: Credentials::default(),
             channel_prefs: BTreeMap::new(),
             recent: Vec::new(),
+            pinned: Vec::new(),
             last_channel: None,
             chat_width: 340.0,
             // Enough that a busy channel opens mid-conversation and a quiet one
@@ -328,6 +341,42 @@ impl Default for Settings {
             miniplayer: true,
             sidebar_collapsed: false,
             window: None,
+        }
+    }
+}
+
+/// What the settings sheet shows and saves: the client id, the auth-token
+/// cookie, quality, chat history and the mini player — and nothing else of
+/// [`Settings`].
+///
+/// The sheet is handed these when it opens ([`SheetFields::of`]) and hands
+/// them back when it saves ([`Settings::adopt_sheet`]), so it cannot carry
+/// back a field it does not own, however long it was open. One type for both
+/// ends, built with a struct literal by the sheet and taken apart in full by
+/// `adopt_sheet`: a field the sheet gains does not compile until both sides
+/// handle it. Before, a comment at each end was all that kept the two lists
+/// of fields in step.
+///
+/// No `Debug`: the auth-token cookie is a full account credential, and
+/// [`Credentials`] keeps it out of logs the same way.
+#[derive(Clone, PartialEq, Eq)]
+pub struct SheetFields {
+    pub client_id: Option<String>,
+    pub auth_token: Option<String>,
+    pub quality: QualityPreference,
+    pub chat_history: usize,
+    pub miniplayer: bool,
+}
+
+impl SheetFields {
+    /// What the sheet shows for `settings` as they are.
+    pub fn of(settings: &Settings) -> Self {
+        Self {
+            client_id: settings.credentials.client_id.clone(),
+            auth_token: settings.credentials.auth_token.clone(),
+            quality: settings.quality.clone(),
+            chat_history: settings.chat_history,
+            miniplayer: settings.miniplayer,
         }
     }
 }
@@ -516,6 +565,61 @@ impl Settings {
         true
     }
 
+    /// Whether `channel` is pinned to the top of the rail.
+    pub fn is_pinned(&self, channel: &str) -> bool {
+        self.pinned.contains(&channel_key(channel))
+    }
+
+    /// Pin `channel` to the top of the rail, after the ones already there, or
+    /// take it off.
+    ///
+    /// Returns whether anything changed, like [`note_watched`](Self::note_watched),
+    /// so pinning what is already pinned does not rewrite the file. Keyed like
+    /// everything else, so `Forsen` and `forsen` are one pin. Something that
+    /// could not be a login changes nothing: `tidy_pinned` would only drop it
+    /// again on the way to disk.
+    pub fn set_pinned(&mut self, channel: &str, pinned: bool) -> bool {
+        let key = channel_key(channel);
+        if pinned {
+            if !is_login(&key) || self.pinned.contains(&key) {
+                return false;
+            }
+            self.pinned.push(key);
+            true
+        } else {
+            let before = self.pinned.len();
+            self.pinned.retain(|login| *login != key);
+            self.pinned.len() != before
+        }
+    }
+
+    /// Take what the settings sheet saved, and change nothing else.
+    ///
+    /// The sheet is open for as long as somebody leaves it, and the app can
+    /// go on writing the live settings meanwhile: a handed-over launch puts
+    /// the channel it opens into `recent`. The sheet used to work on a copy
+    /// of the whole of `Settings` taken when it opened, and handing all of it
+    /// back put that back the way it was. Now it only ever holds
+    /// [`SheetFields`], so everything else the app writes outside the sheet,
+    /// a pin or a volume as much as a recent channel, now or in a later
+    /// build, survives saving it.
+    pub fn adopt_sheet(&mut self, sheet: &SheetFields) {
+        // Named in full, with no `..`, so a field the sheet gains does not
+        // compile until it is taken here too.
+        let SheetFields {
+            client_id,
+            auth_token,
+            quality,
+            chat_history,
+            miniplayer,
+        } = sheet;
+        self.credentials.client_id = client_id.clone();
+        self.credentials.auth_token = auth_token.clone();
+        self.quality = quality.clone();
+        self.chat_history = *chat_history;
+        self.miniplayer = *miniplayer;
+    }
+
     /// Fold a pre-0.2.2 file's single last channel into the list.
     fn adopt_last_channel(&mut self) {
         if let Some(last) = self.last_channel.take() {
@@ -538,6 +642,24 @@ impl Settings {
             .retain(|key, prefs| !prefs.is_empty() && is_login(key));
     }
 
+    /// Put the pins in the one shape the rail reads them in: keyed by
+    /// [`channel_key`], logins only, each once, the first mention keeping its
+    /// place.
+    ///
+    /// Run on load and before every write, like `prune_empty_prefs`. Pins can
+    /// be written into the file by hand, and `"#Forsen"` beside `"forsen"`
+    /// would otherwise be two rows for one channel, and a typo with a space
+    /// in it a row for nobody.
+    fn tidy_pinned(&mut self) {
+        let mut tidy: Vec<String> = Vec::with_capacity(self.pinned.len());
+        for key in self.pinned.iter().map(|pin| channel_key(pin)) {
+            if is_login(&key) && !tidy.contains(&key) {
+                tidy.push(key);
+            }
+        }
+        self.pinned = tidy;
+    }
+
     /// Load from `path`, returning defaults if the file does not exist yet.
     ///
     /// A missing file is normal on first run and is not an error. A corrupt
@@ -558,6 +680,7 @@ impl Settings {
             source,
         })?;
         settings.prune_empty_prefs();
+        settings.tidy_pinned();
         settings.adopt_last_channel();
         Ok(settings)
     }
@@ -621,6 +744,7 @@ impl Settings {
     fn write(&self, path: &Path) -> Result<(), Error> {
         let mut out = self.clone();
         out.prune_empty_prefs();
+        out.tidy_pinned();
         let text = serde_json::to_string_pretty(&out).expect("settings are always serialisable");
         write_atomically(path, &text)
     }
@@ -818,6 +942,128 @@ mod tests {
         assert_eq!(settings.chat_width, 340.0);
         assert_eq!(settings.chat_history, 100);
         assert!(settings.channel_prefs.is_empty());
+        assert!(settings.pinned.is_empty());
+    }
+
+    /// Pins go to disk and come back in the order they were made, which is
+    /// the order the rail shows them in.
+    #[test]
+    fn pins_round_trip_through_disk() {
+        let path = temp_file("pins-round-trip");
+        let mut settings = Settings::default();
+        assert!(settings.set_pinned("xqc", true));
+        assert!(settings.set_pinned("forsen", true));
+        settings.save(&path).unwrap();
+
+        let loaded = Settings::load(&path).unwrap();
+        assert_eq!(loaded.pinned, ["xqc", "forsen"]);
+        assert!(loaded.is_pinned("forsen"));
+        assert_eq!(loaded, settings);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A file from before pins existed has none, and a file with none does
+    /// not grow an empty list on its way through.
+    #[test]
+    fn a_file_without_pins_loads_none() {
+        let path = temp_file("no-pins");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, r#"{"volume": 30}"#).unwrap();
+
+        let loaded = Settings::load(&path).unwrap();
+        assert!(loaded.pinned.is_empty());
+        assert!(!loaded.is_pinned("forsen"));
+
+        loaded.save(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !text.contains("pinned"),
+            "an empty list was written: {text}"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// One key rule for pins as for everything else, or `Forsen` from the
+    /// command line and `forsen` from Helix would be two pins for one channel.
+    #[test]
+    fn pin_keys_ignore_case_and_a_leading_hash() {
+        let mut settings = Settings::default();
+        assert!(settings.set_pinned("#Forsen", true));
+        assert!(settings.is_pinned("forsen"));
+        assert!(settings.is_pinned("FORSEN"));
+        assert!(
+            !settings.set_pinned("forsen", true),
+            "the same channel pinned twice"
+        );
+        assert_eq!(settings.pinned, ["forsen"]);
+
+        assert!(settings.set_pinned("FORSEN", false));
+        assert!(settings.pinned.is_empty());
+    }
+
+    /// A repeat is not a change, so it neither rewrites the file nor moves a
+    /// pin; a new pin goes last; and something that is not a login is not
+    /// pinned at all.
+    #[test]
+    fn pinning_twice_changes_nothing_and_keeps_pin_order() {
+        let mut settings = Settings::default();
+        assert!(settings.set_pinned("a", true));
+        assert!(settings.set_pinned("b", true));
+        assert!(settings.set_pinned("c", true));
+        assert!(!settings.set_pinned("a", true), "already pinned");
+        assert_eq!(settings.pinned, ["a", "b", "c"], "a repeat moved a pin");
+
+        assert!(settings.set_pinned("b", false));
+        assert!(!settings.set_pinned("b", false), "already unpinned");
+        assert_eq!(settings.pinned, ["a", "c"]);
+
+        assert!(settings.set_pinned("b", true));
+        assert_eq!(settings.pinned, ["a", "c", "b"], "a new pin goes last");
+
+        assert!(!settings.set_pinned("vod:2860004234", true), "not a login");
+        assert_eq!(settings.pinned, ["a", "c", "b"]);
+    }
+
+    /// Pins written into the file by hand are tidied on the way in: one key
+    /// rule, logins only, each channel once where it was first named.
+    #[test]
+    fn pins_that_are_not_logins_are_dropped_on_load() {
+        let path = temp_file("pins-not-logins");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            r##"{"pinned": ["Forsen", "vod:2860004234", "", "two words", "#forsen", "xqc"]}"##,
+        )
+        .unwrap();
+
+        let loaded = Settings::load(&path).unwrap();
+        assert_eq!(loaded.pinned, ["forsen", "xqc"]);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The sign-in trap again, for pins: the UI's copy is stale by the time it
+    /// saves, and saving it must keep the pin it made and the sign-in it did
+    /// not.
+    #[test]
+    fn saving_preferences_keeps_pins() {
+        let path = temp_file("preferences-keep-pins");
+        let _ = std::fs::remove_file(&path);
+
+        let at_launch = Settings::default();
+        at_launch.save(&path).unwrap();
+
+        let mut signed_in = Settings::load(&path).unwrap();
+        signed_in.credentials.oauth = Some(a_sign_in());
+        signed_in.save(&path).unwrap();
+
+        let mut ui = at_launch.clone();
+        ui.set_pinned("forsen", true);
+        ui.save_preferences(&path).unwrap();
+
+        let stored = Settings::load(&path).unwrap();
+        assert_eq!(stored.pinned, ["forsen"]);
+        assert!(stored.credentials.oauth.is_some());
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
@@ -933,6 +1179,83 @@ mod tests {
         assert_eq!(stored.volume_for("forsen"), 42);
         assert!(stored.credentials.oauth.is_some());
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// What the settings sheet saves is as old as the sheet. Adopting it
+    /// takes the five fields the sheet shows, and leaves every other field as
+    /// the live settings have it: a recent channel, which can change while
+    /// the sheet is open, and a pin, the rail, the window and a channel's
+    /// level, which cannot today but are not the sheet's either.
+    #[test]
+    fn adopting_the_sheet_keeps_everything_it_does_not_own() {
+        let mut live = Settings::default();
+        let mut sheet = SheetFields::of(&live);
+
+        // Everything the sheet does not own moves on in the live copy.
+        live.set_pinned("forsen", true);
+        live.note_watched("xqc");
+        live.window = Some(WindowPlacement {
+            x: 10.0,
+            y: 20.0,
+            width: 1280.0,
+            height: 720.0,
+            maximized: false,
+        });
+        live.sidebar_collapsed = true;
+        live.set_volume_for("forsen", 42);
+        live.credentials.oauth = Some(a_sign_in());
+
+        // And the sheet is saved with its own changes.
+        sheet.client_id = Some("a-new-app".into());
+        sheet.auth_token = Some("a-new-cookie".into());
+        sheet.quality = QualityPreference::Fixed("720p".into());
+        sheet.chat_history = 0;
+        sheet.miniplayer = false;
+
+        let before = live.clone();
+        live.adopt_sheet(&sheet);
+
+        assert_eq!(live.credentials.client_id.as_deref(), Some("a-new-app"));
+        assert_eq!(live.credentials.auth_token.as_deref(), Some("a-new-cookie"));
+        assert_eq!(live.quality, QualityPreference::Fixed("720p".into()));
+        assert_eq!(live.chat_history, 0);
+        assert!(!live.miniplayer);
+
+        assert_eq!(live.pinned, ["forsen"], "saving the sheet unpinned");
+        assert_eq!(live.recent, ["xqc"], "saving the sheet forgot a channel");
+        assert_eq!(
+            live.window, before.window,
+            "saving the sheet moved the window"
+        );
+        assert!(live.sidebar_collapsed, "saving the sheet unfolded the rail");
+        assert_eq!(live.volume_for("forsen"), 42);
+        assert_eq!(live.volume, before.volume);
+        assert!(
+            live.credentials.oauth.is_some(),
+            "the sheet owns no sign-in"
+        );
+
+        // Everything but the five, exactly as it was.
+        let mut untouched = live.clone();
+        untouched.adopt_sheet(&SheetFields::of(&before));
+        assert_eq!(untouched, before);
+    }
+
+    /// A sheet saved without a change changes nothing: what it is handed is
+    /// exactly what adopting it puts back.
+    #[test]
+    fn a_sheet_saved_as_it_opened_changes_nothing() {
+        let mut settings = Settings::default();
+        settings.credentials.client_id = Some("an-app".into());
+        settings.credentials.auth_token = Some("a-cookie".into());
+        settings.quality = QualityPreference::Fixed("1080p".into());
+        settings.chat_history = 250;
+        settings.miniplayer = false;
+        settings.set_pinned("forsen", true);
+
+        let before = settings.clone();
+        settings.adopt_sheet(&SheetFields::of(&before));
+        assert_eq!(settings, before);
     }
 
     /// A file from a newer build must not fail to load here.

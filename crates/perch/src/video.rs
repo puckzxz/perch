@@ -774,12 +774,12 @@ impl VideoStream {
     }
 
     /// Change playback volume (0-100). Takes effect on the next frame.
+    ///
+    /// Write-only: what mpv hears is not what the user chose while Mute all
+    /// holds a pane silent, so the level worth reading lives in the view's
+    /// `Loudness`, not here.
     pub fn set_volume(&self, percent: u8) {
         self.volume.store(percent.min(100), Ordering::Relaxed);
-    }
-
-    pub fn volume(&self) -> u8 {
-        self.volume.load(Ordering::Relaxed)
     }
 
     /// Why the stream stopped, if it has, taken so it is reported once.

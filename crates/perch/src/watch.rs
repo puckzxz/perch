@@ -99,13 +99,19 @@ pub struct Slot {
     pub pump: Option<Task<()>>,
     /// Whether the pointer is over this pane's video, measured rather than
     /// reported — see `VideoView::hovered` for why that distinction matters.
-    /// The page navigation is revealed by any pane being hovered.
+    /// Kept only to tell when the pointer comes into a pane: that rising edge
+    /// is what makes the pane the one the keys talk to.
     pub hovered: bool,
     /// Whether this pane's chat is hidden, so the video has the whole cell.
     ///
     /// Per pane, like everything else here, and remembered per channel: a
     /// channel you watch for the game is not a statement about the next one.
     pub chat_hidden: bool,
+    /// Held silent by Mute all: a mute that is not a preference. The slot's
+    /// rather than the player's, so it outlives the player — a quality change
+    /// or a re-pick builds a new one, which is born quiet from this. Ends at
+    /// the pane's first deliberate change of level, and is never saved.
+    pub quiet: bool,
     /// When this pane last found nothing to play: the moment streamlink said
     /// the channel was off, or the moment the broadcast ended. A follows poll
     /// that lists the channel live with a `started_at` later than this is a
@@ -212,16 +218,16 @@ fn status_message(slot: &Slot, name: &str) -> Option<Status> {
         StreamState::Starting => Some(waiting_on_it("starting stream…".into())),
         StreamState::Offline if recording => Some(over(
             "this recording is no longer available".into(),
-            "try again",
+            "Try again",
         )),
-        StreamState::Offline => Some(over(format!("{name} is offline").into(), "try again")),
-        StreamState::Ended if recording => Some(over("finished".into(), "watch again")),
-        StreamState::Ended => Some(over(format!("{name} ended the stream").into(), "try again")),
+        StreamState::Offline => Some(over(format!("{name} is offline").into(), "Try again")),
+        StreamState::Ended if recording => Some(over("finished".into(), "Watch again")),
+        StreamState::Ended => Some(over(format!("{name} ended the stream").into(), "Try again")),
         StreamState::Failed(reason) => Some(Status {
             text: reason.clone(),
             working: false,
             error: true,
-            retry: Some("try again"),
+            retry: Some("Try again"),
         }),
     }
 }
@@ -528,7 +534,7 @@ fn chat_header<V: 'static>(
                 // one pane was left, while `Ctrl+W` went on closing that one —
                 // a control the keyboard had and the pointer did not.
                 .child(
-                    controls::destructive(pane_id(&slot.key, "close"), "close").on_click(
+                    controls::destructive(pane_id(&slot.key, "close"), "Close").on_click(
                         cx.listener(move |view, _event, window, cx| {
                             on_close(view, index, window, cx)
                         }),
@@ -739,9 +745,21 @@ fn pane<V: 'static>(
     // does not wait to find out whether the press was a click, a drag of the
     // volume slider or the start of a text selection. It does not consume the
     // event: a link in chat still opens, and the close button still closes.
+    //
+    // Only the first press of a run. The platform counts a second press near
+    // the first as a double-click wherever the first one landed, and the
+    // first can have been on a mini-player tile, which put this page under
+    // the pointer with that tile's pane active: the second, landing in
+    // whichever pane fills the corner the tile was in, would hand that pane
+    // the keys instead. Any later press of a run is within a few pixels of
+    // the first, so on a pane the first press already chose.
     let cell = div().flex_1().min_w_0().min_h_0().flex().on_mouse_down(
         MouseButton::Left,
-        cx.listener(move |view, _event, _window, cx| on_activate(view, index, cx)),
+        cx.listener(move |view, event: &MouseDownEvent, _window, cx| {
+            if event.click_count <= 1 {
+                on_activate(view, index, cx);
+            }
+        }),
     );
 
     if chatless && !layout.portrait {
@@ -764,10 +782,6 @@ fn pane<V: 'static>(
                     .flex_none()
                     .w_full()
                     .py(px(theme::GAP_TIGHT))
-                    // Only the top-left pane, which is the only one the page's
-                    // "← browse" overlay can reach. Every other pane's header
-                    // starts where it always did.
-                    .when(index == 0, |header| header.pl(px(theme::NAV_RESERVE)))
                     .child(header),
             )
             .child(video_pane)

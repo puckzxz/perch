@@ -22,6 +22,7 @@ use twitch_api::{Video, VideoKind};
 use crate::browse::{self, Action};
 use crate::channel_page::{self, Card};
 use crate::controls;
+use crate::layout;
 use crate::theme;
 
 /// What the history keeps of `video`, left at `position` of `length` seconds.
@@ -115,7 +116,7 @@ fn byline(watched: &Watched, now: DateTime<Utc>) -> String {
 #[allow(clippy::too_many_arguments)]
 pub fn view<V: 'static>(
     history: &History,
-    width: f32,
+    room: layout::Room,
     cache: &ImageCache,
     can_add: bool,
     scroll: &ScrollHandle,
@@ -135,7 +136,7 @@ pub fn view<V: 'static>(
 
     let now = Utc::now();
     let card_width = browse::card_width(
-        width,
+        room.width,
         browse::CARD_MIN,
         browse::CARD_MAX,
         theme::GAP_SECTION,
@@ -172,16 +173,16 @@ pub fn view<V: 'static>(
 
     // The one control the page has, on the line with the first heading so
     // it takes no row of its own.
-    let clear = controls::destructive("clear-history", "clear history").on_click(cx.listener({
+    let clear = controls::destructive("clear-history", "Clear history").on_click(cx.listener({
         let on_action = on_action.clone();
         move |view, _event, window, cx| on_action(view, Action::ClearHistory, window, cx)
     }));
     let first_heading = if going.is_empty() {
-        "finished"
+        "Finished"
     } else {
-        "continue watching"
+        "Continue watching"
     };
-    let mut list = browse::scroller("history-grid", scroll).child(
+    let mut list = browse::scroller("history-grid", scroll, room.bottom).child(
         div()
             .flex()
             .flex_row()
@@ -193,7 +194,7 @@ pub fn view<V: 'static>(
     if !going.is_empty() {
         list = list.child(row_of(&going, cx));
         if !done.is_empty() {
-            list = list.child(browse::heading("finished"));
+            list = list.child(browse::heading("Finished"));
         }
     }
     if !done.is_empty() {

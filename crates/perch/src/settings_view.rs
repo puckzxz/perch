@@ -15,7 +15,7 @@ use gpui_component::{
     switch::Switch,
     IndexPath,
 };
-use settings::{QualityPreference, Settings};
+use settings::{QualityPreference, SheetFields};
 
 use crate::controls;
 use crate::keys;
@@ -52,6 +52,23 @@ const QUALITY_OPTIONS: [(&str, &str); 8] = [
     ("160p", "160p"),
 ];
 
+/// What `preference` is called where somebody reads it: the words the sheet's
+/// quality dropdown shows for it — `Auto (matches the video pane)`, `Best
+/// available`, `1080p`. A pane's quality menu leads with the settings' choice
+/// in these words, so the menu and the sheet name it alike, from this one
+/// table. A value hand-edited into the file and not on the list is shown as
+/// it is stored, since a rendition's name has no case to get wrong.
+pub fn quality_label(preference: &QualityPreference) -> SharedString {
+    let stored = preference.name();
+    QUALITY_OPTIONS
+        .iter()
+        .find(|(_, value)| *value == stored)
+        .map_or_else(
+            || SharedString::from(stored.to_string()),
+            |(label, _)| SharedString::from(*label),
+        )
+}
+
 /// How much of a channel's chat a new pane opens with.
 ///
 /// Off is on the list rather than being a value nobody can reach, because this
@@ -66,12 +83,14 @@ const HISTORY_OPTIONS: [(&str, usize); 4] = [
 ];
 
 pub enum SettingsEvent {
-    Saved(Box<Settings>),
+    /// What the sheet's controls say, for the root to take with
+    /// `Settings::adopt_sheet`. Only the fields the sheet owns: it never has
+    /// the rest of the settings to hand back.
+    Saved(SheetFields),
     Dismissed,
 }
 
 pub struct SettingsPanel {
-    settings: Settings,
     client_id: Entity<InputState>,
     auth_token: Entity<InputState>,
     quality: Entity<SelectState<Vec<SharedString>>>,
@@ -88,7 +107,7 @@ impl EventEmitter<SettingsEvent> for SettingsPanel {}
 
 impl SettingsPanel {
     pub fn new(
-        settings: Settings,
+        fields: SheetFields,
         sign_in_status: SharedString,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -100,17 +119,17 @@ impl SettingsPanel {
         let client_id = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("Client ID from dev.twitch.tv")
-                .default_value(settings.credentials.client_id.clone().unwrap_or_default())
+                .default_value(fields.client_id.clone().unwrap_or_default())
         });
 
         let auth_token = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("auth-token cookie (optional)")
                 .masked(true)
-                .default_value(settings.credentials.auth_token.clone().unwrap_or_default())
+                .default_value(fields.auth_token.clone().unwrap_or_default())
         });
 
-        let selected = match &settings.quality {
+        let selected = match &fields.quality {
             QualityPreference::Auto => 0,
             QualityPreference::Fixed(stored) => QUALITY_OPTIONS
                 .iter()
@@ -129,7 +148,7 @@ impl SettingsPanel {
         // on the next save.
         let selected = HISTORY_OPTIONS
             .iter()
-            .position(|(_, value)| *value == settings.chat_history)
+            .position(|(_, value)| *value == fields.chat_history)
             .unwrap_or(0);
         let options: Vec<SharedString> = HISTORY_OPTIONS
             .iter()
@@ -139,8 +158,7 @@ impl SettingsPanel {
             cx.new(|cx| SelectState::new(options, Some(IndexPath::new(selected)), window, cx));
 
         Self {
-            miniplayer: settings.miniplayer,
-            settings,
+            miniplayer: fields.miniplayer,
             client_id,
             auth_token,
             quality,
@@ -150,15 +168,11 @@ impl SettingsPanel {
         }
     }
 
-    fn save(&mut self, cx: &mut Context<Self>) {
+    fn save(&self, cx: &mut Context<Self>) {
         let trimmed = |value: String| {
             let value = value.trim().to_string();
             (!value.is_empty()).then_some(value)
         };
-
-        let mut settings = self.settings.clone();
-        settings.credentials.client_id = trimmed(self.client_id.read(cx).value().to_string());
-        settings.credentials.auth_token = trimmed(self.auth_token.read(cx).value().to_string());
 
         // Index 0 is Auto; the rest map to streamlink quality names verbatim.
         let index = self
@@ -167,7 +181,7 @@ impl SettingsPanel {
             .selected_index(cx)
             .map(|path| path.row)
             .unwrap_or(0);
-        settings.quality = if index == 0 {
+        let quality = if index == 0 {
             QualityPreference::Auto
         } else {
             QualityPreference::Fixed(QUALITY_OPTIONS[index].1.to_string())
@@ -179,11 +193,16 @@ impl SettingsPanel {
             .selected_index(cx)
             .map(|path| path.row)
             .unwrap_or(0);
-        settings.chat_history = HISTORY_OPTIONS[index].1;
-        settings.miniplayer = self.miniplayer;
 
-        self.settings = settings.clone();
-        cx.emit(SettingsEvent::Saved(Box::new(settings)));
+        // Every field the sheet owns, spelled out: a field `SheetFields`
+        // gains does not compile here until the sheet says what it is.
+        cx.emit(SettingsEvent::Saved(SheetFields {
+            client_id: trimmed(self.client_id.read(cx).value().to_string()),
+            auth_token: trimmed(self.auth_token.read(cx).value().to_string()),
+            quality,
+            chat_history: HISTORY_OPTIONS[index].1,
+            miniplayer: self.miniplayer,
+        }));
     }
 
     /// The keymap, as a reference rather than a control.
@@ -361,10 +380,10 @@ impl Render for SettingsPanel {
                     ))
                     .child(Self::field(
                         "Keep playing while browsing",
-                        "What you are watching carries on, muted, in a bar along the bottom of the follows page. Turned off, leaving the watch page stops the stream — which is the cheaper answer if you go there to pick the next thing rather than to glance at the list.",
+                        "What you are watching carries on in a small player in the corner while you browse, with its sound; Mute all there silences it without changing anyone's volume. Turned off, leaving the watch page stops the stream — which is the cheaper answer if you go there to pick the next thing rather than to glance at the list.",
                         Switch::new("miniplayer")
                             .checked(self.miniplayer)
-                            .label(if self.miniplayer { "on" } else { "off" })
+                            .label(if self.miniplayer { "On" } else { "Off" })
                             .on_click(cx.listener(|this: &mut Self, checked: &bool, _, cx| {
                                 this.miniplayer = *checked;
                                 cx.notify();
@@ -379,7 +398,7 @@ impl Render for SettingsPanel {
                     .child(Self::section("Keyboard"))
                     .child(Self::field(
                         "Keyboard shortcuts",
-                        "Player keys act on the pane you last pointed at. All of them stand aside while the cursor is in a box like this one.",
+                        "Player keys act on the pane you last pointed at. While the cursor is in a box like this one the keys stand aside for it, all but the three that type nothing: the palette, settings and refresh.",
                         Self::shortcuts(),
                     ))
                     )
@@ -414,16 +433,42 @@ impl Render for SettingsPanel {
                             // idea of what a primary control looks like — a
                             // filled one, where everywhere else it is bordered.
                             .child(
-                                controls::pill("settings-close", "close", controls::Variant::Quiet)
+                                controls::pill("settings-close", "Close", controls::Variant::Quiet)
                                     .on_click(cx.listener(|_, _, _, cx| {
                                         cx.emit(SettingsEvent::Dismissed)
                                     })),
                             )
                             .child(
-                                controls::pill("settings-save", "save", controls::Variant::Primary)
+                                controls::pill("settings-save", "Save", controls::Variant::Primary)
                                     .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
                             ),
                     ),
             ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A pane's quality menu names the settings' choice the way the sheet
+    /// does — in sentence case, never the word the file stores — and a value
+    /// hand-edited into the file as it is stored.
+    #[test]
+    fn the_quality_menu_names_the_settings_choice_as_the_sheet_does() {
+        let label = |preference: QualityPreference| quality_label(&preference).to_string();
+        assert_eq!(label(QualityPreference::Auto), QUALITY_OPTIONS[0].0);
+        assert_eq!(
+            label(QualityPreference::Fixed("best".into())),
+            "Best available"
+        );
+        assert_eq!(label(QualityPreference::Fixed("720p".into())), "720p");
+        assert_eq!(label(QualityPreference::Fixed("936p60".into())), "936p60");
+        for (label, _) in QUALITY_OPTIONS {
+            assert!(
+                !label.starts_with(char::is_lowercase),
+                "{label} is not sentence case"
+            );
+        }
     }
 }

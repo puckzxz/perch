@@ -5,17 +5,25 @@
 //! closest to the shape a video pane actually wants. That falls out correctly
 //! for an ultrawide, a square window and a vertical monitor without any of them
 //! being special-cased.
+//!
+//! It also owns the few numbers more than one part of the window has to agree
+//! on: how much of the window the title bar takes, whether the rail is drawn,
+//! and where on the bar a drag begins; how the mini player is cut into tiles,
+//! how far in from the page's edge it floats, and how much room a browse list
+//! leaves at its foot so nothing ends up stuck under the player. Each is read
+//! from here rather than recomputed where it is used.
 
 use gpui::{Pixels, Size};
 
-/// The room a page has, which is not the window's once the rail is open.
+/// The room a page has: the window less the rail and the title bar.
 ///
 /// One type, built in one place, so that nothing laying out a page can be
 /// handed the viewport by mistake. The watch grid was, once: with the rail
 /// out, every stacked pane carried a black band under its picture, because
 /// its 16:9 box had been derived from a cell wider than the one it was drawn
 /// in - by exactly the rail's share of the width. Every consumer now takes a
-/// `Body`, and the only way to make one is from the viewport and the rail.
+/// `Body`, and the only way to make one is from the viewport, the rail and
+/// the bar above the page.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Body {
     pub width: f32,
@@ -23,11 +31,13 @@ pub struct Body {
 }
 
 impl Body {
-    /// The viewport less `rail_width`, which is zero when the rail is folded.
-    pub fn of(viewport: Size<Pixels>, rail_width: f32) -> Self {
+    /// The viewport less `rail_width`, which is zero when the rail is not
+    /// drawn (see [`rail_shown`]), and less `top_inset`, the title bar's
+    /// [`title_bar_height`].
+    pub fn of(viewport: Size<Pixels>, rail_width: f32, top_inset: f32) -> Self {
         Self {
             width: (f32::from(viewport.width) - rail_width).max(0.0),
-            height: f32::from(viewport.height),
+            height: (f32::from(viewport.height) - top_inset).max(0.0),
         }
     }
 
@@ -36,6 +46,122 @@ impl Body {
     pub fn aspect(&self) -> f32 {
         self.width / self.height.max(1.0)
     }
+}
+
+/// How much of the window's height the title bar takes: all of
+/// `TITLE_BAR_HEIGHT`, or none in fullscreen, where the bar is not drawn and
+/// the picture gets the whole screen.
+pub fn title_bar_height(fullscreen: bool) -> f32 {
+    if fullscreen {
+        0.0
+    } else {
+        crate::theme::TITLE_BAR_HEIGHT
+    }
+}
+
+/// Whether the rail is drawn: not while it is folded away, and not in
+/// fullscreen either, whichever way it was left.
+///
+/// Fullscreen is the picture alone, and the rail's own control is the
+/// title-bar button, which goes with the bar. Left on screen there, the rail
+/// was a column the mouse could neither fold nor bring back.
+/// `RootView::body` reads this as well as the render that draws the rail, so
+/// the room a page is laid out in matches what is beside it.
+pub fn rail_shown(collapsed: bool, fullscreen: bool) -> bool {
+    !collapsed && !fullscreen
+}
+
+/// How far below the window's top edge the title bar starts answering as a
+/// drag handle or a caption button.
+///
+/// Windowed, it leaves `TITLE_BAR_RESIZE_BAND` to the platform: gpui asks for
+/// a window control before it asks Windows about the frame, so a drag area
+/// reaching the very top would take the top resize edge with it. Maximised,
+/// it is nothing, because there is no edge to resize — gpui skips that band
+/// there — and a pointer flung to the top of the screen has to land on the
+/// bar rather than on a strip that does nothing.
+pub fn drag_top(maximized: bool) -> f32 {
+    if maximized {
+        0.0
+    } else {
+        crate::theme::TITLE_BAR_RESIZE_BAND
+    }
+}
+
+/// What a browse list has to work with: how wide it is, which sizes its
+/// cards, and how much it leaves free at its foot, which is what keeps its
+/// last row from ending up under the mini player.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Room {
+    pub width: f32,
+    pub bottom: f32,
+}
+
+/// How the mini player arranges what is playing: its grid, the size of each
+/// tile, and how tall the whole player is, bar included.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MiniLayout {
+    pub cols: usize,
+    pub rows: usize,
+    /// Each tile, in definite pixels: a player inside a box with no definite
+    /// size lets the frame's own aspect decide the box (see the `img` trap in
+    /// the handoff), and a tile is exactly such a box.
+    pub tile_w: f32,
+    pub tile_h: f32,
+    /// The whole player inside its border: the tiles, the seams between their
+    /// rows and the bar under them, inset from the edge all round.
+    pub height: f32,
+}
+
+/// How many tiles sit side by side once there is more than one: two, so four
+/// streams make a square and the player stays [`theme::MINI_PLAYER_WIDTH`]
+/// wide whatever is playing.
+///
+/// [`theme::MINI_PLAYER_WIDTH`]: crate::theme::MINI_PLAYER_WIDTH
+const MINI_COLUMNS: usize = 2;
+
+/// The mini player for `panes` streams: one gets the whole width, and more
+/// share it two to a row, so the player grows by rows rather than reaching
+/// further across the cards. Tiles are 16:9, with the watch grid's seams
+/// between them.
+pub fn mini_player(panes: usize) -> MiniLayout {
+    let panes = panes.max(1);
+    let cols = panes.min(MINI_COLUMNS);
+    let rows = panes.div_ceil(cols);
+    let tile_w = cell_extent(crate::theme::MINI_PLAYER_WIDTH, cols);
+    let tile_h = tile_w / VIDEO_ASPECT;
+    let seams = crate::theme::PANE_GAP * (rows - 1) as f32;
+    MiniLayout {
+        cols,
+        rows,
+        tile_w,
+        tile_h,
+        height: tile_h * rows as f32
+            + seams
+            + crate::theme::MINI_BAR_HEIGHT
+            + 2.0 * crate::theme::MINI_PLAYER_INSET,
+    }
+}
+
+/// How far in from the page's right edge the mini player floats: its gap
+/// from the edge, measured from the inside of the browse list's scrollbar,
+/// which runs down that edge. At the gap alone the player sat over the foot
+/// of the track, and over the thumb whenever the thumb came down that far,
+/// so the list could not be dragged by its last stretch.
+pub fn mini_player_right() -> f32 {
+    crate::theme::SCROLLBAR_WIDTH + crate::theme::GAP
+}
+
+/// How much a browse list leaves free at its foot while the mini player is
+/// up over it: the player, and a gap either side of it — the one it floats
+/// at above the window's edge and one above it — so the last row can be
+/// scrolled clear. Nothing with nothing playing. The list's own padding comes
+/// on top of this, which more than covers the player's one-pixel border.
+pub fn mini_reserve(panes: usize) -> f32 {
+    if panes == 0 {
+        return 0.0;
+    }
+    mini_player(panes).height + 2.0 * crate::theme::GAP
 }
 
 /// A cell holding 16:9 video with chat *beside* it, so the cell is wider than
@@ -262,10 +388,10 @@ mod tests {
         let viewport = gpui::size(gpui::px(1600.), gpui::px(921.));
         let rail = 236.0;
 
-        let body = Body::of(viewport, rail);
+        let body = Body::of(viewport, rail, 0.0);
         assert_eq!(body.width, 1600.0 - rail);
         assert_eq!(body.height, 921.0);
-        assert!(body.aspect() < Body::of(viewport, 0.0).aspect());
+        assert!(body.aspect() < Body::of(viewport, 0.0, 0.0).aspect());
 
         // Side by side, which is what the viewport's aspect chose: the box
         // must be sized from the body's half, not the window's.
@@ -280,16 +406,84 @@ mod tests {
         // And the shape is the body's to choose, not the window's.
         assert_ne!(
             grid_shape(2, body.aspect()),
-            grid_shape(2, Body::of(viewport, 0.0).aspect()),
+            grid_shape(2, Body::of(viewport, 0.0, 0.0).aspect()),
             "the rail should change the grid for this window"
+        );
+    }
+
+    /// The title bar takes its height off the page the way the rail takes its
+    /// width. A grid laid out from the window's height would make every row
+    /// taller by its share of the bar, and so run the bottom one off the
+    /// window by the whole of it.
+    #[test]
+    fn a_body_is_also_less_the_title_bar() {
+        let viewport = gpui::size(gpui::px(1600.), gpui::px(921.));
+        let rail = 236.0;
+        let bar = title_bar_height(false);
+
+        let body = Body::of(viewport, rail, bar);
+        assert_eq!(body.width, 1600.0 - rail);
+        assert_eq!(body.height, 921.0 - crate::theme::TITLE_BAR_HEIGHT);
+
+        // Four panes stack here, so the bar is split between rows: each one
+        // sized from the window would be its share of the bar too tall.
+        let (rows, _) = grid_shape(4, body.aspect());
+        assert!(rows > 1, "four panes in this window should stack");
+        let right = cell_extent(body.height, rows);
+        let wrong = cell_extent(f32::from(viewport.height), rows);
+        assert!(
+            (wrong - right - bar / rows as f32).abs() < 0.01,
+            "the window-derived row is {wrong}, the body-derived one {right}"
+        );
+    }
+
+    /// Fullscreen is the picture and nothing else, so the bar goes with the
+    /// rest of the window's chrome.
+    #[test]
+    fn fullscreen_gives_the_title_bar_back() {
+        assert_eq!(title_bar_height(true), 0.0);
+        assert_eq!(title_bar_height(false), crate::theme::TITLE_BAR_HEIGHT);
+    }
+
+    /// The rail goes with the bar: fullscreen hides it whether or not it was
+    /// folded, and windowed it is there exactly when it is not folded.
+    #[test]
+    fn fullscreen_hides_the_rail_too() {
+        assert!(rail_shown(false, false));
+        assert!(!rail_shown(true, false), "a folded rail is not drawn");
+        assert!(!rail_shown(false, true), "fullscreen is the picture alone");
+        assert!(!rail_shown(true, true));
+    }
+
+    /// A maximised window has no top edge to resize, so the bar is a drag
+    /// handle right up to the screen's edge.
+    #[test]
+    fn a_maximised_bar_drags_from_the_very_top() {
+        assert_eq!(drag_top(true), 0.0);
+    }
+
+    /// Windowed, the top few pixels are the platform's resize edge, and the
+    /// drag area starts under them rather than taking them over.
+    #[test]
+    fn a_windowed_bar_leaves_the_top_edge_to_resize() {
+        let top = drag_top(false);
+        assert_eq!(top, crate::theme::TITLE_BAR_RESIZE_BAND);
+        assert!(
+            top > 0.0,
+            "a windowed bar would swallow the top resize edge"
         );
     }
 
     #[test]
     fn a_body_never_goes_negative() {
-        let narrow = Body::of(gpui::size(gpui::px(100.), gpui::px(0.)), 236.0);
+        let narrow = Body::of(gpui::size(gpui::px(100.), gpui::px(0.)), 236.0, 0.0);
         assert_eq!(narrow.width, 0.0);
         assert!(narrow.aspect().is_finite());
+
+        // A window shorter than its own title bar, mid-minimise.
+        let short = Body::of(gpui::size(gpui::px(800.), gpui::px(30.)), 0.0, 40.0);
+        assert_eq!(short.height, 0.0);
+        assert!(short.aspect().is_finite());
     }
 
     /// A 16:9 stream gets the box it always got; anything else gets its own
@@ -323,6 +517,79 @@ mod tests {
             stacked_video_height(width, height, f32::NAN, 0.0),
             video_box_height(width)
         );
+    }
+
+    #[test]
+    fn one_pane_gets_the_whole_mini_player() {
+        let mini = mini_player(1);
+        assert_eq!((mini.rows, mini.cols), (1, 1));
+        assert_eq!(mini.tile_w, crate::theme::MINI_PLAYER_WIDTH);
+    }
+
+    /// The player is as wide with four streams as with two: a fixed width is
+    /// what keeps it from reaching across the cards, so more streams make it
+    /// taller instead.
+    #[test]
+    fn the_mini_player_grows_by_rows_not_width() {
+        let shapes: Vec<(usize, usize)> = (1..=4)
+            .map(|panes| {
+                let mini = mini_player(panes);
+                (mini.rows, mini.cols)
+            })
+            .collect();
+        assert_eq!(shapes, [(1, 1), (1, 2), (2, 2), (2, 2)]);
+
+        for panes in 1..=4 {
+            let mini = mini_player(panes);
+            let across =
+                mini.tile_w * mini.cols as f32 + crate::theme::PANE_GAP * (mini.cols - 1) as f32;
+            assert!(
+                (across - crate::theme::MINI_PLAYER_WIDTH).abs() < 0.01,
+                "{panes} panes spread {across}px across"
+            );
+        }
+        assert!(mini_player(4).height > mini_player(2).height);
+    }
+
+    /// Tiles are the shape of the streams in them, so a picture fills its
+    /// tile rather than sitting in black bars.
+    #[test]
+    fn mini_tiles_stay_sixteen_by_nine() {
+        for panes in 1..=4 {
+            let mini = mini_player(panes);
+            assert!(
+                (mini.tile_w / mini.tile_h - VIDEO_ASPECT).abs() < 0.001,
+                "{panes} panes gave a {}x{} tile",
+                mini.tile_w,
+                mini.tile_h
+            );
+        }
+    }
+
+    #[test]
+    fn nothing_is_reserved_when_nothing_plays() {
+        assert_eq!(mini_reserve(0), 0.0);
+    }
+
+    /// The last row of a list has to be able to scroll out from under the
+    /// player: the room left is at least the player and the gap it floats at.
+    #[test]
+    fn the_reserve_clears_the_player() {
+        for panes in 1..=4 {
+            let height = mini_player(panes).height;
+            let reserve = mini_reserve(panes);
+            assert!(reserve >= height + crate::theme::GAP, "{panes} panes");
+        }
+    }
+
+    /// The player stands off the page's right edge by more than the list's
+    /// scrollbar, so the whole track is the list's to drag, down to its foot,
+    /// with the player's usual gap between them.
+    #[test]
+    fn the_mini_player_leaves_the_scrollbar_clear() {
+        let right = mini_player_right();
+        assert!(right > crate::theme::SCROLLBAR_WIDTH, "over the track");
+        assert_eq!(right - crate::theme::SCROLLBAR_WIDTH, crate::theme::GAP);
     }
 
     #[test]

@@ -13,12 +13,15 @@
 //! | `commands` | the palette: what it offers, and running a row |
 //! | `follows` | the Twitch worker's events: sign-in, who is live, replies |
 //! | `browsing` | the browse page's requests: tabs, search, categories, channels |
+//! | `navigation` | back and forward: where the app is as a `Route`, recording each step on the trail (`crate::trail`), and the three ways along it |
 //! | `streams` | opening, restarting and closing panes |
 //! | `launches` | what the command line named, at startup and from later launches |
 //! | `history` | what has been watched: noting where each recording got to, resuming there |
-//! | `prefs` | the settings sheet, the divider drag, the rail |
-//! | `chrome` | pills, toasts, the now-playing bar, the rail |
-//! | `pages` | the two pages, assembled |
+//! | `prefs` | the settings sheet, the divider drag, the rail folding and what is pinned to it |
+//! | `chrome` | pills, toasts, the rail |
+//! | `mini_player` | what plays on while you browse, in the corner of the page |
+//! | `title_bar` | the bar Perch draws across the top of the window: the rail button, back and forward, search, settings, and on Windows the caption buttons |
+//! | `pages` | the two pages, assembled, each only its own column |
 //!
 //! A sibling reaches the fields directly — they are private to this module,
 //! and a child module is inside it — so the split costs no accessors. Its
@@ -31,10 +34,15 @@ mod commands;
 mod follows;
 mod history;
 mod launches;
+mod mini_player;
+mod navigation;
 mod pages;
 mod prefs;
 mod shortcuts;
 mod streams;
+mod title_bar;
+
+pub(crate) use self::title_bar::window_min_size;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -43,22 +51,25 @@ use std::sync::Arc;
 use emotes::ImageCache;
 use futures::channel::mpsc::UnboundedReceiver;
 use gpui::{
-    div, prelude::*, Context, Entity, FocusHandle, MouseButton, ScrollHandle, SharedString,
-    Subscription, Task, Window,
+    div, prelude::*, Context, Entity, FocusHandle, ScrollHandle, SharedString, Subscription, Task,
+    Window,
 };
 use gpui_component::input::{InputEvent, InputState};
 use settings::history::{Forgotten, History};
 use settings::Settings;
 use twitch_api::{Channel, LiveStream};
 
+use self::follows::LiveList;
+use self::navigation::Route;
 use crate::browse::{self, Discovery, SignIn};
 use crate::launch::Launch;
 use crate::layout::Body;
 use crate::settings_view::SettingsPanel;
+use crate::trail::Trail;
 use crate::twitch::TwitchService;
 use crate::video_view::VideoView;
 use crate::watch::{ResizeStart, Slot, StreamState, MAX_PANES};
-use crate::{cpu_log, keys, motion, sidebar, theme, vod, APP_NAME};
+use crate::{cpu_log, keys, layout, motion, sidebar, theme, vod, APP_NAME};
 
 /// Emotes and thumbnails are reproducible, so they live in the platform's
 /// cache directory rather than roaming with settings.
@@ -111,9 +122,9 @@ struct Toast {
 #[derive(Clone)]
 enum ToastAction {
     /// Watch this channel: alone from the text, or beside what is playing
-    /// from the `+ add` pill next to it.
+    /// from the `+ Add` pill next to it.
     Watch(String),
-    /// Put back what was just taken off the history, from the `undo` pill.
+    /// Put back what was just taken off the history, from the `Undo` pill.
     Undo(Forgotten),
 }
 
@@ -179,14 +190,25 @@ pub(crate) struct RootView {
     /// re-announce everybody.
     known_live: HashSet<String>,
     /// Whether the pointer is over the rail, and over the Following tab, as
-    /// the last frame measured it. While either is, a poll updates the live
-    /// follows where they stand rather than sorting them — see
-    /// `RootView::hold_live`.
+    /// the last frame measured it. While either is, a poll updates the
+    /// follows, live and offline, where they stand rather than sorting them —
+    /// see `RootView::hold_live`.
     rail_pointed: bool,
     following_pointed: bool,
+    /// Whether the rail's offline follows are unfolded. For this session
+    /// only, and folded at the start of each: unfolded, it is the longest
+    /// list in the app, up to a thousand rows built every frame, and most
+    /// evenings nobody is looking for someone who is not on.
+    rail_offline_open: bool,
     sign_in: SignIn,
     /// Everything the browse page shows besides your follows.
     discovery: Discovery,
+    /// Where the app has been, for back and forward. History only: where it
+    /// is now is always read from `page` and `discovery`; see `navigation`.
+    trail: Trail<Route>,
+    /// A step is being recorded, or replayed, so the functions it runs
+    /// through do not record steps of their own; see `RootView::record`.
+    recording: bool,
     search: Entity<InputState>,
     /// The Following tab's filter. Typed into, never sent anywhere: it narrows
     /// the two lists already on the page with the palette's own matcher.
@@ -239,10 +261,6 @@ pub(crate) struct RootView {
     palette_selected: usize,
 
     settings_panel: Option<Entity<SettingsPanel>>,
-    /// Whether the page navigation is up. It follows the video chrome rather
-    /// than sitting there permanently: a control you never look at should not
-    /// be on the picture for three hours.
-    nav: motion::Fade,
     toasts: Vec<Toast>,
     next_toast: u64,
     _cache_pump: Task<()>,
@@ -321,8 +339,10 @@ impl RootView {
 
         let (service, twitch_pump) = Self::spawn_twitch(settings_path.clone(), window, cx);
 
+        // In the title bar, over both pages; see `run_search` for what a
+        // search from the watch page does.
         let search =
-            cx.new(|cx| InputState::new(window, cx).placeholder("search channels and categories"));
+            cx.new(|cx| InputState::new(window, cx).placeholder("Search channels and categories"));
         // Searching on every keystroke would be three requests per letter.
         cx.subscribe(&search, |this: &mut RootView, state, event, cx| {
             if matches!(event, InputEvent::PressEnter { .. }) {
@@ -334,7 +354,7 @@ impl RootView {
 
         // The opposite of the search box: every keystroke, and nothing leaves
         // the app. See `browse::following_view`.
-        let filter = cx.new(|cx| InputState::new(window, cx).placeholder("filter your follows"));
+        let filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter your follows"));
         cx.subscribe(&filter, |_: &mut RootView, _, event, cx| {
             if matches!(event, InputEvent::Change) {
                 cx.notify();
@@ -343,7 +363,7 @@ impl RootView {
         .detach();
 
         let palette_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("channel, or a command"));
+            cx.new(|cx| InputState::new(window, cx).placeholder("Channel, or a command"));
         cx.subscribe_in(
             &palette_input,
             window,
@@ -379,8 +399,11 @@ impl RootView {
             known_live: HashSet::new(),
             rail_pointed: false,
             following_pointed: false,
+            rail_offline_open: false,
             sign_in: SignIn::Connecting,
             discovery: Discovery::default(),
+            trail: Trail::default(),
+            recording: false,
             search,
             filter,
             scrolls: browse::Scrolls::default(),
@@ -396,7 +419,6 @@ impl RootView {
             palette_open: false,
             palette_selected: 0,
             settings_panel: None,
-            nav: motion::Fade::hidden(),
             toasts: Vec::new(),
             next_toast: 0,
             _cache_pump: cache_pump,
@@ -440,31 +462,59 @@ impl RootView {
     /// when something is playing, and there is room for another.
     ///
     /// The palette already made this distinction; the cards and the rail did
-    /// not, and offered `+ add` on an empty watch page, where it did exactly
+    /// not, and offered `+ Add` on an empty watch page, where it did exactly
     /// what a click on the card did.
     fn can_add(&self) -> bool {
         !self.slots.is_empty() && self.slots.len() < MAX_PANES
     }
 
-    /// The room the page body has: the window, less the rail when it is open.
-    /// The one place a [`Body`] is made; see the type for why.
+    /// The room the page body has: the window, less the rail and the title
+    /// bar when each is drawn. Neither is in fullscreen. The one place a
+    /// [`Body`] is made; see the type for why.
     fn body(&self, window: &Window) -> Body {
-        let rail = if self.settings.sidebar_collapsed {
-            0.0
-        } else {
+        let rail = if self.rail_shown(window) {
             sidebar::WIDTH
+        } else {
+            0.0
         };
-        Body::of(window.viewport_size(), rail)
+        Body::of(
+            window.viewport_size(),
+            rail,
+            layout::title_bar_height(window.is_fullscreen()),
+        )
+    }
+
+    /// Whether the rail is drawn beside the page; see [`layout::rail_shown`].
+    /// Read by [`body`](Self::body) and by the render that draws the rail, so
+    /// the two cannot disagree about it.
+    fn rail_shown(&self, window: &Window) -> bool {
+        layout::rail_shown(self.settings.sidebar_collapsed, window.is_fullscreen())
+    }
+
+    /// Whether the settings sheet or the palette is up, so that nothing
+    /// behind it may change the page: the keys (through
+    /// [`key_context`](Self::key_context)), the title bar's veil over its
+    /// rail button, arrows and search box, and the mouse's side buttons.
+    /// Asked here by all three, so a modal added later is one more line here
+    /// rather than three places to remember.
+    fn modal_open(&self) -> bool {
+        self.settings_panel.is_some() || self.palette_open
     }
 
     /// What the keymap tests its predicates against.
     ///
-    /// The sheet *replaces* the page name rather than adding to it, so a
-    /// shortcut scoped to a page cannot fire through a modal without every
+    /// A modal *replaces* the page name rather than adding to it, so a
+    /// shortcut scoped to a page cannot fire through one without every
     /// binding having to remember to say so.
     fn key_context(&self) -> &'static str {
-        if self.settings_panel.is_some() || self.palette_open {
-            return keys::CONTEXT_MODAL;
+        if self.modal_open() {
+            // Which modal, for the one key that tells them apart: `Ctrl+K`
+            // closes the palette, and does nothing over the sheet.
+            return if self.settings_panel.is_some() {
+                keys::CONTEXT_SHEET
+            } else {
+                keys::CONTEXT_MODAL
+            };
         }
         match self.page {
             Page::Watch => keys::CONTEXT_WATCH,
@@ -531,6 +581,15 @@ impl Render for RootView {
             Page::Browse => self.browse_page(window, cx).into_any_element(),
             Page::Watch => self.watch_page(window, cx).into_any_element(),
         };
+        // Drawn here, once, beside whichever page is up, rather than by each
+        // page: it does not fade out and back in with the page, and the probe
+        // that holds its order still while it is pointed at has one owner.
+        let rail_shown = self.rail_shown(window);
+        let rail = self.follows_rail(rail_shown, cx).map(|rail| {
+            self.holding(LiveList::Rail, true, rail, cx)
+                .flex_none()
+                .h_full()
+        });
 
         div()
             // Focus and context are what make the keymap reachable at all; see
@@ -559,28 +618,91 @@ impl Render for RootView {
             .on_action(cx.listener(Self::on_activate_pane))
             .on_action(cx.listener(Self::on_next_pane))
             .on_action(cx.listener(Self::on_previous_pane))
-            .on_action(cx.listener(Self::on_back))
+            .on_action(cx.listener(Self::on_step_out))
+            .on_action(cx.listener(Self::on_navigate_back))
+            .on_action(cx.listener(Self::on_navigate_forward))
             .on_key_down(cx.listener(Self::on_palette_key))
-            // A divider drag is followed here rather than on the handle: the
-            // pointer leaves a six-pixel target on the first frame of any pull
-            // worth making, and these are the only listeners that still hear it.
-            .on_mouse_move(cx.listener(Self::on_mouse_move))
-            .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .relative()
             .size_full()
+            .flex()
+            .flex_col()
             .bg(theme::bg())
             .text_color(theme::text())
-            .child(motion::arrive(
-                // Browse and watch share no layout at all, so cutting between
-                // them reads as the window being replaced rather than as
-                // moving within one app. No movement, only a fade: anything
-                // that slides drags the eye across the whole page.
-                ("page", self.page as u32),
-                0.0,
-                div().size_full().child(page),
-            ))
-            .child(self.toast_stack(cx))
-            .children(self.palette_sheet(cx))
-            .children(self.settings_panel.clone())
+            .children(self.title_bar(window, cx))
+            .child(
+                // Everything under the bar. The modals, the toasts and the
+                // mini player are in here rather than on the root, so their
+                // `inset_0` and their offsets start below the bar by
+                // construction: a scrim cannot cover the caption buttons, and
+                // a toast cannot land on the drag strip —
+                // `block_mouse_except_scroll` does not hide a drag area from
+                // the platform's hit test, so a toast there would move the
+                // window when pressed. No id, for the reason the root has
+                // none: an id namespaces every element id beneath it.
+                //
+                // Clipped, because starting below the bar is not the same as
+                // staying below it. Anchored to the bottom, the mini player
+                // grows upward, and in a window shorter than it and the bar
+                // together it reached over the bar, where the bar's drag and
+                // caption areas still answered the platform under its tiles:
+                // pressing a picture moved, maximised or closed the window.
+                // The clip bounds hit testing as well as painting, so nothing
+                // in here can be pressed outside it, and it adds no hitbox.
+                // Tooltips and a text box's menu are drawn by the window
+                // after everything else, so they still reach past it.
+                //
+                // A row: the rail, then the page beside it. The overlays
+                // after them — the toasts and the two modals — are absolute,
+                // out of the row, and cover both.
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_hidden()
+                    .flex()
+                    .flex_row()
+                    .children(rail)
+                    .child(
+                        // The page, and the mini player over it. The player
+                        // is placed against this column rather than the row,
+                        // so it floats over the page and never the rail: in
+                        // a narrow window, placed against the row, it reached
+                        // over the rail's last rows, which have no room at
+                        // their foot to be scrolled out from under it. The
+                        // clip keeps it off the rail in a window narrower
+                        // still, where it is cut off at its left instead.
+                        div()
+                            .relative()
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .overflow_hidden()
+                            .child(motion::arrive(
+                                // Browse and watch share no layout at all, so
+                                // cutting between them reads as the window
+                                // being replaced rather than as moving within
+                                // one app. No movement, only a fade: anything
+                                // that slides drags the eye across the whole
+                                // page.
+                                ("page", self.page as u32),
+                                0.0,
+                                div().size_full().child(page),
+                            ))
+                            // Outside the fade, so the page changing under it
+                            // — a tab, a category, a channel — never rebuilds
+                            // it, and drawn before everything after this
+                            // column, so the toasts, the palette and the sheet
+                            // cover it.
+                            .children(self.mini_player(cx)),
+                    )
+                    .child(self.toast_stack(cx))
+                    .children(self.palette_sheet(cx))
+                    .children(self.settings_panel.clone()),
+            )
+            // A divider drag is followed by the window rather than by the
+            // handle or the root; see `drag_listeners`. So are the mouse's
+            // back and forward buttons, for the same reason.
+            .child(self.drag_listeners(cx))
+            .child(self.side_buttons(cx))
     }
 }

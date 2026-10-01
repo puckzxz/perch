@@ -23,6 +23,7 @@ use twitch_api::{Video, VideoKind, VIDEO_THUMBNAIL};
 
 use crate::browse::{self, Action, ChannelPage, Discovery};
 use crate::controls;
+use crate::layout;
 use crate::seek_bar;
 use crate::theme;
 
@@ -42,10 +43,10 @@ pub const SHELVES: [VideoKind; 3] = [VideoKind::Archive, VideoKind::Highlight, V
 /// What the page's switch calls a kind.
 pub fn shelf_name(kind: VideoKind) -> &'static str {
     match kind {
-        VideoKind::Archive => "past broadcasts",
-        VideoKind::Highlight => "highlights",
-        VideoKind::Upload => "uploads",
-        VideoKind::Other => "videos",
+        VideoKind::Archive => "Past broadcasts",
+        VideoKind::Highlight => "Highlights",
+        VideoKind::Upload => "Uploads",
+        VideoKind::Other => "Videos",
     }
 }
 
@@ -308,7 +309,7 @@ pub(crate) fn card<V: 'static>(
                 // picture.
                 .when(forgettable, |thumb| {
                     thumb.child(
-                        controls::pill(("forget-video", index), "forget", controls::Variant::Pill)
+                        controls::pill(("forget-video", index), "Forget", controls::Variant::Pill)
                             .absolute()
                             .top(px(theme::GAP_TIGHT))
                             .left(px(theme::GAP_TIGHT))
@@ -330,7 +331,7 @@ pub(crate) fn card<V: 'static>(
                 })
                 .when(can_add, |thumb| {
                     thumb.child(
-                        controls::pill(("add-video", index), "+ add", controls::Variant::Pill)
+                        controls::pill(("add-video", index), "+ Add", controls::Variant::Pill)
                             .absolute()
                             .top(px(theme::GAP_TIGHT))
                             .right(px(theme::GAP_TIGHT))
@@ -403,7 +404,7 @@ pub fn view<V: 'static>(
     discovery: &Discovery,
     history: &History,
     live: bool,
-    width: f32,
+    room: layout::Room,
     cache: &ImageCache,
     can_add: bool,
     scroll: &ScrollHandle,
@@ -433,7 +434,7 @@ pub fn view<V: 'static>(
         );
     }
 
-    let list = browse::scroller("channel-videos", scroll).child(shelves);
+    let list = browse::scroller("channel-videos", scroll, room.bottom).child(shelves);
     let list = if videos.is_empty() {
         let name = &channel.display_name;
         let nothing = match channel.kind {
@@ -446,7 +447,7 @@ pub fn view<V: 'static>(
         list.child(browse::browse_placeholder(discovery, nothing.into()))
     } else {
         let card_width = browse::card_width(
-            width,
+            room.width,
             browse::CARD_MIN,
             browse::CARD_MAX,
             theme::GAP_SECTION,
@@ -472,7 +473,7 @@ pub fn view<V: 'static>(
         }
         list.child(row).children(browse::load_more(
             videos.next.is_some(),
-            discovery.loading,
+            discovery.is_loading(),
             on_action.clone(),
             cx,
         ))
@@ -482,7 +483,7 @@ pub fn view<V: 'static>(
     let login = channel.login.clone();
     let other = controls::pill(
         "channel-now",
-        if live { "watch live" } else { "open chat" },
+        if live { "Watch live" } else { "Open chat" },
         controls::Variant::Pill,
     )
     .on_click(cx.listener({
@@ -497,7 +498,7 @@ pub fn view<V: 'static>(
         .flex_col()
         .child(browse::context_bar(
             "leave-channel",
-            "← back",
+            "← Back",
             SharedString::from(channel.display_name.clone()),
             Action::CloseChannel,
             Some(other.into_any_element()),

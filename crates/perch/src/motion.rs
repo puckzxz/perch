@@ -81,12 +81,13 @@ impl Fade {
         E: Styled + IntoElement + 'static,
     {
         // Hidden is `invisible`, not merely transparent. At opacity zero the
-        // element is still there to be clicked: the "← browse" pill went on
-        // taking clicks in a corner that looked empty, and navigated away from
-        // under the pointer. gpui paints nothing of an invisible element and
-        // registers none of its listeners, so hidden means gone to the pointer
-        // too — at rest, and from the last frame of a fade-out, which a
-        // finished animation goes on rendering for as long as it is on screen.
+        // element is still there to be clicked: a control faded out of a
+        // corner that looked empty went on taking clicks there, and navigated
+        // away from under the pointer. gpui paints nothing of an invisible
+        // element and registers none of its listeners, so hidden means gone
+        // to the pointer too — at rest, and from the last frame of a fade-out,
+        // which a finished animation goes on rendering for as long as it is on
+        // screen.
         if self.flips == 0 {
             return if self.visible {
                 element.into_any_element()

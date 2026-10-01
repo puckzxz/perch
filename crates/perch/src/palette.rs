@@ -1,10 +1,11 @@
 //! The command palette.
 //!
-//! Everything you can reach while watching is a key or a hover-revealed
-//! overlay, and everything you can reach while *browsing* was a click — the
-//! picker had no keyboard path at all past the search box. This is the one
-//! control that answers both: a channel to open, a recording to carry on
-//! with, a pane to close, a page to go to, typed rather than aimed at.
+//! While watching, the player's controls are keys or a hover-revealed
+//! overlay and the page-level ones sit in the title bar; everything you could
+//! reach while *browsing* was a click — the picker had no keyboard path at all
+//! past the search box. This is the one control that answers both: a channel
+//! to open, a recording to carry on with, a pane to close, a page to go to,
+//! typed rather than aimed at.
 //!
 //! It is not a second search box. The search box asks *Twitch* a question and
 //! costs a request; this filters what the app already knows — who is live, what
@@ -26,8 +27,9 @@ use crate::theme;
 /// exists to avoid going to.
 const MAX_ROWS: usize = 8;
 
-/// The panel's width, how far down the window it sits, and how far it drops in
-/// as it opens.
+/// The panel's width, how far down the page it sits — measured from under the
+/// title bar, because the palette lives in the root's content area — and how
+/// far it drops in as it opens.
 ///
 /// Near the top rather than centred: this is a thing you type at, and the answer
 /// grows downwards from it.
@@ -499,7 +501,7 @@ pub fn sheet<V: 'static>(
         .bg(theme::scrim())
         // The offset is on a wrapper, not on the panel: `arrive` animates the
         // panel's own top margin, so one set there is overwritten on the first
-        // frame and the box ends up against the top of the window.
+        // frame and the box ends up against the top of the page.
         .child(
             div().pt(px(TOP)).child(crate::motion::arrive(
                 "palette",

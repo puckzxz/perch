@@ -16,6 +16,7 @@ use gpui::{
 use gpui_component::slider::{Slider, SliderEvent, SliderState};
 
 use crate::controls;
+use crate::loudness::Loudness;
 use crate::motion;
 use crate::seek_bar;
 use crate::theme;
@@ -47,7 +48,8 @@ pub struct Qualities {
     /// Every rendition the stream offers, highest first.
     pub available: Vec<String>,
     /// What the settings pick when a pane is not told otherwise, in the words
-    /// the settings sheet stores it in: `auto`, `best`, `1080p`.
+    /// the settings sheet shows it in (`settings_view::quality_label`):
+    /// `Auto (matches the video pane)`, `Best available`, `1080p`.
     pub default: SharedString,
     /// Whether this pane was told otherwise — a rendition picked from its own
     /// menu, which holds until the pane closes or the default is chosen again.
@@ -64,8 +66,10 @@ pub struct VideoView {
     /// so `render` can tell a genuinely new frame from a repaint of the one the
     /// atlas already holds.
     current: Option<Arc<RenderImage>>,
-    /// Volume before muting, so unmute restores rather than guessing.
-    volume_before_mute: u8,
+    /// The level the user chose, and whether Mute all is holding the pane
+    /// silent on top of it. What mpv hears is read from here and nowhere
+    /// else; see `loudness`.
+    loudness: Loudness,
     volume_slider: Entity<SliderState>,
     qualities: Qualities,
     quality_menu_open: bool,
@@ -89,11 +93,12 @@ pub struct VideoView {
     /// Whether the control bar is up, and how far through fading it is.
     /// Derived from `hovered` and the quality menu by `sync_controls`.
     controls: motion::Fade,
-    /// True while the player is a thumbnail on the browse page. Backgrounded
-    /// players are muted and draw no controls.
-    background: bool,
-    /// Volume to restore when coming back to the foreground.
-    volume_before_background: u8,
+    /// True while the player is a tile in the mini player on the browse page.
+    /// Presentation only: a compact player draws no control bar, answers no
+    /// hover, labels no seek bar and does not go fullscreen on a double-click,
+    /// because the tile is a way back to the watch page rather than a player
+    /// of its own. What it sounds like is `loudness`, and nothing here.
+    compact: bool,
     /// A scrub in progress: where along the bar the pointer has dragged the
     /// thumb. The seek happens when it lets go — see `seek_bar` for why not
     /// on every move.
@@ -112,13 +117,30 @@ pub struct VideoView {
 
 impl EventEmitter<VideoEvent> for VideoView {}
 
+/// How a player is born, which is how its pane already is: a player rebuilt
+/// while you browse — a quality change, the re-pick after a resize — has to
+/// come up as the tile it is replacing, not as a watch-page player.
+pub struct Start {
+    /// Drawn as a tile in the mini player; see `VideoView::compact`.
+    pub compact: bool,
+    /// Held silent by Mute all; see `Loudness`.
+    pub quiet: bool,
+}
+
 impl VideoView {
     /// Takes an already-started stream so a failure to open can be shown in the
     /// window rather than panicking inside entity construction.
+    ///
+    /// `level` is the level the pane opens at, which the stream was started at
+    /// too unless `start.quiet`, in which case the stream started silent and
+    /// the slider still shows `level`. Taken rather than read off the stream
+    /// for that reason.
     pub fn from_stream(
         stream: VideoStream,
         mut frames: futures::channel::mpsc::Receiver<()>,
         qualities: Qualities,
+        level: u8,
+        start: Start,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -140,13 +162,13 @@ impl VideoView {
             }
         });
 
-        let volume = stream.volume();
+        let loudness = Loudness::new(level, start.quiet);
         let volume_slider = cx.new(|_| {
             SliderState::new()
                 .min(0.0)
                 .max(100.0)
                 .step(1.0)
-                .default_value(volume as f32)
+                .default_value(loudness.level() as f32)
         });
         cx.subscribe(&volume_slider, |this: &mut Self, _, event, cx| {
             let SliderEvent::Change(value) = event;
@@ -172,14 +194,13 @@ impl VideoView {
         Self {
             stream,
             current: None,
-            volume_before_mute: volume.max(1),
+            loudness,
             volume_slider,
             qualities,
             quality_menu_open: false,
             hovered: false,
             controls: motion::Fade::hidden(),
-            background: false,
-            volume_before_background: volume,
+            compact: start.compact,
             scrub: None,
             track: None,
             pointing: None,
@@ -252,9 +273,9 @@ impl VideoView {
     /// label moved.
     fn follow_pointer(&mut self, pointer: Option<Point<Pixels>>) -> bool {
         let pointing = match (pointer, self.track) {
-            // A backgrounded player draws no bar, so wherever its track was
-            // last laid out is somewhere else on the screen by now.
-            (Some(pointer), Some(track)) if !self.background => seek_bar::hover_at(&track, pointer),
+            // A compact player draws no bar, so wherever its track was last
+            // laid out is somewhere else on the screen by now.
+            (Some(pointer), Some(track)) if !self.compact => seek_bar::hover_at(&track, pointer),
             _ => None,
         };
         if self.pointing == pointing {
@@ -266,12 +287,14 @@ impl VideoView {
 
     /// Set volume without writing back to the slider, which is already where
     /// the user put it. Writing back would fight an in-progress drag.
+    ///
+    /// Every path that reports a level to be remembered comes through here,
+    /// and only a level the user chose does: the hush has its own way in,
+    /// [`set_hushed`](Self::set_hushed), which reports nothing.
     fn apply_volume(&mut self, volume: u8, cx: &mut Context<Self>) {
-        if volume > 0 {
-            self.volume_before_mute = volume;
-        }
-        self.stream.set_volume(volume);
-        cx.emit(VideoEvent::VolumeChanged(volume));
+        self.loudness.set(volume);
+        self.stream.set_volume(self.loudness.audible());
+        cx.emit(VideoEvent::VolumeChanged(self.loudness.level()));
         cx.notify();
     }
 
@@ -288,40 +311,54 @@ impl VideoView {
     /// thumb follows: `apply_volume` deliberately does not write back, because
     /// it is what an in-progress drag calls.
     pub fn nudge_volume(&mut self, delta: i16, window: &mut Window, cx: &mut Context<Self>) {
-        let next = (self.stream.volume() as i16 + delta).clamp(0, 100) as u8;
+        let next = (self.loudness.level() as i16 + delta).clamp(0, 100) as u8;
         self.set_volume(next, window, cx);
     }
 
+    /// `M`: to silence and back. Through `set_volume`, so the slider follows,
+    /// and so the first press on a pane Mute all is holding ends the hold the
+    /// way any deliberate level does — said to the root, which stops counting
+    /// the pane as quiet.
     pub fn toggle_mute(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let next = if self.stream.volume() == 0 {
-            self.volume_before_mute
-        } else {
-            0
-        };
-        self.set_volume(next, window, cx);
+        self.set_volume(self.loudness.toggled(), window, cx);
     }
 
-    /// Move the player between the watch page and the browse thumbnail.
+    /// Move the player between the watch page and a tile in the mini player.
     ///
-    /// Muting here deliberately bypasses `apply_volume`: that emits an event
-    /// the root persists, and navigating to the follows page should not save
-    /// "volume: 0" as the user's preference.
-    pub fn set_background(&mut self, background: bool, cx: &mut Context<Self>) {
-        if self.background == background {
+    /// How it is drawn and nothing else: the pane keeps its sound, which is
+    /// the point of the mini player. Everything the pointer was doing to the
+    /// big player is let go here, because the tile will never hear the
+    /// release — a held scrub in particular would go on asking for a frame
+    /// every frame for as long as the tile was up.
+    pub fn set_compact(&mut self, compact: bool, cx: &mut Context<Self>) {
+        if self.compact == compact {
             return;
         }
-        self.background = background;
-        if background {
-            self.volume_before_background = self.stream.volume();
-            self.stream.set_volume(0);
-        } else {
-            self.stream.set_volume(self.volume_before_background);
-        }
+        self.compact = compact;
         self.quality_menu_open = false;
         self.hovered = false;
         self.pointing = None;
+        self.scrub = None;
+        self.track = None;
         self.sync_controls();
         cx.notify();
+    }
+
+    /// Hold the pane silent for Mute all, or let it go.
+    ///
+    /// Round `apply_volume` on purpose: a hush is not a level anybody chose,
+    /// so it reports nothing to be remembered, and it leaves the slider where
+    /// the user put it — which is also why this needs no `Window`.
+    pub fn set_hushed(&mut self, quiet: bool, cx: &mut Context<Self>) {
+        let changed = if quiet {
+            self.loudness.hush()
+        } else {
+            self.loudness.unhush()
+        };
+        if changed {
+            self.stream.set_volume(self.loudness.audible());
+            cx.notify();
+        }
     }
 
     /// Recompute whether the control bar should be up, and report whether that
@@ -333,7 +370,7 @@ impl VideoView {
         // And while the thumb is held, wherever the pointer has dragged it:
         // a bar that faded out mid-scrub would take the thumb with it.
         let visible =
-            !self.background && (self.hovered || self.quality_menu_open || self.scrub.is_some());
+            !self.compact && (self.hovered || self.quality_menu_open || self.scrub.is_some());
         self.controls.set(visible)
     }
 
@@ -355,8 +392,9 @@ impl VideoView {
     /// What the pane header says about this player. Muted and paused are the
     /// two states that used to be invisible until you hovered the video - a
     /// stream saved muted opened silent with nothing on screen to say why.
+    /// Silent for either reason: muted by hand, or held by Mute all.
     pub fn is_muted(&self) -> bool {
-        self.stream.volume() == 0
+        self.loudness.audible() == 0
     }
 
     pub fn is_paused(&self) -> bool {
@@ -473,6 +511,12 @@ impl VideoView {
             .py(px(theme::CONTROL_PAD_Y))
             .text_size(px(theme::TEXT_LABEL))
             .font_weight(theme::weight_label())
+            // One line, however long: the menu hangs from a button narrower
+            // than it, so its width is whatever its rows say, and the first
+            // row says the settings' choice in the sheet's words — `Auto
+            // (matches the video pane)` — which would otherwise wrap at the
+            // menu's least width.
+            .whitespace_nowrap()
             .cursor_pointer()
             .text_color(if selected {
                 theme::accent()
@@ -536,7 +580,7 @@ impl VideoView {
             .left_0()
             .right_0()
             // Clicks on the bar stay on the bar. Hit-testing is flat, so
-            // without this a click on `pause` would also reach the pane
+            // without this a click on `Pause` would also reach the pane
             // underneath, where a double-click now means fullscreen. The hover
             // probe is a canvas and sees through it, so the bar still counts
             // as "over the video" for the purpose of staying visible.
@@ -555,7 +599,10 @@ impl VideoView {
 
     /// Pause, mute, volume and quality: the row every stream has.
     fn button_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let volume = self.stream.volume();
+        // The figure is the level chosen, beside the slider showing it; the
+        // pill says what a press would do, which for a hushed pane is unmute.
+        let volume = self.loudness.level();
+        let muted = self.is_muted();
         let paused = self.stream.is_paused();
 
         div()
@@ -567,7 +614,7 @@ impl VideoView {
             .child(
                 controls::pill(
                     "pause",
-                    if paused { "play" } else { "pause" },
+                    if paused { "Play" } else { "Pause" },
                     controls::Variant::OnVideo,
                 )
                 .on_click(cx.listener(|this, _event, _window, cx| this.toggle_playback(cx))),
@@ -575,7 +622,7 @@ impl VideoView {
             .child(
                 controls::pill(
                     "mute",
-                    if volume == 0 { "unmute" } else { "mute" },
+                    if muted { "Unmute" } else { "Mute" },
                     controls::Variant::OnVideo,
                 )
                 .on_click(cx.listener(|this, _event, window, cx| this.toggle_mute(window, cx))),
@@ -734,11 +781,14 @@ impl Render for VideoView {
             .on_hover(cx.listener(|_, _: &bool, _window, cx| cx.notify()))
             // The gesture every player has. A single click does nothing on
             // purpose - it is how a pane is made the active one, and pausing
-            // on a click would turn choosing a pane into stopping it.
-            .on_click(|event: &ClickEvent, window, _cx| {
-                if event.click_count() == 2 {
-                    window.toggle_fullscreen();
-                }
+            // on a click would turn choosing a pane into stopping it. Not on
+            // a compact tile, whose click is the way back to the watch page.
+            .when(!self.compact, |pane| {
+                pane.on_click(|event: &ClickEvent, window, _cx| {
+                    if event.click_count() == 2 {
+                        window.toggle_fullscreen();
+                    }
+                })
             })
             .child(probe)
             // Fade the first frames in rather than cutting from black, which
@@ -748,7 +798,7 @@ impl Render for VideoView {
                 Animation::new(theme::MOTION_VIDEO),
                 |element, delta| element.opacity(delta),
             ))
-            .when(!self.background, |pane| {
+            .when(!self.compact, |pane| {
                 // Hidden until the pointer is over the video, so nothing covers
                 // the picture while you are just watching - and faded rather
                 // than cut, because over a moving image a hard switch reads as

@@ -26,9 +26,11 @@ use twitch_api::{Category, Channel, LiveStream, Video, VideoKind};
 use crate::channel_page;
 use crate::controls;
 use crate::history_page;
+use crate::layout;
 use crate::motion;
 use crate::palette;
 use crate::theme;
+use crate::twitch::{ListKey, Request};
 
 /// The narrowest a card is allowed to get before the grid drops a column.
 ///
@@ -97,12 +99,14 @@ pub enum Tab {
 impl Tab {
     pub const ALL: [Tab; 4] = [Tab::Following, Tab::Popular, Tab::Categories, Tab::History];
 
+    /// The tab's name: the words on its pill, and in the palette's `Go to`
+    /// row for it.
     pub fn label(self) -> &'static str {
         match self {
-            Tab::Following => "following",
-            Tab::Popular => "popular",
-            Tab::Categories => "categories",
-            Tab::History => "history",
+            Tab::Following => "Following",
+            Tab::Popular => "Popular",
+            Tab::Categories => "Categories",
+            Tab::History => "History",
         }
     }
 }
@@ -125,11 +129,120 @@ pub struct Discovery {
     pub channel: Option<ChannelPage>,
     /// Streams within [`open`](Self::open).
     pub streams: Listing<LiveStream>,
-    /// A request is in flight. One at a time, so one flag is enough.
-    pub loading: bool,
-    /// A browse request failed. Deliberately separate from `SignIn::Error`:
-    /// the session is fine, and blanking the whole page would say otherwise.
-    pub error: Option<SharedString>,
+    /// The lists asked for and not yet answered, one entry per request.
+    ///
+    /// Keyed by list rather than one flag for all of them. With one flag, a
+    /// reply for a list you had already left cleared "Loading…" from the one
+    /// you were waiting on — and with back and forward, leaving a list before
+    /// it answers is routine. A list asked for twice is here twice, and each
+    /// answer takes one away; see [`finish`](Self::finish). Emptied when the
+    /// worker stops, since nothing it was holding will ever answer.
+    pub pending: Vec<ListKey>,
+    /// The last browse request that failed, and the list it was for — said
+    /// on that list only (see [`shown_error`](Self::shown_error)), so a
+    /// failure that lands after you have moved on does not blank the list you
+    /// moved to. Deliberately separate from `SignIn::Error`: the session is
+    /// fine, and blanking the whole page would say otherwise.
+    pub error: Option<(ListKey, SharedString)>,
+}
+
+/// What the browse page is showing: one of the lists that take it over, or
+/// else a tab. Borrowed from the [`Discovery`] it was read from.
+pub enum Place<'a> {
+    Tab(Tab),
+    Category(&'a Category),
+    Search(&'a SearchResults),
+    Channel(&'a ChannelPage),
+}
+
+impl Place<'_> {
+    /// The request for the first page of this place's list: what filling it
+    /// asks for, and what refreshing it asks for again. `None` for the
+    /// Following and History tabs, whose lists no browse request fills — the
+    /// follows poll's and the app's own.
+    ///
+    /// The one place a place turns into a request. Filling, refreshing and
+    /// [`Discovery::shown_key`] all read it, so the list the page waits on
+    /// is by construction the list its request fills: the key comes from
+    /// the request, through `Request::list_key`, rather than from a second
+    /// match that had to be kept agreeing with it by hand.
+    pub fn first_page(&self) -> Option<Request> {
+        match self {
+            Place::Tab(Tab::Popular) => Some(Request::Popular { after: None }),
+            Place::Tab(Tab::Categories) => Some(Request::Categories { after: None }),
+            Place::Tab(Tab::Following | Tab::History) => None,
+            Place::Category(category) => Some(Request::Category {
+                category: (*category).clone(),
+                after: None,
+            }),
+            Place::Search(results) => Some(Request::Search(results.query.to_string())),
+            // The shelf on screen, from the top.
+            Place::Channel(page) => Some(Request::Videos {
+                login: page.login.clone(),
+                user_id: page.user_id.clone(),
+                kind: page.kind,
+                after: None,
+            }),
+        }
+    }
+}
+
+impl Discovery {
+    /// Which list is on screen.
+    ///
+    /// The one copy of the order the takeovers stack in — a channel's page
+    /// over a search over a category over the tab — which the page, refresh,
+    /// Load more, `Esc` and the back-and-forward trail all have to agree on.
+    /// Each used to spell it out for itself, and a list one of them read in a
+    /// different order would refresh, or step out of, something other than
+    /// what was showing.
+    pub fn place(&self) -> Place<'_> {
+        if let Some(channel) = &self.channel {
+            Place::Channel(channel)
+        } else if let Some(results) = &self.search {
+            Place::Search(results)
+        } else if let Some(category) = &self.open {
+            Place::Category(category)
+        } else {
+            Place::Tab(self.tab)
+        }
+    }
+
+    /// A request for `key` has gone to the worker.
+    pub fn start(&mut self, key: ListKey) {
+        self.pending.push(key);
+    }
+
+    /// An answer for `key` came back, or its failure did. Takes away one
+    /// request for it, not all of them: a refresh sent while the first ask
+    /// is still out is a second answer to wait for.
+    pub fn finish(&mut self, key: &ListKey) {
+        if let Some(at) = self.pending.iter().position(|pending| pending == key) {
+            self.pending.remove(at);
+        }
+    }
+
+    /// Which list the page is showing, as the request that fills it names
+    /// it: `None` for the Following and History tabs, which no browse request
+    /// fills. Read off [`Place::first_page`], so it cannot name a list other
+    /// than the one that request is waited on as.
+    pub fn shown_key(&self) -> Option<ListKey> {
+        self.place()
+            .first_page()
+            .and_then(|request| request.list_key())
+    }
+
+    /// Whether the list on screen is waiting for an answer.
+    pub fn is_loading(&self) -> bool {
+        self.shown_key()
+            .is_some_and(|shown| self.pending.contains(&shown))
+    }
+
+    /// Why the list on screen could not be had, if it was the one that failed.
+    pub fn shown_error(&self) -> Option<&SharedString> {
+        let (failed, reason) = self.error.as_ref()?;
+        (self.shown_key().as_ref() == Some(failed)).then_some(reason)
+    }
 }
 
 /// One channel's page: who, and what it has kept — its past broadcasts, its
@@ -260,8 +373,8 @@ pub enum Action {
     Add(String),
     OpenCategory(Category),
     CloseCategory,
-    /// Ask Twitch for this, as though it had been typed into the header's
-    /// box: what the Following tab's filter offers when nobody matches.
+    /// Ask Twitch for this, as though it had been typed into the title bar's
+    /// search box: what the Following tab's filter offers when nobody matches.
     Search(String),
     CloseSearch,
     /// Look at a channel's past broadcasts. The id rides along when the list
@@ -285,12 +398,31 @@ pub enum Action {
     /// Take every recording off the history.
     ClearHistory,
     /// Open the settings sheet. Only the not-signed-in state raises this: it is
-    /// the one empty state whose instruction is "open settings", and telling
+    /// the one empty state whose instruction is "Open settings", and telling
     /// somebody where a button is instead of giving them the button is the sort
     /// of thing a page does when nobody has read it back.
     OpenSettings,
     /// Fetch the next page of whichever list is on screen.
     LoadMore,
+    /// Pin this channel to the top of the rail, or take it off. From the
+    /// rail's rows only, for now, so only channels you follow.
+    SetPinned {
+        login: String,
+        pinned: bool,
+    },
+}
+
+impl Action {
+    /// Open an offline channel's page, which is what a click on its name does
+    /// wherever the name is: the Following tab, search results and the rail.
+    /// The id rides along when the list had one.
+    pub fn open_channel(channel: &Channel) -> Self {
+        Action::OpenChannel {
+            login: channel.login.clone(),
+            display_name: channel.display_name.clone(),
+            user_id: Some(channel.user_id.clone()).filter(|id| !id.is_empty()),
+        }
+    }
 }
 
 /// How far sign-in has got.
@@ -506,7 +638,7 @@ fn card<V: 'static>(
                         .child(SharedString::from(watching)),
                 )
                 // The other thing a channel has besides the stream on its
-                // card: what it broadcast before. Revealed the way `+ add`
+                // card: what it broadcast before. Revealed the way `+ Add`
                 // is, on the opposite corner, so a card at rest is still a
                 // picture. Both are hidden rather than transparent: at zero
                 // opacity a control still takes a click, and a tap with no
@@ -515,7 +647,7 @@ fn card<V: 'static>(
                 .child(
                     controls::pill(
                         ("card-videos", index),
-                        "past broadcasts",
+                        "Past broadcasts",
                         controls::Variant::Pill,
                     )
                     .absolute()
@@ -530,7 +662,7 @@ fn card<V: 'static>(
                 )
                 .when(can_add, |thumb| {
                     thumb.child(
-                        controls::pill(("add-stream", index), "+ add", controls::Variant::Pill)
+                        controls::pill(("add-stream", index), "+ Add", controls::Variant::Pill)
                             .absolute()
                             .top(px(theme::GAP_TIGHT))
                             .right(px(theme::GAP_TIGHT))
@@ -599,7 +731,15 @@ pub struct Scrolls {
 /// Returns the scroller and the scrollbar for it as two elements, because the
 /// scrollbar has to sit *over* the list in a `relative` parent rather than
 /// inside it, and only the caller knows what else goes in that parent.
-pub(crate) fn scroller(id: &'static str, scroll: &ScrollHandle) -> gpui::Stateful<gpui::Div> {
+///
+/// `bottom` is room left under the last row on top of the page's padding —
+/// a [`layout::Room`]'s, which is the mini player's while it is up — so the
+/// end of every list can be scrolled out from under it.
+pub(crate) fn scroller(
+    id: &'static str,
+    scroll: &ScrollHandle,
+    bottom: f32,
+) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
         .flex_1()
@@ -610,6 +750,7 @@ pub(crate) fn scroller(id: &'static str, scroll: &ScrollHandle) -> gpui::Statefu
         .flex_col()
         .gap(px(theme::GAP_SECTION))
         .p(px(theme::PAGE_PAD))
+        .pb(px(theme::PAGE_PAD + bottom))
 }
 
 /// A list and its scrollbar, stacked.
@@ -661,11 +802,7 @@ pub(crate) fn offline_pill<V: 'static>(
     on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + 'static,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
-    let action = Action::OpenChannel {
-        login: channel.login.clone(),
-        display_name: channel.display_name.clone(),
-        user_id: Some(channel.user_id.clone()).filter(|id| !id.is_empty()),
-    };
+    let action = Action::open_channel(channel);
     controls::pill(
         id,
         SharedString::from(channel.display_name.clone()),
@@ -694,7 +831,7 @@ fn following_view<V: 'static>(
     offline: &[Channel],
     filter: &str,
     filter_box: AnyElement,
-    width: f32,
+    room: layout::Room,
     cache: &ImageCache,
     can_add: bool,
     scroll: &ScrollHandle,
@@ -718,15 +855,15 @@ fn following_view<V: 'static>(
         })
         .collect();
 
-    let mut page = scroller("browse-grid", scroll)
+    let mut page = scroller("browse-grid", scroll, room.bottom)
         .child(div().flex_none().w(px(FILTER_WIDTH)).child(filter_box));
 
     if !live.is_empty() {
         page = page
-            .when(!offline.is_empty(), |page| page.child(heading("live")))
+            .when(!offline.is_empty(), |page| page.child(heading("Live")))
             .child(stream_row(
                 &live,
-                width,
+                room.width,
                 cache,
                 can_add,
                 on_action.clone(),
@@ -744,7 +881,7 @@ fn following_view<V: 'static>(
                 cx,
             ));
         }
-        page = page.child(heading("offline")).child(row);
+        page = page.child(heading("Offline")).child(row);
     }
 
     // The same notice every other empty list gets, rather than a heading over
@@ -761,7 +898,7 @@ fn following_view<V: 'static>(
             .child(
                 controls::pill(
                     "filter-search",
-                    format!("search Twitch for “{filter}”"),
+                    format!("Search Twitch for “{filter}”"),
                     controls::Variant::Primary,
                 )
                 .on_click(cx.listener(move |view, _event, window, cx| {
@@ -836,17 +973,17 @@ fn stream_grid<V: 'static>(
     id: &'static str,
     streams: &Listing<LiveStream>,
     loading: bool,
-    width: f32,
+    room: layout::Room,
     cache: &ImageCache,
     can_add: bool,
     scroll: &ScrollHandle,
     on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + Clone + 'static,
     cx: &mut Context<V>,
 ) -> AnyElement {
-    let list = scroller(id, scroll)
+    let list = scroller(id, scroll, room.bottom)
         .child(stream_row(
             &streams.items,
-            width,
+            room.width,
             cache,
             can_add,
             on_action.clone(),
@@ -876,9 +1013,9 @@ pub(crate) fn load_more<V: 'static>(
     // While a page is in flight the row says so and stops taking clicks, so a
     // second press cannot queue a second page against the same cursor.
     let row = if loading {
-        controls::waiting("loading…").into_any_element()
+        controls::waiting("Loading…").into_any_element()
     } else {
-        controls::pill("load-more", "load more", controls::Variant::Pill)
+        controls::pill("load-more", "Load more", controls::Variant::Pill)
             .on_click(cx.listener(move |view, _event, window, cx| {
                 on_action(view, Action::LoadMore, window, cx)
             }))
@@ -905,7 +1042,7 @@ pub(crate) fn load_more<V: 'static>(
 fn search_view<V: 'static>(
     results: &SearchResults,
     discovery: &Discovery,
-    width: f32,
+    room: layout::Room,
     cache: &ImageCache,
     can_add: bool,
     scroll: &ScrollHandle,
@@ -931,11 +1068,11 @@ fn search_view<V: 'static>(
                 cx,
             ));
         }
-        let list = scroller("search-results", scroll)
+        let list = scroller("search-results", scroll, room.bottom)
             .when(!results.streams.is_empty(), |list| {
-                list.child(heading("live")).child(stream_row(
+                list.child(heading("Live")).child(stream_row(
                     &results.streams,
-                    width,
+                    room.width,
                     cache,
                     can_add,
                     on_action.clone(),
@@ -943,12 +1080,12 @@ fn search_view<V: 'static>(
                 ))
             })
             .when(!results.channels.is_empty(), |list| {
-                list.child(heading("offline")).child(offline)
+                list.child(heading("Offline")).child(offline)
             })
             .when(shown > 0, |list| {
-                list.child(heading("categories")).child(category_row(
+                list.child(heading("Categories")).child(category_row(
                     &results.categories[..shown],
-                    width,
+                    room.width,
                     cache,
                     on_action.clone(),
                     cx,
@@ -964,7 +1101,7 @@ fn search_view<V: 'static>(
         .flex_col()
         .child(context_bar(
             "leave-search",
-            "← back",
+            "← Back",
             results.query.clone(),
             Action::CloseSearch,
             None,
@@ -1097,7 +1234,7 @@ fn awaiting_code<V: 'static>(
             // The one accent on the page, because it is the one thing to do.
             controls::pill(
                 "open-activate",
-                "open twitch.tv/activate",
+                "Open twitch.tv/activate",
                 controls::Variant::Primary,
             )
             .on_click(cx.listener(move |_, _event, _window, cx| cx.open_url(&uri))),
@@ -1190,7 +1327,7 @@ fn empty_state<V: 'static>(
         SignIn::NeedsClientId | SignIn::Error(_) => body.child(
             controls::pill(
                 "empty-settings",
-                "open settings",
+                "Open settings",
                 controls::Variant::Primary,
             )
             .on_click(cx.listener(move |view, _event, window, cx| {
@@ -1214,10 +1351,10 @@ fn empty_state<V: 'static>(
 
 /// What a browse list shows when it has nothing in it yet.
 pub(crate) fn browse_placeholder(discovery: &Discovery, empty: SharedString) -> AnyElement {
-    if let Some(reason) = &discovery.error {
+    if let Some(reason) = discovery.shown_error() {
         return notice("Could not reach Twitch".into(), reason.clone(), true).into_any_element();
     }
-    if discovery.loading {
+    if discovery.is_loading() {
         // Ends as soon as the request does, which is what makes a repeating
         // animation safe here.
         return motion::waiting(
@@ -1229,7 +1366,8 @@ pub(crate) fn browse_placeholder(discovery: &Discovery, empty: SharedString) -> 
     notice("Nothing here".into(), empty, false).into_any_element()
 }
 
-/// The whole page.
+/// The whole page, in the `room` it has: the width its cards divide, and what
+/// every list leaves free at its foot for the mini player.
 #[allow(clippy::too_many_arguments)]
 pub fn page<V: 'static>(
     follows: &[LiveStream],
@@ -1240,7 +1378,7 @@ pub fn page<V: 'static>(
     sign_in: &SignIn,
     follows_loaded: bool,
     history: &History,
-    width: f32,
+    room: layout::Room,
     cache: &Arc<ImageCache>,
     can_add: bool,
     scrolls: &Scrolls,
@@ -1250,141 +1388,138 @@ pub fn page<V: 'static>(
 ) -> impl IntoElement {
     // Search, categories and a channel all take over the page rather than
     // nesting inside a tab, so there is only ever one thing to scroll.
-    let body = if let Some(channel) = &discovery.channel {
-        channel_page::view(
+    let body = match discovery.place() {
+        Place::Channel(channel) => channel_page::view(
             channel,
             discovery,
             history,
             channel_live,
-            width,
+            room,
             cache,
             can_add,
             &scrolls.channel,
             on_action,
             cx,
-        )
-    } else if let Some(results) = &discovery.search {
-        search_view(
+        ),
+        Place::Search(results) => search_view(
             results,
             discovery,
-            width,
+            room,
             cache,
             can_add,
             &scrolls.search,
             on_action,
             cx,
-        )
-    } else if let Some(category) = &discovery.open {
-        let list = if discovery.streams.is_empty() {
-            browse_placeholder(
-                discovery,
-                format!("Nobody is streaming {} right now.", category.name).into(),
-            )
-        } else {
-            stream_grid(
-                "category-streams",
-                &discovery.streams,
-                discovery.loading,
-                width,
-                cache,
-                can_add,
-                &scrolls.category,
-                on_action.clone(),
-                cx,
-            )
-        };
+        ),
+        Place::Category(category) => {
+            let list = if discovery.streams.is_empty() {
+                browse_placeholder(
+                    discovery,
+                    format!("Nobody is streaming {} right now.", category.name).into(),
+                )
+            } else {
+                stream_grid(
+                    "category-streams",
+                    &discovery.streams,
+                    discovery.is_loading(),
+                    room,
+                    cache,
+                    can_add,
+                    &scrolls.category,
+                    on_action.clone(),
+                    cx,
+                )
+            };
 
-        div()
-            .flex_1()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .child(context_bar(
-                "leave-category",
-                "← categories",
-                SharedString::from(category.name.clone()),
-                Action::CloseCategory,
-                None,
-                on_action,
-                cx,
-            ))
-            .child(list)
-            .into_any_element()
-    } else {
-        match discovery.tab {
-            // Sign-in lives on this tab, so an empty follows list has more to
-            // say than "nothing here". Both lists have to be empty: signed in
-            // with everybody offline is not the same as not signed in, and
-            // testing only the live one would hide the sign-in prompt behind a
-            // stale offline list after a client id change.
-            Tab::Following if follows.is_empty() && offline.is_empty() => {
-                empty_state(sign_in, follows_loaded, on_action, cx)
-            }
-            Tab::Following => following_view(
-                follows,
-                offline,
-                filter,
-                filter_box,
-                width,
-                cache,
-                can_add,
-                &scrolls.following,
-                on_action,
-                cx,
-            ),
-            Tab::Popular if discovery.popular.is_empty() => browse_placeholder(
-                discovery,
-                "Twitch reported nothing live, which would be a first.".into(),
-            ),
-            Tab::Popular => stream_grid(
-                "popular-grid",
-                &discovery.popular,
-                discovery.loading,
-                width,
-                cache,
-                can_add,
-                &scrolls.popular,
-                on_action,
-                cx,
-            ),
-            Tab::Categories if discovery.categories.is_empty() => {
-                browse_placeholder(discovery, "No categories came back.".into())
-            }
-            Tab::Categories => {
-                let list = scroller("categories-grid", &scrolls.categories)
-                    .child(category_row(
-                        &discovery.categories.items,
-                        width,
-                        cache,
-                        on_action.clone(),
-                        cx,
-                    ))
-                    .children(load_more(
-                        discovery.categories.next.is_some(),
-                        discovery.loading,
-                        on_action,
-                        cx,
-                    ));
-                scrollable(list, &scrolls.categories).into_any_element()
-            }
-            Tab::History => history_page::view(
-                history,
-                width,
-                cache,
-                can_add,
-                &scrolls.history,
-                on_action,
-                cx,
-            ),
+            div()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .child(context_bar(
+                    "leave-category",
+                    "← Categories",
+                    SharedString::from(category.name.clone()),
+                    Action::CloseCategory,
+                    None,
+                    on_action,
+                    cx,
+                ))
+                .child(list)
+                .into_any_element()
         }
+        // Sign-in lives on this tab, so an empty follows list has more to
+        // say than "nothing here". Both lists have to be empty: signed in
+        // with everybody offline is not the same as not signed in, and
+        // testing only the live one would hide the sign-in prompt behind a
+        // stale offline list after a client id change.
+        Place::Tab(Tab::Following) if follows.is_empty() && offline.is_empty() => {
+            empty_state(sign_in, follows_loaded, on_action, cx)
+        }
+        Place::Tab(Tab::Following) => following_view(
+            follows,
+            offline,
+            filter,
+            filter_box,
+            room,
+            cache,
+            can_add,
+            &scrolls.following,
+            on_action,
+            cx,
+        ),
+        Place::Tab(Tab::Popular) if discovery.popular.is_empty() => browse_placeholder(
+            discovery,
+            "Twitch reported nothing live, which would be a first.".into(),
+        ),
+        Place::Tab(Tab::Popular) => stream_grid(
+            "popular-grid",
+            &discovery.popular,
+            discovery.is_loading(),
+            room,
+            cache,
+            can_add,
+            &scrolls.popular,
+            on_action,
+            cx,
+        ),
+        Place::Tab(Tab::Categories) if discovery.categories.is_empty() => {
+            browse_placeholder(discovery, "No categories came back.".into())
+        }
+        Place::Tab(Tab::Categories) => {
+            let list = scroller("categories-grid", &scrolls.categories, room.bottom)
+                .child(category_row(
+                    &discovery.categories.items,
+                    room.width,
+                    cache,
+                    on_action.clone(),
+                    cx,
+                ))
+                .children(load_more(
+                    discovery.categories.next.is_some(),
+                    discovery.is_loading(),
+                    on_action,
+                    cx,
+                ));
+            scrollable(list, &scrolls.categories).into_any_element()
+        }
+        Place::Tab(Tab::History) => history_page::view(
+            history,
+            room,
+            cache,
+            can_add,
+            &scrolls.history,
+            on_action,
+            cx,
+        ),
     };
 
     // `flex_1` + `min_h_0`, not `size_full`. This is a flex child sitting under
-    // the browse header, so asking for the full window height overflows the
-    // column by exactly the header's height and pushes the bottom of the list
-    // off-screen. It went unnoticed while the last thing in the list was page
-    // padding; a Load more row at the end made it a button you could see and
-    // could not reach.
+    // the browse page's tab strip, so asking for the full window height
+    // overflows the column by exactly the strip's height and pushes the bottom
+    // of the list off-screen. It went unnoticed while the last thing in the
+    // list was page padding; a Load more row at the end made it a button you
+    // could see and could not reach.
     div()
         .flex_1()
         .min_h_0()
@@ -1439,6 +1574,192 @@ mod tests {
         assert_eq!(page.videos().items[0].id, "2");
         assert!(page.videos().next.is_none(), "took the broadcasts' cursor");
         assert!(page.shelf(VideoKind::Upload).is_empty());
+    }
+
+    /// The takeovers stack in one order, and the page, refresh, Load more,
+    /// `Esc` and the trail all read it from `place`: each layer hides the ones
+    /// under it, and taking it away shows the next.
+    #[test]
+    fn a_channel_page_outranks_search_category_and_tab() {
+        let mut discovery = Discovery {
+            tab: Tab::Popular,
+            ..Discovery::default()
+        };
+        assert!(matches!(discovery.place(), Place::Tab(Tab::Popular)));
+
+        discovery.open = Some(Category {
+            id: "509658".into(),
+            name: "Just Chatting".into(),
+            box_art_url: String::new(),
+        });
+        assert!(matches!(discovery.place(), Place::Category(c) if c.id == "509658"));
+
+        discovery.search = Some(SearchResults {
+            query: "zomboid".into(),
+            ..Default::default()
+        });
+        assert!(matches!(discovery.place(), Place::Search(r) if r.query == "zomboid"));
+
+        discovery.channel = Some(ChannelPage::new("someone".into(), "Someone".into(), None));
+        assert!(matches!(discovery.place(), Place::Channel(p) if p.login == "someone"));
+
+        discovery.channel = None;
+        assert!(
+            matches!(discovery.place(), Place::Search(_)),
+            "closing the channel shows the search under it"
+        );
+    }
+
+    fn a_category(id: &str) -> Category {
+        Category {
+            id: id.into(),
+            name: id.into(),
+            box_art_url: String::new(),
+        }
+    }
+
+    /// Popular asked for, then a category opened before it answers: the
+    /// popular page's reply is not the category's, and must not end its wait.
+    #[test]
+    fn a_reply_for_another_list_leaves_this_one_loading() {
+        let mut discovery = Discovery {
+            tab: Tab::Popular,
+            ..Discovery::default()
+        };
+        discovery.start(ListKey::Popular);
+        assert!(discovery.is_loading());
+
+        discovery.open = Some(a_category("509658"));
+        discovery.start(ListKey::Category("509658".into()));
+        discovery.finish(&ListKey::Popular);
+        assert!(
+            discovery.is_loading(),
+            "the popular reply ended the category's wait"
+        );
+
+        discovery.finish(&ListKey::Category("509658".into()));
+        assert!(!discovery.is_loading());
+    }
+
+    /// A failure is said on the list that failed — not on the one the user
+    /// has moved to since, and again when they come back to it.
+    #[test]
+    fn an_error_shows_only_on_the_list_that_failed() {
+        let mut discovery = Discovery {
+            tab: Tab::Popular,
+            ..Discovery::default()
+        };
+        discovery.error = Some((ListKey::Popular, "Twitch is down".into()));
+        assert_eq!(
+            discovery.shown_error().map(|reason| reason.as_ref()),
+            Some("Twitch is down")
+        );
+
+        discovery.tab = Tab::Categories;
+        assert!(discovery.shown_error().is_none(), "said on another list");
+        discovery.tab = Tab::Popular;
+        assert!(
+            discovery.shown_error().is_some(),
+            "not said on coming back to the list that failed"
+        );
+
+        // One shelf of a channel's page failing is not another shelf failing.
+        discovery.channel = Some(ChannelPage::new("someone".into(), "Someone".into(), None));
+        assert!(
+            discovery.shown_error().is_none(),
+            "said on a channel's page"
+        );
+        discovery.error = Some((
+            ListKey::Videos {
+                login: "someone".into(),
+                kind: VideoKind::Highlight,
+            },
+            "no such thing".into(),
+        ));
+        assert!(
+            discovery.shown_error().is_none(),
+            "the highlights failed, not the broadcasts on screen"
+        );
+        if let Some(page) = discovery.channel.as_mut() {
+            page.kind = VideoKind::Highlight;
+        }
+        assert!(discovery.shown_error().is_some());
+    }
+
+    /// Two asks for one list are two answers to wait for.
+    #[test]
+    fn finishing_one_request_leaves_its_twin_pending() {
+        let mut discovery = Discovery {
+            tab: Tab::Categories,
+            ..Discovery::default()
+        };
+        discovery.start(ListKey::Categories);
+        discovery.start(ListKey::Categories);
+
+        discovery.finish(&ListKey::Categories);
+        assert!(discovery.is_loading(), "one answer ended both waits");
+
+        discovery.finish(&ListKey::Categories);
+        assert!(!discovery.is_loading());
+        // An answer nobody was waiting for changes nothing.
+        discovery.finish(&ListKey::Categories);
+        assert!(discovery.pending.is_empty());
+    }
+
+    /// Every place the page can show waits on the list its first page fills,
+    /// by name — a search by the query it sent, a category by its id even
+    /// where the id and the name differ, a channel's page by its login and
+    /// the shelf on screen — and the two tabs no browse request fills wait
+    /// on nothing.
+    #[test]
+    fn each_place_waits_on_the_list_its_first_page_fills() {
+        let mut discovery = Discovery::default();
+        for tab in [Tab::Following, Tab::History] {
+            discovery.tab = tab;
+            assert!(discovery.place().first_page().is_none(), "{tab:?}");
+            assert_eq!(discovery.shown_key(), None, "{tab:?}");
+        }
+        discovery.tab = Tab::Popular;
+        assert_eq!(discovery.shown_key(), Some(ListKey::Popular));
+        discovery.tab = Tab::Categories;
+        assert_eq!(discovery.shown_key(), Some(ListKey::Categories));
+
+        discovery.open = Some(Category {
+            id: "509658".into(),
+            name: "Just Chatting".into(),
+            box_art_url: String::new(),
+        });
+        assert_eq!(
+            discovery.shown_key(),
+            Some(ListKey::Category("509658".into()))
+        );
+
+        discovery.search = Some(SearchResults {
+            query: "zomboid".into(),
+            ..Default::default()
+        });
+        assert_eq!(
+            discovery.shown_key(),
+            Some(ListKey::Search("zomboid".into()))
+        );
+
+        let mut page = ChannelPage::new("someone".into(), "Someone".into(), Some("2".into()));
+        page.kind = VideoKind::Upload;
+        discovery.channel = Some(page);
+        assert_eq!(
+            discovery.shown_key(),
+            Some(ListKey::Videos {
+                login: "someone".into(),
+                kind: VideoKind::Upload,
+            })
+        );
+        assert!(
+            matches!(
+                discovery.place().first_page(),
+                Some(Request::Videos { user_id: Some(id), after: None, .. }) if id == "2"
+            ),
+            "a channel's first page is asked for by its id, from the top"
+        );
     }
 
     /// The difference between a Load more and a fresh tab is one bool, and

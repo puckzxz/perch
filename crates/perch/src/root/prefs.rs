@@ -1,10 +1,15 @@
 //! What the user has said about how the app should be: the settings sheet
 //! and what saving it changes, the divider drag that sizes video against
-//! chat, and the rail folding away. All of it ends up in `settings.json`.
+//! chat, the rail folding away and what is pinned to it. All of it ends up
+//! in `settings.json`.
 
 use std::time::Duration;
 
-use gpui::{prelude::*, App, Context, MouseMoveEvent, MouseUpEvent, Window};
+use gpui::{
+    canvas, prelude::*, App, Context, DispatchPhase, MouseButton, MouseMoveEvent, MouseUpEvent,
+    Window,
+};
+use settings::SheetFields;
 
 use super::{Page, Resize, RootView};
 use crate::browse::{Discovery, SignIn};
@@ -28,8 +33,33 @@ impl RootView {
             return;
         }
 
+        // The sheet takes the keyboard from whatever had it, whichever way it
+        // was opened. `Ctrl+,` does not stand aside for a text box, so it can
+        // open the sheet with the cursor still in the title bar's search box,
+        // which sits above the scrim. The veil there only stops the pointer,
+        // so typing went on reaching the box behind the sheet. `Enter` ran a
+        // search, which on the watch page left the page and, with the mini
+        // player off, stopped every stream. `Esc` could not close the sheet
+        // either, because its binding stands aside for a text box like every
+        // other. The palette is closed rather than left under the sheet
+        // without its cursor. There, `Esc` would only have closed and reopened
+        // the sheet over it, since a binding is answered before the palette's
+        // own key handler is asked. The other way round, `Ctrl+K` does nothing
+        // while the sheet is up (see `keys::bindings`), so the two never stack.
+        if self.palette_open {
+            self.toggle_palette(window, cx);
+        }
+        self.focus.focus(window);
+
+        // Only the fields it shows: whatever else the app writes while the
+        // sheet is open is never the sheet's to hand back. See `SheetFields`.
         let panel = cx.new(|cx| {
-            SettingsPanel::new(self.settings.clone(), self.sign_in.summary(), window, cx)
+            SettingsPanel::new(
+                SheetFields::of(&self.settings),
+                self.sign_in.summary(),
+                window,
+                cx,
+            )
         });
         cx.subscribe_in(
             &panel,
@@ -39,16 +69,18 @@ impl RootView {
                     SettingsEvent::Dismissed => this.settings_panel = None,
                     SettingsEvent::Saved(updated) => {
                         let client_id_changed =
-                            this.settings.credentials.client_id != updated.credentials.client_id;
+                            this.settings.credentials.client_id != updated.client_id;
                         // Turned off while streams are already parked on the
                         // browse page, the setting has to act now — otherwise
                         // it reads as broken until the next navigation.
                         let miniplayer_off = this.settings.miniplayer && !updated.miniplayer;
                         let stream_changed = this.settings.quality != updated.quality
-                            || this.settings.credentials.auth_token
-                                != updated.credentials.auth_token;
+                            || this.settings.credentials.auth_token != updated.auth_token;
 
-                        this.settings = (**updated).clone();
+                        // Only what the sheet owns, so whatever the app wrote
+                        // while it was open — the channel a later launch
+                        // opened — survives; see `adopt_sheet`.
+                        this.settings.adopt_sheet(updated);
                         // A new client id invalidates any stored sign-in, so
                         // that case drops the tokens rather than keeping them.
                         let saved = if client_id_changed {
@@ -76,8 +108,10 @@ impl RootView {
                             this.avatars.clear();
                             this.follows_loaded = false;
                             // Browsing was fetched with the old app's token, so
-                            // it goes with it.
+                            // it goes with it — and so does the trail through
+                            // it, whose places were read from what just went.
                             this.discovery = Discovery::default();
+                            this.trail.clear();
                             let (service, pump) =
                                 Self::spawn_twitch(this.settings_path.clone(), window, cx);
                             this.twitch = service;
@@ -150,8 +184,49 @@ impl RootView {
             .clamp(theme::VIDEO_SHARE_MIN, theme::VIDEO_SHARE_MAX)
     }
 
+    /// The listeners that follow a divider drag, as an element for the root
+    /// to hold: a `canvas` that registers them with the window as it paints.
+    ///
+    /// Window-level rather than on the handle or the root. The pointer leaves
+    /// a six-pixel handle on the first frame of any pull worth making, and an
+    /// element's own `on_mouse_move` and `on_mouse_up` only hear the pointer
+    /// over that element's unblocked hitbox — so the root's went deaf over
+    /// the occluded title bar, over a toast, over anything that blocks the
+    /// mouse, and a drag that wandered there lost its moves and could miss its
+    /// release. The window hears every one: gpui captures the mouse on a
+    /// press, so even a drag that leaves the window is still reported.
+    ///
+    /// A `canvas` inserts no hitbox, so this covers the window without being
+    /// in the way of anything. Both handlers return at once when nothing is
+    /// being dragged, which is most of the time.
+    pub(super) fn drag_listeners(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let owner = cx.entity().downgrade();
+        canvas(
+            |_, _, _| {},
+            move |_, _, window, _| {
+                let moves = owner.clone();
+                window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
+                    if phase == DispatchPhase::Bubble {
+                        moves
+                            .update(cx, |this, cx| this.on_mouse_move(event, window, cx))
+                            .ok();
+                    }
+                });
+                window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
+                    if phase == DispatchPhase::Bubble && event.button == MouseButton::Left {
+                        owner
+                            .update(cx, |this, cx| this.on_mouse_up(event, window, cx))
+                            .ok();
+                    }
+                });
+            },
+        )
+        .absolute()
+        .size_full()
+    }
+
     /// Follow the pointer, if a divider is being dragged.
-    pub(super) fn on_mouse_move(
+    fn on_mouse_move(
         &mut self,
         event: &MouseMoveEvent,
         window: &mut Window,
@@ -184,12 +259,7 @@ impl RootView {
     ///
     /// Saved here rather than on every move: a drag is hundreds of events and
     /// each save is a read-modify-write of the whole settings file.
-    pub(super) fn on_mouse_up(
-        &mut self,
-        _event: &MouseUpEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_mouse_up(&mut self, _event: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
         if self.resize.take().is_none() {
             return;
         }
@@ -198,12 +268,31 @@ impl RootView {
     }
 
     /// Fold the follows rail away, or bring it back, and remember which.
+    ///
+    /// Not in fullscreen, where the rail is not drawn either way (see
+    /// `layout::rail_shown`). There the press would change nothing on screen
+    /// and only show up on leaving fullscreen, as a rail folded or back
+    /// without anything having said so. `B` and the palette's row stand aside
+    /// there, as `Ctrl+F` does for the search box that goes with the bar.
     pub(super) fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if window.is_fullscreen() {
+            return;
+        }
         self.settings.sidebar_collapsed = !self.settings.sidebar_collapsed;
         self.save_settings(cx);
         // The panes just changed width, and with it perhaps their shape.
         self.sync_quality(window, cx);
         cx.notify();
+    }
+
+    /// Pin a channel to the top of the rail, or take it off, and write it
+    /// down. The one place either happens, so a pin is saved however it came
+    /// to be made, and a press that changes nothing writes nothing.
+    pub(super) fn set_pinned(&mut self, login: String, pinned: bool, cx: &mut Context<Self>) {
+        if self.settings.set_pinned(&login, pinned) {
+            self.save_settings(cx);
+            cx.notify();
+        }
     }
 
     /// Write the preferences down once they have stopped changing.

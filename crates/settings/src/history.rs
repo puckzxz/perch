@@ -110,7 +110,7 @@ pub struct History {
 
 /// What [`History::forget`] or [`History::clear`] took off the list, each
 /// entry with the place it held, so [`History::restore`] can put it back
-/// there. A slip of the pointer onto "forget" used to lose where a twelve-hour
+/// there. A slip of the pointer onto "Forget" used to lose where a twelve-hour
 /// broadcast was left, for good.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Forgotten {
