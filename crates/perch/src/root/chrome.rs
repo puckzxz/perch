@@ -8,7 +8,7 @@ use gpui::{div, prelude::*, px, Context, ElementId, IntoElement, SharedString, W
 
 use super::{Page, RootView, Toast, ToastAction};
 use crate::browse::Tab;
-use crate::{controls, motion, sidebar, theme};
+use crate::{channel_page, controls, motion, sidebar, theme};
 
 /// How long a "went live" toast stays up.
 const TOAST_LIFETIME: Duration = Duration::from_secs(8);
@@ -62,6 +62,10 @@ impl RootView {
 
     /// The rail, and everything it needs to know about what is already open.
     pub(super) fn follows_rail(&mut self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        // Folded away, the rail holds nothing still; see `hold_live`.
+        if self.settings.sidebar_collapsed {
+            self.hold_live(super::follows::LiveList::Rail, false, cx);
+        }
         // Live panes only: a recording open beside the rail does not make
         // its channel's row "watching".
         let watching: Vec<String> = self
@@ -100,14 +104,18 @@ impl RootView {
     }
 
     /// A pill that says whether it is the list you are looking at.
+    ///
+    /// None is while search results are up: they come from the box in the
+    /// header, not from a tab, and the tab left lit behind them read as though
+    /// the results were part of it — the history's, as often as not.
     pub(super) fn tab_pill(&self, tab: Tab, cx: &mut Context<Self>) -> impl IntoElement {
-        let variant = if self.discovery.tab == tab {
+        let variant = if self.discovery.tab == tab && self.discovery.search.is_none() {
             controls::Variant::Selected
         } else {
             controls::Variant::Pill
         };
         controls::pill(tab.label(), tab.label(), variant)
-            .on_click(cx.listener(move |this, _event, _window, cx| this.show_tab(tab, cx)))
+            .on_click(cx.listener(move |this, _event, window, cx| this.show_tab(tab, window, cx)))
     }
 
     /// Transient notices, top-right.
@@ -232,20 +240,19 @@ impl RootView {
 
         for (index, slot) in self.slots.iter().enumerate() {
             let id = ElementId::from(SharedString::from(format!("mini-{}", slot.key)));
-            // The name as the channel writes it, when the follows poll knows
-            // it; the login is what the rest of the app keys on, and it is
-            // all a channel opened by name has. A recording carries its
-            // channel's name with it.
-            let name = slot
-                .recording()
-                .map(|video| video.user_name.clone())
-                .or_else(|| {
-                    self.follows
-                        .iter()
-                        .find(|stream| stream.user_login == slot.channel)
-                        .map(|stream| stream.display_name.clone())
-                })
-                .unwrap_or_else(|| slot.channel.clone());
+            // The name the pane header uses; see `display_name`.
+            let name = self.display_name(slot);
+            // Under it, what is on, as the pane header's second line says it:
+            // the game for a stream, and that a recording is one. Every entry
+            // used to say "muted", which was true of all of them at once and
+            // is said once now, beside the controls.
+            let about = match slot.recording() {
+                Some(video) => channel_page::kind_tag(video.kind).to_string(),
+                None => self
+                    .stream_info(&slot.channel)
+                    .map(|stream| stream.game_name.clone())
+                    .unwrap_or_default(),
+            };
             let mut entry = div()
                 .id(id)
                 .flex()
@@ -284,13 +291,15 @@ impl RootView {
                             .text_color(theme::text())
                             .child(SharedString::from(name)),
                     )
-                    .child(
-                        div()
-                            .text_size(px(theme::TEXT_META))
-                            .line_height(px(theme::LINE_TIGHT))
-                            .text_color(theme::text_dim())
-                            .child("muted"),
-                    ),
+                    .when(!about.is_empty(), |text| {
+                        text.child(
+                            div()
+                                .text_size(px(theme::TEXT_META))
+                                .line_height(px(theme::LINE_TIGHT))
+                                .text_color(theme::text_dim())
+                                .child(SharedString::from(about)),
+                        )
+                    }),
             );
 
             // The same word the pane header uses, and the same size: a lone
@@ -304,6 +313,14 @@ impl RootView {
 
         Some(
             bar.child(div().flex_1())
+                // Once for the bar, not once per stream: everything in it is.
+                .child(
+                    div()
+                        .flex_none()
+                        .text_size(px(theme::TEXT_META))
+                        .text_color(theme::text_dim())
+                        .child("muted while you browse"),
+                )
                 .child(self.pill(
                     "mini-watch",
                     "back to watching".into(),

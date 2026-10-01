@@ -16,10 +16,10 @@
 use chrono::{DateTime, Datelike as _, Local, Utc};
 use emotes::ImageCache;
 use gpui::{
-    div, img, prelude::*, px, rgb, AnyElement, Context, DefiniteLength, ScrollHandle, SharedString,
+    div, img, prelude::*, px, AnyElement, Context, DefiniteLength, ScrollHandle, SharedString,
 };
 use settings::history::{History, Watched};
-use twitch_api::{Video, VIDEO_THUMBNAIL};
+use twitch_api::{Video, VideoKind, VIDEO_THUMBNAIL};
 
 use crate::browse::{self, Action, ChannelPage, Discovery};
 use crate::controls;
@@ -35,10 +35,41 @@ use crate::theme;
 /// bar at the length it had then.
 const STILL_GOING_SECS: i64 = 600;
 
+/// The kinds of video a channel's page lists, in the order its switch shows
+/// them: what it broadcast, what it cut from that, and what it uploaded.
+pub const SHELVES: [VideoKind; 3] = [VideoKind::Archive, VideoKind::Highlight, VideoKind::Upload];
+
+/// What the page's switch calls a kind.
+pub fn shelf_name(kind: VideoKind) -> &'static str {
+    match kind {
+        VideoKind::Archive => "past broadcasts",
+        VideoKind::Highlight => "highlights",
+        VideoKind::Upload => "uploads",
+        VideoKind::Other => "videos",
+    }
+}
+
+/// The word a pane playing a video of this kind wears in its header, where a
+/// live pane has its numbers: what the thing on screen is, since the picture
+/// alone does not say.
+pub fn kind_tag(kind: VideoKind) -> &'static str {
+    match kind {
+        VideoKind::Archive => "replay",
+        VideoKind::Highlight => "highlight",
+        VideoKind::Upload => "upload",
+        VideoKind::Other => "video",
+    }
+}
+
 /// Whether `video` is a broadcast still being recorded, as best the list can
 /// tell. See [`STILL_GOING_SECS`] for the two signals.
+///
+/// Broadcasts only. The second signal is a listed end close to now, which a
+/// highlight cut or a video uploaded a few minutes ago has too — and neither
+/// is growing, whatever its dates say.
 pub fn in_progress(video: &Video, now: DateTime<Utc>) -> bool {
-    placeholder(&video.thumbnail_url) || listed_as_going(video, now)
+    video.kind == VideoKind::Archive
+        && (placeholder(&video.thumbnail_url) || listed_as_going(video, now))
 }
 
 /// Whether a thumbnail is the picture Twitch serves in place of one while a
@@ -264,22 +295,10 @@ pub(crate) fn card<V: 'static>(
                 .group("video-card")
                 .child(preview)
                 .child(
-                    div()
+                    controls::badge()
                         .absolute()
                         .bottom(px(theme::GAP_TIGHT))
                         .left(px(theme::GAP_TIGHT))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(theme::GAP_TIGHT))
-                        .px(px(theme::GAP_TIGHT))
-                        .py(px(3.))
-                        .rounded(px(theme::RADIUS))
-                        .bg(theme::overlay())
-                        .text_size(px(theme::TEXT_META))
-                        .font_weight(theme::weight_label())
-                        .line_height(px(theme::LINE_TIGHT))
-                        .text_color(rgb(0xffffff))
                         .when(going, |badge| badge.child(controls::live_dot()))
                         .child(SharedString::from(corner)),
                 )
@@ -392,15 +411,39 @@ pub fn view<V: 'static>(
     cx: &mut Context<V>,
 ) -> AnyElement {
     let now = Utc::now();
-    let body = if channel.videos.is_empty() {
-        browse::browse_placeholder(
-            discovery,
-            format!(
-                "{} has no past broadcasts. Twitch keeps them only for channels that ask it to.",
-                channel.display_name
-            )
-            .into(),
-        )
+    let videos = channel.videos();
+
+    // Which kind is on screen, where the page's one heading used to say
+    // "past broadcasts": the same pills as the browse tabs, because it is the
+    // same choice one level down.
+    let mut shelves = div().flex().flex_row().gap(px(theme::GAP_TIGHT));
+    for (slot, kind) in SHELVES.into_iter().enumerate() {
+        let variant = if kind == channel.kind {
+            controls::Variant::Selected
+        } else {
+            controls::Variant::Pill
+        };
+        let on_action = on_action.clone();
+        shelves = shelves.child(
+            controls::pill(("channel-shelf", slot), shelf_name(kind), variant).on_click(
+                cx.listener(move |view, _event, window, cx| {
+                    on_action(view, Action::ShowShelf(kind), window, cx)
+                }),
+            ),
+        );
+    }
+
+    let list = browse::scroller("channel-videos", scroll).child(shelves);
+    let list = if videos.is_empty() {
+        let name = &channel.display_name;
+        let nothing = match channel.kind {
+            VideoKind::Archive => format!(
+                "{name} has no past broadcasts. Twitch keeps them only for channels that ask it to."
+            ),
+            VideoKind::Highlight => format!("{name} has made no highlights."),
+            VideoKind::Upload | VideoKind::Other => format!("{name} has uploaded no videos."),
+        };
+        list.child(browse::browse_placeholder(discovery, nothing.into()))
     } else {
         let card_width = browse::card_width(
             width,
@@ -409,7 +452,7 @@ pub fn view<V: 'static>(
             theme::GAP_SECTION,
         );
         let mut row = browse::wrap_row(theme::GAP_SECTION);
-        for (index, video) in channel.videos.items.iter().enumerate() {
+        for (index, video) in videos.items.iter().enumerate() {
             let item = Card {
                 index,
                 video,
@@ -427,17 +470,14 @@ pub fn view<V: 'static>(
                 cx,
             ));
         }
-        let list = browse::scroller("channel-videos", scroll)
-            .child(browse::heading("past broadcasts"))
-            .child(row)
-            .children(browse::load_more(
-                channel.videos.next.is_some(),
-                discovery.loading,
-                on_action.clone(),
-                cx,
-            ));
-        browse::scrollable(list, scroll).into_any_element()
+        list.child(row).children(browse::load_more(
+            videos.next.is_some(),
+            discovery.loading,
+            on_action.clone(),
+            cx,
+        ))
     };
+    let body = browse::scrollable(list, scroll).into_any_element();
 
     let login = channel.login.clone();
     let other = controls::pill(
@@ -533,6 +573,20 @@ mod tests {
             &video("not a date", 100, "https://cdn/x.jpg"),
             now
         ));
+    }
+
+    /// A highlight cut a few minutes ago ends close to now on paper, which is
+    /// the second signal a broadcast is still going — and it is not.
+    #[test]
+    fn only_a_broadcast_can_still_be_going() {
+        let now = at("2026-09-08T20:00:00Z");
+        for kind in [VideoKind::Highlight, VideoKind::Upload] {
+            let fresh = Video {
+                kind,
+                ..video("2026-09-08T19:50:00Z", 300, "https://cdn/x.jpg")
+            };
+            assert!(!in_progress(&fresh, now), "{kind:?} read as still going");
+        }
     }
 
     #[test]

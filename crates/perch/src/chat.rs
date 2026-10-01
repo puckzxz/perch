@@ -230,7 +230,10 @@ impl ChatView {
         let (link, mut events, waiting, replay) = match feed {
             Feed::Live { channel, history } => {
                 let (client, events) = ChatClient::connect(&channel, history);
-                let waiting = format!("connecting to #{channel}…");
+                // The words the row that replaces it uses, "connected to
+                // {channel}'s chat": not IRC's `#channel`, which is a name for
+                // the room nobody reading the pane needs to know.
+                let waiting = format!("connecting to {channel}'s chat…");
                 (Link::Live { _client: client }, events, waiting, false)
             }
             Feed::Replay {

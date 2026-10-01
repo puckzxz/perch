@@ -8,8 +8,8 @@
 
 use chrono::{DateTime, Utc};
 use gpui::{
-    canvas, div, prelude::*, px, Context, CursorStyle, ElementId, Entity, IntoElement, MouseButton,
-    MouseDownEvent, Pixels, SharedString, Task, Window,
+    canvas, div, prelude::*, px, AnyElement, Context, CursorStyle, ElementId, Entity, IntoElement,
+    MouseButton, MouseDownEvent, Pixels, SharedString, Task, Window,
 };
 use streamlink::StreamSupervisor;
 
@@ -88,9 +88,9 @@ pub struct Slot {
     pub quality_override: Option<String>,
     pub state: StreamState,
     /// The chat beside the video: live, or replayed against where the
-    /// recording is. `None` only for a video whose chat cannot be replayed —
+    /// recording is. `None` only for a video whose chat cannot be replayed:
     /// a highlight is cut from ranges of a broadcast, so its offsets mean
-    /// nothing — which the app does not list today.
+    /// nothing, and an upload was never a broadcast at all.
     pub chat: Option<Entity<ChatView>>,
     /// Where a recording picks up when its player is started again: after a
     /// quality change, or from the top once it has finished.
@@ -149,16 +149,19 @@ impl Slot {
             Source::Live => None,
         }
     }
+}
 
-    /// What the palette calls this pane. The login for a stream, which is
-    /// what the palette matches "watching" against; a recording says so, so
-    /// two panes on one channel read as two things.
-    pub fn label(&self) -> String {
-        match &self.source {
-            Source::Live => self.channel.clone(),
-            Source::Video { .. } => format!("{} (replay)", self.channel),
-        }
-    }
+/// What the root knows about a pane beyond its slot, resolved once per frame
+/// in `RootView::watch_page` rather than per pane inside the page.
+pub struct PaneInfo<'a> {
+    /// The live record the header's numbers, title and game come from, when
+    /// a list the app has fetched carries the channel — see
+    /// `RootView::stream_info`. `None` for a recording, whose header speaks
+    /// for the recording, and for a channel opened by name that is in no list.
+    pub stream: Option<&'a LiveStream>,
+    /// What the pane calls its channel, in its header and its status line —
+    /// see `RootView::display_name`.
+    pub name: SharedString,
 }
 
 /// What a pane shows in place of a picture.
@@ -177,7 +180,7 @@ struct Status {
     retry: Option<&'static str>,
 }
 
-fn status_message(slot: &Slot) -> Option<Status> {
+fn status_message(slot: &Slot, name: &str) -> Option<Status> {
     // Spelled out per state rather than through a four-argument constructor.
     // Three of the four fields are booleans, and `(false, false, true)` at a
     // call site says nothing about which state is which.
@@ -211,15 +214,9 @@ fn status_message(slot: &Slot) -> Option<Status> {
             "this recording is no longer available".into(),
             "try again",
         )),
-        StreamState::Offline => Some(over(
-            format!("{} is offline", slot.channel).into(),
-            "try again",
-        )),
+        StreamState::Offline => Some(over(format!("{name} is offline").into(), "try again")),
         StreamState::Ended if recording => Some(over("finished".into(), "watch again")),
-        StreamState::Ended => Some(over(
-            format!("{} ended the stream", slot.channel).into(),
-            "try again",
-        )),
+        StreamState::Ended => Some(over(format!("{name} ended the stream").into(), "try again")),
         StreamState::Failed(reason) => Some(Status {
             text: reason.clone(),
             working: false,
@@ -246,9 +243,6 @@ struct PaneLayout {
     cell_height: f32,
     /// A dragged share of the cell for the video, or zero to derive it.
     video_share: f32,
-    /// False when there is only one pane; closing the last one is what the
-    /// page-level navigation is for.
-    closable: bool,
     /// Whether to mark the pane the keyboard is acting on. Only worth saying
     /// with more than one pane on screen: with one, it is the answer to a
     /// question nobody asked.
@@ -352,17 +346,14 @@ fn divider<V: 'static>(
 fn chat_header<V: 'static>(
     index: usize,
     slot: &Slot,
-    info: Option<&LiveStream>,
-    closable: bool,
+    pane: &PaneInfo,
     active: bool,
     on_close: impl Fn(&mut V, usize, &mut Window, &mut Context<V>) + 'static,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
     let recording = slot.recording();
-    let name = recording
-        .map(|video| video.user_name.clone())
-        .or_else(|| info.map(|stream| stream.display_name.clone()))
-        .unwrap_or_else(|| slot.channel.clone());
+    let info = pane.stream;
+    let name = pane.name.clone();
 
     // Both are absent for a channel opened by name that you do not follow:
     // the follows poll is where these numbers come from, and it only knows
@@ -504,13 +495,16 @@ fn chat_header<V: 'static>(
                             gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
                         })
                         .on_click(cx.listener(move |_, _event, _window, cx| cx.open_url(&url)))
-                        .child(SharedString::from(name)),
+                        .child(name),
                 )
                 // Said where `muted` and `paused` are said, and for the same
                 // reason: it is a fact about the pane that the picture alone
                 // does not carry.
-                .when(recording.is_some(), |header| {
-                    header.child(controls::tag("replay"))
+                // Which kind of recording, since the three play alike:
+                // `replay` for a broadcast, and a highlight or an upload by
+                // its own name.
+                .when_some(recording, |header, video| {
+                    header.child(controls::tag(channel_page::kind_tag(video.kind)))
                 })
                 .when(!ended && !meta.is_empty(), |header| {
                     header.child(
@@ -530,15 +524,16 @@ fn chat_header<V: 'static>(
                 .when(muted, |header| header.child(controls::tag("muted")))
                 .when(paused, |header| header.child(controls::tag("paused")))
                 .child(div().flex_1())
-                .when(closable, |header| {
-                    header.child(
-                        controls::destructive(pane_id(&slot.key, "close"), "close").on_click(
-                            cx.listener(move |view, _event, window, cx| {
-                                on_close(view, index, window, cx)
-                            }),
-                        ),
-                    )
-                }),
+                // On every pane, a lone one included. It used to go when only
+                // one pane was left, while `Ctrl+W` went on closing that one —
+                // a control the keyboard had and the pointer did not.
+                .child(
+                    controls::destructive(pane_id(&slot.key, "close"), "close").on_click(
+                        cx.listener(move |view, _event, window, cx| {
+                            on_close(view, index, window, cx)
+                        }),
+                    ),
+                ),
         )
         .when(!about.is_empty(), |header| {
             header.child(
@@ -559,6 +554,34 @@ fn chat_header<V: 'static>(
         })
 }
 
+/// What goes where chat does: the chat, or — for a stacked pane that has
+/// none to show — a word on why it is not there.
+///
+/// Stacked, a pane with chat hidden keeps the shape a pane with chat has: the
+/// picture in the same box, its header under it. It used to put the header on
+/// top and centre the picture in the rest, which for a 16:9 stream in a tall
+/// cell bought nothing but black above and below it — the picture is as wide
+/// as the cell either way — and left its header at a different height from
+/// every neighbour's.
+fn chat_or_why(slot: &Slot, chatless: bool) -> AnyElement {
+    match (&slot.chat, chatless) {
+        (Some(chat), false) => chat.clone().into_any_element(),
+        (chat, _) => div()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_size(px(theme::TEXT_META))
+            .text_color(theme::text_dim())
+            .child(if chat.is_some() {
+                "chat hidden · press C"
+            } else {
+                "no chat replay for this video"
+            })
+            .into_any_element(),
+    }
+}
+
 /// One pane: a player, and its chat with a header.
 ///
 /// Nothing static is drawn over the video. What appears there on hover is
@@ -567,7 +590,7 @@ fn chat_header<V: 'static>(
 fn pane<V: 'static>(
     index: usize,
     slot: &Slot,
-    info: Option<&LiveStream>,
+    info: &PaneInfo,
     layout: PaneLayout,
     active: bool,
     on_close: impl Fn(&mut V, usize, &mut Window, &mut Context<V>) + 'static,
@@ -577,7 +600,7 @@ fn pane<V: 'static>(
     on_hover: impl Fn(&mut V, usize, bool, &mut Context<V>) + 'static,
     cx: &mut Context<V>,
 ) -> gpui::AnyElement {
-    let video = match (&slot.state, status_message(slot)) {
+    let video = match (&slot.state, status_message(slot, &info.name)) {
         (StreamState::Playing(view), _) => view.clone().into_any_element(),
         (_, Some(status)) => {
             let retry = status.retry;
@@ -633,7 +656,6 @@ fn pane<V: 'static>(
         index,
         slot,
         info,
-        layout.closable,
         layout.mark_active && active,
         on_close,
         cx,
@@ -676,18 +698,15 @@ fn pane<V: 'static>(
     // asked mpv for a frame that shape, which fixed the wrong height in
     // place: a stacked pane after a rail toggle showed its picture at four
     // fifths of the box, with black under it, until the app was restarted.
-    // A pane with no chat to show lays out the way hidden chat does: the
-    // header strip, and the picture under it.
+    // A pane with no chat to show lays out the way hidden chat does.
     let chatless = slot.chat_hidden || slot.chat.is_none();
     let video_pane = div()
         .id(pane_id(&slot.key, "video"))
         .map(|pane| {
-            // With chat hidden the video is the whole cell, so it stops being
-            // sized against chat and simply takes what is left under the
-            // header.
-            if chatless {
-                pane.flex_1().min_w_0()
-            } else if layout.portrait {
+            // Stacked, the box is the stream's shape whether or not chat is
+            // under it — see below for why hiding chat does not change that.
+            // Beside, the video takes whatever the cell leaves it.
+            if layout.portrait {
                 pane.flex_none().h(px(video_height)).w_full()
             } else {
                 pane.flex_1().min_w_0()
@@ -725,9 +744,9 @@ fn pane<V: 'static>(
         cx.listener(move |view, _event, _window, cx| on_activate(view, index, cx)),
     );
 
-    if chatless {
-        // A column whatever the grid shape, because the only thing left beside
-        // the video is the header strip.
+    if chatless && !layout.portrait {
+        // Beside the video, hiding chat gives the video chat's column: the
+        // cell becomes the header strip over the picture.
         //
         // That strip stays rather than going with the chat it used to sit on:
         // it carries the channel's name and the close button, and nothing is
@@ -746,7 +765,7 @@ fn pane<V: 'static>(
                     .w_full()
                     .py(px(theme::GAP_TIGHT))
                     // Only the top-left pane, which is the only one the page's
-                    // "← follows" overlay can reach. Every other pane's header
+                    // "← browse" overlay can reach. Every other pane's header
                     // starts where it always did.
                     .when(index == 0, |header| header.pl(px(theme::NAV_RESERVE)))
                     .child(header),
@@ -774,7 +793,7 @@ fn pane<V: 'static>(
             }
         })
         .child(header)
-        .child(div().flex_1().min_h_0().children(slot.chat.clone()));
+        .child(div().flex_1().min_h_0().child(chat_or_why(slot, chatless)));
 
     cell.map(|cell| {
         if layout.portrait {
@@ -792,14 +811,12 @@ fn pane<V: 'static>(
 /// The whole watch page, laid out in the room the `body` says it has. See
 /// [`layout::Body`] for why that is a type rather than the viewport.
 ///
-/// `info` is what the app knows about each slot, in the same order — see
-/// `RootView::stream_info`. `None` for a channel opened by name that appears
-/// in none of the lists it has fetched, which is the one case a pane header
-/// has nothing to say beyond the name.
+/// `panes` is what the app knows about each slot, in the same order — see
+/// [`PaneInfo`].
 #[allow(clippy::too_many_arguments)]
 pub fn page<V: 'static>(
     slots: &[Slot],
-    info: &[Option<&LiveStream>],
+    panes: &[PaneInfo],
     body: layout::Body,
     chat_width: f32,
     video_share: f32,
@@ -820,7 +837,6 @@ pub fn page<V: 'static>(
         cell_width: layout::cell_extent(body.width, cols),
         cell_height: layout::cell_extent(body.height, rows),
         video_share,
-        closable: slots.len() > 1,
         mark_active: slots.len() > 1,
     };
 
@@ -840,13 +856,13 @@ pub fn page<V: 'static>(
             .gap(px(theme::PANE_GAP));
         for col in 0..cols {
             let index = row * cols + col;
-            let Some(slot) = slots.get(index) else {
+            let (Some(slot), Some(info)) = (slots.get(index), panes.get(index)) else {
                 continue;
             };
             line = line.child(pane(
                 index,
                 slot,
-                info.get(index).copied().flatten(),
+                info,
                 cell,
                 active == Some(index),
                 on_close.clone(),

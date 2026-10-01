@@ -4,7 +4,9 @@
 use gpui::{Context, Window};
 
 use super::{Page, RootView};
-use crate::browse::{self, Action, ChannelPage, SearchResults, SignIn, Tab};
+use twitch_api::VideoKind;
+
+use crate::browse::{Action, ChannelPage, SearchResults, SignIn, Tab};
 use crate::twitch::Request;
 
 impl RootView {
@@ -56,9 +58,11 @@ impl RootView {
     /// one you have had open all evening.
     pub(super) fn refresh(&mut self, cx: &mut Context<Self>) {
         if let Some(page) = &self.discovery.channel {
+            // The kind on screen, from its first page again.
             self.fetch(Request::Videos {
                 login: page.login.clone(),
                 user_id: page.user_id.clone(),
+                kind: page.kind,
                 after: None,
             });
             cx.notify();
@@ -102,14 +106,36 @@ impl RootView {
         self.refreshing = self.twitch.request(Request::Follows);
     }
 
-    pub(super) fn show_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
+    /// A tab of the browse page, from wherever the app is — the watch page
+    /// included, which it leaves the way `Esc` does.
+    pub(super) fn go_to_tab(&mut self, tab: Tab, window: &mut Window, cx: &mut Context<Self>) {
+        if self.page == Page::Watch {
+            self.go_browse(cx);
+        }
+        self.show_tab(tab, window, cx);
+    }
+
+    pub(super) fn show_tab(&mut self, tab: Tab, window: &mut Window, cx: &mut Context<Self>) {
         self.discovery.tab = tab;
         self.discovery.open = None;
-        self.discovery.search = None;
+        self.end_search(window, cx);
         self.discovery.channel = None;
         self.discovery.error = None;
         self.fill_tab();
         cx.notify();
+    }
+
+    /// Leave the search results, and empty the box that asked for them.
+    ///
+    /// Every way off the results comes through here — back, a tab, a category
+    /// or a channel's page opened from them — because the query used to stay
+    /// in the box after its results had gone, where it read as though they
+    /// were still what the page was showing.
+    fn end_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.discovery.search.take().is_some() {
+            self.search
+                .update(cx, |state, cx| state.set_value("", window, cx));
+        }
     }
 
     /// Run a search, or clear the results if the box is empty.
@@ -143,7 +169,7 @@ impl RootView {
             Action::Watch(channel) => self.open_channel(channel, true, window, cx),
             Action::Add(channel) => self.open_channel(channel, false, window, cx),
             Action::OpenCategory(category) => {
-                self.discovery.search = None;
+                self.end_search(window, cx);
                 self.discovery.channel = None;
                 self.discovery.streams.clear();
                 self.discovery.open = Some(category.clone());
@@ -159,8 +185,19 @@ impl RootView {
                 self.discovery.error = None;
                 cx.notify();
             }
+            // What was typed into the Following tab's filter moves to the box
+            // that asks Twitch, and is asked there — so the results page says
+            // what it is showing, and back does not return to a filter that
+            // still matches nobody.
+            Action::Search(query) => {
+                self.filter
+                    .update(cx, |state, cx| state.set_value("", window, cx));
+                self.search
+                    .update(cx, |state, cx| state.set_value(query.clone(), window, cx));
+                self.run_search(query, cx);
+            }
             Action::CloseSearch => {
-                self.discovery.search = None;
+                self.end_search(window, cx);
                 self.discovery.error = None;
                 cx.notify();
             }
@@ -170,12 +207,13 @@ impl RootView {
                 login,
                 display_name,
                 user_id,
-            } => self.open_channel_page(login, display_name, user_id, cx),
+            } => self.open_channel_page(login, display_name, user_id, window, cx),
             Action::CloseChannel => {
                 self.discovery.channel = None;
                 self.discovery.error = None;
                 cx.notify();
             }
+            Action::ShowShelf(kind) => self.show_shelf(kind, cx),
             Action::WatchVideo(video) => self.open_video(*video, true, window, cx),
             Action::AddVideo(video) => self.open_video(*video, false, window, cx),
             Action::ForgetVideo(id) => self.forget_video(&id, cx),
@@ -193,25 +231,45 @@ impl RootView {
         login: String,
         display_name: String,
         user_id: Option<String>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if self.page == Page::Watch {
             self.go_browse(cx);
         }
-        self.discovery.search = None;
+        self.end_search(window, cx);
         self.discovery.open = None;
         self.discovery.streams.clear();
-        self.discovery.channel = Some(ChannelPage {
-            login: login.clone(),
-            display_name,
-            user_id: user_id.clone(),
-            videos: browse::Listing::default(),
-        });
+        let page = ChannelPage::new(login.clone(), display_name, user_id.clone());
+        let kind = page.kind;
+        self.discovery.channel = Some(page);
         self.fetch(Request::Videos {
             login,
             user_id,
+            kind,
             after: None,
         });
+        cx.notify();
+    }
+
+    /// Show another kind of the open channel's videos, fetching it the first
+    /// time — or again, while it has come back with nothing: an empty list is
+    /// one question away from being known to be empty now.
+    fn show_shelf(&mut self, kind: VideoKind, cx: &mut Context<Self>) {
+        let Some(page) = self.discovery.channel.as_mut() else {
+            return;
+        };
+        page.kind = kind;
+        self.discovery.error = None;
+        if page.shelf(kind).is_empty() {
+            let request = Request::Videos {
+                login: page.login.clone(),
+                user_id: page.user_id.clone(),
+                kind,
+                after: None,
+            };
+            self.fetch(request);
+        }
         cx.notify();
     }
 
@@ -232,9 +290,10 @@ impl RootView {
         }
 
         let request = if let Some(page) = &self.discovery.channel {
-            page.videos.next.clone().map(|after| Request::Videos {
+            page.videos().next.clone().map(|after| Request::Videos {
                 login: page.login.clone(),
                 user_id: page.user_id.clone(),
+                kind: page.kind,
                 after: Some(after),
             })
         } else if let Some(category) = self.discovery.open.clone() {

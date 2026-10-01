@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 
 use futures::channel::mpsc;
 use settings::{OAuthTokens, Settings};
-use twitch_api::{Category, FollowedChannel, LiveStream, Session, Video};
+use twitch_api::{Category, Channel, LiveStream, Session, Video, VideoKind};
 
 /// How often to re-ask Twitch who is live.
 const POLL_INTERVAL: Duration = Duration::from_secs(60);
@@ -45,13 +45,15 @@ pub enum Request {
         category: Category,
         after: Option<String>,
     },
-    /// Categories and live channels matching a name.
+    /// Categories and channels matching a name, live and not.
     Search(String),
-    /// A channel's past broadcasts. `user_id` is what Helix lists them by;
-    /// a channel that arrived with a name alone has it looked up first.
+    /// One kind of a channel's videos — past broadcasts, highlights or
+    /// uploads. `user_id` is what Helix lists them by; a channel that arrived
+    /// with a name alone has it looked up first.
     Videos {
         login: String,
         user_id: Option<String>,
+        kind: VideoKind,
         after: Option<String>,
     },
     /// One recording, by the id a link carries.
@@ -96,9 +98,9 @@ pub enum TwitchEvent {
     Streams(Vec<LiveStream>),
     /// Everyone the user follows, live or not. A separate list from
     /// [`Streams`](TwitchEvent::Streams) all the way to the screen — see
-    /// [`FollowedChannel`] for why merging them would be wrong three times
+    /// [`Channel`] for why merging them would be wrong three times
     /// over.
-    FollowedChannels(Vec<FollowedChannel>),
+    FollowedChannels(Vec<Channel>),
     /// Avatars for whoever is live, as `(login, url)`. Arrives after the live
     /// list it belongs to and is merged into what the UI already holds, so a
     /// rail that is already on screen fills in rather than blinking.
@@ -118,12 +120,16 @@ pub enum TwitchEvent {
         query: String,
         categories: Vec<Category>,
         streams: Vec<LiveStream>,
+        /// Channels that answered to the name and are not live: names, the
+        /// way offline follows are.
+        channels: Vec<Channel>,
     },
-    /// A page of one channel's past broadcasts, with the id they were listed
+    /// A page of one kind of a channel's videos, with the id they were listed
     /// by so the next page need not look it up again.
     Videos {
         login: String,
         user_id: String,
+        kind: VideoKind,
         videos: Listing<Video>,
     },
     /// The recording a link named, or why it could not be had. Its own
@@ -461,8 +467,9 @@ fn serve(
         Request::Videos {
             login,
             user_id,
+            kind,
             after,
-        } => channel_videos(client_id, token, login, user_id, after),
+        } => channel_videos(client_id, token, login, user_id, kind, after),
         Request::Video { id } => {
             let result = match twitch_api::video(client_id, token, &id) {
                 Ok(Some(video)) => Ok(video),
@@ -487,14 +494,30 @@ fn search(client_id: &str, token: &str, query: String) -> Result<TwitchEvent, tw
     let categories = twitch_api::search_categories(client_id, token, &query)?;
     let logins = twitch_api::search_channels(client_id, token, &query)?;
     let streams = twitch_api::streams_by_login(client_id, token, &logins)?;
+    // The channels that are not on: the way to a channel's page when you know
+    // its name and it is not streaming, which the search used to have none of.
+    // Worth less than the rest of the answer, so a failure here costs these
+    // names and not the page. Anyone who went live between the two requests
+    // is already among the streams, and is not listed twice.
+    let channels = match twitch_api::search_offline_channels(client_id, token, &query) {
+        Ok(channels) => channels
+            .into_iter()
+            .filter(|channel| !streams.iter().any(|s| s.user_login == channel.login))
+            .collect(),
+        Err(e) => {
+            eprintln!("search: offline channels: {e}");
+            Vec::new()
+        }
+    };
     Ok(TwitchEvent::SearchResults {
         query,
         categories,
         streams,
+        channels,
     })
 }
 
-/// One channel's past broadcasts, looking its id up first when the caller
+/// One kind of a channel's videos, looking its id up first when the caller
 /// had only a name — the palette and the command line know channels by login,
 /// and Helix lists videos by id alone.
 fn channel_videos(
@@ -502,6 +525,7 @@ fn channel_videos(
     token: &str,
     login: String,
     user_id: Option<String>,
+    kind: VideoKind,
     after: Option<String>,
 ) -> Result<TwitchEvent, twitch_api::Error> {
     let user_id = match user_id {
@@ -510,10 +534,11 @@ fn channel_videos(
             .map(|(id, _)| id)
             .ok_or_else(|| twitch_api::Error::Api(format!("there is no channel called {login}")))?,
     };
-    let page = twitch_api::videos(client_id, token, &user_id, after.as_deref())?;
+    let page = twitch_api::videos(client_id, token, &user_id, kind, after.as_deref())?;
     Ok(TwitchEvent::Videos {
         login,
         user_id,
+        kind,
         videos: Listing::from(page, after.is_some()),
     })
 }

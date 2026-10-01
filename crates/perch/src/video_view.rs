@@ -9,9 +9,9 @@
 use std::sync::Arc;
 
 use gpui::{
-    canvas, div, img, prelude::*, px, Animation, AnimationExt, Bounds, ClickEvent, Context,
-    ElementId, Entity, EventEmitter, Hsla, Pixels, Point, RenderImage, SharedString, Subscription,
-    Task, Window,
+    canvas, div, img, prelude::*, px, Animation, AnimationExt, Bounds, ClickEvent, Context, Div,
+    ElementId, Entity, EventEmitter, Hsla, Pixels, Point, RenderImage, SharedString, Stateful,
+    Subscription, Task, Window,
 };
 use gpui_component::slider::{Slider, SliderEvent, SliderState};
 
@@ -29,13 +29,29 @@ const MENU_RISE: f32 = 6.0;
 pub enum VideoEvent {
     /// The user changed volume; worth persisting to settings.
     VolumeChanged(u8),
-    /// The user picked a different quality. Switching means restarting
-    /// streamlink, so the root handles it rather than the player.
-    QualityRequested(String),
+    /// The user picked a quality from the pane's menu: a rendition, or `None`
+    /// to hand the pane back to whatever the settings pick at its size.
+    /// Switching means restarting streamlink, so the root handles it rather
+    /// than the player.
+    QualityRequested(Option<String>),
     /// The stream stopped and will not resume. The root handles it because
     /// what is left to do - retire this player, take streamlink down with it,
     /// and say so in the pane - is all outside the player.
     Stopped(Stopped),
+}
+
+/// What a pane's quality menu offers, and which of it is chosen.
+pub struct Qualities {
+    /// The rendition playing, which is what the menu's button says.
+    pub playing: SharedString,
+    /// Every rendition the stream offers, highest first.
+    pub available: Vec<String>,
+    /// What the settings pick when a pane is not told otherwise, in the words
+    /// the settings sheet stores it in: `auto`, `best`, `1080p`.
+    pub default: SharedString,
+    /// Whether this pane was told otherwise — a rendition picked from its own
+    /// menu, which holds until the pane closes or the default is chosen again.
+    pub picked: bool,
 }
 
 pub struct VideoView {
@@ -51,9 +67,7 @@ pub struct VideoView {
     /// Volume before muting, so unmute restores rather than guessing.
     volume_before_mute: u8,
     volume_slider: Entity<SliderState>,
-    quality: SharedString,
-    /// Other qualities this channel offers, highest first.
-    available: Vec<String>,
+    qualities: Qualities,
     quality_menu_open: bool,
     /// Whether the pointer is over this player, measured from the pane's own
     /// bounds rather than taken from GPUI's `on_hover`.
@@ -104,8 +118,7 @@ impl VideoView {
     pub fn from_stream(
         stream: VideoStream,
         mut frames: futures::channel::mpsc::Receiver<()>,
-        quality: SharedString,
-        available: Vec<String>,
+        qualities: Qualities,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -161,8 +174,7 @@ impl VideoView {
             current: None,
             volume_before_mute: volume.max(1),
             volume_slider,
-            quality,
-            available,
+            qualities,
             quality_menu_open: false,
             hovered: false,
             controls: motion::Fade::hidden(),
@@ -354,11 +366,30 @@ impl VideoView {
     /// The qualities this stream offers, highest first, and the one playing:
     /// what a re-pick after the pane changes size chooses from.
     pub fn available(&self) -> &[String] {
-        &self.available
+        &self.qualities.available
     }
 
     pub fn quality(&self) -> &str {
-        &self.quality
+        &self.qualities.playing
+    }
+
+    /// Whether this pane's quality was picked from its own menu, for a choice
+    /// that did not need a new player to take effect.
+    pub fn set_picked(&mut self, picked: bool, cx: &mut Context<Self>) {
+        self.qualities.picked = picked;
+        cx.notify();
+    }
+
+    /// Close the quality menu, if it is open. Returns whether it was, so
+    /// `Esc` can take back the menu before it takes you off the page.
+    pub fn close_menu(&mut self, cx: &mut Context<Self>) -> bool {
+        if !self.quality_menu_open {
+            return false;
+        }
+        self.quality_menu_open = false;
+        self.sync_controls();
+        cx.notify();
+        true
     }
 
     /// Width over height of the stream itself, once a frame has decoded.
@@ -385,33 +416,31 @@ impl VideoView {
             .border_1()
             .border_color(theme::border());
 
-        let current = self.quality.to_string();
-        for (index, name) in self.available.iter().enumerate() {
-            let selected = *name == current;
-            let chosen = name.clone();
-            menu = menu.child(
-                div()
-                    .id(("quality-option", index))
-                    .px(px(theme::PANEL_PAD))
-                    .py(px(theme::CONTROL_PAD_Y))
-                    .text_size(px(theme::TEXT_LABEL))
-                    .font_weight(theme::weight_label())
-                    .cursor_pointer()
-                    .text_color(if selected {
-                        theme::accent()
-                    } else {
-                        theme::text()
-                    })
-                    .hover(|style| style.bg(theme::hover()))
-                    .active(|style| style.bg(theme::pressed()))
-                    .child(SharedString::from(name.clone()))
-                    .on_click(cx.listener(move |this, _event, _window, cx| {
-                        this.quality_menu_open = false;
-                        this.sync_controls();
-                        cx.emit(VideoEvent::QualityRequested(chosen.clone()));
-                        cx.notify();
-                    })),
-            );
+        // The settings' choice first, ruled off from the renditions: picking a
+        // rendition holds it for as long as the pane is open, and until this
+        // row existed nothing handed the pane back short of closing it.
+        let picked = self.qualities.picked;
+        menu = menu.child(
+            self.quality_option(
+                "quality-default",
+                self.qualities.default.clone(),
+                !picked,
+                None,
+                cx,
+            )
+            .border_b_1()
+            .border_color(theme::border()),
+        );
+
+        for (index, name) in self.qualities.available.iter().enumerate() {
+            let selected = picked && name.as_str() == self.qualities.playing.as_ref();
+            menu = menu.child(self.quality_option(
+                ("quality-option", index),
+                SharedString::from(name.clone()),
+                selected,
+                Some(name.clone()),
+                cx,
+            ));
         }
 
         // Rises the last few pixels into place, so it reads as coming out of
@@ -426,6 +455,41 @@ impl VideoView {
                     .bottom(px(MENU_BOTTOM - MENU_RISE * (1.0 - delta)))
             },
         )
+    }
+
+    /// One row of the quality menu. `request` is what choosing it asks for:
+    /// a rendition, or `None` for the settings' choice.
+    fn quality_option(
+        &self,
+        id: impl Into<ElementId>,
+        label: SharedString,
+        selected: bool,
+        request: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        div()
+            .id(id.into())
+            .px(px(theme::PANEL_PAD))
+            .py(px(theme::CONTROL_PAD_Y))
+            .text_size(px(theme::TEXT_LABEL))
+            .font_weight(theme::weight_label())
+            .cursor_pointer()
+            .text_color(if selected {
+                theme::accent()
+            } else {
+                theme::text()
+            })
+            .hover(|style| style.bg(theme::hover()))
+            .active(|style| style.bg(theme::pressed()))
+            .child(label)
+            .on_click(cx.listener(move |this, _event, _window, cx| {
+                this.close_menu(cx);
+                // Choosing what is already chosen changes nothing, and asking
+                // anyway would restart the stream to arrive where it was.
+                if !selected {
+                    cx.emit(VideoEvent::QualityRequested(request.clone()));
+                }
+            }))
     }
 
     /// The seek bar, on a recording. A live stream has no timeline and gets
@@ -533,13 +597,26 @@ impl VideoView {
             .child(
                 div()
                     .relative()
+                    // A press anywhere else closes the menu, the way every menu
+                    // does. On the anchor rather than the menu, so a press on
+                    // the button is not "elsewhere" — that would close the menu
+                    // and the click that followed would open it straight again.
+                    .on_mouse_down_out(cx.listener(|this, _event, _window, cx| {
+                        this.close_menu(cx);
+                    }))
                     .child(
-                        controls::pill("quality", self.quality.clone(), controls::Variant::OnVideo)
-                            .on_click(cx.listener(|this, _event, _window, cx| {
+                        controls::pill(
+                            "quality",
+                            self.qualities.playing.clone(),
+                            controls::Variant::OnVideo,
+                        )
+                        .on_click(cx.listener(
+                            |this, _event, _window, cx| {
                                 this.quality_menu_open = !this.quality_menu_open;
                                 this.sync_controls();
                                 cx.notify();
-                            })),
+                            },
+                        )),
                     )
                     .when(self.quality_menu_open, |anchor| {
                         anchor.child(self.quality_menu(cx))

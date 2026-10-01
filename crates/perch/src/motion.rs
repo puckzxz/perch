@@ -80,9 +80,19 @@ impl Fade {
     where
         E: Styled + IntoElement + 'static,
     {
+        // Hidden is `invisible`, not merely transparent. At opacity zero the
+        // element is still there to be clicked: the "← browse" pill went on
+        // taking clicks in a corner that looked empty, and navigated away from
+        // under the pointer. gpui paints nothing of an invisible element and
+        // registers none of its listeners, so hidden means gone to the pointer
+        // too — at rest, and from the last frame of a fade-out, which a
+        // finished animation goes on rendering for as long as it is on screen.
         if self.flips == 0 {
-            let resting = if self.visible { 1.0 } else { 0.0 };
-            return element.opacity(resting).into_any_element();
+            return if self.visible {
+                element.into_any_element()
+            } else {
+                element.invisible().into_any_element()
+            };
         }
 
         let appearing = self.visible;
@@ -90,7 +100,15 @@ impl Fade {
             .with_animation(
                 self.animation_id(id),
                 Animation::new(duration).with_easing(theme::ease_fade()),
-                move |element, delta| element.opacity(if appearing { delta } else { 1.0 - delta }),
+                move |element, delta| {
+                    if appearing {
+                        element.opacity(delta)
+                    } else if delta >= 1.0 {
+                        element.opacity(0.0).invisible()
+                    } else {
+                        element.opacity(1.0 - delta)
+                    }
+                },
             )
             .into_any_element()
     }

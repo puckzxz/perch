@@ -6,9 +6,9 @@ use gpui::{App, Context, IntoElement, KeyDownEvent, Window};
 use gpui_component::input::Input;
 
 use super::RootView;
+use crate::channel_page;
 use crate::history_page;
 use crate::palette;
-use crate::watch::Slot;
 
 impl RootView {
     /// Everything the palette could run right now, in the order it shows them.
@@ -17,7 +17,23 @@ impl RootView {
     /// view already owns, and holding a copy would mean keeping it in step with
     /// a follows poll, a pane closing and every keystroke.
     pub(super) fn palette_entries(&self, cx: &App) -> Vec<palette::Entry> {
-        let watching: Vec<String> = self.slots.iter().map(Slot::label).collect();
+        let watching: Vec<palette::OpenPane> = self
+            .slots
+            .iter()
+            .map(|slot| palette::OpenPane {
+                login: slot.is_live().then(|| slot.channel.clone()),
+                // A recording says which kind it is, so two panes on one
+                // channel read as two things.
+                title: match slot.recording() {
+                    Some(video) => format!(
+                        "{} ({})",
+                        self.display_name(slot),
+                        channel_page::kind_tag(video.kind)
+                    ),
+                    None => self.display_name(slot),
+                },
+            })
+            .collect();
         palette::entries(
             self.palette_input.read(cx).value().as_ref(),
             &self.follows,
@@ -112,7 +128,7 @@ impl RootView {
                 login,
                 display_name,
                 user_id,
-            } => self.open_channel_page(login, display_name, user_id, cx),
+            } => self.open_channel_page(login, display_name, user_id, window, cx),
             palette::Command::OpenVideo { id, start_secs } => {
                 self.open_video_link(id, start_secs, cx)
             }
@@ -127,8 +143,7 @@ impl RootView {
                     self.open_video(video, true, window, cx);
                 }
             }
-            palette::Command::ShowHistory => self.show_history(cx),
-            palette::Command::GoBrowse => self.go_browse(cx),
+            palette::Command::ShowTab(tab) => self.go_to_tab(tab, window, cx),
             palette::Command::GoWatch => self.go_watch(cx),
             palette::Command::StopAll => self.stop_all(cx),
             palette::Command::ToggleSidebar => self.toggle_sidebar(window, cx),

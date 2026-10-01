@@ -809,9 +809,18 @@ unconsidered.
   six shapes — the tokens were shared the whole time and the component was not,
   which is the same drift one file down. A control that needs a shape not on
   that list is a new variant there, not an eleventh `div`. The same file owns
-  the two things that are not buttons but were drawn by hand in three places
-  each: `live_dot`, and `tag`, the passive `muted` / `paused` word in a pane
-  header.
+  the things that are not buttons but were drawn by hand in three places each:
+  `live_dot`; `tag`, the passive `muted` / `paused` word in a pane header; and
+  `badge`, a fact drawn on a picture — a thumbnail's viewers, a recording's
+  length, the seek bar's time — which was three recipes at three paddings, two
+  of them with a white of their own. The settings sheet uses these too: it was
+  the one place with the widget library's buttons, and so the one place a
+  primary control was filled rather than bordered.
+- **Casing** — a thing you click is lowercase: `refresh`, `open settings`,
+  `save`, `← browse`. A thing you read is written as a sentence: titles,
+  notices, field labels, tooltips, palette rows. Proper nouns keep their
+  capitals either way (`search Twitch for “…”`). There was no rule, and three
+  controls and the settings sheet's buttons had drifted into title case.
 - **Layout reads a `layout::Body`, never the viewport.** The body is the window
   less the rail when it is open, and it is a type made in one place —
   `RootView::body` — so nothing laying out a page can be handed the viewport by
@@ -849,14 +858,21 @@ unconsidered.
 Audit commands, worth re-running after UI work:
 
 ```bash
-grep -ohE "\.(p|px|py|gap|gap_x|gap_y)_[0-9p]+\(\)" crates/perch/src/*.rs | sort | uniq -c
-grep -ohE "\.text_(xs|sm|base|lg|xl)\(\)|FontWeight::[A-Z_]+" crates/perch/src/*.rs | sort | uniq -c
-grep -nE "Duration::from_(millis|secs)" crates/perch/src/*.rs
+cd crates/perch/src
+grep -ohE "\.(p|px|py|gap|gap_x|gap_y)_[0-9p]+\(\)" *.rs root/*.rs | sort | uniq -c
+grep -nE "\.(p|px|py|pt|pb|pl|pr|gap|gap_x|gap_y)\(px\([1-9]" *.rs root/*.rs | grep -v "^theme.rs"
+grep -nE "\b(rgb|rgba|hsla|hsl)\(" *.rs root/*.rs | grep -v "^theme.rs\|^widget_theme.rs"
+grep -ohE "\.text_(xs|sm|base|lg|xl)\(\)|FontWeight::[A-Z_]+" *.rs root/*.rs | sort | uniq -c
+grep -nE "Duration::from_(millis|secs)" *.rs root/*.rs
 ```
 
-The first two should return nothing outside `theme.rs`. The third will show
-genuine timings — the follows poll, the toast lifetime, an mpv frame wait — but
-no *animation* duration should appear outside `theme.rs`.
+The first four should return nothing outside `theme.rs` (the colour one also
+shows a test in `controls.rs` building a grey to measure against). The second
+and third are newer than the rest: the first only ever caught gpui's named
+spacings, so a `.py(px(3.))` and an `rgb(0xffffff)` sat in two card badges
+through every audit until a review read the code. The last will show genuine
+timings — the follows poll, the toast lifetime, an mpv frame wait — but no
+*animation* duration should appear outside `theme.rs`.
 
 ### Where controls live
 
@@ -876,8 +892,10 @@ there. The split:
   minute, and an uptime still counting beside "ended the stream" is the same lie
   the frozen last frame used to tell.
 - **Over the video**, hover-revealed only: the playback bar (pause, mute,
-  volume, quality), and in the top-left the "← follows" pill plus, when the rail
-  is folded away, the control that brings it back. Point at the video and they
+  volume, quality), and in the top-left the "← browse" pill plus, when the rail
+  is folded away, the control that brings it back. "browse" rather than a
+  tab's name, because it goes back to whichever tab, category or channel the
+  browse page was left on; it said "follows" when that was the history. Point at the video and they
   come up; look away and the picture is all that is left.
 
 The back pill follows the *panes'* hover, not the window's, so resting the
@@ -940,7 +958,7 @@ columns, the third pane's *left* edge also lands under a centred nav.
 Follows are **two lists that never merge**. `LiveStream` means *is live*, and
 three things read it that way — the went-live toasts, the card's viewer count,
 and the chat header's live dot — so an offline channel sitting in that vec would
-be wrong in all three at once. Offline follows are `FollowedChannel`s, and they are
+be wrong in all three at once. Offline follows are `Channel`s, and they are
 drawn as names rather than cards: a card is mostly a picture, and an offline
 channel has none worth showing — a thumbnail stale by hours, or a profile
 picture that costs another request per refresh and says nothing. Names also
@@ -948,6 +966,15 @@ pack, so a hundred follows is five rows instead of a wall of grey rectangles.
 Clicking one opens the channel's page — its past broadcasts, with its chat one
 click away from that page's bar, since chat connects whether or not anyone is
 streaming.
+
+**A channel's page is three lists**, past broadcasts, highlights and uploads,
+behind a switch of pills: `ChannelPage::shelves`, one `Listing` each, so each
+keeps its own cursor and a hundred daily broadcasts do not bury the highlights.
+A kind is fetched the first time it is shown, and again whenever it is shown
+empty. `channel_page::in_progress` is archives only: its second signal is a
+listed end close to now, which a highlight cut or a video uploaded minutes ago
+has too. Neither kind has a chat replay, so they open as picture alone, and the
+pane header's tag names the kind — `replay`, `highlight`, `upload`.
 
 Both followed endpoints paginate — see the Networking trap — and
 `/channels/followed` is the one whose `first` defaults to 20 rather than 100:
@@ -1012,6 +1039,21 @@ Lists are fetched once per tab and kept, and grow a page at a time on Load
 more — see "Paging, and what is not paged" for the cursor's route out to the
 caller.
 
+**The live follows hold still while pointed at.** They are sorted by viewers,
+and a poll a minute used to re-sort them, swapping neighbours whose counts
+crossed — so a rail row or a card could change between aiming and clicking.
+Now a probe on the rail and one on the Following tab (`RootView::holding`, a
+canvas measuring the pointer against its own bounds, the way chat's hold is
+measured) report whether the pointer is over them, and while either is,
+`on_streams` merges the poll into the order on screen (`follows::keep_order`):
+the ones still live keep their places with the new numbers, the ones that
+ended go, the ones that started join the end. When the last is let go,
+`hold_live` sorts by viewers again with `twitch_api::by_viewers`, the one rule
+every list of streams is sorted by. A list that is not on screen is released
+by the page that is not drawing it — the watch page for the Following tab, a
+folded rail for the rail — because an unpainted probe says nothing, and the
+pointer was always on the card that opened the watch page.
+
 **A went-live toast is the way to the channel**, not only news of it:
 `Toast::action`, watch from the text and `+ add` from the pill beside it. And
 a pane that stalled — streamlink said the channel was off, or the broadcast
@@ -1021,17 +1063,27 @@ the list is up to a minute behind the pane, so a stream that has just ended is
 still on it, and a retry keyed on presence alone would find it gone and turn
 "ended" into "offline" for nothing.
 
-**Search** is three requests behind one result, and both halves have a reason:
+**Search** is four requests behind one result, and each has a reason:
 
 - `/search/channels` answers with a **profile picture and no viewer count** — a
   different shape from every other list in the app. So only its logins are kept,
   and they go back through `/streams` to become ordinary stream records. One
   extra round trip buys cards identical to every other list. Helix takes up to
   100 `user_login` parameters, so it stays one request.
+- The same endpoint again without `live_only`, for the channels that are not on.
+  It answers live and offline alike with an `is_live` flag; the offline ones
+  are kept as `Channel`s — names, like offline follows — and open the channel's
+  page. A separate call rather than the first one without `live_only`, because
+  that one's live results are the proven part, and offline matches ranked by
+  relevance could crowd them out of a page. It is best-effort: a failure costs
+  the names, not the results. The names are re-ranked (`name_rank`): the
+  channel whose name was typed first, then names that start with it, then the
+  rest in Twitch's order — its relevance put `Asmongold` twentieth, behind
+  every `Asmongold_Vevo` that shares the letters.
 - Categories are searched in the same breath, because a name like "zomboid" is
   as likely to mean the game as a channel.
 
-Results show **channels first**, and categories are capped at
+Results show **live channels first**, then offline ones, and categories are capped at
 `SEARCH_CATEGORY_LIMIT`. Twitch matches category names loosely — "moonmoon"
 returns twenty-odd games with "moon" in them — and with categories first the
 channel you actually searched for was below the fold. A live channel is directly
@@ -1361,7 +1413,12 @@ active one, and pausing on a click would turn choosing a pane into stopping it.
 by `MAX_PANES`, so a fifth pane cannot arrive without a key. `Esc` on the
 browse page is `Back`: out of a channel page, a search or a category, else to
 whatever is playing — the other direction from the watch page's `Esc`, each
-scoped to its own page.
+scoped to its own page. The watch page's `Esc` closes an open quality menu
+before it leaves: that menu is hand-rolled, so it has no key context to catch
+`Esc` itself, and `RootView::on_go_browse` asks every pane to close its menu
+first. A press anywhere else closes it too — `on_mouse_down_out` on the menu's
+anchor rather than the menu, or the press on the button that opened it would
+count as elsewhere and the click after it would open it straight back up.
 
 **The window remembers where it was.** `Settings::window` is written from
 `on_window_should_close` with the platform's restore bounds, so a maximised or
@@ -1370,6 +1427,15 @@ used only if some display still intersects it — a monitor unplugged since is
 the common way to lose a window — and otherwise the default is centred and
 fitted to the primary display, which the old fixed 1600×920 was not: it opened
 with its bottom edge off a laptop screen.
+
+**On Windows the display has to be named.** gpui keeps saved bounds only when
+their centre is on the display in `WindowOptions::display_id`, and with none
+that is the primary — so a window closed on a second monitor opened at a
+default size on the first, every time, while the check above passed.
+`main::home_display` picks the display holding the centre and hands its id
+over. Not on macOS, where gpui reads the bounds *relative* to the display it
+is given: the saved bounds are global, so naming one would shift the window by
+that display's origin.
 
 ### What deliberately does not move
 
@@ -1503,37 +1569,34 @@ palette, links on the command line, pane keys, clickable toasts, auto-retry,
 the quality re-pick, chat holding still under the pointer — and the watch
 history that followed it — where each recording was left, resuming there from
 anywhere, the history tab, the time under the pointer on the seek bar, and
-getting a stalled recording going again — are built. Ranked by what would be
-noticed, roughly:
+getting a stalled recording going again — are built, as are a channel's
+highlights and uploads beside its past broadcasts, offline channels in search,
+and the live follows holding their order under the pointer. Ranked by what
+would be noticed, roughly:
 
 1. **Rewind a live stream.** A "from the start" control on a live pane that
    opens the in-progress archive in place. The archive is in the channel's
    page already; the shortcut is the work.
 2. **Buffered range and muted-audio spans on the seek bar**, from
    `demuxer-cache-time` and the `-muted` segments a playlist names.
-3. **Highlights and uploads** on the channel page, as a second list.
-4. **Stream metadata for channels in none of the lists.** The chat header now
+3. **Stream metadata for channels in none of the lists.** The chat header now
    reads from every live list the app holds, so a pane opened from popular, a
    category or a search carries its numbers, title and game. A channel opened by
    name still carries none: nothing has ever fetched it. `GET
    /helix/streams?user_login=…` per open channel would fill it, and would also
    keep a title that changes mid-stream honest, which the snapshot does not.
-5. **A stable order for the rail and the grid.** Both re-sort by viewers on every
-   poll, so a row can move under the pointer while a menu is open. Keeping the
-   order a channel arrived in for the session, or animating the move, are the
-   two answers; neither is free.
-6. **Badges in the chat gutter** — sub, mod, VIP. The tags already arrive and
+4. **Badges in the chat gutter** — sub, mod, VIP. The tags already arrive and
    are parsed into the map; nothing reads them.
-7. **Reply context lines.** `reply-parent-*` tags arrive too.
-8. **Highlight rules** that wash the row background rather than colouring a
+5. **Reply context lines.** `reply-parent-*` tags arrive too.
+6. **Highlight rules** that wash the row background rather than colouring a
    word. The wash already exists for events.
-9. **Rebindable keys.** `keys::bindings` is a plain `Vec<KeyBinding>` built
+7. **Rebindable keys.** `keys::bindings` is a plain `Vec<KeyBinding>` built
    from constants; the work is a UI and a settings shape, not a mechanism.
-10. **Sign-out.** There is no way to clear a bad token except editing the field.
-11. **The auth-token cookie off argv.** It is documented as a tradeoff, but a
-    per-spawn `--config` file with a user-only ACL, deleted once streamlink has
-    started, would take it out of the process list at the cost of one more file
-    on disk. Not done here because it changes a documented decision.
+8. **Sign-out.** There is no way to clear a bad token except editing the field.
+9. **The auth-token cookie off argv.** It is documented as a tradeoff, but a
+   per-spawn `--config` file with a user-only ACL, deleted once streamlink has
+   started, would take it out of the process list at the cost of one more file
+   on disk. Not done here because it changes a documented decision.
 
 **Known to be out of reach**, so nobody re-derives it:
 
@@ -1611,9 +1674,8 @@ None of these is being worked on; all of them are real.
 11. **Chat history depends on somebody else's server.** If it is down the pane
     opens blank, which is what it did before the feature existed. Failures go to
     the log rather than the pane, on purpose.
-12. **Shortcuts are not rebindable**, and `Esc` does not close the video quality
-    menu — that menu is hand-rolled rather than a gpui-component popup, so it
-    carries no key context of its own.
+12. **Shortcuts are not rebindable.** `keys::bindings` is a plain list built
+    from constants; see "What to build next".
 13. **The palette scrolls with no visible scrollbar.** It is a window of eight
     rows around the selection, so arrowing scrolls it; the wheel works and
     nothing says so. The settings sheet, the browse lists and the rail now draw
@@ -1659,6 +1721,13 @@ None of these is being worked on; all of them are real.
   through: picture quality spent on a number that is mostly not real. Forcing
   `scale=bilinear` on its own measured *slower* than the default.
 - Do not derive control visibility from `group_hover` or from `on_hover`'s value.
+- Do not hide a control with opacity alone. At zero it is still there to be
+  clicked: the watch page's "← browse" pill went on navigating from a corner
+  that looked empty. `motion::Fade` ends hidden as `invisible()`, which gpui
+  does not paint and registers no listeners for.
+- Do not name a display in `WindowOptions` on macOS, and do not leave it out on
+  Windows. The two platforms read saved window bounds opposite ways; see "The
+  window remembers where it was".
 - Do not key animated-image element ids on position.
 - Do not use `--stream-url` to skip streamlink's pipeline for a *live* stream.
   A recording is resolved that way on purpose, and reads its playlist itself;

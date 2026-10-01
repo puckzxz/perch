@@ -296,7 +296,7 @@ pub const RADIUS_LG: f32 = 8.0;
 
 /// Outer margin of a page.
 pub const PAGE_PAD: f32 = 20.0;
-/// Width kept clear at the top-left of the watch page for the "← follows"
+/// Width kept clear at the top-left of the watch page for the "← browse"
 /// control.
 ///
 /// That control is an absolute overlay, so it lands on whatever a pane happens
@@ -320,6 +320,13 @@ pub const PANEL_PAD: f32 = 12.0;
 /// Inside a pill or button.
 pub const CONTROL_PAD_X: f32 = 10.0;
 pub const CONTROL_PAD_Y: f32 = 5.0;
+/// Above and below the text of a badge on a picture — a thumbnail's viewer
+/// count, the seek bar's time. More than a tag gets, because it has an image
+/// to stand out from rather than a panel.
+pub const BADGE_PAD_Y: f32 = 3.0;
+/// Above and below a tag's word in a pane header. Slim, so `muted` does not
+/// make its row taller than the channel's name.
+pub const TAG_PAD_Y: f32 = 1.0;
 /// Between words in a sentence. Narrower than `GAP_TIGHT`, which was doing
 /// this job and is wider than a real word space at `TEXT_BODY`.
 pub const GAP_WORD: f32 = 4.0;

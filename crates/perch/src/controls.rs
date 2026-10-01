@@ -124,6 +124,16 @@ impl Variant {
             _ => theme::text(),
         }
     }
+
+    /// The fill under the pointer. A chosen pill stays chosen: the hover wash
+    /// used to replace its tint, so the tab you had just clicked looked like
+    /// every other tab for as long as the pointer rested on it.
+    fn hover_background(self) -> gpui::Hsla {
+        match self {
+            Variant::Selected => theme::accent_dim(),
+            _ => theme::hover(),
+        }
+    }
 }
 
 /// A control, styled and ready for `.on_click(..)`.
@@ -160,8 +170,9 @@ pub fn pill(
     // build with two panes open used to panic on the close button - so the
     // variant decides what the pointer does rather than a caller adding to it.
     let hover_text = variant.hover_foreground();
+    let hover_fill = variant.hover_background();
     control
-        .hover(move |style| style.bg(theme::hover()).text_color(hover_text))
+        .hover(move |style| style.bg(hover_fill).text_color(hover_text))
         // Stronger than hover rather than a different colour, so a press reads
         // as more of the same gesture. On video there is no shadow or border to
         // deform, so this is the only channel a press has.
@@ -186,7 +197,7 @@ pub fn tag(label: impl Into<SharedString>) -> gpui::Div {
     div()
         .flex_none()
         .px(px(theme::GAP_TIGHT))
-        .py(px(1.))
+        .py(px(theme::TAG_PAD_Y))
         .rounded(px(theme::RADIUS))
         .bg(theme::accent_dim())
         .text_size(px(theme::TEXT_META))
@@ -194,6 +205,31 @@ pub fn tag(label: impl Into<SharedString>) -> gpui::Div {
         .line_height(px(theme::LINE_TIGHT))
         .text_color(theme::text())
         .child(label.into())
+}
+
+/// A fact drawn on a picture: the viewers and uptime on a stream's thumbnail,
+/// a recording's length or where it was left, the time under the pointer on a
+/// seek bar. A row, so a live dot can sit in front of the number.
+///
+/// It lands on whatever the picture is doing, so it brings its own contrast:
+/// the `overlay` wash, and text at full strength. There were three of these,
+/// drawn by hand in three files at three different paddings, and two with a
+/// white of their own rather than the app's.
+pub fn badge() -> gpui::Div {
+    div()
+        .flex_none()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(theme::GAP_TIGHT))
+        .px(px(theme::GAP_TIGHT))
+        .py(px(theme::BADGE_PAD_Y))
+        .rounded(px(theme::RADIUS))
+        .bg(theme::overlay())
+        .text_size(px(theme::TEXT_META))
+        .font_weight(theme::weight_label())
+        .line_height(px(theme::LINE_TIGHT))
+        .text_color(theme::text())
 }
 
 /// The dot that says "this number is of people watching right now".
@@ -260,5 +296,20 @@ mod tests {
                 "a control label reads {ratio:.2}:1 on what it sits on"
             );
         }
+    }
+
+    /// A badge sits on a picture that could be anything, so it is held to the
+    /// worst one: pure white under the wash, where the wash is at its lightest.
+    #[test]
+    fn a_badge_reads_on_the_brightest_picture() {
+        // Black at the wash's alpha over white leaves a grey whose channels
+        // are what the wash lets through.
+        let through = 1.0 - theme::overlay().a;
+        let behind = gpui::hsla(0.0, 0.0, through, 1.0);
+        let ratio = theme::contrast(theme::text(), behind);
+        assert!(
+            ratio >= theme::MIN_CONTRAST,
+            "a badge reads {ratio:.2}:1 over a white picture"
+        );
     }
 }

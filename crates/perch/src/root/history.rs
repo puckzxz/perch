@@ -12,8 +12,7 @@ use gpui::{App, Context, Task};
 use settings::history;
 use twitch_api::Video;
 
-use super::{Page, RootView};
-use crate::browse::Tab;
+use super::RootView;
 use crate::channel_page;
 use crate::history_page;
 use crate::watch::{Slot, Source, StreamState};
@@ -159,14 +158,6 @@ impl RootView {
             self.save_history_soon(cx);
             cx.notify();
         }
-    }
-
-    /// The history tab, from wherever the app is.
-    pub(super) fn show_history(&mut self, cx: &mut Context<Self>) {
-        if self.page == Page::Watch {
-            self.go_browse(cx);
-        }
-        self.show_tab(Tab::History, cx);
     }
 
     /// Write the history down once it has stopped changing; see

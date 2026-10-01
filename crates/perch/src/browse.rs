@@ -16,12 +16,12 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use emotes::ImageCache;
 use gpui::{
-    div, img, prelude::*, px, rgb, AnyElement, App, Context, ImgResourceLoader, Resource,
-    ScrollHandle, SharedString, Stateful, Window,
+    div, img, prelude::*, px, AnyElement, App, Context, ImgResourceLoader, Resource, ScrollHandle,
+    SharedString, Stateful, Window,
 };
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 use settings::history::History;
-use twitch_api::{Category, FollowedChannel, LiveStream, Video};
+use twitch_api::{Category, Channel, LiveStream, Video, VideoKind};
 
 use crate::channel_page;
 use crate::controls;
@@ -132,7 +132,8 @@ pub struct Discovery {
     pub error: Option<SharedString>,
 }
 
-/// One channel's page: who, and their past broadcasts so far.
+/// One channel's page: who, and what it has kept — its past broadcasts, its
+/// highlights and its uploads, one kind on screen at a time.
 pub struct ChannelPage {
     pub login: String,
     pub display_name: String,
@@ -140,7 +141,47 @@ pub struct ChannelPage {
     /// `None` until the worker has looked it up for a channel that arrived
     /// with a name alone.
     pub user_id: Option<String>,
-    pub videos: Listing<Video>,
+    /// Which kind of video the page is showing.
+    pub kind: VideoKind,
+    /// One list per kind, in the order of [`channel_page::SHELVES`], each with
+    /// its own cursor and each fetched the first time it is shown: a channel
+    /// that keeps two months of broadcasts would otherwise bury its
+    /// highlights under a hundred of them a page.
+    pub shelves: [Listing<Video>; 3],
+}
+
+impl ChannelPage {
+    /// A page for a channel, on its past broadcasts, with nothing fetched yet.
+    pub fn new(login: String, display_name: String, user_id: Option<String>) -> Self {
+        Self {
+            login,
+            display_name,
+            user_id,
+            kind: VideoKind::Archive,
+            shelves: Default::default(),
+        }
+    }
+
+    fn shelf_index(kind: VideoKind) -> usize {
+        channel_page::SHELVES
+            .iter()
+            .position(|shelf| *shelf == kind)
+            .unwrap_or(0)
+    }
+
+    /// The list for one kind of video.
+    pub fn shelf(&self, kind: VideoKind) -> &Listing<Video> {
+        &self.shelves[Self::shelf_index(kind)]
+    }
+
+    pub fn shelf_mut(&mut self, kind: VideoKind) -> &mut Listing<Video> {
+        &mut self.shelves[Self::shelf_index(kind)]
+    }
+
+    /// The list on screen.
+    pub fn videos(&self) -> &Listing<Video> {
+        self.shelf(self.kind)
+    }
 }
 
 /// A list that arrives a page at a time.
@@ -188,18 +229,21 @@ impl<T> Listing<T> {
     }
 }
 
-/// What a search turned up. Both kinds at once, because a name like "zomboid"
-/// is as likely to mean the game as a channel.
+/// What a search turned up. Channels and categories at once, because a name
+/// like "zomboid" is as likely to mean the game as a channel — and channels
+/// both live and not, because the one you were looking for may not be on.
 #[derive(Default)]
 pub struct SearchResults {
     pub query: SharedString,
     pub categories: Vec<Category>,
     pub streams: Vec<LiveStream>,
+    /// The channels that answered and are not live, as names.
+    pub channels: Vec<Channel>,
 }
 
 impl SearchResults {
     pub fn is_empty(&self) -> bool {
-        self.categories.is_empty() && self.streams.is_empty()
+        self.categories.is_empty() && self.streams.is_empty() && self.channels.is_empty()
     }
 }
 
@@ -216,6 +260,9 @@ pub enum Action {
     Add(String),
     OpenCategory(Category),
     CloseCategory,
+    /// Ask Twitch for this, as though it had been typed into the header's
+    /// box: what the Following tab's filter offers when nobody matches.
+    Search(String),
     CloseSearch,
     /// Look at a channel's past broadcasts. The id rides along when the list
     /// this came from had it, and is looked up when it did not.
@@ -225,6 +272,9 @@ pub enum Action {
         user_id: Option<String>,
     },
     CloseChannel,
+    /// Show another kind of the open channel's videos: its past broadcasts,
+    /// its highlights or its uploads.
+    ShowShelf(VideoKind),
     /// Play this recording alone, or beside whatever is already playing.
     /// Boxed because a video is a dozen strings and every other action is a
     /// name.
@@ -448,24 +498,10 @@ fn card<V: 'static>(
                 .group("card")
                 .child(preview)
                 .child(
-                    div()
+                    controls::badge()
                         .absolute()
                         .bottom(px(theme::GAP_TIGHT))
                         .left(px(theme::GAP_TIGHT))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(theme::GAP_TIGHT))
-                        .px(px(theme::GAP_TIGHT))
-                        .py(px(3.))
-                        .rounded(px(theme::RADIUS))
-                        // Carries its own contrast, because it sits on whatever
-                        // the stream happens to be showing.
-                        .bg(theme::overlay())
-                        .text_size(px(theme::TEXT_META))
-                        .font_weight(theme::weight_label())
-                        .line_height(px(theme::LINE_TIGHT))
-                        .text_color(rgb(0xffffff))
                         .child(controls::live_dot())
                         .child(SharedString::from(watching)),
                 )
@@ -616,9 +652,9 @@ pub(crate) fn wrap_row(gap: f32) -> gpui::Div {
 /// the thing an offline channel has. Its chat used to be what a click opened
 /// — it connects whether or not anyone is streaming — and it is still one
 /// click away, from that page's bar.
-fn offline_pill<V: 'static>(
-    index: usize,
-    channel: &FollowedChannel,
+pub(crate) fn offline_pill<V: 'static>(
+    id: impl Into<gpui::ElementId>,
+    channel: &Channel,
     on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + 'static,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
@@ -628,7 +664,7 @@ fn offline_pill<V: 'static>(
         user_id: Some(channel.user_id.clone()).filter(|id| !id.is_empty()),
     };
     controls::pill(
-        ("offline-follow", index),
+        id,
         SharedString::from(channel.display_name.clone()),
         controls::Variant::Pill,
     )
@@ -652,7 +688,7 @@ fn offline_pill<V: 'static>(
 #[allow(clippy::too_many_arguments)]
 fn following_view<V: 'static>(
     follows: &[LiveStream],
-    offline: &[FollowedChannel],
+    offline: &[Channel],
     filter: &str,
     filter_box: AnyElement,
     width: f32,
@@ -671,7 +707,7 @@ fn following_view<V: 'static>(
         })
         .cloned()
         .collect();
-    let offline: Vec<&FollowedChannel> = offline
+    let offline: Vec<&Channel> = offline
         .iter()
         .filter(|channel| {
             palette::matches(&channel.display_name, filter)
@@ -698,13 +734,38 @@ fn following_view<V: 'static>(
     if !offline.is_empty() {
         let mut row = wrap_row(theme::GAP_TIGHT);
         for (index, channel) in offline.iter().enumerate() {
-            row = row.child(offline_pill(index, channel, on_action.clone(), cx));
+            row = row.child(offline_pill(
+                ("offline-follow", index),
+                channel,
+                on_action.clone(),
+                cx,
+            ));
         }
         page = page.child(heading("offline")).child(row);
     }
 
+    // The same notice every other empty list gets, rather than a heading over
+    // nothing — and the way on from it: this box never leaves the app, so a
+    // name it cannot find is one to ask Twitch about instead.
     if live.is_empty() && offline.is_empty() && !filter.is_empty() {
-        page = page.child(heading("nobody you follow matches that"));
+        let query = filter.to_string();
+        page = page.child(
+            notice(
+                format!("Nobody you follow matches “{filter}”").into(),
+                "This box only looks through the channels you follow.".into(),
+                false,
+            )
+            .child(
+                controls::pill(
+                    "filter-search",
+                    format!("search Twitch for “{filter}”"),
+                    controls::Variant::Primary,
+                )
+                .on_click(cx.listener(move |view, _event, window, cx| {
+                    on_action(view, Action::Search(query.clone()), window, cx)
+                })),
+            ),
+        );
     }
 
     scrollable(page, scroll).into_any_element()
@@ -851,13 +912,25 @@ fn search_view<V: 'static>(
     let body = if results.is_empty() {
         browse_placeholder(
             discovery,
-            format!("Nothing live matches “{}”.", results.query).into(),
+            format!("Nothing matches “{}”.", results.query).into(),
         )
     } else {
         let shown = SEARCH_CATEGORY_LIMIT.min(results.categories.len());
+        // Who is on, then who is not, then games: the order of how directly
+        // each is the thing searched for. The headings are the Following
+        // tab's, because they divide the same way.
+        let mut offline = wrap_row(theme::GAP_TIGHT);
+        for (index, channel) in results.channels.iter().enumerate() {
+            offline = offline.child(offline_pill(
+                ("search-offline", index),
+                channel,
+                on_action.clone(),
+                cx,
+            ));
+        }
         let list = scroller("search-results", scroll)
             .when(!results.streams.is_empty(), |list| {
-                list.child(heading("channels")).child(stream_row(
+                list.child(heading("live")).child(stream_row(
                     &results.streams,
                     width,
                     cache,
@@ -865,6 +938,9 @@ fn search_view<V: 'static>(
                     on_action.clone(),
                     cx,
                 ))
+            })
+            .when(!results.channels.is_empty(), |list| {
+                list.child(heading("offline")).child(offline)
             })
             .when(shown > 0, |list| {
                 list.child(heading("categories")).child(category_row(
@@ -1018,7 +1094,7 @@ fn awaiting_code<V: 'static>(
             // The one accent on the page, because it is the one thing to do.
             controls::pill(
                 "open-activate",
-                "Open twitch.tv/activate",
+                "open twitch.tv/activate",
                 controls::Variant::Primary,
             )
             .on_click(cx.listener(move |_, _event, _window, cx| cx.open_url(&uri))),
@@ -1111,7 +1187,7 @@ fn empty_state<V: 'static>(
         SignIn::NeedsClientId | SignIn::Error(_) => body.child(
             controls::pill(
                 "empty-settings",
-                "Open settings",
+                "open settings",
                 controls::Variant::Primary,
             )
             .on_click(cx.listener(move |view, _event, window, cx| {
@@ -1154,7 +1230,7 @@ pub(crate) fn browse_placeholder(discovery: &Discovery, empty: SharedString) -> 
 #[allow(clippy::too_many_arguments)]
 pub fn page<V: 'static>(
     follows: &[LiveStream],
-    offline: &[FollowedChannel],
+    offline: &[Channel],
     filter: &str,
     filter_box: AnyElement,
     discovery: &Discovery,
@@ -1318,6 +1394,49 @@ pub fn page<V: 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn a_video(id: &str, kind: VideoKind) -> Video {
+        Video {
+            id: id.into(),
+            stream_id: None,
+            user_id: "2".into(),
+            user_login: "someone".into(),
+            user_name: "Someone".into(),
+            title: String::new(),
+            created_at: String::new(),
+            length_secs: 60,
+            thumbnail_url: String::new(),
+            view_count: 0,
+            kind,
+            muted_segments: Vec::new(),
+        }
+    }
+
+    /// Each kind of video keeps a list of its own, and the page shows the one
+    /// it is on: a page of highlights arriving must not land among the past
+    /// broadcasts, nor take their cursor.
+    #[test]
+    fn a_channel_page_keeps_a_list_per_kind() {
+        let mut page = ChannelPage::new("someone".into(), "Someone".into(), None);
+        assert_eq!(page.kind, VideoKind::Archive, "a page opens on broadcasts");
+
+        page.shelf_mut(VideoKind::Archive).absorb(
+            vec![a_video("1", VideoKind::Archive)],
+            Some("more-broadcasts".into()),
+            false,
+        );
+        page.shelf_mut(VideoKind::Highlight).absorb(
+            vec![a_video("2", VideoKind::Highlight)],
+            None,
+            false,
+        );
+
+        assert_eq!(page.videos().items[0].id, "1");
+        page.kind = VideoKind::Highlight;
+        assert_eq!(page.videos().items[0].id, "2");
+        assert!(page.videos().next.is_none(), "took the broadcasts' cursor");
+        assert!(page.shelf(VideoKind::Upload).is_empty());
+    }
 
     /// The difference between a Load more and a fresh tab is one bool, and
     /// getting it wrong either doubles the list or throws away what you were

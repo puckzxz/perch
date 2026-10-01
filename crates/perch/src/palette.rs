@@ -13,8 +13,9 @@
 
 use gpui::{div, prelude::*, px, Context, SharedString};
 use settings::history::Watched;
-use twitch_api::{FollowedChannel, LiveStream};
+use twitch_api::{Channel, LiveStream};
 
+use crate::browse::Tab;
 use crate::seek_bar;
 use crate::target::{self, Target};
 use crate::theme;
@@ -57,14 +58,36 @@ pub enum Command {
     },
     /// Play a recording from the history, where it was left.
     Resume(String),
-    /// Show the history tab.
-    ShowHistory,
-    GoBrowse,
+    /// Show one of the browse page's tabs, from wherever the app is.
+    ShowTab(Tab),
     GoWatch,
     StopAll,
     ToggleSidebar,
     ToggleSettings,
     Refresh,
+}
+
+/// A pane that is open, as the palette sees it.
+#[derive(Debug, Clone)]
+pub struct OpenPane {
+    /// The channel a live pane plays, which is what "already watching" is
+    /// matched against. `None` for a recording: a replay of a channel is not
+    /// watching it.
+    pub login: Option<String>,
+    /// What a row about the pane calls it: the channel's name as it writes
+    /// it, with the kind of recording after it for one — "(replay)".
+    pub title: String,
+}
+
+/// A live pane known only by its login, which is all the tests need.
+#[cfg(test)]
+impl From<&str> for OpenPane {
+    fn from(login: &str) -> Self {
+        Self {
+            login: Some(login.to_string()),
+            title: login.to_string(),
+        }
+    }
 }
 
 /// One row: what it does, and what it says it does.
@@ -173,10 +196,10 @@ fn watched_matches(watched: &Watched, query: &str) -> bool {
 pub fn entries(
     query: &str,
     follows: &[LiveStream],
-    offline: &[FollowedChannel],
+    offline: &[Channel],
     recent: &[String],
     history: &[Watched],
-    watching: &[String],
+    watching: &[OpenPane],
     can_add: bool,
 ) -> Vec<Entry> {
     let mut entries = Vec::new();
@@ -200,7 +223,9 @@ pub fn entries(
     // A row to open a channel, and beside it one to add it — only when that
     // is different from the row above it.
     let offer = |entries: &mut Vec<Entry>, login: &str, title: String, kind: &'static str| {
-        let open = watching.iter().any(|open| open == login);
+        let open = watching
+            .iter()
+            .any(|pane| pane.login.as_deref() == Some(login));
         entries.push(Entry {
             command: Command::Watch(login.to_string()),
             title: SharedString::from(title.clone()),
@@ -247,13 +272,20 @@ pub fn entries(
     }
 
     if !query.is_empty() {
+        // An offline channel opens its page, the way its name does on the
+        // Following tab. It used to open a pane that could only say the
+        // channel was offline, which is what the row already said.
         for channel in offline {
             if !matches(&channel.display_name, query) && !matches(&channel.login, query) {
                 continue;
             }
             matched_follow = true;
             entries.push(Entry {
-                command: Command::Watch(channel.login.clone()),
+                command: Command::Videos {
+                    login: channel.login.clone(),
+                    display_name: channel.display_name.clone(),
+                    user_id: Some(channel.user_id.clone()).filter(|id| !id.is_empty()),
+                },
                 title: SharedString::from(channel.display_name.clone()),
                 kind: "offline".into(),
             });
@@ -285,29 +317,22 @@ pub fn entries(
                 .map(resume_row),
         );
 
-        // Everyone's past broadcasts, live or not, after the rows that open
-        // them now. Only once something is typed, for the same reason the
-        // offline rows wait: with nothing typed this would be a second row
-        // for every channel above the commands.
-        let past = follows
-            .iter()
-            .map(|stream| (&stream.user_login, &stream.display_name, &stream.user_id))
-            .chain(
-                offline
-                    .iter()
-                    .map(|channel| (&channel.login, &channel.display_name, &channel.user_id)),
-            );
-        for (login, display_name, user_id) in past {
-            if !matches(display_name, query) && !matches(login, query) {
+        // A live channel's past broadcasts, after the rows that open it now —
+        // its own row watches it. An offline channel's row is already its
+        // page. Only once something is typed, for the same reason the offline
+        // rows wait: with nothing typed this would be a second row for every
+        // channel above the commands.
+        for stream in follows {
+            if !matches(&stream.display_name, query) && !matches(&stream.user_login, query) {
                 continue;
             }
             entries.push(Entry {
                 command: Command::Videos {
-                    login: login.clone(),
-                    display_name: display_name.clone(),
-                    user_id: Some(user_id.clone()).filter(|id| !id.is_empty()),
+                    login: stream.user_login.clone(),
+                    display_name: stream.display_name.clone(),
+                    user_id: Some(stream.user_id.clone()).filter(|id| !id.is_empty()),
                 },
-                title: SharedString::from(format!("{display_name} — past broadcasts")),
+                title: SharedString::from(format!("{} — past broadcasts", stream.display_name)),
                 kind: "videos".into(),
             });
         }
@@ -335,8 +360,8 @@ pub fn entries(
         }
     }
 
-    for (index, channel) in watching.iter().enumerate() {
-        let title = format!("Close {channel}");
+    for (index, pane) in watching.iter().enumerate() {
+        let title = format!("Close {}", pane.title);
         if matches(&title, query) {
             entries.push(Entry {
                 command: Command::Close(index),
@@ -346,17 +371,27 @@ pub fn entries(
         }
     }
 
-    let commands: [(Command, &str); 7] = [
-        (Command::GoBrowse, "Go to follows"),
-        (Command::ShowHistory, "Go to history"),
-        (Command::GoWatch, "Back to watching"),
-        (Command::StopAll, "Stop all streams"),
-        (Command::ToggleSidebar, "Toggle the follows rail"),
-        (Command::Refresh, "Refresh this list"),
-        (Command::ToggleSettings, "Settings"),
-    ];
+    // One row per tab, each named for the tab it opens. There used to be one
+    // "Go to follows", which went to whichever tab had been left open — the
+    // history, as often as not — and said otherwise.
+    let tabs = Tab::ALL.map(|tab| (Command::ShowTab(tab), format!("Go to {}", tab.label())));
+    let playing = !watching.is_empty();
+    let commands = tabs.into_iter().chain(
+        [
+            // Only with something to go back to, or to stop: a command that
+            // does nothing is a row in the way of one that would.
+            (playing, Command::GoWatch, "Back to watching"),
+            (playing, Command::StopAll, "Stop all streams"),
+            (true, Command::ToggleSidebar, "Toggle the follows rail"),
+            (true, Command::Refresh, "Refresh this list"),
+            (true, Command::ToggleSettings, "Settings"),
+        ]
+        .into_iter()
+        .filter(|(offered, _, _)| *offered)
+        .map(|(_, command, title)| (command, title.to_string())),
+    );
     for (command, title) in commands {
-        if matches(title, query) {
+        if matches(&title, query) {
             entries.push(Entry {
                 command,
                 title: SharedString::from(title),
@@ -394,8 +429,16 @@ fn rows<V: 'static>(
                 .py(px(theme::GAP_TIGHT))
                 .rounded(px(theme::RADIUS))
                 .cursor_pointer()
+                // The row Enter runs keeps its tint under the pointer, or
+                // resting the mouse on the list hides which row that is.
                 .when(index == selected, |row| row.bg(theme::accent_dim()))
-                .hover(|style| style.bg(theme::hover()))
+                .hover(move |style| {
+                    style.bg(if index == selected {
+                        theme::accent_dim()
+                    } else {
+                        theme::hover()
+                    })
+                })
                 .child(
                     div()
                         .flex_1()
@@ -561,7 +604,7 @@ mod tests {
 
     #[test]
     fn every_open_pane_can_be_closed_by_name() {
-        let watching: Vec<String> = vec!["forsen".into(), "quin69".into()];
+        let watching: Vec<OpenPane> = vec!["forsen".into(), "quin69".into()];
         let entries = entries("close quin", &[], &[], &[], &[], &watching, true);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].command, Command::Close(1));
@@ -584,7 +627,7 @@ mod tests {
     #[test]
     fn offline_follows_appear_only_for_a_typed_query_and_after_live_ones() {
         let follows = [stream("forsen", "Forsen")];
-        let offline = [FollowedChannel {
+        let offline = [Channel {
             login: "fextralife".into(),
             user_id: "9".into(),
             display_name: "Fextralife".into(),
@@ -603,16 +646,26 @@ mod tests {
             .position(|entry| entry.kind == "offline")
             .unwrap();
         assert!(live < off, "an offline channel outranked a live one");
-        assert_eq!(typed[off].command, Command::Watch("fextralife".into()));
+        // Its page, as on the Following tab — not a pane saying it is off.
+        assert_eq!(
+            typed[off].command,
+            Command::Videos {
+                login: "fextralife".into(),
+                display_name: "Fextralife".into(),
+                user_id: Some("9".into()),
+            }
+        );
     }
 
-    /// Past broadcasts are offered for everyone, after the rows that open a
-    /// channel now, and only once something is typed. An id the list already
-    /// had rides along; an empty one is nothing rather than an empty string.
+    /// A live channel's past broadcasts are a row of their own, after the
+    /// rows that open a channel now, and only once something is typed. An
+    /// offline channel's row already is its page, so it gets no second one.
+    /// An id the list already had rides along; an empty one is nothing rather
+    /// than an empty string.
     #[test]
-    fn past_broadcasts_are_offered_for_live_and_offline_alike_once_typed() {
+    fn past_broadcasts_are_offered_for_live_channels_once_typed() {
         let follows = [stream("forsen", "Forsen")];
-        let offline = [FollowedChannel {
+        let offline = [Channel {
             login: "fextralife".into(),
             user_id: "9".into(),
             display_name: "Fextralife".into(),
@@ -626,21 +679,13 @@ mod tests {
             .iter()
             .filter(|entry| entry.kind == "videos")
             .collect();
-        assert_eq!(videos.len(), 2);
+        assert_eq!(videos.len(), 1, "an offline channel got a second row");
         assert_eq!(
             videos[0].command,
             Command::Videos {
                 login: "forsen".into(),
                 display_name: "Forsen".into(),
                 user_id: None,
-            }
-        );
-        assert_eq!(
-            videos[1].command,
-            Command::Videos {
-                login: "fextralife".into(),
-                display_name: "Fextralife".into(),
-                user_id: Some("9".into()),
             }
         );
         let last_now = typed
@@ -841,6 +886,41 @@ mod tests {
         let found = entries("history", &[], &[], &[], &[], &[], false);
         assert!(found
             .iter()
-            .any(|entry| entry.command == Command::ShowHistory));
+            .any(|entry| entry.command == Command::ShowTab(Tab::History)));
+    }
+
+    /// Every tab has a row that goes to it, named for it. The one row there
+    /// used to be said "follows" and went wherever the page had been left.
+    #[test]
+    fn every_tab_is_a_command_away_by_its_own_name() {
+        for tab in Tab::ALL {
+            let found = entries(tab.label(), &[], &[], &[], &[], &[], false);
+            let row = found
+                .iter()
+                .find(|entry| entry.command == Command::ShowTab(tab))
+                .unwrap_or_else(|| panic!("no row goes to {}", tab.label()));
+            assert!(row.title.contains(tab.label()));
+        }
+    }
+
+    /// Going back to watching, or stopping everything, with nothing playing
+    /// would do nothing, so neither is offered until something is.
+    #[test]
+    fn commands_about_what_is_playing_wait_for_something_to_play() {
+        let idle = entries("", &[], &[], &[], &[], &[], false);
+        for command in [Command::GoWatch, Command::StopAll] {
+            assert!(
+                !idle.iter().any(|entry| entry.command == command),
+                "{command:?} offered with nothing playing"
+            );
+        }
+
+        let playing = entries("", &[], &[], &[], &[], &["forsen".into()], true);
+        for command in [Command::GoWatch, Command::StopAll] {
+            assert!(
+                playing.iter().any(|entry| entry.command == command),
+                "{command:?} missing while something plays"
+            );
+        }
     }
 }

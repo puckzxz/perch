@@ -138,7 +138,21 @@ impl RootView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.go_browse(cx);
+        // A menu open over a pane goes first: `Esc` takes back the last thing
+        // that was opened, and leaving the page with the menu still up was two
+        // steps taken for one press.
+        let videos: Vec<_> = self
+            .slots
+            .iter()
+            .filter_map(|slot| slot.video().cloned())
+            .collect();
+        let mut closed = false;
+        for view in videos {
+            closed |= view.update(cx, |view, cx| view.close_menu(cx));
+        }
+        if !closed {
+            self.go_browse(cx);
+        }
     }
 
     pub(super) fn on_toggle_settings(

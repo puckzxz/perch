@@ -42,8 +42,8 @@ mod watch;
 mod widget_theme;
 
 use gpui::{
-    point, prelude::*, px, size, AnyView, App, Application, Bounds, Pixels, Size, TitlebarOptions,
-    WindowBounds, WindowOptions,
+    point, prelude::*, px, size, AnyView, App, Application, Bounds, DisplayId, Pixels, Size,
+    TitlebarOptions, WindowBounds, WindowOptions,
 };
 use settings::{Settings, WindowPlacement};
 
@@ -62,12 +62,24 @@ const DEFAULT_WINDOW: Size<Pixels> = size(px(1600.), px(920.));
 /// forgotten its chrome.
 const DEFAULT_WINDOW_SHARE: f32 = 0.9;
 
-/// Where to open the window: where it was last closed, if that is still on
-/// a display, or else centred on the primary display at a size that fits it.
+/// Where to open the window, and on which display: where it was last closed,
+/// if that is still on a display, or else centred on the primary display at a
+/// size that fits it.
 ///
 /// The fixed default this replaces was larger than a laptop's screen, and the
 /// platform's answer to that is a window with its bottom edge off the display.
-fn initial_window_bounds(placement: Option<WindowPlacement>, cx: &App) -> WindowBounds {
+///
+/// The display is only named on Windows, and there it is not optional. gpui
+/// keeps saved bounds only when their centre lies on the display it is handed,
+/// and with none it is handed the primary — so a window last closed on a
+/// second monitor failed that check and opened at a default size on the first,
+/// every time. macOS reads the bounds the other way, relative to the display
+/// it is given, and the saved bounds are global; naming a display there would
+/// shift the window by that display's origin.
+fn initial_window_bounds(
+    placement: Option<WindowPlacement>,
+    cx: &App,
+) -> (WindowBounds, Option<DisplayId>) {
     if let Some(saved) = placement {
         let bounds = Bounds {
             origin: point(px(saved.x), px(saved.y)),
@@ -76,16 +88,15 @@ fn initial_window_bounds(placement: Option<WindowPlacement>, cx: &App) -> Window
         // Only if some display still holds it: a window last closed on a
         // monitor that has since been unplugged would open where nobody can
         // reach it.
-        let visible = cx
-            .displays()
-            .iter()
-            .any(|display| display.bounds().intersects(&bounds));
-        if visible {
-            return if saved.maximized {
+        let displays = cx.displays();
+        let areas: Vec<Bounds<Pixels>> = displays.iter().map(|display| display.bounds()).collect();
+        if let Some(home) = home_display(&areas, bounds) {
+            let window = if saved.maximized {
                 WindowBounds::Maximized(bounds)
             } else {
                 WindowBounds::Windowed(bounds)
             };
+            return (window, cfg!(windows).then(|| displays[home].id()));
         }
     }
 
@@ -101,7 +112,26 @@ fn initial_window_bounds(placement: Option<WindowPlacement>, cx: &App) -> Window
         }
         None => DEFAULT_WINDOW,
     };
-    WindowBounds::Windowed(Bounds::centered(None, fitted, cx))
+    (
+        WindowBounds::Windowed(Bounds::centered(None, fitted, cx)),
+        None,
+    )
+}
+
+/// Which of `displays` a window at `window` belongs on: the one holding its
+/// centre, which is the display gpui checks the bounds against, or failing
+/// that any that still shows part of it — a window whose centre fell between
+/// two monitors of different heights. `None` when no display shows any of it.
+fn home_display(displays: &[Bounds<Pixels>], window: Bounds<Pixels>) -> Option<usize> {
+    let centre = window.center();
+    displays
+        .iter()
+        .position(|display| display.contains(&centre))
+        .or_else(|| {
+            displays
+                .iter()
+                .position(|display| display.intersects(&window))
+        })
 }
 
 /// What to remember about a window that is closing.
@@ -203,8 +233,10 @@ fn main() {
             // last, and these bindings are the ones that must stand aside.
             keys::init(cx);
 
+            let (bounds, display_id) = initial_window_bounds(placement, cx);
             let options = WindowOptions {
-                window_bounds: Some(initial_window_bounds(placement, cx)),
+                window_bounds: Some(bounds),
+                display_id,
                 titlebar: Some(TitlebarOptions {
                     title: Some(APP_NAME.into()),
                     ..Default::default()
@@ -241,4 +273,51 @@ fn main() {
 
             cx.activate(true);
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rect(x: f32, y: f32, width: f32, height: f32) -> Bounds<Pixels> {
+        Bounds {
+            origin: point(px(x), px(y)),
+            size: size(px(width), px(height)),
+        }
+    }
+
+    /// The layout the bug was found on: a 4K primary with a 1440p monitor to
+    /// its right, sitting lower. A window closed on the second monitor has to
+    /// go back to the second monitor, not merely to "some display".
+    #[test]
+    fn a_window_goes_back_to_the_display_holding_its_centre() {
+        let displays = [rect(0., 0., 3840., 2160.), rect(3840., 712., 2560., 1440.)];
+
+        let on_second = rect(4213., 1213., 1536., 864.);
+        assert_eq!(home_display(&displays, on_second), Some(1));
+
+        let on_first = rect(1152., 660., 1536., 864.);
+        assert_eq!(home_display(&displays, on_first), Some(0));
+
+        // Straddling the seam: it belongs where most of it — its centre — is.
+        let straddling = rect(3000., 800., 1200., 600.);
+        assert_eq!(home_display(&displays, straddling), Some(0));
+    }
+
+    /// A centre that falls in the gap beside a shorter monitor still has a
+    /// home, as long as some of the window is on a display.
+    #[test]
+    fn a_centre_off_every_display_falls_back_to_one_that_shows_the_window() {
+        let displays = [rect(0., 0., 3840., 2160.), rect(3840., 712., 2560., 1440.)];
+        let centre_in_the_gap = rect(3700., 150., 600., 400.);
+        assert_eq!(home_display(&displays, centre_in_the_gap), Some(0));
+    }
+
+    /// A monitor that has been unplugged since takes the window with it; the
+    /// caller then opens a default one on the primary.
+    #[test]
+    fn a_window_on_no_display_has_no_home() {
+        let displays = [rect(0., 0., 1920., 1080.)];
+        assert_eq!(home_display(&displays, rect(5000., 100., 800., 600.)), None);
+    }
 }

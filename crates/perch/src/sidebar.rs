@@ -97,9 +97,16 @@ fn row<V: 'static>(
         .rounded(px(theme::RADIUS))
         .cursor_pointer()
         // A channel already open reads as chosen rather than as offered, which
-        // is the same thing the browse page's tab pills say about themselves.
+        // is the same thing the browse page's tab pills say about themselves —
+        // under the pointer too, as theirs does.
         .when(watching, |row| row.bg(theme::accent_dim()))
-        .hover(|style| style.bg(theme::hover()))
+        .hover(move |style| {
+            style.bg(if watching {
+                theme::accent_dim()
+            } else {
+                theme::hover()
+            })
+        })
         .active(|style| style.bg(theme::pressed()))
         .on_click(cx.listener(move |view, _event, window, cx| {
             on_click(view, Action::Watch(login.clone()), window, cx)

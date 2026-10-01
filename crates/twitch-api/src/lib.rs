@@ -423,8 +423,10 @@ pub struct LiveStream {
 /// Every list of streams this module hands back is ordered this way, and Helix
 /// promises no order of its own — `/streams` happens to come back sorted and
 /// `/streams/followed` did too until it started being paginated, at which point
-/// "sorted within each page" stopped meaning sorted.
-fn by_viewers(streams: &mut [LiveStream]) {
+/// "sorted within each page" stopped meaning sorted. Public so a caller that
+/// held a list still for a while puts it back in the same order, not in one of
+/// its own.
+pub fn by_viewers(streams: &mut [LiveStream]) {
     streams.sort_by_key(|stream| std::cmp::Reverse(stream.viewer_count));
 }
 
@@ -565,25 +567,26 @@ fn next_cursor(json: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
-/// A channel you follow, live or not.
+/// A channel by name: who it is, and nothing about whether it is live.
 ///
-/// Deliberately not a [`LiveStream`] with the fields left blank. Three things
-/// read that list as *who is live* — the went-live toasts, the LIVE badge, and
-/// the chat header's viewer count — and an offline channel sitting in it would
-/// be wrong in all three at once.
+/// Everyone you follow, and the channels a search turns up that are not on
+/// right now. Deliberately not a [`LiveStream`] with the fields left blank.
+/// Three things read that list as *who is live* — the went-live toasts, the
+/// LIVE badge, and the chat header's viewer count — and an offline channel
+/// sitting in it would be wrong in all three at once.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FollowedChannel {
+pub struct Channel {
     pub login: String,
     /// See [`LiveStream::user_id`].
     pub user_id: String,
     pub display_name: String,
 }
 
-fn parse_followed_channels(json: &Value) -> Vec<FollowedChannel> {
+fn parse_followed_channels(json: &Value) -> Vec<Channel> {
     entries(json)
         .filter_map(|entry| {
             let login = text(entry, "broadcaster_login")?;
-            Some(FollowedChannel {
+            Some(Channel {
                 login: login.to_string(),
                 user_id: text_or_empty(entry, "broadcaster_id"),
                 display_name: text(entry, "broadcaster_name")
@@ -653,7 +656,7 @@ pub fn followed_channels(
     client_id: &str,
     token: &str,
     user_id: &str,
-) -> Result<Vec<FollowedChannel>, Error> {
+) -> Result<Vec<Channel>, Error> {
     let mut all = walk_follow_pages(
         client_id,
         token,
@@ -846,24 +849,27 @@ fn parse_videos(json: &Value) -> Vec<Video> {
         .collect()
 }
 
-/// A channel's past broadcasts, newest first, a page at a time.
+/// One kind of a channel's videos — its past broadcasts, its highlights or
+/// its uploads — newest first, a page at a time.
 ///
-/// Archives only. Highlights and uploads play through the same path, but a
-/// highlight is cut from ranges of a broadcast and its offsets mean nothing to
-/// a chat replay, so neither is listed. Helix takes a user id here and nothing
-/// else; a login goes through [`user_id_for`] first. Needs no scope, only a
-/// token. Paged the way the browse lists are — see [`Page`] — because a
-/// partner keeps two months of daily broadcasts, and a hundred at a time is
-/// Twitch's cap.
+/// One kind per call rather than `type=all`, because the page shows one at a
+/// time and each keeps its own cursor: a partner's two months of daily
+/// broadcasts would otherwise bury its highlights a hundred at a time. They
+/// all play through the same path; only an archive's chat can be replayed,
+/// since a highlight is cut from ranges of a broadcast and its offsets mean
+/// nothing to one. Helix takes a user id here and nothing else; a login goes
+/// through [`user_id_for`] first. Needs no scope, only a token. Paged the way
+/// the browse lists are — see [`Page`].
 pub fn videos(
     client_id: &str,
     token: &str,
     user_id: &str,
+    kind: VideoKind,
     after: Option<&str>,
 ) -> Result<Page<Video>, Error> {
     let mut query = vec![
         ("user_id", user_id),
-        ("type", "archive"),
+        ("type", kind.as_str()),
         ("sort", "time"),
         ("first", PAGE_SIZE),
     ];
@@ -1014,6 +1020,73 @@ pub fn streams_by_login(
     let mut streams = parse_streams(&json);
     by_viewers(&mut streams);
     Ok(streams)
+}
+
+/// Channels matching `query` that are not live right now: what a search turns
+/// up besides the streams.
+///
+/// The same endpoint as [`search_channels`] without `live_only`, which answers
+/// with live and offline channels alike and says which is which. The live ones
+/// are dropped here: that search already has them, and turns them into full
+/// stream records. These stay names, the way offline follows do — a picture of
+/// a channel that is not on says nothing about it.
+pub fn search_offline_channels(
+    client_id: &str,
+    token: &str,
+    query: &str,
+) -> Result<Vec<Channel>, Error> {
+    let json = helix_get(
+        client_id,
+        token,
+        "/search/channels",
+        &[("query", query), ("first", SEARCH_PAGE_SIZE)],
+    )?;
+    let mut channels = parse_offline_channels(&json);
+    // Stable, so within each rank Twitch's own order stands.
+    channels.sort_by_key(|channel| name_rank(channel, query));
+    Ok(channels)
+}
+
+/// How closely a channel's name answers what was searched: the channel
+/// itself first, then names that begin with it, then the rest.
+///
+/// Twitch's relevance order for a search that is not live-only put the one
+/// `Asmongold` twentieth, behind every `Asmongold_Vevo` and
+/// `Asmongold_the_version` sharing its letters — and a name typed in full is
+/// almost always that channel.
+fn name_rank(channel: &Channel, query: &str) -> u8 {
+    let query = query.trim().to_lowercase();
+    let login = channel.login.to_lowercase();
+    let name = channel.display_name.to_lowercase();
+    if login == query || name == query {
+        0
+    } else if login.starts_with(&query) || name.starts_with(&query) {
+        1
+    } else {
+        2
+    }
+}
+
+fn parse_offline_channels(json: &Value) -> Vec<Channel> {
+    entries(json)
+        .filter(|entry| {
+            !entry
+                .get("is_live")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
+        .filter_map(|entry| {
+            let login = text(entry, "broadcaster_login")?;
+            Some(Channel {
+                login: login.to_string(),
+                user_id: text_or_empty(entry, "id"),
+                display_name: text(entry, "display_name")
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or(login)
+                    .to_string(),
+            })
+        })
+        .collect()
 }
 
 fn parse_logins(json: &Value) -> Vec<String> {
@@ -1229,6 +1302,66 @@ mod tests {
         .unwrap();
 
         assert_eq!(parse_logins(&json), vec!["moonmoon", "ben_"]);
+    }
+
+    /// A search without `live_only` answers with both; the offline ones are
+    /// kept as names, with the id their page is listed by.
+    #[test]
+    fn keeps_the_offline_channels_from_a_search() {
+        let json: Value = serde_json::from_str(
+            r#"{"data":[
+                 {"broadcaster_login":"moonmoon","display_name":"MOONMOON","id":"121059319","is_live":true},
+                 {"broadcaster_login":"asmongold","display_name":"Asmongold","id":"26261471","is_live":false},
+                 {"display_name":"No Login Here","id":"1","is_live":false},
+                 {"broadcaster_login":"quiet_one","display_name":"","id":"7","is_live":false}
+               ]}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            parse_offline_channels(&json),
+            vec![
+                Channel {
+                    login: "asmongold".into(),
+                    user_id: "26261471".into(),
+                    display_name: "Asmongold".into(),
+                },
+                Channel {
+                    login: "quiet_one".into(),
+                    user_id: "7".into(),
+                    display_name: "quiet_one".into(),
+                },
+            ]
+        );
+        assert!(parse_offline_channels(&Value::Null).is_empty());
+    }
+
+    /// The channel whose name was typed leads, then names that start with
+    /// it, then the rest — each group in the order Twitch gave.
+    #[test]
+    fn the_channel_searched_for_comes_first() {
+        let channel = |login: &str, name: &str| Channel {
+            login: login.into(),
+            user_id: String::new(),
+            display_name: name.into(),
+        };
+        let mut found = [
+            channel("the_asmongold_fan", "the_asmongold_fan"),
+            channel("asmongold_vevo", "Asmongold_Vevo"),
+            channel("asmongold", "Asmongold"),
+            channel("asmongold_otk", "Asmongold_OTK"),
+        ];
+        found.sort_by_key(|channel| name_rank(channel, " AsmonGold "));
+        let order: Vec<&str> = found.iter().map(|c| c.login.as_str()).collect();
+        assert_eq!(
+            order,
+            [
+                "asmongold",
+                "asmongold_vevo",
+                "asmongold_otk",
+                "the_asmongold_fan"
+            ]
+        );
     }
 
     #[test]

@@ -61,6 +61,18 @@ pub enum QualityPreference {
     Fixed(String),
 }
 
+impl QualityPreference {
+    /// The preference in the words it is stored in: `auto`, or the quality
+    /// name — `best`, `1080p`. What a pane's quality menu calls the choice it
+    /// hands the pane back to.
+    pub fn name(&self) -> &str {
+        match self {
+            QualityPreference::Auto => "auto",
+            QualityPreference::Fixed(name) => name,
+        }
+    }
+}
+
 /// Twitch credentials.
 ///
 /// Two unrelated tokens, which is confusing enough to be worth spelling out:
@@ -209,6 +221,12 @@ impl WindowPlacement {
 /// what stops `Forsen` and `forsen` remembering two different levels.
 pub fn channel_key(channel: &str) -> String {
     channel.trim_start_matches('#').to_ascii_lowercase()
+}
+
+/// Whether `key` could be a channel's login: letters, digits and underscores,
+/// which is all Twitch allows in one.
+fn is_login(key: &str) -> bool {
+    !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -507,12 +525,17 @@ impl Settings {
         }
     }
 
-    /// Drop per-channel entries that remember nothing.
+    /// Drop per-channel entries that remember nothing, or that are not about a
+    /// channel at all.
     ///
     /// Run on load and before every save, so a file written by an older build
-    /// that left such entries behind is cleaned on its way through.
+    /// that left such entries behind is cleaned on its way through. Builds up
+    /// to 0.2.1 remembered a recording's volume against the recording's pane
+    /// key — `vod:2860004234` — which nothing ever read back; a login is
+    /// letters, digits and underscores, so anything else is one of those.
     fn prune_empty_prefs(&mut self) {
-        self.channel_prefs.retain(|_, prefs| !prefs.is_empty());
+        self.channel_prefs
+            .retain(|key, prefs| !prefs.is_empty() && is_login(key));
     }
 
     /// Load from `path`, returning defaults if the file does not exist yet.
@@ -928,6 +951,41 @@ mod tests {
 
         let auto = serde_json::to_string(&QualityPreference::Auto).unwrap();
         assert!(auto.contains("auto"), "got {auto}");
+    }
+
+    /// A recording's volume was remembered against its pane key, where
+    /// nothing read it back. Those entries go on load, and only those.
+    #[test]
+    fn remembered_prefs_that_are_not_about_a_channel_are_dropped() {
+        let path = temp_file("not-a-channel");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"channel_prefs": {
+                "vod:2860004234": {"volume": 68},
+                "spicy_sushi_poe": {"volume": 51},
+                "Forsen": {"chat_hidden": true}
+            }}"#,
+        )
+        .unwrap();
+
+        let settings = Settings::load(&path).unwrap();
+        assert!(!settings.channel_prefs.contains_key("vod:2860004234"));
+        assert!(settings.channel_prefs.contains_key("spicy_sushi_poe"));
+        assert!(
+            settings.channel_prefs.contains_key("Forsen"),
+            "a login from before keys were lowercased is still a login"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A pane's quality menu names the preference it hands the pane back to,
+    /// so the name has to be the word the preference is stored as.
+    #[test]
+    fn a_quality_preference_is_named_the_way_it_is_stored() {
+        assert_eq!(QualityPreference::Auto.name(), "auto");
+        assert_eq!(QualityPreference::Fixed("best".into()).name(), "best");
+        assert_eq!(QualityPreference::Fixed("1080p".into()).name(), "1080p");
     }
 
     /// Toggling chat off and back on again for a channel used to leave an

@@ -263,7 +263,7 @@ pub const SHORTCUTS: [(&[&str], &str, &str); 16] = [
     (&PANE_KEYS, "1 – 4", "Talk to that pane"),
     (&["tab", "shift-tab"], "Tab", "The next pane"),
     (&["secondary-w"], secondary!("W"), "Close this pane"),
-    (&["escape"], "Esc", "Back to follows, or to watching"),
+    (&["escape"], "Esc", "Back to browsing, or to watching"),
     (&["secondary-f"], secondary!("F"), "Search"),
     (&["secondary-r"], secondary!("R"), "Refresh this list"),
     (&["secondary-,"], secondary!(","), "Settings"),

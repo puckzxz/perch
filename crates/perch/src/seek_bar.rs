@@ -30,6 +30,7 @@ use gpui::{
     MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Window,
 };
 
+use crate::controls;
 use crate::theme;
 
 /// Room for `h:mm:ss` at meta size, so the track does not shift by a few
@@ -225,22 +226,9 @@ pub fn element<V: 'static>(
             .w(px(0.))
             .flex()
             .justify_center()
-            .child(
-                div()
-                    .flex_none()
-                    .whitespace_nowrap()
-                    .px(px(theme::GAP_TIGHT))
-                    .py(px(2.))
-                    .rounded(px(theme::RADIUS))
-                    // Over the picture rather than the bar, so it carries its
-                    // own contrast the way the bar does.
-                    .bg(theme::overlay())
-                    .text_size(px(theme::TEXT_META))
-                    .font_weight(theme::weight_label())
-                    .line_height(px(theme::LINE_TIGHT))
-                    .text_color(theme::text())
-                    .child(hover.time),
-            )
+            // Over the picture rather than the bar, so it is the badge every
+            // fact drawn on a picture is.
+            .child(controls::badge().whitespace_nowrap().child(hover.time))
     });
 
     let release_inside = on_release.clone();

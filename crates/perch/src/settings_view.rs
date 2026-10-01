@@ -9,7 +9,6 @@ use gpui::{
     Window,
 };
 use gpui_component::{
-    button::{Button, ButtonVariants},
     input::{Input, InputState},
     scroll::{Scrollbar, ScrollbarShow},
     select::{Select, SelectState},
@@ -18,6 +17,7 @@ use gpui_component::{
 };
 use settings::{QualityPreference, Settings};
 
+use crate::controls;
 use crate::keys;
 use crate::motion;
 use crate::theme;
@@ -26,8 +26,9 @@ use crate::theme;
 /// somewhere, not enough to watch.
 const PANEL_RISE: f32 = 12.0;
 
-/// Half the panel's content width, so the shortcut listing reads as two
-/// columns rather than as one long list nobody scans to the end of.
+/// Half the panel's content width, less the gap between the two, so the
+/// shortcut listing reads as two columns rather than as one long list nobody
+/// scans to the end of. A description longer than its column wraps inside it.
 const SHORTCUT_COLUMN: f32 = 210.0;
 /// Wide enough for the longest key name in the listing.
 const SHORTCUT_KEY: f32 = 56.0;
@@ -196,15 +197,21 @@ impl SettingsPanel {
             .flex()
             .flex_row()
             .flex_wrap()
+            .gap_x(px(theme::GAP))
             .gap_y(px(theme::GAP_TIGHT))
             .children(keys::SHORTCUTS.iter().map(|(_, key, description)| {
+                // Top-aligned rather than on the baseline: key and words share
+                // a size and a leading, so their first lines line up either
+                // way, and a description that wraps pulled its key down to
+                // its last line when aligned by baseline.
                 div()
                     .w(px(SHORTCUT_COLUMN))
                     .flex()
                     .flex_row()
-                    .items_baseline()
+                    .items_start()
                     .gap(px(theme::GAP_TIGHT))
                     .text_size(px(theme::TEXT_META))
+                    .line_height(px(theme::LINE_TIGHT))
                     .child(
                         div()
                             .flex_none()
@@ -213,7 +220,15 @@ impl SettingsPanel {
                             .text_color(theme::text())
                             .child(*key),
                     )
-                    .child(div().text_color(theme::text_muted()).child(*description))
+                    // Wraps inside its own column. Left to its content width, a
+                    // long one ran straight over the key in the column beside it.
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_color(theme::text_muted())
+                            .child(*description),
+                    )
             }))
     }
 
@@ -349,7 +364,7 @@ impl Render for SettingsPanel {
                         "What you are watching carries on, muted, in a bar along the bottom of the follows page. Turned off, leaving the watch page stops the stream — which is the cheaper answer if you go there to pick the next thing rather than to glance at the list.",
                         Switch::new("miniplayer")
                             .checked(self.miniplayer)
-                            .label(if self.miniplayer { "On" } else { "Off" })
+                            .label(if self.miniplayer { "on" } else { "off" })
                             .on_click(cx.listener(|this: &mut Self, checked: &bool, _, cx| {
                                 this.miniplayer = *checked;
                                 cx.notify();
@@ -394,13 +409,18 @@ impl Render for SettingsPanel {
                                     .text_color(theme::text_muted())
                                     .child(self.sign_in_status.clone()),
                             )
-                            .child(Button::new("cancel").ghost().label("Close").on_click(
-                                cx.listener(|_, _, _, cx| cx.emit(SettingsEvent::Dismissed)),
-                            ))
+                            // The app's own controls, not the widget library's
+                            // buttons: this was the one place with a second
+                            // idea of what a primary control looks like — a
+                            // filled one, where everywhere else it is bordered.
                             .child(
-                                Button::new("save")
-                                    .primary()
-                                    .label("Save")
+                                controls::pill("settings-close", "close", controls::Variant::Quiet)
+                                    .on_click(cx.listener(|_, _, _, cx| {
+                                        cx.emit(SettingsEvent::Dismissed)
+                                    })),
+                            )
+                            .child(
+                                controls::pill("settings-save", "save", controls::Variant::Primary)
                                     .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
                             ),
                     ),

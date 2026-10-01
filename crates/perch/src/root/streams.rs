@@ -12,7 +12,7 @@ use super::{Page, RootView};
 use crate::chat::{ChatView, Feed};
 use crate::layout;
 use crate::video::{self, Playback, PositionHandle, Stopped, VideoStream};
-use crate::video_view::{VideoEvent, VideoView};
+use crate::video_view::{Qualities, VideoEvent, VideoView};
 use crate::watch::{Slot, Source, StreamState, MAX_PANES};
 
 /// Starting render size. Each pane measures itself on the first layout pass and
@@ -150,8 +150,8 @@ impl RootView {
         // rather than at the top and then jumping.
         let position = PositionHandle::starting_at(start_at);
         // Archives only. A highlight is cut from ranges of a broadcast, so
-        // its offsets mean nothing to a replay; the app lists none today, and
-        // one that arrives plays as picture alone.
+        // its offsets mean nothing to a replay, and an upload had no chat to
+        // replay; both play as picture alone.
         let chat = matches!(video.kind, VideoKind::Archive).then(|| {
             cx.new(|cx| {
                 ChatView::new(
@@ -298,9 +298,14 @@ impl RootView {
                 };
                 match VideoStream::start(RENDER_WIDTH, RENDER_HEIGHT, volume, playback) {
                     Ok((stream, frames)) => {
-                        let label = SharedString::from(quality);
+                        let qualities = Qualities {
+                            playing: SharedString::from(quality),
+                            available,
+                            default: SharedString::from(self.settings.quality.name().to_string()),
+                            picked: self.slots[index].quality_override.is_some(),
+                        };
                         let view = cx.new(|cx| {
-                            VideoView::from_stream(stream, frames, label, available, window, cx)
+                            VideoView::from_stream(stream, frames, qualities, window, cx)
                         });
                         let owner = key.to_string();
                         cx.subscribe_in(
@@ -311,18 +316,25 @@ impl RootView {
                                     // Remembered against the channel rather
                                     // than globally, so coming back to a
                                     // streamer finds them where you left them.
+                                    // The channel, not the pane's key: for a
+                                    // recording that is `vod:<id>`, and a level
+                                    // kept there was never read back — the
+                                    // pane opens at its *channel's* level.
                                     // A slider drag emits a change per pixel,
                                     // so the write waits for the run to end.
-                                    if this.settings.set_volume_for(&owner, *volume) {
-                                        this.save_settings_soon(cx);
+                                    let channel = this
+                                        .slot_index(&owner)
+                                        .map(|index| this.slots[index].channel.clone());
+                                    if let Some(channel) = channel {
+                                        if this.settings.set_volume_for(&channel, *volume) {
+                                            this.save_settings_soon(cx);
+                                        }
                                     }
                                     cx.notify();
                                 }
                                 VideoEvent::QualityRequested(name) => {
                                     if let Some(index) = this.slot_index(&owner) {
-                                        this.slots[index].quality_override = Some(name.clone());
-                                        this.restart_stream(index, window, cx);
-                                        cx.notify();
+                                        this.request_quality(index, name.clone(), window, cx);
                                     }
                                 }
                                 VideoEvent::Stopped(reason) => {
@@ -372,6 +384,28 @@ impl RootView {
         .into_iter()
         .flatten()
         .find(|stream| stream.user_login == channel)
+    }
+
+    /// What a pane calls its channel: the name the channel writes itself as,
+    /// from whichever list knows it, or the login when none does.
+    ///
+    /// One answer for the pane header, its status line, the now-playing bar
+    /// and the palette. They used to ask different lists, so a channel you
+    /// follow that was offline was "Nubzombie" in the palette and
+    /// "nubzombie" in the pane it opened.
+    pub(super) fn display_name(&self, slot: &Slot) -> String {
+        if let Some(video) = slot.recording() {
+            return video.user_name.clone();
+        }
+        self.stream_info(&slot.channel)
+            .map(|stream| stream.display_name.clone())
+            .or_else(|| {
+                self.offline
+                    .iter()
+                    .find(|channel| channel.login == slot.channel)
+                    .map(|channel| channel.display_name.clone())
+            })
+            .unwrap_or_else(|| slot.channel.clone())
     }
 
     /// A playing stream stopped on its own: the broadcast ended, or mpv gave
@@ -449,6 +483,56 @@ impl RootView {
         self.start_stream(key, window, cx);
     }
 
+    /// What the settings would have a pane of `pane_height` play, from the
+    /// renditions its stream offers. The one answer to that question, for
+    /// the re-pick after a resize and for a pane handed back to the default.
+    fn settings_pick(&self, available: &[String], pane_height: u32) -> Option<quality::Quality> {
+        match &self.settings.quality {
+            QualityPreference::Auto => quality::select(available, pane_height),
+            QualityPreference::Fixed(name) => quality::select_named(available, name, pane_height),
+        }
+    }
+
+    /// A quality chosen from pane `index`'s own menu: a rendition, which holds
+    /// until the pane closes, or `None`, which hands the pane back to the
+    /// settings.
+    ///
+    /// The stream restarts only when that changes what plays — a restart is
+    /// seconds of black, and pinning the rendition already playing, or going
+    /// back to a default that picks the same one, should cost nothing. Going
+    /// back re-picks for the pane as it is now, down as well as up: that is
+    /// an answer somebody asked for, where the re-pick after a resize is not.
+    pub(super) fn request_quality(
+        &mut self,
+        index: usize,
+        name: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(view) = self.slots.get(index).and_then(Slot::video).cloned() else {
+            return;
+        };
+        let (playing, available) = {
+            let view = view.read(cx);
+            (view.quality().to_string(), view.available().to_vec())
+        };
+        let target = match &name {
+            Some(name) => Some(name.clone()),
+            None => self
+                .settings_pick(&available, self.pane_height(window))
+                .map(|pick| pick.name),
+        };
+        let picked = name.is_some();
+        self.slots[index].quality_override = name;
+        if target.as_deref() == Some(playing.as_str()) {
+            // Nothing to restart, so the menu the pane already has says it.
+            view.update(cx, |view, cx| view.set_picked(picked, cx));
+        } else {
+            self.restart_stream(index, window, cx);
+        }
+        cx.notify();
+    }
+
     /// How tall a pane is right now, in physical pixels: what a quality is
     /// chosen against, when a stream starts and again in
     /// [`sync_quality`](Self::sync_quality). With several panes the window is
@@ -487,12 +571,7 @@ impl RootView {
             .filter(|(_, slot)| slot.quality_override.is_none())
             .filter_map(|(index, slot)| {
                 let view = slot.video()?.read(cx);
-                let wanted = match &self.settings.quality {
-                    QualityPreference::Auto => quality::select(view.available(), pane_height),
-                    QualityPreference::Fixed(name) => {
-                        quality::select_named(view.available(), name, pane_height)
-                    }
-                }?;
+                let wanted = self.settings_pick(view.available(), pane_height)?;
                 let playing = quality::parse_quality(view.quality()).map_or(0, |q| q.height);
                 (wanted.height > playing).then_some(index)
             })

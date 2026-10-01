@@ -46,7 +46,7 @@ use gpui::{
 use gpui_component::input::{InputEvent, InputState};
 use settings::history::History;
 use settings::Settings;
-use twitch_api::{FollowedChannel, LiveStream};
+use twitch_api::{Channel, LiveStream};
 
 use crate::browse::{self, Discovery, SignIn};
 use crate::layout::Body;
@@ -148,8 +148,8 @@ pub(crate) struct RootView {
 
     follows: Vec<LiveStream>,
     /// Everyone followed, live or not. Kept apart from `follows` all the way to
-    /// the screen; see `twitch_api::FollowedChannel`.
-    offline: Vec<FollowedChannel>,
+    /// the screen; see `twitch_api::Channel`.
+    offline: Vec<Channel>,
     /// A follows request the user asked for by hand is outstanding. Only their
     /// requests set this, so the minute-by-minute poll does not blink the
     /// control every time it runs.
@@ -173,6 +173,12 @@ pub(crate) struct RootView {
     /// from ones that were already streaming. Without this every poll would
     /// re-announce everybody.
     known_live: HashSet<String>,
+    /// Whether the pointer is over the rail, and over the Following tab, as
+    /// the last frame measured it. While either is, a poll updates the live
+    /// follows where they stand rather than sorting them — see
+    /// `RootView::hold_live`.
+    rail_pointed: bool,
+    following_pointed: bool,
     sign_in: SignIn,
     /// Everything the browse page shows besides your follows.
     discovery: Discovery,
@@ -362,6 +368,8 @@ impl RootView {
             avatars: HashMap::new(),
             follows_loaded: false,
             known_live: HashSet::new(),
+            rail_pointed: false,
+            following_pointed: false,
             sign_in: SignIn::Connecting,
             discovery: Discovery::default(),
             search,

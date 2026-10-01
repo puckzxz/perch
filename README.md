@@ -91,7 +91,7 @@ video, which is no use when you are not holding the mouse.
 | `1` – `4` | Talk to that pane |
 | `Tab` | The next pane |
 | `Ctrl+W` | Close this pane |
-| `Esc` | Back to follows, or back to watching |
+| `Esc` | Back to browsing, or back to watching |
 | `Ctrl+F` | Search |
 | `Ctrl+R` | Refresh whichever list is on screen |
 | `Ctrl+,` | Settings |
@@ -110,23 +110,32 @@ and with more than one pane open its header is underlined to say so. `1` to
 `4` name a pane by its place in the grid and `Tab` steps along them, for when
 the mouse is nowhere near. All of them stand aside while the cursor is in a
 text box. The same list is in the settings sheet. Double-clicking the video is
-fullscreen too.
+fullscreen too. `Esc` from the watch page goes back to whichever tab, category
+or channel you left the browse page on — and first closes a pane's quality
+menu, if one is open.
+
+Every pane has a `close` in its header, a lone one included; closing the last
+pane goes back to the browse page.
 
 The header above each chat says `muted` or `paused` when either is true, so a
 channel that opens silent says so without the pointer having to be on the
 video.
 
-The window opens where it was last closed, at the size it was, as long as that
-is still on a display; the first time, it is sized to fit the screen.
+The window opens where it was last closed — on the same monitor, at the size
+it was — as long as that monitor is still there; the first time, it is sized to
+fit the screen.
 
 The seam between video and chat can be dragged, in either arrangement, and the
 size is remembered. `Ctrl+0` puts both back to what the layout would have
 derived.
 
 Hiding chat is remembered per channel, the way volume is — a channel you watch
-for the game stays that way without saying anything about the next one. The
-header keeps its place above the video, so a pane without chat still has its
-name and its close button.
+for the game stays that way without saying anything about the next one. Beside
+the video, hiding chat gives the video its column, and the header moves to a
+strip above the picture, so a pane without chat still has its name and its
+close button. Under the video, the pane keeps its shape: the picture stays in
+its box, the header under it where every neighbour's is, and the space chat
+had says `chat hidden · press C`.
 
 Above chat, each pane says who is on, how many are watching, how long they have
 been going, and what they are doing — the stream's title and its game, on a line
@@ -205,6 +214,12 @@ which connects whether or not anyone is streaming.
 The list refreshes itself every minute. `Ctrl+R`, or the pill in the header,
 asks again now — for whichever list is on screen, not just follows.
 
+Who is live is sorted by viewers, and holds still while the pointer is on it,
+the way chat does: a refresh then updates the numbers where they stand, drops
+whoever ended and adds whoever started at the end, and the list is put back in
+order once the pointer leaves — so a card is never swapped for its neighbour
+between aiming at it and clicking. The rail does the same.
+
 When somebody you follow goes live, a notice says so in the corner; click it
 to watch them, or `+ add` beside it to open them next to what is playing. A
 pane left on a channel that was off, or whose broadcast ended, starts by
@@ -214,7 +229,8 @@ start and it begins without you.
 The box at the top of the Following tab filters both lists as you type, live
 and offline, by the same few-letters-of-a-name match the palette uses. It is
 the opposite of the search box in the header: that one asks Twitch, this one
-asks the app, and nothing typed here leaves it.
+asks the app, and nothing typed here leaves it — until nobody you follow
+matches, when it offers to ask Twitch instead.
 
 Cards are as wide as the window allows: the grid takes the room it has and
 divides it, rather than leaving whatever a fixed width could not use as a gutter
@@ -223,8 +239,8 @@ game are underneath, each on one line and cut with an ellipsis where it does not
 fit. Resting the pointer on one shows the whole of it.
 
 Whatever is playing while you browse keeps playing, muted, in a bar along the
-bottom — each stream with its own close button, and one control back to
-watching. Settings can turn that off, in which case leaving the watch page
+bottom — each stream with what it is playing and its own close button, and one
+control back to watching. Settings can turn that off, in which case leaving the watch page
 stops the streams instead, which is the cheaper answer if you go to the follows
 page to pick the next thing rather than to glance at the list.
 
@@ -245,7 +261,10 @@ the right of it; the rail belongs to the window.
 than aimed at. It filters what the app already knows, so it costs nothing and
 runs on every keystroke; the search box in the header is the one that asks
 Twitch. `qb` finds QuickyBaby. Offline follows are in it too, once you have
-typed something, and so is every channel's page of past broadcasts.
+typed something, and open the channel's page, as their names do on the
+Following tab; a live channel's past broadcasts are a row of their own. Every
+tab is a `Go to` row, and going back to watching or stopping everything is
+offered once something is playing.
 
 With nothing typed it leads with the channels you watched most recently, then
 who is live. Type a name none of your follows answer to and it offers to open
@@ -262,17 +281,24 @@ opened was a recording you had not finished, it leads the empty palette, so
 
 Every channel has a page of what it broadcast before: click an offline name on
 the Following tab, the **past broadcasts** control that appears on a live card,
-or the palette's row for it. The recordings are cards like the streams are, with
-the length where a stream's card has its viewer count, and how long ago it was
-underneath. One still being recorded carries the live dot and says how long it
-has been going so far; it can be watched from the start while the stream is on.
+or the palette's row for it — or search for it by name, since a search lists
+the channels that answer to it and are not on, as names under the live ones.
+The recordings are cards like the streams are, with the length where a
+stream's card has its viewer count, and how long ago it was underneath. One
+still being recorded carries the live dot and says how long it has been going
+so far; it can be watched from the start while the stream is on.
+
+A switch at the top of the page turns it to the channel's **highlights** or its
+**uploads**, each a list of its own. They play the way a broadcast does, but as
+picture alone: a highlight is cut from pieces of a broadcast and an upload was
+never one, so neither has a chat to replay.
 
 A recording plays in an ordinary pane, with a seek bar above the controls. Point
 at the bar and it says what time is under the pointer before you click; click
 it or drag its thumb, and `←` and `→` skip ten seconds. A jump takes a second
 or so, because the player is reopened at the new place rather than seeked —
-the reason is the player's and `HANDOFF.md` has it. The header says `replay`,
-names the broadcast, and opens it on twitch.tv; when the recording ends the pane
+the reason is the player's and `HANDOFF.md` has it. The header says `replay`
+— or `highlight`, or `upload` — names the video, and opens it on twitch.tv; when the recording ends the pane
 says so and offers to start over. A channel's live stream and one of its
 recordings can be open side by side.
 
@@ -371,7 +397,10 @@ or closing, the rail folding, the window resizing or going fullscreen — and
 only ever upwards: a pane that has grown restarts on a sharper rendition,
 since a restart is a few seconds of black and worth it for the picture, and a
 pane that has shrunk keeps what it has. A quality picked from a pane's own
-menu is left alone; that choice was about the pane, whatever its size.
+menu is left alone; that choice was about the pane, whatever its size. The
+menu's first row is the settings' own choice — `auto`, or whatever quality the
+settings name — and picking it hands the pane back, restarting it only if that
+changes what plays. A press anywhere else, or `Esc`, closes the menu.
 
 ## Layout
 

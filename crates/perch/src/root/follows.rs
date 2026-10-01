@@ -10,6 +10,38 @@ use gpui::{Context, Task, Window};
 use twitch_api::{LiveStream, Video};
 
 use super::{LinkedVideo, RootView, ToastAction};
+
+/// A list of who is live that the pointer can rest on, and hold still.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum LiveList {
+    Rail,
+    Following,
+}
+
+/// The live follows as they stand on screen, brought up to date by a fresh
+/// poll without moving any of them: the ones still live keep their places,
+/// with the poll's numbers and titles; the ones that ended go; the ones that
+/// started join the end, most-watched first.
+///
+/// For while the pointer is over a list of them. Sorting by viewers every
+/// minute swapped neighbours whose counts crossed, so a card or a rail row
+/// could change under the pointer between aiming and clicking.
+fn keep_order(shown: &[LiveStream], fresh: Vec<LiveStream>) -> Vec<LiveStream> {
+    let mut fresh: Vec<Option<LiveStream>> = fresh.into_iter().map(Some).collect();
+    let mut kept = Vec::with_capacity(fresh.len());
+    for old in shown {
+        let still = fresh.iter_mut().find(|stream| {
+            stream
+                .as_ref()
+                .is_some_and(|stream| stream.user_login == old.user_login)
+        });
+        if let Some(stream) = still.and_then(Option::take) {
+            kept.push(stream);
+        }
+    }
+    kept.extend(fresh.into_iter().flatten());
+    kept
+}
 use crate::browse::{SearchResults, SignIn};
 use crate::twitch::{Request, TwitchEvent, TwitchService};
 
@@ -126,6 +158,7 @@ impl RootView {
                 query,
                 categories,
                 streams,
+                channels,
             } => {
                 // Same guard as a category: an answer to a question the user
                 // has moved on from must not replace what they are reading now.
@@ -139,6 +172,7 @@ impl RootView {
                         query: query.into(),
                         categories,
                         streams,
+                        channels,
                     });
                 }
                 self.discovery.loading = false;
@@ -146,6 +180,7 @@ impl RootView {
             TwitchEvent::Videos {
                 login,
                 user_id,
+                kind,
                 videos,
             } => {
                 // Whatever the history holds of these, this is the newer
@@ -160,7 +195,8 @@ impl RootView {
                     .filter(|page| page.login == login)
                 {
                     page.user_id = Some(user_id);
-                    page.videos.absorb(videos.items, videos.next, videos.append);
+                    page.shelf_mut(kind)
+                        .absorb(videos.items, videos.next, videos.append);
                 }
                 self.discovery.loading = false;
             }
@@ -192,8 +228,18 @@ impl RootView {
                 .collect();
             newly.sort_by_key(|stream| std::cmp::Reverse(stream.viewer_count));
             for stream in newly {
+                // A stream with no category set has an empty game, and joined
+                // regardless the notice ended in a dangling " · ".
+                let text = [
+                    format!("{} went live", stream.display_name),
+                    stream.game_name.clone(),
+                ]
+                .into_iter()
+                .filter(|part| !part.trim().is_empty())
+                .collect::<Vec<_>>()
+                .join(" · ");
                 self.toast_with(
-                    format!("{} went live · {}", stream.display_name, stream.game_name),
+                    text,
                     Some(ToastAction::Watch(stream.user_login.clone())),
                     cx,
                 );
@@ -229,9 +275,38 @@ impl RootView {
             .retain(|channel| !now_live.contains(&channel.login));
 
         self.known_live = now_live;
-        self.follows = streams;
+        self.follows = if self.live_held() {
+            keep_order(&self.follows, streams)
+        } else {
+            streams
+        };
         self.follows_loaded = true;
         cx.notify();
+    }
+
+    /// Whether the pointer is over a list of who is live.
+    fn live_held(&self) -> bool {
+        self.rail_pointed || self.following_pointed
+    }
+
+    /// Note whether the pointer is over one of the lists of who is live, from
+    /// that list's probe — or, for a list that is not on screen, from the page
+    /// that is not drawing it, since a probe that is not painted says nothing.
+    ///
+    /// The lists hold still while pointed at, the way chat does: a poll that
+    /// lands meanwhile updates them in place (see [`keep_order`]). When the
+    /// last of them is let go they are sorted by viewers again, out of the way
+    /// of the pointer rather than under it.
+    pub(super) fn hold_live(&mut self, list: LiveList, pointed: bool, cx: &mut Context<Self>) {
+        let was = self.live_held();
+        match list {
+            LiveList::Rail => self.rail_pointed = pointed,
+            LiveList::Following => self.following_pointed = pointed,
+        }
+        if was && !self.live_held() {
+            twitch_api::by_viewers(&mut self.follows);
+            cx.notify();
+        }
     }
 
     /// Open a recording named by its link, once Twitch has said what it is.
@@ -308,5 +383,56 @@ impl RootView {
             }
             Err(reason) => self.toast(format!("could not open recording {id}: {reason}"), cx),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stream(login: &str, viewers: u64) -> LiveStream {
+        LiveStream {
+            user_login: login.into(),
+            user_id: String::new(),
+            display_name: login.into(),
+            title: String::new(),
+            game_name: String::new(),
+            viewer_count: viewers,
+            thumbnail_url: String::new(),
+            started_at: String::new(),
+        }
+    }
+
+    fn logins(streams: &[LiveStream]) -> Vec<&str> {
+        streams.iter().map(|s| s.user_login.as_str()).collect()
+    }
+
+    /// A poll whose counts would reorder the list leaves it where it stands,
+    /// with the new counts.
+    #[test]
+    fn a_held_list_keeps_its_order_and_takes_the_new_numbers() {
+        let shown = [stream("a", 300), stream("b", 200), stream("c", 100)];
+        let fresh = vec![stream("c", 900), stream("b", 250), stream("a", 10)];
+
+        let kept = keep_order(&shown, fresh);
+        assert_eq!(logins(&kept), ["a", "b", "c"]);
+        assert_eq!(kept[0].viewer_count, 10, "kept the old numbers");
+        assert_eq!(kept[2].viewer_count, 900);
+    }
+
+    /// Whoever ended goes; whoever started joins the end, most-watched first,
+    /// so nothing already on screen moves down to make room.
+    #[test]
+    fn a_held_list_drops_who_ended_and_adds_who_started_at_the_end() {
+        let shown = [stream("a", 300), stream("b", 200), stream("c", 100)];
+        let fresh = vec![
+            stream("new_big", 5000),
+            stream("c", 100),
+            stream("a", 300),
+            stream("new_small", 5),
+        ];
+
+        let kept = keep_order(&shown, fresh);
+        assert_eq!(logins(&kept), ["a", "c", "new_big", "new_small"]);
     }
 }
