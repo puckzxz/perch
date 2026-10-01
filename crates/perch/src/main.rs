@@ -1,13 +1,14 @@
 //! Twitch in one native window.
 //!
-//!     perch [channel...] [--volume 0-100]
+//!     perch [channel or link...] [--volume 0-100]
 //!
 //! Two pages: browse what you follow, and watch up to four of them at once.
 //! The watch page is deliberately bare — players and their chats, nothing else
 //! — because chrome you stare past for three hours should not be there.
 //!
-//! This file is the process: the arguments, the window, and where stderr
-//! goes. The app itself is `root`.
+//! This file is the process: whether it is the first perch or a later launch
+//! to hand over, the window, and where stderr goes. The app itself is `root`;
+//! what the arguments mean is `launch`.
 
 // No console window in a real build. Debug builds keep one, because that is
 // where `--help` and a live stderr are worth more than the tidiness. See
@@ -24,7 +25,9 @@ mod controls;
 mod cpu_log;
 mod diagnostics;
 mod history_page;
+mod instance;
 mod keys;
+mod launch;
 mod layout;
 mod motion;
 mod palette;
@@ -47,8 +50,9 @@ use gpui::{
 };
 use settings::{Settings, WindowPlacement};
 
+use instance::Claim;
+use launch::Launch;
 use root::RootView;
-use target::Target;
 use watch::MAX_PANES;
 
 pub const APP_NAME: &str = "perch";
@@ -153,11 +157,43 @@ fn placement_of(bounds: WindowBounds) -> WindowPlacement {
 }
 
 fn main() {
-    // Before anything that could go wrong: a windowed build has no console, so
-    // stderr must be pointed somewhere first or the first failure is silent.
-    // If this fails there is, by construction, nowhere to say so.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let settings_path = settings::default_path(APP_NAME);
+
+    // First of all, whether this is the perch at all, or a later launch whose
+    // arguments belong to the one already running — see `instance`. Before
+    // stderr is pointed at the log, because that starts by moving the running
+    // copy's log aside. Later launches queue here from the start, ahead of
+    // the window that will open them.
+    let (to_window, launches) = futures::channel::mpsc::unbounded();
+    let closing = to_window.clone();
+    let settings_dir = settings_path.parent().unwrap_or(&settings_path);
+    let unguarded = match instance::claim(settings_dir, &args) {
+        Claim::First(listener) => {
+            listener.serve(move |args| to_window.unbounded_send(args).is_ok());
+            None
+        }
+        // Said to a debug build's console; a windowed build has none, and
+        // the window coming forward is the answer.
+        Claim::Handed => {
+            eprintln!("{APP_NAME} is already running; it has this launch now");
+            return;
+        }
+        Claim::Unanswered => {
+            eprintln!("{APP_NAME} is already running and did not answer");
+            return;
+        }
+        Claim::Alone(e) => Some(e),
+    };
+
+    // Before anything else that could go wrong: a windowed build has no
+    // console, so stderr must be pointed somewhere first or the first failure
+    // is silent. If this fails there is, by construction, nowhere to say so.
     if !cfg!(debug_assertions) {
         let _ = diagnostics::capture_stderr();
+    }
+    if let Some(e) = unguarded {
+        eprintln!("instance: {e}; running without the one-perch guard");
     }
     // After stderr, so the path it reports has somewhere to be written. Opt-in
     // by environment variable in any build; a debug build's numbers are not
@@ -166,54 +202,25 @@ fn main() {
         eprintln!("cpu log: {}", path.display());
     }
 
-    let mut args = std::env::args().skip(1);
-    let mut targets: Vec<Target> = Vec::new();
-    let mut volume = None;
-    // What could not be used, to be said in the window. A release build has
-    // no console, so anything only printed here is never seen.
-    let mut warnings: Vec<String> = Vec::new();
-
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--volume" => match args.next().and_then(|v| v.parse::<u8>().ok()) {
-                Some(level) => volume = Some(level.min(100)),
-                None => warnings.push("--volume needs a number from 0 to 100; ignored".into()),
-            },
-            "--help" | "-h" => {
-                eprintln!("usage: {APP_NAME} [channel...] [--volume 0-100]");
-                eprintln!();
-                eprintln!("A release build is windowed, so this text goes to");
-                eprintln!("{}", diagnostics::log_path().display());
-                eprintln!();
-                eprintln!("Name up to {MAX_PANES} channels, or twitch.tv links to channels or");
-                eprintln!("recordings, to open them side by side.");
-                eprintln!("With no channel, opens on the follows page.");
-                eprintln!(
-                    "Settings live at {}",
-                    settings::default_path(APP_NAME).display()
-                );
-                std::process::exit(0);
-            }
-            // Anything else that looks like an option is a mistake worth
-            // naming, rather than a channel called `--foo` that streamlink
-            // fails on a few seconds later with a message about a URL.
-            flag if flag.starts_with('-') => {
-                warnings.push(format!("unknown option {flag}; ignored"));
-            }
-            // A login, or a twitch.tv link to a channel or a recording, read
-            // the one way the app reads either — see `target`.
-            other => match target::parse(other) {
-                Some(target) => targets.push(target),
-                None => warnings.push(format!(
-                    "{other:?} is not a Twitch channel or recording; skipped"
-                )),
-            },
-        }
+    let launch = Launch::read(args);
+    if launch.help {
+        eprintln!("{}", launch::USAGE);
+        eprintln!();
+        eprintln!("A release build is windowed, so this text goes to");
+        eprintln!("{}", diagnostics::log_path().display());
+        eprintln!();
+        eprintln!("Name up to {MAX_PANES} channels, or twitch.tv links to channels or");
+        eprintln!("recordings, to open them side by side.");
+        eprintln!("With no channel, opens on the follows page.");
+        eprintln!("While {APP_NAME} runs, launching it again brings the window forward");
+        eprintln!("and opens what is named there.");
+        eprintln!("Settings live at {}", settings_path.display());
+        std::process::exit(0);
     }
 
     // Where the window was last closed, read before the app exists so the
     // window can open there rather than open elsewhere and jump.
-    let placement = Settings::load(&settings::default_path(APP_NAME))
+    let placement = Settings::load(&settings_path)
         .ok()
         .and_then(|settings| settings.window)
         .filter(WindowPlacement::is_usable);
@@ -244,9 +251,8 @@ fn main() {
                 ..Default::default()
             };
 
-            cx.open_window(options, |window, cx| {
-                let root = cx
-                    .new(|cx| RootView::new(targets.clone(), volume, warnings.clone(), window, cx));
+            cx.open_window(options, move |window, cx| {
+                let root = cx.new(|cx| RootView::new(launch, launches, window, cx));
 
                 // Remember where the window was, on the way out. The platform
                 // reports the restore bounds for a maximised or fullscreen
@@ -261,6 +267,10 @@ fn main() {
                             this.remember_watching(cx);
                         })
                         .ok();
+                        // A launch arriving from here on is turned away, and
+                        // becomes the next perch once this one lets go, rather
+                        // than being handed to a window that is going.
+                        closing.close_channel();
                         true
                     }
                 });

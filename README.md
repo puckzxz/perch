@@ -66,6 +66,11 @@ points when it carries a `?t=`. `--volume` applies to this run only: it does
 not overwrite the level each channel remembers, and it wins over one for as
 long as the app is open.
 
+Only one perch runs at a time. Launching it again while it is open brings the
+open window to the front — out of the taskbar, if it was minimised — and
+whatever you named opens there, beside what is playing. Two copies used to be
+possible, and each spent the sign-in the other was relying on.
+
 Or directly, once built:
 
 ```

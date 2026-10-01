@@ -68,8 +68,10 @@ App modules:
 
 | file | role |
 |---|---|
-| `main.rs` | the process: arguments, the window, where stderr goes |
-| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `browsing`, `streams`, `history` (where each recording was left, and resuming there), `prefs`, `chrome`, `pages` |
+| `main.rs` | the process: first perch or a launch to hand over, the window, where stderr goes |
+| `instance/` | one perch per settings file: the claim, and a later launch handing its arguments to the running one — a named pipe on Windows, `flock` and a socket on Unix |
+| `launch.rs` | what a launch's arguments ask for, read the one way at startup and on a handover (pure, tested) |
+| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `browsing`, `streams`, `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `prefs`, `chrome`, `pages` |
 | `target.rs` | what a typed or pasted thing means: a login, or a twitch.tv link to a channel or a recording (pure, tested) |
 | `browse.rs` | the picker page: following, popular, categories, search |
 | `channel_page.rs` | one channel's past broadcasts, and when each was; the recording card both pages use |
@@ -109,6 +111,12 @@ on `recv_timeout` against the next follows-poll deadline — the wait and the
 mailbox are the same thing, so browsing never queues behind the timer. Dropping
 the service drops the sender, which wakes the worker immediately rather than
 after the poll interval.
+
+**And one process owns the settings file, for the same reason.** A second
+perch on the same file was a second worker spending the same tokens — and a
+second writer the `settings` crate's lock knows nothing about, since that lock
+is per process. `instance` makes the first copy the only one: a later launch
+hands its arguments over and exits. See "One perch".
 
 ---
 
@@ -1458,6 +1466,43 @@ over. Not on macOS, where gpui reads the bounds *relative* to the display it
 is given: the saved bounds are global, so naming one would shift the window by
 that display's origin.
 
+**One perch.** `instance::claim` runs first thing in `main` — before
+`capture_stderr` too, which starts by renaming the log and would move a running
+copy's log out from under it. The claim is the operating system's, so a crash
+leaves nothing to clear: on Windows a named pipe, whose first instance is
+created with `FILE_FLAG_FIRST_PIPE_INSTANCE` and so cannot be created twice —
+the test and the claim are one call; on Unix `flock` on `instance.lock`, with
+`instance.sock` beside it to listen on. The pipe is named for a hash of the
+settings directory (FNV-1a, not std's hasher, which may change between
+releases): pipes are machine-wide, and a fixed name would hand one user's launch
+to another user's window. Its handle is not inheritable, so a streamlink that
+outlived perch could not keep the claim.
+
+A later launch connects, sends its arguments as typed — `launch` reads them on
+arrival, the same reader startup uses — and waits for one byte back. That
+byte comes only once the arguments are queued for a window that still exists:
+`main` closes the queue the moment the window starts to close, and a launch
+arriving after that is turned away, tries again, and becomes the next perch as
+soon as the old one lets go, rather than being answered by a process on its
+way out. One that is not answered within five seconds exits, because running
+anyway is the race the guard exists to stop. What is handed over opens beside
+whatever is playing (`RootView::open_targets`) — the rule startup follows too,
+where the first target is alone only because nothing else is open. A handed-over
+`--volume` becomes the session's override, as it would have been for the
+session it would have started, and `--help` becomes a toast.
+
+**Coming forward without a keystroke.** gpui's `Window::activate_window` on
+Windows earns the foreground by pressing Alt through `SendInput`: a real
+keystroke, into whatever had the keyboard. Instead the launch that hands over —
+which Windows lets take the foreground, because the user just started it —
+passes that right to the running copy before it says anything
+(`AllowSetForegroundWindow`, on the pid `GetNamedPipeServerProcessId` names),
+and the running copy restores itself if minimised and calls
+`SetForegroundWindow` on its own handle (`instance::bring_forward`). It is what
+Chromium's process singleton does. The launch opens the pipe with
+`SECURITY_IDENTIFICATION`, so whoever might have made a pipe of that name first
+learns who called and cannot act as them.
+
 ### What deliberately does not move
 
 Both of these were considered and rejected, so they read as decisions rather
@@ -1482,6 +1527,12 @@ cargo clippy --workspace --all-targets
 
 **Kill the app before rebuilding.** Windows locks the running exe and the link
 step fails with "Access is denied".
+
+**One perch at a time is enforced now.** A build started while another perch
+runs on the same settings hands its arguments over and exits — `cargo run`
+included, which then seems to do nothing but bring the other window forward. A
+debug build says so in its console. Close the running one first; the two were
+never safe together, since they spent each other's sign-in.
 
 **`cargo build | tail` reports `tail`'s exit code, not cargo's.** Use
 `set -o pipefail` and `${PIPESTATUS[0]}`, or a bare build. This produced at least
@@ -1592,8 +1643,9 @@ history that followed it — where each recording was left, resuming there from
 anywhere, the history tab, the time under the pointer on the seek bar, and
 getting a stalled recording going again — are built, as are a channel's
 highlights and uploads beside its past broadcasts, offline channels in search,
-the live follows holding their order under the pointer, and undo for forgetting
-a recording. Ranked by what would be noticed, roughly:
+the live follows holding their order under the pointer, undo for forgetting a
+recording, and one perch at a time, a later launch handing over to it. Ranked
+by what would be noticed, roughly:
 
 1. **Rewind a live stream.** A "from the start" control on a live pane that
    opens the in-progress archive in place. The archive is in the channel's
@@ -1754,6 +1806,12 @@ None of these is being worked on; all of them are real.
 - Do not name a display in `WindowOptions` on macOS, and do not leave it out on
   Windows. The two platforms read saved window bounds opposite ways; see "The
   window remembers where it was".
+- Do not call `Window::activate_window` on Windows. It presses Alt through
+  `SendInput`; `instance::bring_forward` comes forward on a right the launching
+  process handed over. See "Coming forward without a keystroke".
+- Do not move `instance::claim` below anything that touches what a running
+  perch owns — the log first of all — and do not answer a handover before its
+  arguments are queued for a window that still exists. See "One perch".
 - Do not key animated-image element ids on position.
 - Do not use `--stream-url` to skip streamlink's pipeline for a *live* stream.
   A recording is resolved that way on purpose, and reads its playlist itself;

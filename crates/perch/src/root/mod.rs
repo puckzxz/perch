@@ -14,6 +14,7 @@
 //! | `follows` | the Twitch worker's events: sign-in, who is live, replies |
 //! | `browsing` | the browse page's requests: tabs, search, categories, channels |
 //! | `streams` | opening, restarting and closing panes |
+//! | `launches` | what the command line named, at startup and from later launches |
 //! | `history` | what has been watched: noting where each recording got to, resuming there |
 //! | `prefs` | the settings sheet, the divider drag, the rail |
 //! | `chrome` | pills, toasts, the now-playing bar, the rail |
@@ -29,6 +30,7 @@ mod chrome;
 mod commands;
 mod follows;
 mod history;
+mod launches;
 mod pages;
 mod prefs;
 mod shortcuts;
@@ -39,6 +41,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use emotes::ImageCache;
+use futures::channel::mpsc::UnboundedReceiver;
 use gpui::{
     div, prelude::*, Context, Entity, FocusHandle, MouseButton, ScrollHandle, SharedString,
     Subscription, Task, Window,
@@ -49,9 +52,9 @@ use settings::Settings;
 use twitch_api::{Channel, LiveStream};
 
 use crate::browse::{self, Discovery, SignIn};
+use crate::launch::Launch;
 use crate::layout::Body;
 use crate::settings_view::SettingsPanel;
-use crate::target::Target;
 use crate::twitch::TwitchService;
 use crate::video_view::VideoView;
 use crate::watch::{ResizeStart, Slot, StreamState, MAX_PANES};
@@ -246,6 +249,9 @@ pub(crate) struct RootView {
 
     /// Recordings opened by link that are still to be looked up.
     linked_videos: Vec<LinkedVideo>,
+    /// Opens what later launches hand over; see `launches`. Dropping it is
+    /// what tells `instance` there is no window left to hand to.
+    _launch_pump: Task<()>,
     /// Which scheduled settings save is the newest; see `save_settings_soon`.
     save_epoch: u64,
     /// Which run of window resizes is the newest; see `on_window_resized`.
@@ -255,10 +261,11 @@ pub(crate) struct RootView {
 }
 
 impl RootView {
+    /// The app, opening what this launch named; `launches` brings what later
+    /// ones name, handed over by `instance`.
     pub(crate) fn new(
-        targets: Vec<Target>,
-        volume_override: Option<u8>,
-        warnings: Vec<String>,
+        launch: Launch,
+        launches: UnboundedReceiver<Vec<String>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -383,7 +390,7 @@ impl RootView {
             active: None,
             focus,
             _focus_lost,
-            volume_override,
+            volume_override: launch.volume,
             resize: None,
             palette_input,
             palette_open: false,
@@ -394,6 +401,7 @@ impl RootView {
             next_toast: 0,
             _cache_pump: cache_pump,
             linked_videos: Vec::new(),
+            _launch_pump: Self::pump_launches(launches, window, cx),
             save_epoch: 0,
             resize_epoch: 0,
             _bounds,
@@ -406,17 +414,10 @@ impl RootView {
         // Only what was named on the command line opens a stream. Launching
         // straight into whatever was on last time means the app starts costing
         // CPU and bandwidth before anyone has asked it to.
-        for (index, target) in targets.into_iter().take(MAX_PANES).enumerate() {
-            match target {
-                Target::Channel(channel) => view.open_channel(channel, index == 0, window, cx),
-                // Named by a link, so it has to be looked up first, and that
-                // needs a session; it opens once there is one.
-                Target::Video { id, start_secs } => view.open_video_link(id, start_secs, cx),
-            }
-        }
+        view.open_targets(launch.targets, window, cx);
         // Anything the command line could not use. Said here, in the window,
         // because a release build has no console for it to have been said in.
-        for warning in warnings {
+        for warning in launch.warnings {
             view.toast(warning, cx);
         }
         view

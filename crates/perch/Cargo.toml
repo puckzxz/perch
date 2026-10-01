@@ -28,9 +28,15 @@ smallvec = "1"
 [dev-dependencies]
 serde_json.workspace = true
 
-# Only for `dup2` in `diagnostics`, which has no std equivalent.
+# For `dup2` in `diagnostics` and `flock` in `instance`, neither of which has a
+# std equivalent.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# Only for the window's own handle, which `instance` brings forward when a
+# later launch hands over; gpui uses the same crate and does not re-export it.
+[target.'cfg(windows)'.dependencies]
+raw-window-handle = "0.6"
 
 # Only to stamp the icon onto the .exe; see build.rs.
 [target.'cfg(windows)'.build-dependencies]
