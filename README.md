@@ -321,19 +321,37 @@ than to glance at the list.
 
 ### The rail
 
-Down the left-hand edge of both pages, in three groups. First the channels you
+Down the left-hand edge of both pages, in four groups. First the channels you
 have pinned, in the order you pinned them, live or not. Then who else is live:
 avatar, name, what they are playing, and how many people are there. Then
-everyone else you follow, folded under Offline and a count — click the count
-to unfold them, and again to fold them away; they start folded each time Perch
-starts. Click a live channel to watch it, or `+` to open it beside what is
-already playing; click anyone else for their channel's page. An offline name
-has a picture only if Perch saw that channel live earlier in the session.
+Recommended: up to five live channels you do not follow that are like the ones
+you watch, each saying which one led to it — "Like forsen" — and holding still
+under the pointer as the live list does. Then everyone else you follow, folded
+under Offline and a count — click the count to unfold them, and again to fold
+them away; they start folded each time Perch starts. Click a live channel,
+followed or recommended, to watch it, or `+` to open it beside what is already
+playing; click anyone else for their channel's page. An offline name has a
+picture only if Perch saw that channel live earlier in the session.
+
+Recommendations start from the channels open in your panes and the ones you
+watched most recently, six at most. For each, Twitch says who else its viewers
+are watching — the suggestions its own website shows in its sidebar, from a
+query Twitch has never published, which Perch asks without sending your
+sign-in. Anyone you follow or are already watching is left out, though one you
+have just opened from the list keeps its place, marked as watching, until the
+pointer leaves the rail. They are asked
+for when you open a channel they have not been asked about yet, and otherwise
+every five minutes at most, only while you are signed in and the rail is open.
+If Twitch refuses that query — most likely because it has changed it — the
+group goes away until Perch is next started; if a request fails any other way,
+the last list stays and is asked for again at the next five-minute refresh.
+Nothing about them is saved.
 
 The pin that appears on a row under the pointer pins that channel, and the
-same pin on a pinned row unpins it. Pins are kept in `settings.json`, as
-`pinned`, so they can be written there by hand too; a pin for a channel you no
-longer follow shows as just its login, with nothing to say whether it is live.
+same pin on a pinned row unpins it. A recommended row has no pin, since a pin
+is for a channel you follow. Pins are kept in `settings.json`, as `pinned`, so
+they can be written there by hand too; a pin for a channel you no longer
+follow shows as just its login, with nothing to say whether it is live.
 
 It folds away with the rail button at the left of the title bar, or `B`, and
 stays folded — a window left on one stream for three hours should be able to

@@ -432,8 +432,8 @@ pub fn caption_button(
 }
 
 /// The box a group's name sits in over the rows it heads, with nothing in it
-/// yet: the rail's `Pinned` and `Live`, and the start of a [`fold`] for its
-/// `Offline`. Not a control; here because [`fold`] is built on it, and the
+/// yet: the rail's `Pinned`, `Live` and `Recommended`, and the start of a
+/// [`fold`] for its `Offline`. Not a control; here because [`fold`] is built on it, and the
 /// fold sits in the same column as the headings above it, at the same size,
 /// weight and colour, on the same inset. One recipe for both, so the fold
 /// cannot drift from them by somebody restyling one and not the other.

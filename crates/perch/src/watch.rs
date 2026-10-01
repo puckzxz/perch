@@ -29,6 +29,7 @@ use gpui::{
 use settings::history::Watched;
 use streamlink::StreamSupervisor;
 
+use twitch_api::recommend::SimilarChannel;
 use twitch_api::{LiveStream, Video};
 
 pub use self::header::Placement;
@@ -454,14 +455,51 @@ fn band_wanted(
     placement == Placement::OverPicture && (inside || revealed || !picture) && !menu_open
 }
 
+/// What a live pane's header says about the broadcast: how many are watching,
+/// for how long, and what is on. Borrowed from whichever list carries the
+/// channel — a Helix [`LiveStream`], or a recommendation from Twitch's
+/// sidebar query, which knows no start time — rather than one copied into the
+/// other's shape; see `RootView::live_info`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LiveInfo<'a> {
+    pub viewers: u64,
+    /// When the broadcast began, RFC 3339, for the uptime; `None` from a list
+    /// that does not say.
+    pub started_at: Option<&'a str>,
+    pub title: &'a str,
+    pub game: &'a str,
+}
+
+impl<'a> From<&'a LiveStream> for LiveInfo<'a> {
+    fn from(stream: &'a LiveStream) -> Self {
+        LiveInfo {
+            viewers: stream.viewer_count,
+            started_at: Some(&stream.started_at),
+            title: &stream.title,
+            game: &stream.game_name,
+        }
+    }
+}
+
+impl<'a> From<&'a SimilarChannel> for LiveInfo<'a> {
+    fn from(channel: &'a SimilarChannel) -> Self {
+        LiveInfo {
+            viewers: channel.viewer_count,
+            started_at: None,
+            title: &channel.title,
+            game: &channel.game_name,
+        }
+    }
+}
+
 /// What the root knows about a pane beyond its slot, resolved once per frame
 /// in `RootView::watch_page` rather than per pane inside the page.
 pub struct PaneInfo<'a> {
-    /// The live record the header's numbers, title and game come from, when
-    /// a list the app has fetched carries the channel — see
-    /// `RootView::stream_info`. `None` for a recording, whose header speaks
-    /// for the recording, and for a channel opened by name that is in no list.
-    pub stream: Option<&'a LiveStream>,
+    /// What the header's numbers, title and game come from, when a list the
+    /// app has fetched carries the channel — see `RootView::live_info`.
+    /// `None` for a recording, whose header speaks for the recording, and for
+    /// a channel opened by name that is in no list.
+    pub live: Option<LiveInfo<'a>>,
     /// What the pane calls its channel, in its header and its status line —
     /// see `RootView::display_name`.
     pub name: SharedString,

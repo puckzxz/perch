@@ -54,7 +54,9 @@ crates/
                 resolves a recording and reads its playlist
   twitch-chat   read-only chat over anonymous IRC, the history backfill, and
                 the replay of a recording's chat
-  twitch-api    device-code sign-in, follows, top streams, categories, search
+  twitch-api    device-code sign-in, follows, top streams, categories, search,
+                and channels like the ones watched, from Twitch's unofficial
+                SideNav query (`recommend`)
   emotes        Twitch/FFZ/BTTV/7TV resolution + disk image cache
   settings      persisted user settings, and what has been watched
   perch         the app
@@ -72,7 +74,7 @@ App modules:
 | `instance/` | one perch per settings file: the claim, and a later launch handing its arguments to the running one — a named pipe on Windows, `flock` and a socket on Unix |
 | `launch.rs` | what a launch's arguments ask for, read the one way at startup and on a handover (pure, tested) |
 | `trail.rs` | back and forward: the places behind and ahead, what a step passes over, and forgetting a place that is gone (pure, tested) |
-| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams` (opening, restarting, closing, and `replace_with_video`, a recording swapped in for a live pane in place), `broadcasts` (what a stopped live pane asks about its channel's past broadcasts, and whether it may offer to start by itself), `pane_actions` (what a pane asks for, by its key: a press on it or one of its controls, which takes the keys back for the root first, and its player's requests; and the moment a pane key brings a pane's header up over its picture), `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `prefs`, `chrome` (pills, toasts, the rail), `mini_player` (what plays on while you browse, in the corner of the page), `title_bar` (the bar Perch draws across the top of the window — the rail button, back and forward, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`) |
+| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams` (opening, restarting, closing, and `replace_with_video`, a recording swapped in for a live pane in place), `broadcasts` (what a stopped live pane asks about its channel's past broadcasts, and whether it may offer to start by itself), `pane_actions` (what a pane asks for, by its key: a press on it or one of its controls, which takes the keys back for the root first, and its player's requests; and the moment a pane key brings a pane's header up over its picture), `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `prefs`, `recommended` (the rail's Recommended group: when to ask the worker, what its answer becomes, and the hooks that call it), `chrome` (pills, toasts, the rail), `mini_player` (what plays on while you browse, in the corner of the page), `title_bar` (the bar Perch draws across the top of the window — the rail button, back and forward, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`) |
 | `target.rs` | what a typed or pasted thing means: a login, or a twitch.tv link to a channel or a recording; `link`, its inverse and the one place a twitch.tv URL is written, and `moment`, the second a link to a recording starts at (pure, tested) |
 | `browse.rs` | the picker page: following, popular, categories, search; which of them is on screen (`Discovery::place`) and which lists are still being waited on |
 | `channel_page.rs` | one channel's past broadcasts, and when each was; the recording card both pages use, and a stopped pane too; a recording's poster, and `archive_of`, which finds the recording of a broadcast that just ended (tested) |
@@ -91,10 +93,11 @@ App modules:
 | `chat.rs` | chat pane: rows, emotes, scrollback |
 | `chat_text.rs` | what a word in a message is — link, mention or plain (pure, tested) |
 | `settings_view.rs` | settings sheet |
-| `twitch.rs` | the worker: sign-in, follows polling, browse requests, and a stopped pane's ask for its channel's past broadcasts |
+| `twitch.rs` | the worker: sign-in, follows polling, browse requests, a stopped pane's ask for its channel's past broadcasts, and the rail's anonymous ask for channels like the ones watched (`Request::Recommend`, answered ahead of the session's upkeep) |
 | `keys.rs` | the keymap: actions, bindings, contexts, the listing, and the keys a tooltip may name (`Hint`) |
 | `theme.rs` | **all** colour, spacing, type and motion tokens |
-| `sidebar.rs` | the follows rail down the left, beside both pages: Pinned, Live, then Offline folded under a count (`groups`, pure, tested) |
+| `sidebar.rs` | the follows rail down the left, beside both pages: Pinned, Live, Recommended, then Offline folded under a count (`groups`, pure, tested) |
+| `recommended.rs` | the rail's Recommended group worked out: the seeds (`seeds`), when to ask (`Recommended::next_ask`), and what the answers come to (`suggestions`, `reason`) (pure, tested) |
 | `palette.rs` | the command palette, and what it can run |
 | `controls.rs` | the one button, the variants it comes in, the icon button, the heading that folds (`fold`) and the plain one it sits among (`group_heading`), the window's caption buttons, and the two tooltip builders (`tip`, `full_text`) |
 | `widget_theme.rs` | hands `theme.rs` to `gpui-component`'s own palette |
@@ -112,11 +115,15 @@ you add a network feature, follow that shape rather than introducing tokio.
 **One thread owns the Twitch session, and it has to.** Refresh tokens are
 single-use, so two things refreshing at once would spend the same token twice
 and lock the user out. Every Helix read therefore goes through `twitch.rs`, not
-merely for tidiness. It takes requests on a `std::sync::mpsc` channel and waits
-on `recv_timeout` against the next follows-poll deadline — the wait and the
-mailbox are the same thing, so browsing never queues behind the timer. Dropping
-the service drops the sender, which wakes the worker immediately rather than
-after the poll interval.
+merely for tidiness — and so does the rail's recommendations ask, which reads
+Twitch's unofficial GraphQL with no token, as one more request on the same
+queue. Chat's own requests stay with chat and never pass through the worker:
+its IRC, its history, and a recording's replay, which is GraphQL too (see
+"Chat"). The worker takes requests on a `std::sync::mpsc` channel and waits on
+`recv_timeout` against the next follows-poll deadline — the wait and the
+mailbox are the same thing, so browsing never queues behind the timer.
+Dropping the service drops the sender, which wakes the worker immediately
+rather than after the poll interval.
 
 **And one process owns the settings file, for the same reason.** A second
 perch on the same file was a second worker spending the same tokens — and a
@@ -1104,13 +1111,15 @@ unconsidered.
   pressed by the platform (see the title-bar trap). `fold` is a heading that
   folds away the rows under it — the rail's offline follows — with a chevron
   that says which way it is and no fill until hovered. It is built on
-  `group_heading`, the box the rail's `Pinned` and `Live` headings sit in, so
-  the fold and the headings above it share one recipe rather than two that
-  had to be restyled together. What a control says under the pointer is
-  `tip`, one line of words with any key in it from `keys::Hint`, or
-  `full_text` for the rest of a line cut short — never a
-  `gpui_component` `Tooltip` built at the call site — and a control whose
-  words follow a state keys its id on that state too (see the GPUI traps).
+  `group_heading`, the box the rail's `Pinned`, `Live` and `Recommended`
+  headings sit in, so the fold and the headings above it share one recipe
+  rather than two that had to be restyled together. None of the headings
+  carries an icon, so the third, added later, does not either. What a
+  control says under the pointer is `tip`, one line of words with any key in
+  it from `keys::Hint`, or `full_text` for the rest of a line cut short —
+  never a `gpui_component` `Tooltip` built at the call site — and a control
+  whose words follow a state keys its id on that state too (see the GPUI
+  traps).
   The player's bar builds every icon through three helpers in
   `video_view/bar.rs`: `bar_icon` is an `OnVideo` icon button that is
   handed its `tip` only while `window.is_window_hovered()`, so that gate
@@ -1346,12 +1355,14 @@ header rests over it. The split:
   so the toasts at the top-right reach Refresh only in a narrow window — and
   the browse toast offset (`TAB_STRIP_HEIGHT`) keeps them off it even then.
 - **The rail** (`sidebar.rs`): a row is a click — a live channel watches,
-  anyone else opens their page — and under the pointer it reveals more at
-  its right-hand end, over the viewer count where there is one: the pin,
-  filled on a pinned row, where it unpins, and `+` on a live row while
-  something plays and there is room beside it. Both stop propagation, or the
-  row under them would fire as well. The offline group's heading is
-  `controls::fold`, which unfolds it for the session.
+  followed or recommended, anyone else opens their page — and under the
+  pointer it reveals more at its right-hand end, over the viewer count where
+  there is one: the pin, filled on a pinned row, where it unpins, and `+` on
+  a live row while something plays and there is room beside it. Both stop
+  propagation, or the row under them would fire as well. A recommended row
+  has no pin, so with no room for `+` its count stays put rather than
+  giving way to nothing. The offline group's heading is `controls::fold`,
+  which unfolds it for the session.
 
 - **The mini player**, on the browse page while something plays
   (`root/mini_player.rs`): the pictures, and under them a bar with what is
@@ -1413,6 +1424,10 @@ than copied onto the `Slot`, so there is one source and it cannot go stale.
 then popular, the open category and the last search, because a pane opened from
 Popular used to have no numbers and no title at all: the panes most likely to be
 somebody you had never watched before were the ones the header said least about.
+Failing those, the rail's recommendations, which are no `LiveStream`s: the
+header reads a `watch::LiveInfo` borrowed from either (`RootView::live_info`),
+and the name comes from `RootView::channel_name`, which asks the same lists,
+the offline follows and the recommendations; see "Browsing".
 Resolved once per pane per frame in `watch_page`, not per pane inside the page,
 which would be the same walk four times over. The same record gives a starting
 pane its poster — the preview its browse card shows — and an ended one the id
@@ -1735,7 +1750,69 @@ live follows are looked up. An offline or pinned row in the rail shows a
 picture only if `avatars` already has one from earlier in the session, and
 asks for none of its own: a `/users` call per hundred offline follows would
 cost every poll as many requests again as fetching the offline list does, for
-faces on a list that starts folded.
+faces on a list that starts folded. A recommended row brings its own picture,
+70x70 already, and goes through the same `ImageCache`.
+
+**The rail's Recommended group reads Twitch's unofficial sidebar query.**
+Helix has nothing like it. `twitch_api::recommend` asks the website's
+persisted `SideNav` query, anonymously and on the website's Client-ID, for the
+live channels whose viewers also watch a given channel — five a seed when
+measured — and `rank` puts the shelves together, channels several seeds agree
+on first, less everyone followed, live or offline, and every open pane's
+channel. Its module docs carry the hash, the forum's word on the endpoint and
+the fixtures. The perch half is three files: `recommended.rs` works it out
+purely, `root/recommended.rs` runs it, and `sidebar.rs` draws it, under Live
+and over the offline fold.
+
+The seeds are the open panes, most recently watched first, then
+`Settings::recent`, each once through `channel_key` and capped at
+`recommended::SEED_LIMIT` (six), because each seed is one request and the
+worker makes them one after another with every browse request queued behind.
+`Request::Recommend` is answered in `run` ahead of `keep_session_fresh`, beside
+the interception of `Follows`: it carries no token, and a refresh Twitch turned
+down — which ends the worker — should not be what an anonymous ask finds out.
+But the worker reads requests only once sign-in has got it into its loop, so
+the root asks only while `SignIn::SignedIn`, and only while the rail is
+unfolded, since nobody sees the group folded away. One ask at a time, decided
+purely by `Recommended::next_ask`: every seed once the last full ask is
+`recommended::REFRESH` (five minutes) old, otherwise only the seeds not asked
+about since — a pane opened on a new channel is one request, not six — and
+nothing while an answer is out, so an answer for an older set of seeds is used
+and the new seed asked after it rather than beside it. `update_recommended`
+ranks and asks, and is called wherever the seeds, the follows or the answers
+change: a pane opened (`open_channel`, `open_video_at`) or closed
+(`retire_slots`), `on_streams`, `FollowedChannels`, `SignedIn`, the rail
+unfolding, and the answer itself. The follows poll's call is the backstop for
+the interval; it asks once in five polls, not at every one.
+
+Failures stay quiet, the stance chat replay takes. `Error::QueryRefused` — a
+retired hash, or anything else Twitch will not run — empties the group for the
+session and says so once on stderr. Anything else, a 4xx included, keeps the
+last good answers, says why on stderr, and is asked again at the next full
+ask; a seed whose ask failed is not asked again before then. An empty answer
+hides the group, and so does having no follows list yet: without one a
+followed channel cannot be told from the rest, and would be offered for the
+seconds the follows take. The worker's terminal `Error` and a new client id
+forget the ask that was out (`forget_asks`), or no ask would ever go again.
+The rows hold still under the pointer with the follows, merged by
+`root::recommended::hold` and ranked afresh by `hold_live` on release. `hold`
+is `follows::keep_order` and one thing more: a row just opened in a pane is a
+seed now, and left out of every fresh ranking, so it is kept where it stands,
+lit as watching like a clicked follow, rather than dropped from under the
+pointer with the next row sliding up for a double-click's second press to
+land on. A recommended row is a live row with the reason in the accent where
+the game would be — `recommended::reason`, "Like forsen", "Like forsen and
+nymn", "Like forsen and 2 more", by the name a seed writes itself as when a
+list knows it — a click that watches and a `+` that adds, and no pin: a pin
+for a channel nobody follows is a bare login that cannot say whether it is
+live (see "Known limits"). A pane opened from the group is on a channel no
+Helix list has, so what it says about it — the name in its header, status
+line, mini player and palette row, and the title, game and viewers — comes
+from `Recommended::channel`, every channel the answers have named this
+session, through `RootView::live_info` and `channel_name`; the reasons that
+later name it as a seed use the same name. A recommendation knows no start
+time and carries no preview, so that pane has no uptime and starts on black.
+Nothing is saved, and the palette does not offer recommendations yet.
 
 **Card width is derived from the window**, by `browse::card_width`, and the row
 is filled rather than merely fitted. A fixed 300px card left 306px of gutter
@@ -2466,19 +2543,20 @@ two bugs phase 1 left for it are fixed: Mute all's tooltip kept its old
 words after a press, and a list asked for while signed out said it could not
 reach Twitch.
 
-**The overhaul's later phases are agreed in outline**, and the first two left
-a seam for each. An omnibox takes the place of the title bar's search box,
-which is one element in `title_bar_leading` so it can be swapped whole. A
-guide, and a Recommended group in the rail read from Twitch's unofficial
-`SideNav` query, with the unpublished-query risk the chat replay already
-carries (see "Known limits"); the bar's right-hand cluster keeps a commented
-slot for the guide's button. A pop-out player that stays on top, and a pane
-maximised within the window — whether a `VideoView`'s pump and its atlas
-tile can move between windows is not known yet, and is the first thing to
-find out. The bar's cluster and the pane header's keep commented slots for
-both, More a commented row for the pop-out, and `bar::RIGHT_BUTTONS` counts
-the cluster, so a button added there narrows the bar sooner. Sound and chat
-stay per pane throughout.
+**The overhaul's later phases are agreed in outline**, and the first two left a
+seam for each. An omnibox takes the place of the title bar's search box, which
+is one element in `title_bar_leading` so it can be swapped whole. A guide; the
+bar's right-hand cluster keeps a commented slot for its button. The Recommended
+group in the rail, read from Twitch's unofficial `SideNav` query with the
+unpublished-query risk the chat replay already carries, is built (see
+"Browsing" and "Known limits"); the palette and the guide do not show
+recommendations yet, and `recommended::Recommended::shown` is what they would
+read. A pop-out player that stays on top, and a pane maximised within the
+window — whether a `VideoView`'s pump and its atlas tile can move between
+windows is not known yet, and is the first thing to find out. The bar's cluster
+and the pane header's keep commented slots for both, More a commented row for
+the pop-out, and `bar::RIGHT_BUTTONS` counts the cluster, so a button added
+there narrows the bar sooner. Sound and chat stay per pane throughout.
 
 Left over from phase 1, smallest first:
 
@@ -2504,7 +2582,7 @@ Left over from phase 2, smallest first:
   are; see the GPUI traps.
 - The bar's and the status screen's room are estimates, to be tuned against
   a capture of real panes: `theme::QUALITY_PILL_ROOM` (see "Known limits",
-  item 23) and `theme::STATUS_ROOM`, which decides when an offline pane's
+  item 24) and `theme::STATUS_ROOM`, which decides when an offline pane's
   last broadcast shrinks from a card to a pill; too small, and a card in a
   short pane pushes `Try again` out of the box.
 - Arrow keys between a menu's rows, and a key of its own for a pane's
@@ -2636,9 +2714,10 @@ None of these is being worked on; all of them are real.
 14. **Pins know only what the follows lists know.** A pin for a channel no
     longer followed shows as its bare login, live or not: the worker reads
     the settings once when it starts and asks Twitch about follows only, so
-    nothing polls such a channel. Pinning is from the rail only, so a channel
-    you do not follow can be pinned only by hand in `settings.json`; and an
-    offline row has a picture only if this session saw the channel live.
+    nothing polls such a channel. Pinning is from the rail only, and a
+    recommended row offers no pin for that reason, so a channel you do not
+    follow can be pinned only by hand in `settings.json`; and an offline row
+    has a picture only if this session saw the channel live.
 15. **A recording's thumbnail is 320x180**, the one size Twitch serves for a
     video, scaled up onto a card that is wider than that — and over a whole
     pane, dimmed, while a recording opens. A live channel's preview is the
@@ -2657,25 +2736,36 @@ None of these is being worked on; all of them are real.
     of a broadcast still being recorded runs about thirty seconds behind live,
     so a viewer who has caught up with the edge sees no chat there; the live
     pane is for that.
-18. **The history is only as fresh as the last listing.** An entry keeps the
+18. **The rail's Recommended group rides an unpublished Twitch query too**:
+    `SideNav`, by its persisted hash, on the website's Client-ID — see
+    `twitch_api::recommend` and "Browsing". Twitch's developer forum has said
+    third parties should not use that endpoint. If the hash is retired the
+    group goes for the session and stderr says so once; a block would most
+    likely arrive as a 4xx, which is read as passing — the list kept, asked
+    again in five minutes — since none has been seen to tell it apart. Each
+    seed is one request on the worker, so a full ask of six holds the browse
+    requests behind it for as long as six requests take. And the reason
+    takes the game's place on the row, so what a recommended channel is
+    playing is not on the rail, whose rows have no tooltips.
+19. **The history is only as fresh as the last listing.** An entry keeps the
     title and the picture from when it was last opened or listed, so a title
     edited since shows the old one until the channel's page is opened again.
     And it is written every fifteen seconds while a recording plays, so a
     crash picks up at most that much early; closing a pane or the window
     writes it at once.
-19. **A Mac window drags only by AppKit's own strip.** gpui 0.2.2 ignores
+20. **A Mac window drags only by AppKit's own strip.** gpui 0.2.2 ignores
     window-control areas on macOS, so only the part of Perch's title bar that
     AppKit's native strip lies under moves the window. A double-click anywhere
     on the bar's empty stretch is handed to the platform by hand. The
     traffic-light position, the room left for it and the bar's height are
     guesses until someone tunes them on a Mac.
-20. **The mouse's side buttons do nothing over the title bar's empty strip
+21. **The mouse's side buttons do nothing over the title bar's empty strip
     or its caption buttons, on Windows.** Those answer the platform's hit
     test as non-client areas, so a press there arrives as `WM_NCXBUTTONDOWN`,
     which gpui 0.2.2 does not translate (events.rs:84-91). Everywhere else in
     the window — the bar's own controls included — they go back and forward.
     Accepted rather than patched in the vendored gpui.
-21. **The saved window size can creep smaller on Windows.** Worked out from
+22. **The saved window size can creep smaller on Windows.** Worked out from
     the vendored gpui and not observed: a system settings change or a DPI
     change that lands while the window is maximised leaves gpui measuring its
     frame as maximised after the restore, and the next close saves the
@@ -2683,37 +2773,38 @@ None of these is being worked on; all of them are real.
     7px and 4px at 100% scale), each time it happens. The fix belongs in
     `vendor/gpui` — re-measure only while not maximised — and waits on a
     decision to patch it; see "The window remembers where it was".
-22. **A live pane's link has no time.** More's `Copy link` and `Open on
+23. **A live pane's link has no time.** More's `Copy link` and `Open on
     twitch.tv`, and the palette's, give a live pane's channel. A moment in a
     broadcast still going is a moment in its archive, which the pane does not
     know; see "What to build next", item 1.
-23. **The bar can run past the narrowest pane.** `bar::fit` drops the volume
+24. **The bar can run past the narrowest pane.** `bar::fit` drops the volume
     figure, the slider and the quality pill, but play, the speaker and the
     right-hand buttons stay, about 194px with the padding, and four beside
     panes in a small window can be narrower. The quality pill's room is an
     estimate (`theme::QUALITY_PILL_ROOM`), so a long rendition name can run a
     few pixels past a pane right at the edge of fitting.
-24. **Posters exist only for channels in a list.** A starting live pane shows
-    its channel's preview only when a list the app has fetched carries the
-    channel; one opened by name waits on black. The preview is a snapshot,
-    minutes old at most.
-25. **`Start when they go live` is only for channels you follow, signed
+25. **Posters exist only for channels in a list.** A starting live pane shows
+    its channel's preview only when a Helix list the app has fetched carries
+    the channel; one opened by name waits on black, and so does one opened
+    from the rail's recommendations, whose answers carry no preview. The
+    preview is a snapshot, minutes old at most.
+26. **`Start when they go live` is only for channels you follow, signed
     in.** The follows poll is what starts a pane, and it lists only followed
     channels; a pane on any other channel has no switch. A poll of the open
     panes' channels would widen it — see "What to build next", item 3.
-26. **`Watch from the start` depends on Helix listing the archive.** A channel
+27. **`Watch from the start` depends on Helix listing the archive.** A channel
     that does not keep past broadcasts offers nothing, and so does one whose
     archive Helix has not listed yet, or lists as ending more than ten minutes
     before the broadcast did (`STILL_GOING_SECS`). A broadcast split by a
     reconnect plays only its last part from the start.
-27. **A pane with chat hidden says `muted` and `paused` only while pointed
+28. **A pane with chat hidden says `muted` and `paused` only while pointed
     at.** Its header rides the band over the picture, which is up while the
     pointer is on the pane, for a moment after a pane key, or over a status
     screen, and the active pane's underline goes with it. Accepted under
     "nothing static on a playing picture": the bar's speaker and play glyphs
     say the same on the same hover, and a pane with chat on screen keeps
     both in its header. See the Keyboard section.
-28. **A vertical stream in a stacked cell stays in the capped box with chat
+29. **A vertical stream in a stacked cell stays in the capped box with chat
     hidden.** The box is the one a pane with chat has, so `C` never moves
     the picture. A portrait stream is what would gain most from chat's
     space; a 4:3 stream in a cell just narrow enough to stack, and a box the

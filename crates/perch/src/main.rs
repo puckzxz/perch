@@ -32,6 +32,7 @@ mod layout;
 mod loudness;
 mod motion;
 mod palette;
+mod recommended;
 mod root;
 mod seek_bar;
 mod settings_view;

@@ -286,6 +286,9 @@ impl RootView {
         self.save_settings(cx);
         // The panes just changed width, and with it perhaps their shape.
         self.sync_quality(window, cx);
+        // Folded, the recommendations are not asked for; unfolded, whatever
+        // came due meanwhile is.
+        self.update_recommended();
         cx.notify();
     }
 

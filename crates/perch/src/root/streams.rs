@@ -13,7 +13,7 @@ use super::{Page, RootView};
 use crate::chat::{ChatView, Feed};
 use crate::video::{self, Playback, PositionHandle, Stopped, VideoStream};
 use crate::video_view::{ChatButton, Qualities, Start, VideoView};
-use crate::watch::{Lookup, Slot, Source, StreamState, MAX_PANES};
+use crate::watch::{LiveInfo, Lookup, Slot, Source, StreamState, MAX_PANES};
 use crate::{layout, motion, settings_view};
 
 /// Starting render size. Each pane measures itself on the first layout pass and
@@ -82,6 +82,9 @@ impl RootView {
             if this.settings.note_watched(&channel) {
                 this.save_settings(cx);
             }
+            // A new seed for the rail's recommendations, and one channel
+            // fewer to recommend.
+            this.update_recommended();
             this.active = Some(channel.clone());
             this.start_stream(channel, window, cx);
             this.set_compact(false, cx);
@@ -154,6 +157,8 @@ impl RootView {
             if this.settings.note_watched(&channel) {
                 this.save_settings(cx);
             }
+            // And for the rail's recommendations.
+            this.update_recommended();
             this.active = Some(key.clone());
             this.start_stream(key, window, cx);
             this.set_compact(false, cx);
@@ -460,6 +465,11 @@ impl RootView {
     ///
     /// This is a snapshot, not a subscription: a title changed mid-stream is
     /// wrong here until whichever list it came from is fetched again.
+    ///
+    /// Helix's lists only. The rail's recommendations are fetched too, but
+    /// are not `LiveStream`s; what a pane says about its channel reads them
+    /// as well, through [`live_info`](Self::live_info) and
+    /// [`channel_name`](Self::channel_name).
     pub(super) fn stream_info(&self, channel: &str) -> Option<&LiveStream> {
         let search = self
             .discovery
@@ -478,8 +488,44 @@ impl RootView {
         .find(|stream| stream.user_login == channel)
     }
 
+    /// What a live pane's header says about its channel's broadcast — how
+    /// many are watching, since when, what is on — from whichever list knows
+    /// it: [`stream_info`](Self::stream_info)'s, and failing those the rail's
+    /// recommendations, which are the only list that has a channel opened
+    /// from the Recommended group (`Recommended::channel`).
+    pub(super) fn live_info(&self, channel: &str) -> Option<LiveInfo<'_>> {
+        self.stream_info(channel)
+            .map(LiveInfo::from)
+            .or_else(|| self.recommended.channel(channel).map(LiveInfo::from))
+    }
+
+    /// The name `login` writes itself as, from whichever list knows it: a
+    /// live list, the offline follows, or the rail's recommendations. `None`
+    /// when none does.
+    ///
+    /// The one lookup behind [`display_name`](Self::display_name) and the
+    /// names a recommendation's reason gives its seeds, so a channel opened
+    /// from the Recommended group is "AdmiralBulldog" on the row, in the pane
+    /// it opens, and in the reasons that name it later.
+    pub(super) fn channel_name(&self, login: &str) -> Option<&str> {
+        self.stream_info(login)
+            .map(|stream| stream.display_name.as_str())
+            .or_else(|| {
+                self.offline
+                    .iter()
+                    .find(|channel| channel.login == login)
+                    .map(|channel| channel.display_name.as_str())
+            })
+            .or_else(|| {
+                self.recommended
+                    .channel(login)
+                    .map(|channel| channel.display_name.as_str())
+            })
+    }
+
     /// What a pane calls its channel: the name the channel writes itself as,
-    /// from whichever list knows it, or the login when none does.
+    /// from whichever list knows it ([`channel_name`](Self::channel_name)),
+    /// or the login when none does. A recording's own, for a recording.
     ///
     /// One answer for the pane header, its status line, the mini player and
     /// the palette. They used to ask different lists, so a channel you
@@ -489,15 +535,9 @@ impl RootView {
         if let Some(video) = slot.recording() {
             return video.user_name.clone();
         }
-        self.stream_info(&slot.channel)
-            .map(|stream| stream.display_name.clone())
-            .or_else(|| {
-                self.offline
-                    .iter()
-                    .find(|channel| channel.login == slot.channel)
-                    .map(|channel| channel.display_name.clone())
-            })
-            .unwrap_or_else(|| slot.channel.clone())
+        self.channel_name(&slot.channel)
+            .unwrap_or(&slot.channel)
+            .to_string()
     }
 
     /// A playing stream stopped on its own: the broadcast ended, or mpv gave
@@ -823,6 +863,10 @@ impl RootView {
     /// be a press that seemed to do nothing. Every way the last pane goes
     /// comes through here — a close, Stop all, leaving with the mini player
     /// off, turning it off in the settings.
+    ///
+    /// The rail's recommendations hear of it here too, for the same reason:
+    /// a pane gone is a seed that may have gone with it, and a channel that
+    /// may be recommended again.
     pub(super) fn retire_slots(&mut self, keep: impl Fn(&Slot) -> bool, cx: &mut Context<Self>) {
         let recording_leaves = self.slots.iter().any(|slot| !slot.is_live() && !keep(slot));
         if recording_leaves && self.note_watching(cx) {
@@ -832,5 +876,6 @@ impl RootView {
         if self.slots.is_empty() {
             self.trail.forget(|route| *route == Route::Watch);
         }
+        self.update_recommended();
     }
 }

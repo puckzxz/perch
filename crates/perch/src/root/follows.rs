@@ -28,8 +28,9 @@ pub(super) enum LiveList {
 /// minute swapped neighbours whose counts crossed, so a card or a rail row
 /// could change under the pointer between aiming and clicking; and a channel
 /// that went offline used to land in the middle of the offline names, pushing
-/// down every name after it.
-fn keep_order<T>(shown: &[T], fresh: Vec<T>, key: impl Fn(&T) -> &str) -> Vec<T> {
+/// down every name after it. The rail's recommendations hold by it too; see
+/// `RootView::rank_recommended`.
+pub(super) fn keep_order<T>(shown: &[T], fresh: Vec<T>, key: impl Fn(&T) -> &str) -> Vec<T> {
     let mut fresh: Vec<Option<T>> = fresh.into_iter().map(Some).collect();
     let mut kept = Vec::with_capacity(fresh.len());
     for old in shown {
@@ -117,6 +118,9 @@ impl RootView {
                 self.fill_shown();
                 self.request_linked_videos();
                 self.ask_missing();
+                // And the rail's recommendations, which the worker can now
+                // take.
+                self.update_recommended();
             }
             TwitchEvent::Streams(streams) => self.on_streams(streams, window, cx),
             TwitchEvent::FollowedChannels(channels) => {
@@ -126,6 +130,8 @@ impl RootView {
                     offline_after(&self.offline, channels, &self.known_live, self.live_held());
                 self.refreshing = false;
                 self.follows_loaded = true;
+                // A channel followed since is no recommendation.
+                self.update_recommended();
                 cx.notify();
             }
             TwitchEvent::Avatars(images) => {
@@ -238,6 +244,9 @@ impl RootView {
             }
             TwitchEvent::Video { id, result } => self.on_linked_video(id, result, window, cx),
             TwitchEvent::Broadcasts { login, result } => self.on_broadcasts(login, result, cx),
+            // The rail's, and no list's: nothing here waits on it or says
+            // its failure. See `root::recommended`.
+            TwitchEvent::Recommended(result) => self.on_recommended(result, cx),
             // Said on the list that failed, which may not be the one on
             // screen by now; see `Discovery::shown_error`.
             TwitchEvent::BrowseError {
@@ -330,13 +339,19 @@ impl RootView {
             streams
         };
         self.follows_loaded = true;
+        // Who is followed may have changed, and a minute has gone by: the
+        // recommendations are ranked against the new list, and asked for
+        // again if their interval is up — which it is once in five polls,
+        // not at every one; see `Recommended::next_ask`.
+        self.update_recommended();
         cx.notify();
     }
 
     /// Whether the pointer is over a list of follows: the rail, or the
     /// Following tab. Each shows the offline follows as well as who is live,
-    /// so either holds both.
-    fn live_held(&self) -> bool {
+    /// so either holds both. The rail's recommendations hold with them, by
+    /// the same rule rather than a second one for the rail alone.
+    pub(super) fn live_held(&self) -> bool {
         self.rail_pointed || self.following_pointed
     }
 
@@ -346,9 +361,10 @@ impl RootView {
     ///
     /// The lists hold still while pointed at, the way chat does: a poll that
     /// lands meanwhile updates them in place (see [`keep_order`]), the offline
-    /// names as well as who is live. When the last of them is let go they are
-    /// put back in order — who is live by viewers, the rest by name — out of
-    /// the way of the pointer rather than under it.
+    /// names as well as who is live, and the rail's recommendations with
+    /// them. When the last of them is let go they are put back in order —
+    /// who is live by viewers, the rest by name, the recommendations ranked
+    /// afresh — out of the way of the pointer rather than under it.
     pub(super) fn hold_live(&mut self, list: LiveList, pointed: bool, cx: &mut Context<Self>) {
         let was = self.live_held();
         match list {
@@ -358,6 +374,7 @@ impl RootView {
         if was && !self.live_held() {
             twitch_api::by_viewers(&mut self.follows);
             twitch_api::by_name(&mut self.offline);
+            self.rank_recommended();
             cx.notify();
         }
     }

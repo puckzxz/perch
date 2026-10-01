@@ -178,7 +178,7 @@ impl RootView {
         // pointer was on the card that opened this page — standing for good.
         self.hold_live(LiveList::Following, false, cx);
 
-        // Resolved here, for the panes on screen only: `stream_info` walks
+        // Resolved here, for the panes on screen only: `live_info` walks
         // every list the app holds, and doing that per pane per frame inside
         // the page would be the same walk four times over.
         let panes: Vec<PaneInfo> = self
@@ -189,8 +189,8 @@ impl RootView {
                 PaneInfo {
                     // A recording's header speaks for the recording; the live
                     // numbers would be about a different broadcast.
-                    stream: if slot.is_live() {
-                        self.stream_info(&slot.channel)
+                    live: if slot.is_live() {
+                        self.live_info(&slot.channel)
                     } else {
                         None
                     },
@@ -261,9 +261,10 @@ impl RootView {
     /// an old broadcast of a channel that is on now would otherwise open
     /// over a picture of what the channel is doing tonight.
     ///
-    /// Only for a channel in a list the app has fetched: nothing has ever
-    /// fetched a preview for one opened by name, and a pane with none waits
-    /// on black, as before.
+    /// Only for a channel in a Helix list the app has fetched: nothing has
+    /// ever fetched a preview for one opened by name, nor for one opened from
+    /// the rail's recommendations, whose answers carry none, and a pane with
+    /// none waits on black, as before.
     fn poster(&self, slot: &Slot) -> Option<PathBuf> {
         match slot.recording() {
             Some(video) if channel_page::poster_url(video).is_some() => {

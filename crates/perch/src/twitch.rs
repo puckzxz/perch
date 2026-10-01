@@ -1,10 +1,15 @@
 //! The Twitch worker: signing in, keeping the follows list fresh, and
-//! answering the browse page's requests and a stopped pane's.
+//! answering the browse page's requests, a stopped pane's, and the rail's
+//! ask for channels like the ones watched.
 //!
 //! One thread owns the session, and it has to. Refresh tokens are single-use,
 //! so two things refreshing at once would spend the same token twice and lock
 //! the user out. Everything that reads Helix goes through here for that reason,
-//! not merely for tidiness.
+//! not merely for tidiness. The rail's ask reads no Helix and carries no token
+//! (see [`Request::Recommend`]), and goes through here anyway, so what the app
+//! asks of Helix and of the rail's query is all in one place. Chat is not:
+//! its IRC, its history and a recording's replay — a GraphQL ask too — are
+//! the chat side's, and never come through here.
 //!
 //! The thread alternates between a follows poll on a timer and whatever the UI
 //! asks for in between, which is what the request channel is: `recv_timeout`
@@ -18,6 +23,7 @@ use std::time::{Duration, Instant};
 
 use futures::channel::mpsc;
 use settings::{OAuthTokens, Settings};
+use twitch_api::recommend::SimilarChannel;
 use twitch_api::{Category, Channel, LiveStream, Session, Video, VideoKind};
 
 /// How often to re-ask Twitch who is live.
@@ -78,6 +84,20 @@ pub enum Request {
         login: String,
         user_id: Option<String>,
     },
+    /// The live channels whose viewers also watch each of `seeds`, for the
+    /// rail's Recommended group: one request per seed, in order, to Twitch's
+    /// unpublished sidebar query (`twitch_api::recommend::similar_channels`).
+    /// The root decides which seeds and how often; see `crate::recommended`.
+    ///
+    /// Anonymous: it carries no token and asks nothing of the session, so it
+    /// is answered in [`run`] ahead of the session's upkeep, like
+    /// [`Follows`](Request::Follows) — a refresh Twitch turned down ends the
+    /// worker, and an ask that needs no session should not be what finds that
+    /// out. It is still only read once the worker is in its loop, after
+    /// sign-in, which is why the root asks it only signed in. It fills no
+    /// browse list and touches no follows, and its failure travels in its
+    /// answer.
+    Recommend { seeds: Vec<String> },
 }
 
 /// Which browse list a request fills, so its answer — or its failure — can
@@ -103,13 +123,17 @@ pub enum ListKey {
 }
 
 impl Request {
-    /// The browse list this fills, or `None` for the three that fill none:
+    /// The browse list this fills, or `None` for the four that fill none:
     /// the follows poll, whose lists are not the browse page's, a recording
-    /// looked up for a link, whose failure is a toast, and a pane's past
-    /// broadcasts, which are the pane's.
+    /// looked up for a link, whose failure is a toast, a pane's past
+    /// broadcasts, which are the pane's, and the rail's recommendations,
+    /// which are the rail's.
     pub fn list_key(&self) -> Option<ListKey> {
         match self {
-            Request::Follows | Request::Video { .. } | Request::Broadcasts { .. } => None,
+            Request::Follows
+            | Request::Video { .. }
+            | Request::Broadcasts { .. }
+            | Request::Recommend { .. } => None,
             Request::Popular { .. } => Some(ListKey::Popular),
             Request::Categories { .. } => Some(ListKey::Categories),
             Request::Category { category, .. } => Some(ListKey::Category(category.id.clone())),
@@ -210,6 +234,11 @@ pub enum TwitchEvent {
         login: String,
         result: Result<Vec<Video>, String>,
     },
+    /// Each seed of a [`Request::Recommend`], in the order asked, with the
+    /// live channels Twitch says its viewers also watch — or why not. Its own
+    /// event with the failure inside it, for the reason
+    /// [`Broadcasts`](TwitchEvent::Broadcasts) has one.
+    Recommended(Recommendations),
     /// Sign-in itself failed, so nothing works.
     Error(String),
     /// One browse request failed. The session is fine; only that list is empty,
@@ -221,6 +250,25 @@ pub enum TwitchEvent {
         list: Option<ListKey>,
         reason: String,
     },
+}
+
+/// What a [`Request::Recommend`] comes back as: each seed beside the live
+/// channels Twitch says its viewers also watch, in the order asked, or why
+/// there are none.
+pub type Recommendations = Result<Vec<(String, Vec<SimilarChannel>)>, RecommendError>;
+
+/// Why a [`Request::Recommend`] came back with nothing. Two kinds, because
+/// the root does different things with them; see
+/// `recommended::Recommended::answered`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RecommendError {
+    /// Twitch would not run the query (`twitch_api::Error::QueryRefused`):
+    /// most likely the website's query has a new hash and this one is
+    /// retired. It will not work again this session.
+    Refused(String),
+    /// Anything else — the network, a failure Twitch says passes, a 4xx —
+    /// which a later ask may not meet.
+    Failed(String),
 }
 
 pub struct TwitchService {
@@ -525,8 +573,9 @@ fn serve(
     // which list it was.
     let list = request.list_key();
     let result = match request {
-        // Intercepted by the caller, which owns the poll timer.
-        Request::Follows => return,
+        // Intercepted by the caller: the first because it owns the poll
+        // timer, the second because it needs no session.
+        Request::Follows | Request::Recommend { .. } => return,
         Request::Popular { after } => {
             twitch_api::top_streams(client_id, token, None, after.as_deref())
                 .map(|page| TwitchEvent::Popular(Listing::from(page, after.is_some())))
@@ -652,6 +701,37 @@ fn user_id_or_lookup(
     }
 }
 
+/// Ask `similar` about each seed in turn, for [`Request::Recommend`]: every
+/// seed with its answer, in order, or the first failure.
+///
+/// A refusal stops it, since the next seed would only be refused too, and so
+/// does any other failure, dropping the answers before it: a network that
+/// failed one request is likely failing the next, and the root asks about
+/// every seed again at its next interval. `stop` is checked before each seed,
+/// as `poll_follows` checks it between its two calls, and a service dropped
+/// part-way sends nothing (`None`). Takes the asking as an argument so the
+/// tests can answer for Twitch.
+fn similar_to_each(
+    seeds: Vec<String>,
+    stop: &AtomicBool,
+    mut similar: impl FnMut(&str) -> Result<Vec<SimilarChannel>, twitch_api::Error>,
+) -> Option<Recommendations> {
+    let mut answers = Vec::with_capacity(seeds.len());
+    for seed in seeds {
+        if stop.load(Ordering::Relaxed) {
+            return None;
+        }
+        match similar(&seed) {
+            Ok(channels) => answers.push((seed, channels)),
+            Err(twitch_api::Error::QueryRefused(message)) => {
+                return Some(Err(RecommendError::Refused(message)))
+            }
+            Err(e) => return Some(Err(RecommendError::Failed(e.to_string()))),
+        }
+    }
+    Some(Ok(answers))
+}
+
 /// Ask who is live, then who is followed at all.
 ///
 /// Two calls because Helix has no endpoint that answers both, and at most one
@@ -754,6 +834,17 @@ fn run(
         // answered, so browsing never has to queue behind a timer.
         let wait = next_poll.saturating_duration_since(Instant::now());
         match requests.recv_timeout(wait) {
+            // Anonymous, so ahead of the session's upkeep; see the request.
+            // One request per seed, one after another, which is the worker's
+            // time every request behind it waits for — why the root caps the
+            // seeds and asks rarely.
+            Ok(Request::Recommend { seeds }) => {
+                if let Some(answer) =
+                    similar_to_each(seeds, &stop, twitch_api::recommend::similar_channels)
+                {
+                    let _ = tx.unbounded_send(TwitchEvent::Recommended(answer));
+                }
+            }
             Ok(request) => {
                 if !keep_session_fresh(&mut session, &client_id, &settings_path, &tx, &stop) {
                     return;
@@ -781,9 +872,9 @@ mod tests {
     use super::*;
 
     /// Every request the browse page makes names the list it fills, and the
-    /// three that fill none say so. A request with no key would leave its list
+    /// four that fill none say so. A request with no key would leave its list
     /// with nothing to wait on, and its failure with nowhere to be said; a
-    /// pane's request with one would end a browse list's wait.
+    /// pane's or the rail's request with one would end a browse list's wait.
     #[test]
     fn every_browse_request_names_its_list() {
         let category = Category {
@@ -798,6 +889,12 @@ mod tests {
                 Request::Broadcasts {
                     login: "someone".into(),
                     user_id: None,
+                },
+                None,
+            ),
+            (
+                Request::Recommend {
+                    seeds: vec!["forsen".into()],
                 },
                 None,
             ),
@@ -839,6 +936,102 @@ mod tests {
         for (request, key) in cases {
             assert_eq!(request.list_key(), key, "{request:?}");
         }
+    }
+
+    fn similar(login: &str) -> SimilarChannel {
+        SimilarChannel {
+            login: login.into(),
+            user_id: String::new(),
+            display_name: login.into(),
+            title: String::new(),
+            game_name: String::new(),
+            game_id: String::new(),
+            viewer_count: 1,
+            profile_image_url: String::new(),
+            stream_id: String::new(),
+        }
+    }
+
+    fn seeds(logins: &[&str]) -> Vec<String> {
+        logins.iter().map(|login| login.to_string()).collect()
+    }
+
+    /// Every seed is asked about, in order, and comes back beside its own
+    /// answer.
+    #[test]
+    fn recommendations_ask_about_every_seed_in_order() {
+        let mut asked = Vec::new();
+        let answer = similar_to_each(
+            seeds(&["forsen", "nymn"]),
+            &AtomicBool::new(false),
+            |seed| {
+                asked.push(seed.to_string());
+                Ok(vec![similar(&format!("like_{seed}"))])
+            },
+        );
+        assert_eq!(asked, ["forsen", "nymn"]);
+        let answers = answer.expect("nothing stopped it").expect("nothing failed");
+        assert_eq!(answers.len(), 2);
+        assert_eq!(answers[0].0, "forsen");
+        assert_eq!(answers[0].1[0].login, "like_forsen");
+        assert_eq!(answers[1].0, "nymn");
+    }
+
+    /// A refusal is told apart from every other failure, and either stops
+    /// the asking there: the seeds after it are not asked about at all.
+    #[test]
+    fn recommendations_stop_at_the_first_failure_and_say_which_kind() {
+        let mut asked = 0;
+        let refused = similar_to_each(seeds(&["a", "b", "c"]), &AtomicBool::new(false), |_| {
+            asked += 1;
+            if asked == 2 {
+                Err(twitch_api::Error::QueryRefused(
+                    "PersistedQueryNotFound".into(),
+                ))
+            } else {
+                Ok(Vec::new())
+            }
+        });
+        assert_eq!(asked, 2, "asked on past a refusal");
+        assert_eq!(
+            refused,
+            Some(Err(RecommendError::Refused(
+                "PersistedQueryNotFound".into()
+            )))
+        );
+
+        for error in [
+            twitch_api::Error::Network("timed out".into()),
+            twitch_api::Error::Api("HTTP 403".into()),
+            twitch_api::Error::Shape("not JSON".into()),
+        ] {
+            let message = error.to_string();
+            let mut error = Some(error);
+            let failed = similar_to_each(seeds(&["a", "b"]), &AtomicBool::new(false), |_| {
+                Err(error.take().expect("asked on past a failure"))
+            });
+            assert_eq!(failed, Some(Err(RecommendError::Failed(message))));
+        }
+    }
+
+    /// A service dropped before the asking asks nothing, and one dropped
+    /// part-way asks no further; neither sends anything.
+    #[test]
+    fn a_stopped_worker_asks_and_sends_nothing() {
+        let answer = similar_to_each(seeds(&["a"]), &AtomicBool::new(true), |_| {
+            panic!("asked Twitch for a service that has gone")
+        });
+        assert_eq!(answer, None);
+
+        let stop = AtomicBool::new(false);
+        let mut asked = 0;
+        let answer = similar_to_each(seeds(&["a", "b"]), &stop, |_| {
+            asked += 1;
+            stop.store(true, Ordering::Relaxed);
+            Ok(Vec::new())
+        });
+        assert_eq!(answer, None);
+        assert_eq!(asked, 1);
     }
 
     fn a_session(login: &str) -> Session {

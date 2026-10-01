@@ -74,21 +74,21 @@ pub(super) fn pane_header<V: 'static>(
     cx: &mut Context<V>,
 ) -> impl IntoElement {
     let recording = slot.recording();
-    let info = pane.stream;
+    let info = pane.live;
     let name = pane.name.clone();
 
-    // Both are absent for a channel opened by name that you do not follow:
-    // the follows poll is where these numbers come from, and it only knows
-    // about channels you follow. The same shape as the browse card's overlay,
+    // Both are absent for a channel opened by name that no list carries, and
+    // the uptime for one only the rail's recommendations know, which do not
+    // say when it began. The same shape as the browse card's overlay,
     // "358 · 8h 20m", and for the same reason: the live dot beside it already
     // says what the first number counts, and a header 340px wide has no room
     // to say it again in words once `muted` has to fit too.
     let meta = info
         .into_iter()
-        .flat_map(|stream| {
+        .flat_map(|live| {
             [
-                Some(browse::format_viewers(stream.viewer_count)),
-                browse::uptime(&stream.started_at),
+                Some(browse::format_viewers(live.viewers)),
+                live.started_at.and_then(browse::uptime),
             ]
         })
         .flatten()
@@ -115,7 +115,7 @@ pub(super) fn pane_header<V: 'static>(
         ],
         None => info
             .into_iter()
-            .flat_map(|stream| [stream.title.clone(), stream.game_name.clone()])
+            .flat_map(|live| [live.title.to_string(), live.game.to_string()])
             .collect(),
     }
     .into_iter()

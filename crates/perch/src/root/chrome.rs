@@ -84,6 +84,7 @@ impl RootView {
                 follows: &self.follows,
                 offline: &self.offline,
                 pinned: &self.settings.pinned,
+                recommended: &self.recommended.shown,
                 avatars: &self.avatars,
                 watching: &watching,
                 can_add: self.can_add(),

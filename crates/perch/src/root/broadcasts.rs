@@ -127,10 +127,15 @@ impl RootView {
     /// ask is as if never made, and the next sign-in asks it afresh
     /// (`ask_missing`); a repeat goes back to the answer it would have
     /// replaced ([`Lookup::forget`]).
+    ///
+    /// The rail's ask for recommendations too, which is not a pane's but dies
+    /// with the worker the same way, and would otherwise hold off every ask
+    /// after it for good; see `Recommended::forget`.
     pub(super) fn forget_asks(&mut self) {
         for slot in &mut self.slots {
             slot.archives.forget();
         }
+        self.recommended.forget();
     }
 
     /// Whether a pane on `channel` offers `Start when they go live`: only

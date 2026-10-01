@@ -20,6 +20,7 @@
 //! | `launches` | what the command line named, at startup and from later launches |
 //! | `history` | what has been watched: noting where each recording got to, resuming there |
 //! | `prefs` | the settings sheet, the divider drag, the rail folding and what is pinned to it |
+//! | `recommended` | the rail's Recommended group: when to ask the worker, and what its answer becomes |
 //! | `chrome` | pills, toasts, the rail |
 //! | `mini_player` | what plays on while you browse, in the corner of the page |
 //! | `title_bar` | the bar Perch draws across the top of the window: the rail button, back and forward, search, settings, and on Windows the caption buttons |
@@ -42,6 +43,7 @@ mod navigation;
 mod pages;
 mod pane_actions;
 mod prefs;
+mod recommended;
 mod shortcuts;
 mod streams;
 mod title_bar;
@@ -68,6 +70,7 @@ use self::navigation::Route;
 use crate::browse::{self, Discovery, SignIn};
 use crate::launch::Launch;
 use crate::layout::Body;
+use crate::recommended::Recommended;
 use crate::settings_view::SettingsPanel;
 use crate::trail::Trail;
 use crate::twitch::TwitchService;
@@ -204,6 +207,9 @@ pub(crate) struct RootView {
     /// list in the app, up to a thousand rows built every frame, and most
     /// evenings nobody is looking for someone who is not on.
     rail_offline_open: bool,
+    /// The rail's Recommended group: the asks out, the answers in, and the
+    /// rows shown. For this session only; see `crate::recommended`.
+    recommended: Recommended,
     sign_in: SignIn,
     /// Everything the browse page shows besides your follows.
     discovery: Discovery,
@@ -407,6 +413,7 @@ impl RootView {
             rail_pointed: false,
             following_pointed: false,
             rail_offline_open: false,
+            recommended: Recommended::default(),
             sign_in: SignIn::Connecting,
             discovery: Discovery::default(),
             trail: Trail::default(),
