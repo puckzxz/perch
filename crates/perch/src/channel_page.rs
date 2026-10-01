@@ -315,12 +315,9 @@ pub(crate) fn card<V: 'static>(
                             .left(px(theme::GAP_TIGHT))
                             .invisible()
                             .group_hover("video-card", |style| style.visible())
-                            .tooltip(|window, cx| {
-                                gpui_component::tooltip::Tooltip::new(
-                                    "Take this off your history, and where you left it",
-                                )
-                                .build(window, cx)
-                            })
+                            .tooltip(controls::tip(
+                                "Take this off your history, and where you left it",
+                            ))
                             .on_click(cx.listener(move |view, _event, window, cx| {
                                 // Or the card underneath plays what was just
                                 // forgotten.
@@ -337,10 +334,7 @@ pub(crate) fn card<V: 'static>(
                             .right(px(theme::GAP_TIGHT))
                             .invisible()
                             .group_hover("video-card", |style| style.visible())
-                            .tooltip(|window, cx| {
-                                gpui_component::tooltip::Tooltip::new("Open beside what is playing")
-                                    .build(window, cx)
-                            })
+                            .tooltip(controls::tip("Open beside what is playing"))
                             .on_click(cx.listener(move |view, _event, window, cx| {
                                 // Without this the card underneath also fires
                                 // and replaces every open pane.

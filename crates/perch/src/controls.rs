@@ -14,11 +14,12 @@
 //!
 //! A picture instead of a word is the same control in a square,
 //! [`icon_button`], wearing the same variants, and [`icon_waiting`] while it
-//! is not on offer. A heading that folds away what it heads is [`fold`], built
-//! on [`group_heading`], the plain heading it sits among. The window's
-//! minimise, maximise and close are here too, as [`caption_button`], because
-//! they look like controls — but they are the platform's to press, not the
-//! app's.
+//! is not on offer. What a control says under the pointer is [`tip`], or
+//! [`full_text`] for the rest of a line cut short. A heading that folds away
+//! what it heads is [`fold`], built on [`group_heading`], the plain heading
+//! it sits among. The window's minimise, maximise and close are here too, as
+//! [`caption_button`], because they look like controls — but they are the
+//! platform's to press, not the app's.
 
 use gpui::{
     div, prelude::*, px, svg, AnyView, App, Div, ElementId, SharedString, Stateful, Window,
@@ -86,6 +87,26 @@ pub fn full_text(
         })
         .build(window, cx)
     }
+}
+
+/// A tooltip that is one line of words: what a control does, and — through
+/// `keys::Hint`, never spelled out by hand — the key that does it too.
+///
+/// The one builder for those, beside [`full_text`] for text a line cut
+/// short, so every plain tooltip in the app is drawn the same way. It hands
+/// back the builder rather than taking the element, because gpui's `tooltip`
+/// takes a builder, and takes it once per element (div.rs:536-549): text
+/// handed to it does not compile, and a second call is a debug assertion.
+///
+/// What the words say is decided when the tooltip comes up and not again,
+/// so a control whose words follow a state it can change — Pause and Play,
+/// Mute all and Unmute all — keys its element id on that state as well. The
+/// first frame drawn under the other id drops the open tooltip with the rest
+/// of the element's state, and the next one to come up says the new words;
+/// [`caption_button`] does the same for its press.
+pub fn tip(text: impl Into<SharedString>) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
+    let text = text.into();
+    move |window, cx| gpui_component::tooltip::Tooltip::new(text.clone()).build(window, cx)
 }
 
 /// Declares [`Variant`] once and derives, for the tests only, the list of every

@@ -1,11 +1,12 @@
 //! Keyboard shortcuts.
 //!
-//! The controls you reach for while watching — pause, mute, volume — are a
-//! hover-revealed overlay on the video, a pane's Close sits in its header, and
-//! the rest live in the title bar or the settings sheet. That is the right
-//! place for them when you are already holding the mouse, and no place at all
-//! when you are not, which for a window left open for hours is most of the
-//! time.
+//! The controls you reach for while watching — pause, mute, volume, chat,
+//! fullscreen — are icons on a bar that comes up over the video under the
+//! pointer, each naming its key in its tooltip ([`Hint`]); a pane's Close
+//! sits in its header, and the rest live in the title bar or the settings
+//! sheet. That is the right place for them when you are already holding the
+//! mouse, and no place at all when you are not, which for a window left open
+//! for hours is most of the time.
 //!
 //! GPUI's keyboard stack has two gates, and both are easy to get subtly wrong:
 //!
@@ -28,7 +29,9 @@
 //! There is deliberately no on-screen feedback for pause, mute or volume.
 //! Each one announces itself through the thing it controls — a paused picture
 //! stops moving, and the other two are audible — so a flash of UI would only be
-//! telling you what you already know.
+//! telling you what you already know. The bar's glyphs follow the same state,
+//! but the bar is up only while the pointer is on the picture, so a key
+//! pressed with the mouse elsewhere still puts nothing on screen.
 
 use gpui::{actions, Action, App, KeyBinding};
 
@@ -402,6 +405,14 @@ hints! {
     Back => "alt-left" as NavigateBack,
     Forward => "alt-right" as NavigateForward,
     Settings => "secondary-," as ToggleSettings,
+    Playback => "space" as TogglePlayback,
+    Mute => "m" as ToggleMute,
+    // Up names the pair: the sheet lists `up` and `down` as one row, `↑ / ↓`,
+    // and the tooltip borrows that row's label whole.
+    Volume => "up" as VolumeUp,
+    Chat => "c" as ToggleChat,
+    // The same for `f` and `f11`, as `F / F11`.
+    Fullscreen => "f" as ToggleFullscreen,
 }
 
 impl Hint {

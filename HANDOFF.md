@@ -73,7 +73,7 @@ App modules:
 | `launch.rs` | what a launch's arguments ask for, read the one way at startup and on a handover (pure, tested) |
 | `trail.rs` | back and forward: the places behind and ahead, what a step passes over, and forgetting a place that is gone (pure, tested) |
 | `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams`, `pane_actions` (what a pane asks for, by its key: a press on it or one of its controls, which takes the keys back for the root first, and its player's requests), `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `prefs`, `chrome` (pills, toasts, the rail), `mini_player` (what plays on while you browse, in the corner of the page), `title_bar` (the bar Perch draws across the top of the window — the rail button, back and forward, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`) |
-| `target.rs` | what a typed or pasted thing means: a login, or a twitch.tv link to a channel or a recording; and `link`, its inverse and the one place a twitch.tv URL is written (pure, tested) |
+| `target.rs` | what a typed or pasted thing means: a login, or a twitch.tv link to a channel or a recording; `link`, its inverse and the one place a twitch.tv URL is written, and `moment`, the second a link to a recording starts at (pure, tested) |
 | `browse.rs` | the picker page: following, popular, categories, search; which of them is on screen (`Discovery::place`) and which lists are still being waited on |
 | `channel_page.rs` | one channel's past broadcasts, and when each was; the recording card both pages use |
 | `history_page.rs` | the history tab, and the one translation between a video and a history entry |
@@ -81,8 +81,8 @@ App modules:
 | `watch/status.rs` | a pane with no picture: `Showing`, the one reading of its state that the pane's sentence and the mini player's word both come from, and the screen drawn from it (tested) |
 | `layout.rs` | derives grid shape from window aspect; the page's `Body`, the title bar's height and drag edge, and the mini player's tiles, how far in it floats clear of the scrollbar, and the `Room` a browse list leaves for it (pure, tested) |
 | `video_view.rs` | the player element: its sound, its hover, the picture; drawn full or as a compact mini-player tile |
-| `video_view/bar.rs` | the control bar over a playing picture: the seek row on a recording, the buttons, the one anchor menus open from |
-| `video_view/menu.rs` | the bar's menus: which is open (`Menu`, one at a time), the box, rows that act on the press (tested) |
+| `video_view/bar.rs` | the control bar over a playing picture: the seek row on a recording, the icons and their key-naming tooltips, what fits at the pane's width (`fit`, tested), the one anchor menus open from |
+| `video_view/menu.rs` | the bar's menus, the quality and More: which is open (`Menu`, one at a time), the box, rows that act on the press (tested), and `run_guard`, which swallows the rest of a double-click a row took (tested) |
 | `loudness.rs` | one pane's level and the Mute all hush over it: what mpv hears, and the only level ever reported to be remembered (pure, tested) |
 | `seek_bar.rs` | the bar on a recording, and the arithmetic behind it |
 | `video.rs` | render thread; owns the mpv `Player` |
@@ -95,7 +95,7 @@ App modules:
 | `theme.rs` | **all** colour, spacing, type and motion tokens |
 | `sidebar.rs` | the follows rail down the left, beside both pages: Pinned, Live, then Offline folded under a count (`groups`, pure, tested) |
 | `palette.rs` | the command palette, and what it can run |
-| `controls.rs` | the one button, the variants it comes in, the icon button, the heading that folds (`fold`) and the plain one it sits among (`group_heading`), and the window's caption buttons |
+| `controls.rs` | the one button, the variants it comes in, the icon button, the heading that folds (`fold`) and the plain one it sits among (`group_heading`), the window's caption buttons, and the two tooltip builders (`tip`, `full_text`) |
 | `widget_theme.rs` | hands `theme.rs` to `gpui-component`'s own palette |
 | `assets.rs` | the icons: the ones `gpui-component` asks the host for, and Perch's own, typed as `assets::Icon` |
 | `motion.rs` | the four animation shapes, and the state one of them needs |
@@ -670,6 +670,44 @@ on, and its bubble phase still finds the row, so `menu::menu_row` acts in
 The box itself occludes, since it rises out of the bar's own hitbox, or a
 press on a row would also reach the picture's double-click.
 
+**The second press of a double-click lands on whatever is there by then.**
+The platform counts a press near the last one, soon enough, as the next of
+a run, by time and place alone (windows/window.rs:1049-1060), and every
+press is hit-tested against the frame on screen. A row acts on the first
+press and its menu is gone by the second, which then reaches what was under
+the row: the picture, whose double-click is fullscreen; a recording's seek
+track, which seeks; or the quality menu that More's quality row has just
+opened in its place, which would pick a rendition and restart the stream.
+So a row acts only on a run's first press and marks the run
+(`VideoView::row_run`), and `menu::run_guard`, a window-level listener held
+ahead of the bar, stops every later press of that run in the capture phase,
+before anything else hears it, which also leaves its release no click to
+make. The next run's first press clears the mark. A pane's press making it
+active guards against the same platform rule (`watch::pane`).
+
+**A tooltip keeps the words it came up with.** gpui builds the tooltip's view
+once, when its delay runs out, keeps it in the element's state, and sets that
+same view on the window every frame the pointer stays (div.rs:1662-1664,
+2279-2316); the builder a later frame hands over is not asked again. So a
+control whose words follow a state it changes keys its element id on that
+state too — the bar's `bar-pause`/`bar-play`, `bar-mute`/`bar-unmute`, the
+chat and fullscreen glyphs, the mini player's `mini-mute-all`/
+`mini-unmute-all`, the rail's pin and the gear signed in or not — and the
+first frame drawn under the other id drops the open tooltip with the rest
+of the old element's state. The next to come up, on the next move, has the
+new words. Mute all went on saying "Mute all" after a press until the
+pointer left, which is how this was found. `controls::tip` is the one
+builder for a tooltip of plain words: `.tooltip()` takes a builder, not
+text, and only once per element (div.rs:536-549).
+
+**A tooltip outlives a pointer that leaves the window**, for the reason the
+caption buttons stay lit: it checks it is still wanted against the last
+position gpui saw, which a pointer leaving never updates. Taking the builder
+away clears it in prepaint (div.rs:1660-1668), so the player's bar gives its
+tooltips only while `window.is_window_hovered()` (`bar::bar_icon`). The
+title bar and the mini player sit on the window's edge as well and do not
+gate theirs yet.
+
 **`gpui_component::init(cx)` must run before any widget**, and `Root::new` must
 wrap the window's first view or overlays have nowhere to render.
 
@@ -1046,7 +1084,11 @@ unconsidered.
   that says which way it is and no fill until hovered. It is built on
   `group_heading`, the box the rail's `Pinned` and `Live` headings sit in, so
   the fold and the headings above it share one recipe rather than two that
-  had to be restyled together.
+  had to be restyled together. What a control says under the pointer is
+  `tip`, one line of words with any key in it from `keys::Hint`, or
+  `full_text` for the rest of a line cut short — never a
+  `gpui_component` `Tooltip` built at the call site — and a control whose
+  words follow a state keys its id on that state too (see the GPUI traps).
 - **Casing** — words on controls are sentence case: `Refresh`, `Open
   settings`, `Save`, `+ Add`, `← Back`, `Try again`, the browse tabs, the
   channel page's shelves. That covers a control's stand-in too — the
@@ -1147,15 +1189,16 @@ and third are newer than the rest: the first only ever caught gpui's named
 spacings, so a `.py(px(3.))` and an `rgb(0xffffff)` sat in two card badges
 through every audit until a review read the code. The fifth, literal sizes, is
 newer still, and is a ledger rather than a clean sheet: it shows the debt that
-was there when it was added, and the list should only get shorter. That is
-the `max_w(px(420.))` on the text of an empty list's notice and of the
-sign-in code's (both in `browse.rs`), the settings sheet's `w(px(480.))`, the
-volume slider's `w(px(120.))` and the `w(px(38.))` of the figure beside it
-(`video_view/bar.rs`), and chat's one-pixel time-break rule, `h(px(1.))`. The
-quality menu's `min_w(px(120.))` was on it and is `theme::MENU_MIN_WIDTH`
-now. A zero (`px(0.)`) is left out on purpose: the divider seams and the seek
-bar's time label hang off zero-sized anchors by design. The sixth will show genuine timings — the follows poll, the toast
-lifetime, an mpv frame wait — but no *animation* duration should appear
+was there when it was added, and the list should only get shorter. That is the
+`max_w(px(420.))` on the text of an empty list's notice and of the sign-in
+code's (both in `browse.rs`), the settings sheet's `w(px(480.))`, and chat's
+one-pixel time-break rule, `h(px(1.))`. The quality menu's `min_w(px(120.))`
+was on it and is `theme::MENU_MIN_WIDTH` now, and the volume slider's
+`w(px(120.))` and its figure's `w(px(38.))` are `theme::VOLUME_SLIDER` and
+`VOLUME_FIGURE`, which `bar::fit` reads too. A zero (`px(0.)`) is left out on
+purpose: the divider seams and the seek bar's time label hang off zero-sized
+anchors by design. The sixth will show genuine timings — the follows poll, the
+toast lifetime, an mpv frame wait — but no *animation* duration should appear
 outside `theme.rs`. The last should return nothing: a control at zero opacity
 still takes clicks (see "Things not to redo"), and only `motion` fades one
 there, on its way to `invisible()`.
@@ -1177,9 +1220,29 @@ there. The split:
   go when the stream ends — they come from a list that will not know for another
   minute, and an uptime still counting beside "ended the stream" is the same lie
   the frozen last frame used to tell.
-- **Over the video**, hover-revealed only: the playback bar (pause, mute,
-  volume, quality). Point at the video and it comes up; look away and the
-  picture is all that is left. Nothing page-level is drawn over the panes.
+- **Over the video**, hover-revealed only: the control bar
+  (`video_view/bar.rs`). At the left play or pause, the speaker — crossed out
+  whenever the pane is silent, Mute all's hold included — the volume slider
+  and its figure; at the right the quality pill, chat, fullscreen and More.
+  Chat is crossed out while hidden, and drawn still, with a `No chat replay`
+  tooltip, for a recording that has none, so the cluster keeps its shape. More
+  opens the pane on twitch.tv and copies its link, a recording's at the moment
+  it is at (`Copy link at 1:02:03`). Every icon lifts under the pointer and
+  its tooltip says what a press does, and the key that does the same where
+  there is one, from `keys::Hint`; More has no key, and the quality pill is
+  words with no tooltip. A narrow pane drops the figure, then the slider, then
+  folds the quality into More's first row (`bar::fit`, from the probe's
+  width); play, the speaker and the right-hand buttons never go. The
+  right-hand cluster has commented slots for the pop-out and the guide, and
+  `bar::RIGHT_BUTTONS` counts its buttons — `button_row` lays them out as an
+  array that long — so a control added there narrows the bar sooner. What is
+  the pane's rather than the player's — chat, the link — goes up as
+  `VideoEvent::Pane` and is resolved by key in `root/pane_actions.rs`, the
+  route the header's close takes; the clipboard is written there and nowhere
+  else. The chat glyph reads `video_view::ChatButton`, a mirror of the slot's
+  `chat_hidden` that only `Start` and `RootView::toggle_chat` write. Point at
+  the video and the bar comes up; look away and the picture is all that is
+  left. Nothing page-level is drawn over the panes.
 - **The title bar** (`root/title_bar.rs`), on both pages and gone in
   fullscreen: the rail button, back and forward — each drawn waiting while
   the trail has nowhere to go that way — and the search box at the left,
@@ -1851,6 +1914,17 @@ in the README's prose too and would hide a dropped row. Off macOS only, since
 the README writes `Ctrl` and `Alt` once and says what a Mac draws instead.
 The `RUNNING` pages are shorter on purpose and are kept in step by hand.
 
+The controls are the fourth place a key is named. The title bar's and the
+player's bar's tooltips — `Settings (Ctrl+,)`, `Pause (Space)`, `Mute (M)`,
+`Volume (↑ / ↓)`, `Hide chat (C)`, `Fullscreen (F / F11)` — never spell a
+key: each names a keystroke as a `keys::Hint`, in the binding grammar, and
+borrows the label the sheet shows for it, and
+`every_hint_names_a_listed_and_bound_key` holds every hint to a listed key
+bound to the control's own action. `Volume` names `up` and so reads the
+row's whole `↑ / ↓`; `Fullscreen` names `f` and reads `F / F11`. A hint
+arrives with the first control that names it, since an unused one is dead
+code.
+
 **Fullscreen** is `f` on the watch page, `F11` on either, and a double-click on
 the video. The title bar goes with it, and `layout::title_bar_height` gives
 its height back to the page — and with it the search box, so `Ctrl+F`, bound
@@ -1865,8 +1939,8 @@ returns early, rather than flipping a setting nothing on screen shows, which
 would only surface on leaving fullscreen. The mouse's way out is a
 double-click on the video, which brings the bar back.
 The double-click lives on the pane's root element; the control bar over it is
-`.occlude()`d while it is up, so a double-click on `Pause` does not also reach
-it.
+`.occlude()`d while it is up, so a double-click on one of its controls does
+not also reach it.
 A single click deliberately does nothing there — it is how a pane is made the
 active one, and pausing on a click would turn choosing a pane into stopping it.
 
@@ -1888,7 +1962,11 @@ A press anywhere else closes it — `on_mouse_down_out` on that anchor rather
 than the menu, or the press on the button that opened it would count as
 elsewhere and the click after it would open it straight back up. A menu's
 button toggles it and closes nothing first, for the same reason; the rows act
-on the press (see the GPUI traps). The quality menu has no key of its own: the
+on the press (see the GPUI traps). Everything else inside the anchor closes
+the menu itself, since the dismiss never hears it: the chat and fullscreen
+buttons before they act (`bar::act_button`), and the still chat glyph of a
+recording with no chat replay. Only the narrow gaps between the cluster's
+controls leave a menu open. The quality menu has no key of its own: the
 palette's `Choose quality for …`, offered once something is typed for each
 pane with a picture up, opens it, and with it the bar, which an open menu holds
 up wherever the pointer is. From the browse page that goes back to watching
@@ -1896,7 +1974,11 @@ first, and any other pane's menu closes. A pane still buffering is offered no
 row and `open_menu` refuses it: it draws no bar, so the menu would be invisible
 and would still take the next `Esc`. The rows come after every `Close` row,
 because the letters of "quality" answer to most short queries and `c quin`
-should stay a close.
+should stay a close. More's two rows are in the palette by name as well, after
+the quality's and for the same reasons — `Copy link to …` and `Open … on
+twitch.tv`, for every pane, a stopped one included, since it still has a
+channel or a recording to hand out. They go down the route More's own rows
+take (`RootView::on_pane_action`), so the link and the toast are the same.
 
 **Back and forward are `Alt+←` and `Alt+→`** (`⌥` on macOS), as well as
 the title bar's arrows and the mouse's side buttons. The keys are bound
@@ -2180,8 +2262,6 @@ throughout.
 
 Left over from phase 1, smallest first:
 
-- The mini player's Mute all tooltip keeps its old words after a click, until
-  the pointer leaves the button. Seen live; not yet looked into.
 - The passive words the casing pass left alone — tags, toasts, a pane's
   status line; see "Casing".
 - Pin from a card, the channel page or the palette. `palette::entries` takes
@@ -2353,6 +2433,16 @@ None of these is being worked on; all of them are real.
     7px and 4px at 100% scale), each time it happens. The fix belongs in
     `vendor/gpui` — re-measure only while not maximised — and waits on a
     decision to patch it; see "The window remembers where it was".
+22. **A live pane's link has no time.** More's `Copy link` and `Open on
+    twitch.tv`, and the palette's, give a live pane's channel. A moment in a
+    broadcast still going is a moment in its archive, which the pane does not
+    know; see "What to build next", item 1.
+23. **The bar can run past the narrowest pane.** `bar::fit` drops the volume
+    figure, the slider and the quality pill, but play, the speaker and the
+    right-hand buttons stay, about 194px with the padding, and four beside
+    panes in a small window can be narrower. The quality pill's room is an
+    estimate (`theme::QUALITY_PILL_ROOM`), so a long rendition name can run a
+    few pixels past a pane right at the edge of fitting.
 
 ## Things not to redo
 
@@ -2416,6 +2506,10 @@ None of these is being worked on; all of them are real.
 - Do not make a menu row act on a click. The press closes the menu, and the
   click would come from a frame with no row in it; `menu::menu_row` acts on
   the press, and `menu_rows_act_on_the_press` holds `menu.rs` to it.
+- Do not give a control a fixed id when its tooltip's words follow a state it
+  changes. The tooltip keeps the words it came up with; key the id on the
+  state, as the bar's glyphs, Mute all, the rail's pin and the gear do (see
+  the GPUI traps).
 - Do not take `.occlude()` off the title bar, give a caption button a handler,
   or wrap the bar's controls in its drag area. Each one hands the platform's
   press to gpui, which reports it handled, and the window stops dragging,

@@ -126,6 +126,17 @@ pub fn link(target: &Target) -> String {
     }
 }
 
+/// The moment a link to a recording `position` seconds in starts at: the
+/// whole second it is in, or none in the first second, which [`link`] writes
+/// as no time anyway. Read by the link a pane hands out and by the words that
+/// offer it (`Copy link at 1:02:03`), so the two cannot disagree about when
+/// there is a time to speak of.
+pub fn moment(position: f64) -> Option<u64> {
+    // `as` floors, and saturates anything below zero (and NaN) to zero.
+    let secs = position as u64;
+    (secs > 0).then_some(secs)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,6 +220,18 @@ mod tests {
         let written = link(&at_zero);
         assert!(!written.contains("t="), "{written}");
         assert_eq!(parse(&written), video("5", None));
+    }
+
+    /// A moment is a whole second, counted from the first one: the time a
+    /// player reports a fraction into a second is the second it is in, and
+    /// anything short of the first is the start.
+    #[test]
+    fn a_moment_starts_at_the_first_whole_second() {
+        assert_eq!(moment(0.0), None);
+        assert_eq!(moment(0.99), None);
+        assert_eq!(moment(-3.0), None, "a position before the start");
+        assert_eq!(moment(1.0), Some(1));
+        assert_eq!(moment(3723.7), Some(3723));
     }
 
     #[test]

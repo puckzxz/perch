@@ -541,6 +541,19 @@ pub const MENU_MIN_WIDTH: f32 = 120.0;
 pub const MENU_BOTTOM: f32 = ICON_BUTTON + GAP_WORD;
 pub const MENU_RISE: f32 = 6.0;
 
+/// The player's volume slider and the `100%` figure beside it, on the
+/// control bar (`video_view::bar`). The figure is as wide as its widest
+/// number, so the slider does not shift as the level crosses a digit.
+pub const VOLUME_SLIDER: f32 = 120.0;
+pub const VOLUME_FIGURE: f32 = 38.0;
+/// What the bar keeps for the quality pill when it works out what fits
+/// (`bar::fit`). An estimate, not a measurement: the pill is as wide as the
+/// rendition's name, and measuring a string needs the font. Sized for
+/// `1080p60` and the pill's padding, the longest name a picture usually
+/// carries; a longer one, such as `audio_only`, can run a few pixels past a
+/// pane right at the edge of what fits.
+pub const QUALITY_PILL_ROOM: f32 = 72.0;
+
 /// The live indicator's diameter. Small enough to read as a status mark
 /// beside a number rather than as a control.
 pub const LIVE_DOT: f32 = 6.0;

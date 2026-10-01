@@ -37,7 +37,6 @@ use std::sync::Arc;
 use emotes::ImageCache;
 use gpui::{div, img, prelude::*, px, Context, ElementId, ScrollHandle, SharedString, Window};
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
-use gpui_component::tooltip::Tooltip;
 use settings::channel_key;
 use twitch_api::{Channel, LiveStream};
 
@@ -377,7 +376,12 @@ fn row<V: 'static>(
                 .group_hover(ROW_GROUP, |style| style.visible())
                 .child(
                     controls::icon_button(
-                        ElementId::Name(format!("rail-pin-{login}").into()),
+                        // Keyed on the state its words follow, so the Pin a
+                        // press has just made true does not stay up; see
+                        // `controls::tip`.
+                        ElementId::Name(
+                            format!("rail-{}-{login}", if pinned { "unpin" } else { "pin" }).into(),
+                        ),
                         Icon::Pin,
                         // Lit on a pinned row: it is the answer there, the way
                         // a chosen tab is, and pressing it takes the answer back.
@@ -387,9 +391,7 @@ fn row<V: 'static>(
                             controls::Variant::Pill
                         },
                     )
-                    .tooltip(move |window, cx| {
-                        Tooltip::new(if pinned { "Unpin" } else { "Pin" }).build(window, cx)
-                    })
+                    .tooltip(controls::tip(if pinned { "Unpin" } else { "Pin" }))
                     .on_click(cx.listener(move |view, _event, window, cx| {
                         cx.stop_propagation();
                         let pin = Action::SetPinned {
@@ -406,9 +408,7 @@ fn row<V: 'static>(
                             "+",
                             controls::Variant::Pill,
                         )
-                        .tooltip(|window, cx| {
-                            Tooltip::new("Open beside what is playing").build(window, cx)
-                        })
+                        .tooltip(controls::tip("Open beside what is playing"))
                         .on_click(cx.listener(
                             move |view, _event, window, cx| {
                                 cx.stop_propagation();

@@ -12,7 +12,7 @@ use super::navigation::Route;
 use super::{Page, RootView};
 use crate::chat::{ChatView, Feed};
 use crate::video::{self, Playback, PositionHandle, Stopped, VideoStream};
-use crate::video_view::{Qualities, Start, VideoView};
+use crate::video_view::{ChatButton, Qualities, Start, VideoView};
 use crate::watch::{Slot, Source, StreamState, MAX_PANES};
 use crate::{layout, settings_view};
 
@@ -327,6 +327,10 @@ impl RootView {
                     compact: self.page != Page::Watch,
                     quiet,
                     focus: self.focus.clone(),
+                    chat: ChatButton::of(
+                        self.slots[index].chat_hidden,
+                        self.slots[index].chat.is_some(),
+                    ),
                 };
                 let audible = if quiet { 0 } else { volume };
                 match VideoStream::start(RENDER_WIDTH, RENDER_HEIGHT, audible, playback) {

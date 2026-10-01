@@ -1,4 +1,5 @@
-//! What a pane asks for, resolved: a press on one of its own controls, or on
+//! What a pane asks for, resolved: a press on one of its own controls, on
+//! its player's bar or in its menus, a palette row about it, or a press on
 //! the pane itself (`watch::PaneAction`), and what its player asks of the
 //! root (`VideoEvent`).
 //!
@@ -6,10 +7,10 @@
 //! rather than by a position read when the pane was drawn: a press can land
 //! after the panes have moved, and a player's event long after that.
 
-use gpui::{Context, Window};
+use gpui::{ClipboardItem, Context, Window};
 
 use super::RootView;
-use crate::video_view::VideoEvent;
+use crate::video_view::{ChatButton, VideoEvent};
 use crate::watch::PaneAction;
 
 impl RootView {
@@ -45,7 +46,48 @@ impl RootView {
                     cx.notify();
                 }
             }
+            PaneAction::ToggleChat => self.toggle_chat(index, cx),
+            // The moment the pane is at, on a recording: More is where a
+            // moment is offered, and the palette's row is More by name.
+            PaneAction::OpenOnTwitch => cx.open_url(&self.slots[index].link(true)),
+            PaneAction::CopyLink => {
+                cx.write_to_clipboard(ClipboardItem::new_string(self.slots[index].link(true)));
+                self.toast("link copied", cx);
+            }
         }
+    }
+
+    /// Show or hide the chat of the pane at `index`, and remember it for that
+    /// channel: `C`, and the chat glyph on the pane's bar.
+    ///
+    /// Per pane rather than per app: the whole watch page is built on panes
+    /// being independent, and the reason to hide chat — watching one stream for
+    /// the game while reading another's chat — only makes sense if it is.
+    ///
+    /// The one place a pane's `chat_hidden` changes after it opens, so the one
+    /// place that tells the pane's player, whose glyph mirrors it
+    /// (`video_view::ChatButton`).
+    pub(super) fn toggle_chat(&mut self, index: usize, cx: &mut Context<Self>) {
+        // A video whose chat cannot be replayed. Say so, rather than toggling
+        // a pane that would come up empty. Its glyph is drawn still, so only
+        // the key ever asks.
+        if self.slots[index].chat.is_none() {
+            self.toast("no chat replay for this video", cx);
+            return;
+        }
+        let hidden = !self.slots[index].chat_hidden;
+        self.slots[index].chat_hidden = hidden;
+        if let Some(view) = self.slots[index].video().cloned() {
+            view.update(cx, |view, cx| {
+                view.set_chat(ChatButton::of(hidden, true), cx)
+            });
+        }
+
+        let channel = self.slots[index].channel.clone();
+        if self.settings.set_chat_hidden_for(&channel, hidden) {
+            self.save_settings(cx);
+        }
+        cx.notify();
     }
 
     /// What the player in the pane `owner` names asked for. Looked up by key
@@ -87,6 +129,9 @@ impl RootView {
                 }
             }
             VideoEvent::Stopped(reason) => self.stream_stopped(owner, reason.clone(), cx),
+            // The bar's own: the same route as the pane's header and the
+            // palette, by the key the player was subscribed with.
+            VideoEvent::Pane(action) => self.on_pane_action(owner, action.clone(), window, cx),
         }
     }
 }

@@ -17,7 +17,6 @@
 //! more than the list's scrollbar, so the whole track stays the list's.
 
 use gpui::{div, prelude::*, px, Context, ElementId, IntoElement, SharedString};
-use gpui_component::tooltip::Tooltip;
 
 use super::{Page, RootView};
 use crate::assets::Icon;
@@ -67,6 +66,15 @@ impl RootView {
             })
             .collect();
         let unmute = loudness::unmute_all_offered(self.slots.iter().map(|slot| slot.quiet));
+        // Its words follow what a press would do, so its id does too: a
+        // tooltip comes up with the words of its moment and keeps them, and
+        // without this one that came up over Mute all went on saying so after
+        // the press, until the pointer left. See `controls::tip`.
+        let (quiet_id, quiet_icon, quiet_words) = if unmute {
+            ("mini-unmute-all", Icon::VolumeOff, "Unmute all")
+        } else {
+            ("mini-mute-all", Icon::Volume, "Mute all")
+        };
 
         // What is playing is said here, in the bar, and never over the
         // pictures: static text on a moving image is the thing you end up
@@ -91,14 +99,10 @@ impl RootView {
                     .child(SharedString::from(mini_label(&playing))),
             )
             .child(self.mini_control(
-                "mini-quiet",
-                if unmute {
-                    Icon::VolumeOff
-                } else {
-                    Icon::Volume
-                },
+                quiet_id,
+                quiet_icon,
                 Variant::Pill,
-                if unmute { "Unmute all" } else { "Mute all" },
+                quiet_words,
                 cx,
                 move |this, cx| this.set_quiet_all(!unmute, cx),
             ))
@@ -210,7 +214,7 @@ impl RootView {
                 // zero opacity a control still takes the click.
                 .invisible()
                 .group_hover(TILE_GROUP, |style| style.visible())
-                .tooltip(move |window, cx| Tooltip::new(format!("Close {name}")).build(window, cx))
+                .tooltip(controls::tip(format!("Close {name}")))
                 .on_click(cx.listener(move |this, _event, window, cx| {
                     // Or the tile under it goes back to watching too.
                     cx.stop_propagation();
@@ -229,7 +233,9 @@ impl RootView {
     }
 
     /// One of the bar's three controls: an icon, what it does in words for
-    /// the pointer that rests on it, and the method it calls.
+    /// the pointer that rests on it, and the method it calls. A control whose
+    /// words change with what it would do passes an `id` that changes with
+    /// them; see `controls::tip`.
     ///
     /// Each takes focus back for the root first. The player blocks the pointer
     /// from the root, so the root's own mouse-down never hears these presses
@@ -244,7 +250,7 @@ impl RootView {
         on_click: impl Fn(&mut Self, &mut Context<Self>) + 'static,
     ) -> impl IntoElement {
         controls::icon_button(id, icon, variant)
-            .tooltip(move |window, cx| Tooltip::new(tooltip).build(window, cx))
+            .tooltip(controls::tip(tooltip))
             .on_click(cx.listener(move |this, _event, window, cx| {
                 this.focus.focus(window);
                 on_click(this, cx);

@@ -82,34 +82,17 @@ impl RootView {
         }
     }
 
-    /// Show or hide the active pane's chat, and remember it for that channel.
-    ///
-    /// Per pane rather than per app: the whole watch page is built on panes
-    /// being independent, and the reason to hide chat — watching one stream for
-    /// the game while reading another's chat — only makes sense if it is.
+    /// Show or hide the active pane's chat; see `toggle_chat`, which the
+    /// chat glyph on a pane's bar reaches too.
     pub(super) fn on_toggle_chat(
         &mut self,
         _: &keys::ToggleChat,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(index) = self.active_slot() else {
-            return;
-        };
-        // A video whose chat cannot be replayed. Say so, rather than toggling
-        // a pane that would come up empty.
-        if self.slots[index].chat.is_none() {
-            self.toast("no chat replay for this video", cx);
-            return;
+        if let Some(index) = self.active_slot() {
+            self.toggle_chat(index, cx);
         }
-        let hidden = !self.slots[index].chat_hidden;
-        self.slots[index].chat_hidden = hidden;
-
-        let channel = self.slots[index].channel.clone();
-        if self.settings.set_chat_hidden_for(&channel, hidden) {
-            self.save_settings(cx);
-        }
-        cx.notify();
     }
 
     pub(super) fn on_toggle_sidebar(

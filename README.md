@@ -82,10 +82,11 @@ build is several times slower at it.
 
 ### Keyboard
 
-The player's controls are a hover-revealed overlay on the video, and the rest
-— the rail button, back and forward, search and settings — sit in the bar
-across the top of the window. Neither is any use when you are not holding the
-mouse.
+The player's controls are on a bar that comes up over the video while the
+pointer is on it, and those a key also works name the key in their tooltips;
+the quality and More have no key. The rest — the rail button, back and
+forward, search and settings — sit in the bar across the top of the window.
+Neither is any use when you are not holding the mouse.
 
 | | |
 |---|---|
@@ -127,7 +128,16 @@ fullscreen too. `Esc` from the watch page goes back to whichever tab, category
 or channel you left the browse page on — and first closes a pane's open menu,
 if there is one. A playing pane's quality menu is in the palette as well:
 type `quality` and some of the pane's name, and `Choose quality for …` opens
-it.
+it. So are the two things under the bar's **More**, as `Copy link to …` and
+`Open … on twitch.tv`.
+
+The bar over a playing pane has play, the speaker — crossed out whenever
+the pane is silent, Mute all included — and the volume at the left, and at
+the right the quality, chat, fullscreen and **More**, which has **Open on
+twitch.tv** and **Copy link**. A narrow pane drops the volume's figure
+first, then its slider, then folds the quality into More. A past broadcast
+with no chat to replay shows the chat icon crossed out, with nothing to
+press.
 
 Back and forward work the way they do in a browser. `Alt+←` and `Alt+→`, the
 arrows in the title bar or the mouse's side buttons walk back through the
@@ -210,7 +220,10 @@ The time is shown once a minute, as a break between messages, rather than once
 per row — in a channel where fifteen messages share a minute, a column of
 identical timestamps is not a ruler. It is written the way your system writes a
 time, twelve-hour or twenty-four, in your language. The channel's name in the pane header opens
-it on twitch.tv, which is the way out of a chat you cannot type in.
+it on twitch.tv, which is the way out of a chat you cannot type in — and so
+do **Open on twitch.tv** under the bar's **More** and the palette's `Open …
+on twitch.tv`. On a live pane the site plays the stream as well, with its
+own sound.
 
 A pane also opens with the last hundred messages from *before* you joined, so
 four panes do not open blank. Twitch publishes no scrollback of its own, so
@@ -352,7 +365,10 @@ it or drag its thumb, and `←` and `→` skip ten seconds. A jump takes a secon
 or so, because the player is reopened at the new place rather than seeked —
 the reason is the player's and `HANDOFF.md` has it. The header says `replay`
 — or `highlight`, or `upload` — names the video, and opens it on twitch.tv;
-when the recording ends the pane says so and offers to start over. A channel's
+when the recording ends the pane says so and offers to start over. Under the
+bar's **More**, **Copy link** reads `Copy link at 1:02:03` and copies a link
+to the moment you are at, which pasted back into Perch opens there, and
+**Open on twitch.tv** opens it at that moment. A channel's
 live stream and one of its recordings can be open side by side.
 
 Every recording you open is kept on the **History** tab, newest first: the ones

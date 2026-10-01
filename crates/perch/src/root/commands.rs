@@ -10,6 +10,7 @@ use crate::channel_page;
 use crate::history_page;
 use crate::palette;
 use crate::video_view::Menu;
+use crate::watch::PaneAction;
 
 impl RootView {
     /// Everything the palette could run right now, in the order it shows them.
@@ -129,6 +130,14 @@ impl RootView {
             palette::Command::Add(channel) => self.open_channel(channel, false, window, cx),
             palette::Command::Close(index) => self.close_slot(index, window, cx),
             palette::Command::ChooseQuality(index) => self.choose_quality(index, cx),
+            // More's rows by name, down the route More takes, by the pane's
+            // key: the same link, the same toast.
+            palette::Command::CopyLink(index) => {
+                self.pane_command(index, PaneAction::CopyLink, window, cx)
+            }
+            palette::Command::OpenOnTwitch(index) => {
+                self.pane_command(index, PaneAction::OpenOnTwitch, window, cx)
+            }
             palette::Command::Videos {
                 login,
                 display_name,
@@ -156,6 +165,21 @@ impl RootView {
             palette::Command::Refresh => self.refresh(cx),
         }
         cx.notify();
+    }
+
+    /// What a pane's own control would ask, for the pane at `index` in the
+    /// list the palette was drawn from. The palette holds positions; the
+    /// route takes keys, so the key is read here, as the row runs.
+    fn pane_command(
+        &mut self,
+        index: usize,
+        action: PaneAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(key) = self.slots.get(index).map(|slot| slot.key.clone()) {
+            self.on_pane_action(&key, action, window, cx);
+        }
     }
 
     /// Open the quality menu of the pane at `index`, from the palette.

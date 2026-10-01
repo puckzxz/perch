@@ -1,11 +1,12 @@
 //! The command palette.
 //!
-//! While watching, the player's controls are keys or a hover-revealed
-//! overlay and the page-level ones sit in the title bar; everything you could
-//! reach while *browsing* was a click — the picker had no keyboard path at all
-//! past the search box. This is the one control that answers both: a channel
-//! to open, a recording to carry on with, a pane to close, a page to go to,
-//! typed rather than aimed at.
+//! While watching, the player's controls are keys or a bar that comes up over
+//! the video under the pointer, and the page-level ones sit in the title bar;
+//! everything you could reach while *browsing* was a click — the picker had
+//! no keyboard path at all past the search box. This is the one control that
+//! answers both: a channel to open, a recording to carry on with, a pane to
+//! close, choose the quality of, copy a link to or open on twitch.tv, a page
+//! to go to, typed rather than aimed at.
 //!
 //! It is not a second search box. The search box asks *Twitch* a question and
 //! costs a request; this filters what the app already knows — who is live, what
@@ -47,8 +48,15 @@ pub enum Command {
     /// Close the pane at this index.
     Close(usize),
     /// Open the quality menu of the pane at this index: the keyboard's way
-    /// to the one control on the player's bar no key reaches.
+    /// to a menu no key opens. More has no key either, and its rows are
+    /// here by name below.
     ChooseQuality(usize),
+    /// Copy a link to the pane at this index, at the moment it is at: More's
+    /// `Copy link`, by name.
+    CopyLink(usize),
+    /// Open the pane at this index on twitch.tv, the same way: More's
+    /// `Open on twitch.tv`.
+    OpenOnTwitch(usize),
     /// Look at a channel's past broadcasts.
     Videos {
         login: String,
@@ -141,6 +149,35 @@ const RECENT_SHOWN: usize = 5;
 /// nearly all of them; so a title has to contain what was typed, whole, and
 /// what was typed has to be long enough to mean something.
 const TITLE_QUERY_MIN: usize = 3;
+
+/// A row the palette offers for each open pane once something is typed:
+/// whether only a pane with a picture up has it, what it runs, and what it
+/// says, from what the pane is called.
+struct PaneRow {
+    needs_picture: bool,
+    command: fn(usize) -> Command,
+    words: fn(&str) -> String,
+}
+
+/// The pane rows, in the order they are offered: the quality, which needs a
+/// bar to open over, then More's two by name. See `entries`.
+const PANE_ROWS: [PaneRow; 3] = [
+    PaneRow {
+        needs_picture: true,
+        command: Command::ChooseQuality,
+        words: |pane| format!("Choose quality for {pane}"),
+    },
+    PaneRow {
+        needs_picture: false,
+        command: Command::CopyLink,
+        words: |pane| format!("Copy link to {pane}"),
+    },
+    PaneRow {
+        needs_picture: false,
+        command: Command::OpenOnTwitch,
+        words: |pane| format!("Open {pane} on twitch.tv"),
+    },
+];
 
 /// A row for a recording in the history: whose, and what, and where it was
 /// left — which is what tells apart a channel that titles every broadcast
@@ -382,25 +419,28 @@ pub fn entries(
         }
     }
 
-    // A pane's quality, by name, for a pane with a picture to choose it for.
-    // Only once something is typed: with nothing typed it would be a row per
-    // pane between the recents and the commands, for a thing done now and
-    // then. After every `Close` row rather than beside its pane's, because
-    // the letters of "quality" answer to most short queries: `c quin` is
-    // still Enter away from closing quin69 rather than opening some other
-    // pane's menu.
+    // A pane's quality, by name, for a pane with a picture to choose it for;
+    // then More's two rows by name, for every pane, since a stopped one still
+    // has a channel or a recording to hand out. Only once something is
+    // typed: with nothing typed they would be three rows per pane between the
+    // recents and the commands, for things done now and then. After every
+    // `Close` row rather than beside their pane's, because their letters
+    // answer to most short queries: `c quin` is still Enter away from closing
+    // quin69 rather than opening some other pane's menu or copying its link.
     if !query.is_empty() {
-        for (index, pane) in watching.iter().enumerate() {
-            if !pane.playing {
-                continue;
-            }
-            let title = format!("Choose quality for {}", pane.title);
-            if matches(&title, query) {
-                entries.push(Entry {
-                    command: Command::ChooseQuality(index),
-                    title: SharedString::from(title),
-                    kind: "pane".into(),
-                });
+        for row in PANE_ROWS {
+            for (index, pane) in watching.iter().enumerate() {
+                if row.needs_picture && !pane.playing {
+                    continue;
+                }
+                let title = (row.words)(&pane.title);
+                if matches(&title, query) {
+                    entries.push(Entry {
+                        command: (row.command)(index),
+                        title: SharedString::from(title),
+                        kind: "pane".into(),
+                    });
+                }
             }
         }
     }
@@ -657,9 +697,8 @@ mod tests {
         }
     }
 
-    /// The quality menu is the one control on the player's bar no key
-    /// reaches, so each playing pane offers it by name: by the words of the
-    /// row, matched the way every row is.
+    /// No key opens the quality menu, so each playing pane offers it by
+    /// name: by the words of the row, matched the way every row is.
     #[test]
     fn a_playing_pane_offers_its_quality_by_name() {
         let watching: Vec<OpenPane> = vec!["forsen".into(), "quin69".into()];
@@ -678,16 +717,45 @@ mod tests {
         );
     }
 
-    /// An empty palette leads with what to watch. A row per open pane for its
-    /// quality would push that down for a thing done now and then, so those
-    /// rows wait to be typed for.
+    /// An empty palette leads with what to watch. Rows per open pane for its
+    /// quality and its link would push that down for things done now and
+    /// then, so those rows wait to be typed for.
     #[test]
     fn pane_rows_wait_for_a_query() {
         let watching: Vec<OpenPane> = vec!["forsen".into(), "quin69".into()];
         let blank = entries("", &[], &[], &[], &[], &watching, true);
-        assert!(!blank
+        assert!(!blank.iter().any(|entry| matches!(
+            entry.command,
+            Command::ChooseQuality(_) | Command::CopyLink(_) | Command::OpenOnTwitch(_)
+        )));
+    }
+
+    /// More's two rows, by name, for each pane the query names — a stopped
+    /// one too, since it still has a channel to hand out — and after every
+    /// `Close`, so an abbreviated close still leads.
+    #[test]
+    fn an_open_pane_can_be_copied_from_the_palette() {
+        let stopped = OpenPane {
+            playing: false,
+            .."quin69".into()
+        };
+        let watching: Vec<OpenPane> = vec!["forsen".into(), stopped];
+        let found = entries("copy", &[], &[], &[], &[], &watching, true);
+        let copies: Vec<&Entry> = found
             .iter()
-            .any(|entry| matches!(entry.command, Command::ChooseQuality(_))));
+            .filter(|entry| matches!(entry.command, Command::CopyLink(_)))
+            .collect();
+        assert_eq!(copies.len(), 2, "every pane offers its link");
+        assert_eq!(copies[1].command, Command::CopyLink(1));
+        assert_eq!(copies[1].title, "Copy link to quin69");
+        assert_eq!(copies[1].kind, "pane");
+
+        let found = entries("open quin", &[], &[], &[], &[], &watching, true);
+        let open = found
+            .iter()
+            .find(|entry| entry.command == Command::OpenOnTwitch(1))
+            .expect("the stopped pane can be opened on twitch.tv");
+        assert_eq!(open.title, "Open quin69 on twitch.tv");
     }
 
     /// A pane that is starting, still waiting for its first frame, offline or

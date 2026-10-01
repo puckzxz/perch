@@ -1,25 +1,36 @@
 //! The menus the player's control bar opens: which one is open, the box it
 //! opens in, and its rows.
 //!
-//! Hand-rolled rather than gpui-component's `DropdownMenu`, which serves only
-//! that library's own `Button`. One is open at a time, all of them open from
-//! the bar's right-hand cluster (`bar::button_row`), and `Esc` closes whichever
-//! it is, through `RootView::on_go_browse`. The rows act on the press, never
-//! on a click; `menu_row` says why, and a test below holds this file to it.
+//! Two of them: the quality, and More — what else there is to do with the
+//! pane, which also carries the quality when the bar is too narrow for its
+//! pill. Hand-rolled rather than gpui-component's `DropdownMenu`, which
+//! serves only that library's own `Button`. One is open at a time, all of
+//! them open from the bar's right-hand cluster (`bar::button_row`), and `Esc`
+//! closes whichever it is, through `RootView::on_go_browse`. The rows act on
+//! the press, never on a click; `menu_row` says why, and a test below holds
+//! this file to it. The rest of a double-click whose first press a row took
+//! is swallowed whole, by `run_guard`, so it cannot land on whatever the
+//! closed menu left under the pointer.
 
 use gpui::{
-    div, prelude::*, px, Animation, AnimationExt, Context, Div, ElementId, MouseButton,
-    SharedString, Stateful, Window,
+    canvas, div, prelude::*, px, Animation, AnimationExt, Context, DispatchPhase, Div, ElementId,
+    MouseButton, MouseDownEvent, SharedString, Stateful, Window,
 };
 
 use super::{VideoEvent, VideoView};
+use crate::seek_bar;
+use crate::target;
 use crate::theme;
+use crate::watch::PaneAction;
 
 /// A menu the control bar opens.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Menu {
     /// The renditions this stream offers, under the settings' choice.
     Quality,
+    /// The rest: open the pane on twitch.tv, copy its link — and the
+    /// quality, while the bar has no room for its pill.
+    More,
 }
 
 impl Menu {
@@ -29,6 +40,7 @@ impl Menu {
     fn id(self) -> &'static str {
         match self {
             Menu::Quality => "quality-menu",
+            Menu::More => "more-menu",
         }
     }
 }
@@ -44,7 +56,8 @@ pub(super) fn toggled(open: Option<Menu>, which: Menu) -> Option<Menu> {
 }
 
 impl VideoView {
-    /// Open `which` over the bar, for the palette's keyboard path to it. An
+    /// Open `which` over the bar: the palette's keyboard path to it, and
+    /// More's quality row, which opens the quality menu in More's place. An
     /// open menu holds the bar up (`sync_controls`), so the bar comes up with
     /// it, wherever the pointer is.
     ///
@@ -87,6 +100,7 @@ impl VideoView {
     pub(super) fn menu_box(&self, which: Menu, cx: &mut Context<Self>) -> impl IntoElement {
         let rows = match which {
             Menu::Quality => self.quality_rows(cx),
+            Menu::More => self.more_rows(cx),
         };
 
         div()
@@ -151,6 +165,112 @@ impl VideoView {
         }
         rows
     }
+
+    /// More: the quality first while its pill has folded, then the pane's
+    /// way out to twitch.tv and its link. The last two are the root's to do
+    /// — it knows the pane, and the clipboard and the browser are the app's
+    /// — so they go up as `VideoEvent::Pane`.
+    ///
+    /// A recording opens and copies at the moment it is at, and says so:
+    /// `Copy link at 1:02:03`, from its first whole second on, by the rule
+    /// the link itself is written by (`target::moment`). Read as the menu is
+    /// drawn, which a playing picture does with every frame, so the time on
+    /// the row is the time a press copies.
+    fn more_rows(&self, cx: &mut Context<Self>) -> Vec<Stateful<Div>> {
+        let mut rows = Vec::new();
+        if !self.fit.quality {
+            rows.push(
+                menu_row(
+                    "more-quality",
+                    format!("Quality · {}", self.qualities.playing).into(),
+                    false,
+                    // In place of this menu, as if from the pill.
+                    |this, _window, cx| this.open_menu(Menu::Quality, cx),
+                    cx,
+                )
+                .border_b_1()
+                .border_color(theme::border()),
+            );
+        }
+        // phase 3: Pop out
+        rows.push(menu_row(
+            "more-open",
+            "Open on twitch.tv".into(),
+            false,
+            |_this, _window, cx| cx.emit(VideoEvent::Pane(PaneAction::OpenOnTwitch)),
+            cx,
+        ));
+        let moment = self
+            .stream
+            .timeline()
+            .and_then(|_| target::moment(self.stream.position()));
+        let copy = match moment {
+            Some(secs) => format!("Copy link at {}", seek_bar::timecode(secs as f64)),
+            None => "Copy link".to_string(),
+        };
+        rows.push(menu_row(
+            "more-copy",
+            copy.into(),
+            false,
+            |_this, _window, cx| cx.emit(VideoEvent::Pane(PaneAction::CopyLink)),
+            cx,
+        ));
+        rows
+    }
+
+    /// The rest of a run of presses whose first one a row took: an element
+    /// for the player to hold, a `canvas` that listens at the window as it
+    /// paints, the way `RootView::side_buttons` does.
+    ///
+    /// A row acts on the press and takes the menu away with it, but the
+    /// platform counts a second press near the first as a double-click
+    /// whatever is under it by then (gpui's windows/window.rs:1049-1060).
+    /// Under a row that was the picture, whose double-click is fullscreen; a
+    /// recording's seek track, which seeks; or, after More's quality row, the
+    /// quality menu that opened in More's place, where the press would pick a
+    /// rendition and restart the stream. So a row marks its run (`row_run`),
+    /// and this stops every later press of that run in the capture phase,
+    /// before anything under the pointer hears it. The bubble phase, where a
+    /// click begins, never comes, so the release makes no click either. The
+    /// next run's first press ends it.
+    ///
+    /// Window-level because nothing narrower hears all of those: the bar and
+    /// the menu each block the pointer from what is under them. Held ahead
+    /// of the bar, so this listens before anything on the bar or in a menu
+    /// does, the anchor's dismiss included, and a quality menu just opened
+    /// from More stays open for a press of its own.
+    pub(super) fn run_guard(cx: &mut Context<Self>) -> impl IntoElement {
+        let owner = cx.entity().downgrade();
+        canvas(
+            |_, _, _| {},
+            move |_, _, window, _| {
+                window.on_mouse_event(move |event: &MouseDownEvent, phase, _window, cx| {
+                    if phase != DispatchPhase::Capture {
+                        return;
+                    }
+                    let swallowed = owner
+                        .update(cx, |this, _| {
+                            this.row_run = rest_of_row_run(this.row_run, event.click_count);
+                            this.row_run
+                        })
+                        .unwrap_or(false);
+                    if swallowed {
+                        cx.stop_propagation();
+                    }
+                });
+            },
+        )
+        .absolute()
+        .size_full()
+    }
+}
+
+/// Whether a press `click_count` deep into its run is the rest of a run a
+/// row took, given whether the run so far was a row's. The first press of a
+/// run never is, and ends whatever run went before, so this is also what
+/// `row_run` reads once the press has been heard.
+fn rest_of_row_run(row_run: bool, click_count: usize) -> bool {
+    row_run && click_count > 1
 }
 
 /// One row of the quality menu. `request` is what choosing it asks for: a
@@ -190,6 +310,12 @@ fn quality_option(
 /// capture phase that closed the menu, while the row is still there to hear
 /// it. What acting on the press costs is drag-off-to-cancel, which a short
 /// list of rows can do without.
+///
+/// Only on the first press of a run, which is also when it marks the run as
+/// a row's, for [`VideoView::run_guard`] to swallow the rest of. A later
+/// press of a run is never a row's to take: whatever the run's first press
+/// landed on chose, and the row under the second may only be there because
+/// the first opened its menu.
 fn menu_row(
     id: impl Into<ElementId>,
     label: SharedString,
@@ -219,7 +345,11 @@ fn menu_row(
         .child(label)
         .on_mouse_down(
             MouseButton::Left,
-            cx.listener(move |this, _event, window, cx| {
+            cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                if event.click_count > 1 {
+                    return;
+                }
+                this.row_run = true;
                 this.close_menu(cx);
                 on_press(this, window, cx);
             }),
@@ -238,6 +368,37 @@ mod tests {
     #[test]
     fn a_closed_menu_opens_on_its_button() {
         assert_eq!(toggled(None, Menu::Quality), Some(Menu::Quality));
+    }
+
+    /// One menu at a time: More's button over an open quality menu swaps
+    /// one for the other rather than stacking them, and the other way round.
+    #[test]
+    fn opening_one_menu_closes_the_other() {
+        assert_eq!(toggled(Some(Menu::Quality), Menu::More), Some(Menu::More));
+        assert_eq!(
+            toggled(Some(Menu::More), Menu::Quality),
+            Some(Menu::Quality)
+        );
+        assert_eq!(toggled(Some(Menu::More), Menu::More), None);
+    }
+
+    /// A double- or triple-click on a row: the row took the first press, so
+    /// the rest go nowhere — not to the picture's fullscreen, the seek track
+    /// or the quality menu More's row opened under the pointer.
+    #[test]
+    fn the_rest_of_a_rows_run_is_swallowed() {
+        assert!(rest_of_row_run(true, 2));
+        assert!(rest_of_row_run(true, 3));
+    }
+
+    /// The next run's first press is heard as usual and ends the row's run,
+    /// so a double-click after it is a double-click again. A run that never
+    /// started on a row is never touched.
+    #[test]
+    fn a_new_run_is_nobody_elses() {
+        assert!(!rest_of_row_run(true, 1));
+        assert!(!rest_of_row_run(false, 1));
+        assert!(!rest_of_row_run(false, 2));
     }
 
     /// A row that waited for a click would compile, draw, highlight under the

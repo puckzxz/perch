@@ -9,8 +9,13 @@
 //! This file is the player: what it starts with, its sound, its hover, the
 //! switch to a mini-player tile, and the picture. What is drawn over the
 //! picture lives beside it, in child modules that see the player's private
-//! fields: `bar`, the control bar along the bottom, and `menu`, the menus that
-//! bar opens, which one is open, and how their rows take a press.
+//! fields: `bar`, the control bar along the bottom — its icons, and what fits
+//! at the pane's width — and `menu`, the menus that bar opens, which one is
+//! open, and how their rows take a press.
+//!
+//! What the bar offers that is not the player's to do — the pane's chat,
+//! opening it on twitch.tv, copying its link — it asks the root for, as
+//! [`VideoEvent::Pane`], the same way it asks for a new quality.
 
 mod bar;
 mod menu;
@@ -31,6 +36,7 @@ use crate::motion;
 use crate::seek_bar;
 use crate::theme;
 use crate::video::{Stopped, VideoStream};
+use crate::watch::PaneAction;
 
 pub enum VideoEvent {
     /// The user changed volume; worth persisting to settings.
@@ -44,6 +50,43 @@ pub enum VideoEvent {
     /// what is left to do - retire this player, take streamlink down with it,
     /// and say so in the pane - is all outside the player.
     Stopped(Stopped),
+    /// Something on the bar or in More that is the pane's rather than the
+    /// player's: its chat, its link. Answered by `RootView::on_pane_action`,
+    /// as the pane's own controls are, for the pane this player belongs to.
+    Pane(PaneAction),
+}
+
+/// What the bar's chat glyph offers: to hide the pane's chat, to show it, or
+/// nothing, for a recording with no chat to replay — drawn still, so the
+/// right-hand cluster keeps its shape and its place.
+///
+/// A mirror, and the only one the bar keeps: the pane's `chat_hidden` and
+/// `chat` are the root's, and the player cannot see them. Written in exactly
+/// two places — [`Start::chat`] when the player is made, and
+/// `RootView::toggle_chat`, the one thing that changes `chat_hidden` after a
+/// pane opens, through [`VideoView::set_chat`]. Anything else that comes to
+/// write `chat_hidden` has to call `set_chat` too, or the glyph will offer
+/// the opposite of what a press does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChatButton {
+    /// Chat is beside the picture: the glyph hides it.
+    Shown,
+    /// Chat is hidden: the glyph brings it back.
+    Hidden,
+    /// There is no chat to show — a highlight or an upload.
+    Unavailable,
+}
+
+impl ChatButton {
+    /// The glyph for a pane whose chat is `chat_hidden`, and which has one
+    /// at all. With none, what was saved for the channel does not matter.
+    pub fn of(chat_hidden: bool, has_chat: bool) -> Self {
+        match (has_chat, chat_hidden) {
+            (false, _) => ChatButton::Unavailable,
+            (true, true) => ChatButton::Hidden,
+            (true, false) => ChatButton::Shown,
+        }
+    }
 }
 
 /// What a pane's quality menu offers, and which of it is chosen.
@@ -80,9 +123,19 @@ pub struct VideoView {
     /// The menu open over the control bar, if any: one at a time, so opening
     /// one is closing whichever was open (`menu::toggled`).
     menu: Option<Menu>,
+    /// Whether the run of presses going on began on a menu row, whose later
+    /// presses — the second of a double-click — go nowhere; see
+    /// `VideoView::run_guard`.
+    row_run: bool,
     /// The root's focus, which a press on the bar or on a menu hands the keys
     /// back to; see `return_keys`.
     root_focus: FocusHandle,
+    /// What the bar's chat glyph offers; see [`ChatButton`].
+    chat: ChatButton,
+    /// What the bar has room for at the pane's width, measured by the probe
+    /// (`bar::fit`): the volume figure and slider, and the quality pill,
+    /// which folds into More when it does not fit.
+    fit: bar::Fit,
     /// Whether the pointer is over this player, measured from the pane's own
     /// bounds rather than taken from GPUI's `on_hover`.
     ///
@@ -137,6 +190,8 @@ pub struct Start {
     pub quiet: bool,
     /// The root's focus handle, kept as `VideoView::root_focus`.
     pub focus: FocusHandle,
+    /// What the pane's chat is at the start; see [`ChatButton`].
+    pub chat: ChatButton,
 }
 
 impl VideoView {
@@ -210,7 +265,12 @@ impl VideoView {
             volume_slider,
             qualities,
             menu: None,
+            row_run: false,
             root_focus: start.focus,
+            chat: start.chat,
+            // Until the probe has measured the pane: the bar is hidden on
+            // the first frame, and the probe's first pass corrects it.
+            fit: bar::Fit::EVERYTHING,
             hovered: false,
             controls: motion::Fade::hidden(),
             compact: start.compact,
@@ -355,6 +415,7 @@ impl VideoView {
         }
         self.compact = compact;
         self.menu = None;
+        self.row_run = false;
         self.hovered = false;
         self.pointing = None;
         self.scrub = None;
@@ -448,6 +509,27 @@ impl VideoView {
     pub fn set_picked(&mut self, picked: bool, cx: &mut Context<Self>) {
         self.qualities.picked = picked;
         cx.notify();
+    }
+
+    /// What the pane's chat now is, after `RootView::toggle_chat` changed
+    /// it; see [`ChatButton`] for why this is the only other way in.
+    pub fn set_chat(&mut self, chat: ChatButton, cx: &mut Context<Self>) {
+        if self.chat != chat {
+            self.chat = chat;
+            cx.notify();
+        }
+    }
+
+    /// Note what the bar has room for, from the probe. Returns whether that
+    /// changed, the only time a repaint is worth it: the width moves with
+    /// every pixel of a window being dragged, and what fits changes a few
+    /// times across all of them.
+    fn set_fit(&mut self, fit: bar::Fit) -> bool {
+        if self.fit == fit {
+            return false;
+        }
+        self.fit = fit;
+        true
     }
 
     /// Whether a frame has decoded, and so whether `render` draws the picture
@@ -544,11 +626,14 @@ impl Render for VideoView {
 
                 let pointer = window.mouse_position();
                 let inside = window.is_window_hovered() && bounds.contains(&pointer);
+                // In logical pixels, the bar's own: the bar spans the pane.
+                let fit = bar::fit(f32::from(bounds.size.width), bar::RIGHT_BUTTONS);
                 this.update(cx, |view: &mut Self, cx| {
                     let hovered = view.set_hovered(inside);
                     let scrubbed = view.follow_scrub(pointer.x);
                     let pointed = view.follow_pointer(inside.then_some(pointer));
-                    if hovered || scrubbed || pointed {
+                    let fitted = view.set_fit(fit);
+                    if hovered || scrubbed || pointed || fitted {
                         cx.notify();
                     }
                 })
@@ -581,6 +666,8 @@ impl Render for VideoView {
             // purpose - it is how a pane is made the active one, and pausing
             // on a click would turn choosing a pane into stopping it. Not on
             // a compact tile, whose click is the way back to the watch page.
+            // A double-click whose first press chose a menu row never gets
+            // here: `run_guard`, below, stops the second press.
             .when(!self.compact, |pane| {
                 pane.on_click(|event: &ClickEvent, window, _cx| {
                     if event.click_count() == 2 {
@@ -589,6 +676,9 @@ impl Render for VideoView {
                 })
             })
             .child(probe)
+            // Ahead of the bar and its menus, so it hears a press before
+            // anything on them does; see `run_guard`. A tile has no menus.
+            .when(!self.compact, |pane| pane.child(Self::run_guard(cx)))
             // Fade the first frames in rather than cutting from black, which
             // makes a channel switch read as deliberate instead of a glitch.
             .child(img(frame).flex_1().min_h_0().w_full().with_animation(
@@ -601,12 +691,33 @@ impl Render for VideoView {
                 // the picture while you are just watching - and faded rather
                 // than cut, because over a moving image a hard switch reads as
                 // part of the video instead of a response to the pointer.
-                pane.child(self.controls.apply(
-                    "controls",
-                    theme::MOTION_HOVER,
-                    div().absolute().inset_0().child(self.control_bar(cx)),
-                ))
+                pane.child(
+                    self.controls.apply(
+                        "controls",
+                        theme::MOTION_HOVER,
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .child(self.control_bar(window, cx)),
+                    ),
+                )
             })
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A recording with no chat to replay offers none, whatever the channel
+    /// was saved as: its glyph is the still one either way.
+    #[test]
+    fn the_chat_glyph_follows_the_pane() {
+        assert_eq!(ChatButton::of(false, true), ChatButton::Shown);
+        assert_eq!(ChatButton::of(true, true), ChatButton::Hidden);
+        for hidden in [false, true] {
+            assert_eq!(ChatButton::of(hidden, false), ChatButton::Unavailable);
+        }
     }
 }

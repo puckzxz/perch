@@ -196,6 +196,26 @@ impl Slot {
             Source::Live => None,
         }
     }
+
+    /// The twitch.tv page for what this pane plays: the channel, or the
+    /// recording — and with `at_position`, the recording at the moment the
+    /// pane is at, which pasted back into Perch opens it there.
+    ///
+    /// A live pane's link has no time either way: a moment in a broadcast
+    /// still going is a moment in its archive, which the pane does not know.
+    /// The header's name passes `false`, since a name says which and never
+    /// when; More and the palette pass `true`.
+    pub fn link(&self, at_position: bool) -> String {
+        target::link(&match &self.source {
+            Source::Live => Target::Channel(self.channel.clone()),
+            Source::Video { video, position } => Target::Video {
+                id: video.id.clone(),
+                start_secs: at_position
+                    .then(|| target::moment(position.get()))
+                    .flatten(),
+            },
+        })
+    }
 }
 
 /// What the root knows about a pane beyond its slot, resolved once per frame
@@ -211,14 +231,16 @@ pub struct PaneInfo<'a> {
     pub name: SharedString,
 }
 
-/// What a pane asks of whoever owns it: its controls, and a press on it.
+/// What a pane asks of whoever owns it: its controls, its player's bar and
+/// menus, the palette's rows about it, and a press on it.
 ///
 /// One vocabulary, so a new thing a pane can ask for is a variant here and an
 /// arm in `RootView::on_pane_action`, rather than one more callback threaded
 /// through `page`, `pane` and the header. Always sent with the pane's key,
 /// never its position: a press can land after the panes have moved — one
 /// closed, another opened — and an index read when the pane was drawn would
-/// then name its neighbour (see [`pane_id`]).
+/// then name its neighbour (see [`pane_id`]). The player sends its own as
+/// `VideoEvent::Pane`, which the root answers by the key it subscribed with.
 #[derive(Clone, Debug)]
 pub enum PaneAction {
     /// Close the pane: its header's close.
@@ -227,6 +249,13 @@ pub enum PaneAction {
     Retry,
     /// Make it the pane the keys talk to: a press anywhere in it.
     Activate,
+    /// Show or hide its chat, as `C` does: the chat glyph on the bar.
+    ToggleChat,
+    /// Open what it plays on twitch.tv, at the moment it is at: More's
+    /// `Open on twitch.tv` row, and the palette's.
+    OpenOnTwitch,
+    /// Put the same link on the clipboard: More's, and the palette's.
+    CopyLink,
 }
 
 /// How every pane in the current grid is arranged. Identical for all of them,
@@ -435,21 +464,13 @@ fn chat_header<V: 'static>(
         })
         .unwrap_or((false, false));
     // The name opens what the pane is playing: the channel, or this one
-    // recording, from its start — the name says which, never when.
-    let (target, tooltip) = match recording {
-        Some(video) => (
-            Target::Video {
-                id: video.id.clone(),
-                start_secs: None,
-            },
-            SharedString::from("Open this broadcast on twitch.tv"),
-        ),
-        None => (
-            Target::Channel(slot.channel.clone()),
-            SharedString::from(format!("Open twitch.tv/{}", slot.channel)),
-        ),
+    // recording, from its start — the name says which, never when. The
+    // moment is More's to offer, on the bar.
+    let url = slot.link(false);
+    let tooltip = match recording {
+        Some(_) => SharedString::from("Open this broadcast on twitch.tv"),
+        None => SharedString::from(format!("Open twitch.tv/{}", slot.channel)),
     };
-    let url = target::link(&target);
 
     div()
         .flex_none()
@@ -498,9 +519,7 @@ fn chat_header<V: 'static>(
                         .text_color(theme::text())
                         .cursor_pointer()
                         .hover(|style| style.text_color(theme::accent()))
-                        .tooltip(move |window, cx| {
-                            gpui_component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
-                        })
+                        .tooltip(controls::tip(tooltip))
                         .on_click(cx.listener(move |_, _event, _window, cx| cx.open_url(&url)))
                         .child(name),
                 )
@@ -592,7 +611,7 @@ fn chat_or_why(slot: &Slot, chatless: bool) -> AnyElement {
 /// One pane: a player, and its chat with a header.
 ///
 /// Nothing static is drawn over the video. What appears there on hover is
-/// playback only.
+/// the player's bar: playback, the pane's chat, fullscreen and More.
 #[allow(clippy::too_many_arguments)]
 fn pane<V: 'static>(
     index: usize,
@@ -920,5 +939,50 @@ mod tests {
         }
         slot.set_state(StreamState::Starting);
         assert_eq!(slot.stalled_at, None, "asking again is not a stall");
+    }
+
+    /// A live pane hands out its channel, with or without a moment asked
+    /// for: there is no moment in a broadcast still going to give.
+    #[test]
+    fn a_live_pane_links_its_channel() {
+        for at_position in [false, true] {
+            assert_eq!(live().link(at_position), "https://www.twitch.tv/forsen");
+        }
+    }
+
+    /// A recording hands out where it is, which reads back as that moment.
+    #[test]
+    fn a_recording_links_where_it_is() {
+        let link = recording(3723.0).link(true);
+        assert_eq!(link, "https://www.twitch.tv/videos/2868644730?t=1h2m3s");
+        assert_eq!(
+            target::parse(&link),
+            Some(Target::Video {
+                id: "2868644730".into(),
+                start_secs: Some(3723),
+            })
+        );
+    }
+
+    /// In its first second a recording is at its start, and its link says
+    /// so by saying no time at all.
+    #[test]
+    fn a_recording_at_the_top_has_no_time() {
+        for position in [0.0, 0.6] {
+            assert_eq!(
+                recording(position).link(true),
+                "https://www.twitch.tv/videos/2868644730"
+            );
+        }
+    }
+
+    /// The header's name says which recording, never when: its link is the
+    /// recording from the top, however far in the pane is.
+    #[test]
+    fn the_header_link_never_carries_a_time() {
+        assert_eq!(
+            recording(3723.0).link(false),
+            "https://www.twitch.tv/videos/2868644730"
+        );
     }
 }

@@ -8,19 +8,22 @@
 //! credential fields had an invisible-but-clickable eye at their right edge.
 //! Silent, because a missing asset is not an error anywhere in that path.
 //!
-//! So they live here, hand-drawn rather than vendored: twenty-one paths in a
-//! 24×24 box is less to carry than an icon set, and gpui only keeps the alpha
-//! anyway — [`gpui::SvgRenderer`] rasterises and throws the colour away,
+//! So they live here, hand-drawn rather than vendored: a few strokes each in
+//! a 24×24 box are less to carry than an icon set, and gpui only keeps the
+//! alpha anyway — [`gpui::SvgRenderer`] rasterises and throws the colour away,
 //! tinting the mask with whatever `text_color` the element asked for. That is
 //! also why these are stroked in flat black: nothing downstream ever sees it.
+//! A new one is drawn the same way — the 24 box, a stroke of 2, round caps
+//! and joins, no fill — or it will not sit beside the rest.
 //!
 //! Perch's own controls draw from the same table — the title bar's rail
 //! toggle, back, forward and settings gear, the window's caption buttons, the
-//! mini player's, and the rail's pin and the fold over its offline follows —
-//! through [`Icon`], so a control names an icon by a variant the compiler
-//! checks rather than by a path string nothing does. A variant is named for
-//! what it means, not what it looks like, and a file can serve a variant and
-//! the widget library both: the fold's chevrons are the dropdown's.
+//! mini player's, the rail's pin and the fold over its offline follows, and
+//! the player's control bar — through [`Icon`], so a control names an icon by
+//! a variant the compiler checks rather than by a path string nothing does. A
+//! variant is named for what it means, not what it looks like, and a file can
+//! serve a variant and the widget library both: the fold's chevrons are the
+//! dropdown's.
 //! An `svg` element paints with its *own* `text_color` and nothing inherited,
 //! so a glyph that was not given one draws nothing; see `controls`.
 
@@ -46,9 +49,11 @@ macro_rules! icon {
 /// Anything not on this list is answered `None`, which is exactly what the app
 /// did for all of them until now — so an icon nobody drew degrades to the
 /// blank it already was rather than to a crash.
-const ICONS: [(&str, &[u8]); 21] = [
+const ICONS: [(&str, &[u8]); 28] = [
     icon!("arrow-left"),
     icon!("arrow-right"),
+    icon!("chat"),
+    icon!("chat-off"),
     icon!("chevron-down"),
     icon!("chevron-left"),
     icon!("chevron-right"),
@@ -57,10 +62,15 @@ const ICONS: [(&str, &[u8]); 21] = [
     icon!("close"),
     icon!("expand"),
     icon!("eye"),
+    icon!("fullscreen"),
+    icon!("fullscreen-exit"),
     icon!("inbox"),
     icon!("minus"),
+    icon!("more"),
     icon!("panel-left"),
+    icon!("pause"),
     icon!("pin"),
+    icon!("play"),
     icon!("plus"),
     icon!("search"),
     icon!("settings"),
@@ -117,6 +127,13 @@ perch_icons! {
     Folded => "chevron-right",
     Unfolded => "chevron-down",
     Pin => "pin",
+    Play => "play",
+    Pause => "pause",
+    Fullscreen => "fullscreen",
+    FullscreenExit => "fullscreen-exit",
+    Chat => "chat",
+    ChatOff => "chat-off",
+    More => "more",
 }
 
 /// What `Application::new().with_assets(..)` is handed.

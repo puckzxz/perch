@@ -49,7 +49,6 @@ use gpui::{
     WindowControlArea,
 };
 use gpui_component::input::Input;
-use gpui_component::tooltip::Tooltip;
 
 use super::RootView;
 use crate::assets::Icon;
@@ -202,17 +201,23 @@ impl RootView {
         // The account control is the gear: who is signed in rides on its
         // tooltip rather than taking room in the bar, since once signed in it
         // is a fact nobody needs to read again.
-        let settings_tip: SharedString = match &self.sign_in {
-            SignIn::SignedIn(login) => format!(
-                "{} · signed in as {login}",
-                Hint::Settings.tooltip("Settings")
-            )
-            .into(),
-            _ => Hint::Settings.tooltip("Settings").into(),
+        // The id follows whether there is a sign-in, as the words do, so a
+        // sign-in landing while the pointer rests on the gear does not leave
+        // the old words up; see `controls::tip`.
+        let (settings_id, settings_tip): (&str, SharedString) = match &self.sign_in {
+            SignIn::SignedIn(login) => (
+                "title-settings-signed-in",
+                format!(
+                    "{} · signed in as {login}",
+                    Hint::Settings.tooltip("Settings")
+                )
+                .into(),
+            ),
+            _ => ("title-settings", Hint::Settings.tooltip("Settings").into()),
         };
-        let settings = controls::icon_button("title-settings", Icon::Settings, Variant::Chrome)
+        let settings = controls::icon_button(settings_id, Icon::Settings, Variant::Chrome)
             .mr(px(theme::GAP_TIGHT))
-            .tooltip(move |window, cx| Tooltip::new(settings_tip.clone()).build(window, cx))
+            .tooltip(controls::tip(settings_tip))
             .on_click(cx.listener(|this, _event, window, cx| {
                 // The bar is occluded, so the root's own mouse-down never
                 // hears this press and never takes focus back from a text box
@@ -307,9 +312,7 @@ impl RootView {
         let modal = self.modal_open();
 
         let rail = controls::icon_button("title-rail", Icon::Rail, Variant::Chrome)
-            .tooltip(|window, cx| {
-                Tooltip::new(Hint::Rail.tooltip("Show or hide the rail")).build(window, cx)
-            })
+            .tooltip(controls::tip(Hint::Rail.tooltip("Show or hide the rail")))
             .on_click(cx.listener(|this, _event, window, cx| {
                 // See the gear's handler.
                 this.focus.focus(window);
@@ -322,7 +325,7 @@ impl RootView {
         // there is nothing there to press.
         let back = if self.can_back() {
             controls::icon_button("title-back", Icon::Back, Variant::Chrome)
-                .tooltip(|window, cx| Tooltip::new(Hint::Back.tooltip("Back")).build(window, cx))
+                .tooltip(controls::tip(Hint::Back.tooltip("Back")))
                 .on_click(cx.listener(|this, _event, window, cx| {
                     // See the gear's handler.
                     this.focus.focus(window);
@@ -334,9 +337,7 @@ impl RootView {
         };
         let forward = if self.can_forward() {
             controls::icon_button("title-forward", Icon::Forward, Variant::Chrome)
-                .tooltip(|window, cx| {
-                    Tooltip::new(Hint::Forward.tooltip("Forward")).build(window, cx)
-                })
+                .tooltip(controls::tip(Hint::Forward.tooltip("Forward")))
                 .on_click(cx.listener(|this, _event, window, cx| {
                     // See the gear's handler.
                     this.focus.focus(window);
