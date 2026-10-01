@@ -153,13 +153,19 @@ impl RootView {
     /// Its cell of the watch grid, the one grid ([`grid`](Self::grid)), on
     /// whichever page is up: a mini-player tile is not one of the sizes a
     /// quality is chosen for. The cell's share of the body's height, seams
-    /// included (`Grid::share_height`, which says why). Asked by the pane's
-    /// key although every pane is one cell of that grid today — a pane in a
-    /// window of its own included, since it keeps its cell — so that a pane
-    /// measured by room of its own is asked the same question, and every
-    /// caller already says which pane it means.
-    pub(super) fn pane_height_for(&self, _key: &str, window: &Window) -> u32 {
-        layout::quality_height(self.grid(window).share_height * window.scale_factor())
+    /// included (`Grid::share_height`, which says why), at the main window's
+    /// scale, which is what `window` always is.
+    ///
+    /// Except a pane in a window of its own, which is measured by that
+    /// window: the picture's height there, in that window's own physical
+    /// pixels (`PoppedOut::height`), which its window keeps the root told
+    /// of. Its cell in the main window says only where it will come back to.
+    pub(super) fn pane_height_for(&self, key: &str, window: &Window) -> u32 {
+        let own_window = self.stage.popped(key).map(|popped| popped.height);
+        measured_height(
+            own_window,
+            self.grid(window).share_height * window.scale_factor(),
+        )
     }
 
     /// Choose each pane's quality again, for the size it is now — and move
@@ -177,21 +183,21 @@ impl RootView {
     /// keeps what it has: the smaller pane hides nothing, and a sharper
     /// picture is what is worth paying for, not a cheaper one. A quality
     /// picked by hand from the pane's own menu is left alone; that choice was
-    /// about this pane, whatever its size. So, for now, is a pane in a window
-    /// of its own, whose window is not the grid's cell this measures. And so
-    /// is a pane already resolving a rendition at least as sharp
-    /// ([`wants_swap`]), which every call while it resolves would otherwise
-    /// start again.
+    /// about this pane, whatever its size. So is a pane already resolving a
+    /// rendition at least as sharp ([`wants_swap`]), which every call while
+    /// it resolves would otherwise start again.
     ///
     /// Each pane is measured on its own ([`pane_height_for`](Self::pane_height_for)),
-    /// and its log line says the height it was measured at.
+    /// and its log line says the height it was measured at. A pane in a
+    /// window of its own is measured by that window, whose resizes call this
+    /// as the main window's do (`pop_out_moved`); a small pop-out keeps what
+    /// it played at home, by the same upwards-only rule.
     pub(super) fn sync_quality(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let restart: Vec<(usize, u32)> = self
             .slots
             .iter()
             .enumerate()
             .filter(|(_, slot)| slot.quality_override.is_none())
-            .filter(|(_, slot)| !self.stage.is_popped(&slot.key))
             .filter_map(|(index, slot)| {
                 let pane_height = self.pane_height_for(&slot.key, window);
                 let view = slot.video()?.read(cx);
@@ -377,6 +383,13 @@ impl RootView {
     }
 }
 
+/// The height in physical pixels a pane's quality is chosen for: its own
+/// window's picture, when it is in a window of its own (`own_window`), and
+/// otherwise its `cell`'s share of the main window's grid.
+fn measured_height(own_window: Option<f32>, cell: f32) -> u32 {
+    layout::quality_height(own_window.unwrap_or(cell))
+}
+
 /// How a rendition change starts: beside the picture when there is one that
 /// covers the pane, so it can take over in place; cold otherwise, since a
 /// pane still starting or fading in has nothing on screen to keep.
@@ -416,6 +429,25 @@ fn worth_swapping(reason: Restart, playing: &str, resolved: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A pane in a window of its own is measured by that window, larger or
+    /// smaller than the cell it keeps at home, and by the same clamp a cell
+    /// is; a pane at home by its cell.
+    #[test]
+    fn a_popped_pane_is_measured_by_its_own_window() {
+        assert_eq!(
+            measured_height(Some(1080.0), 405.0),
+            1080,
+            "a large pop-out"
+        );
+        assert_eq!(measured_height(Some(270.0), 540.0), 270, "a small pop-out");
+        assert_eq!(
+            measured_height(Some(120.0), 540.0),
+            180,
+            "the least a pane asks for"
+        );
+        assert_eq!(measured_height(None, 540.0), 540, "a pane at home");
+    }
 
     /// Only a picture that covers its pane is kept through a rendition
     /// change; a pane still starting or fading in starts cold, whatever

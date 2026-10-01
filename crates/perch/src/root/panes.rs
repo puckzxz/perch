@@ -236,6 +236,30 @@ mod tests {
         assert_eq!(writes, 1, "set_slot_state is the one write");
     }
 
+    /// What the main window draws reaches a player only through
+    /// `video_in_main`, which answers none for a popped pane, so a drawer
+    /// cannot read a player another window draws, which would redraw the
+    /// main window at the video's rate. The mini player and the pages are
+    /// the root's drawers; read from their sources, as the test above reads
+    /// the root's.
+    #[test]
+    fn the_main_windows_drawers_reach_players_only_through_video_in_main() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/root");
+        for name in ["mini_player.rs", "pages.rs"] {
+            let source = std::fs::read_to_string(dir.join(name)).expect("an unreadable source");
+            let code: String = source
+                .split("#[cfg(test)]")
+                .next()
+                .expect("a file has code above its tests")
+                .split_whitespace()
+                .collect();
+            assert!(
+                !code.contains(".video()"),
+                "{name} reaches a player through Slot::video; use video_in_main"
+            );
+        }
+    }
+
     /// A pane at home is drawn by the watch page, or by the mini player
     /// while browsing; browsing with it off, nothing draws one.
     #[test]

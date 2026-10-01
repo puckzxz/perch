@@ -82,6 +82,25 @@ fn unpack_size(packed: u64) -> (u32, u32) {
     ((packed >> 32) as u32, packed as u32)
 }
 
+/// Whether the render thread draws the frame mpv holds again, now, rather
+/// than waiting for the next one: only for a player that is `paused`, whose
+/// render size has changed since it last rendered (`size_changed`), and that
+/// has a frame to draw again (`has_frame`).
+///
+/// The loop renders when mpv says a new frame is ready, and a paused player
+/// sends none. So a paused pane that grew — the window made larger, a
+/// pop-out resized or brought home, a swap promoted while paused — went on
+/// stretching its last small frame over the larger pane until it played or
+/// seeked. mpv's render call draws the frame it last drew when no new one is
+/// queued ("If no new frame is available, the previous frame is redrawn",
+/// render.h), and without waiting for a display time, since nothing new is
+/// presented. A playing player needs none of this: its next frame comes at
+/// the new size within a frame or two. Once per size, since the redraw is
+/// at the new size and that is then the last one, so it never spins.
+fn redraw_now(paused: bool, size_changed: bool, has_frame: bool) -> bool {
+    paused && size_changed && has_frame
+}
+
 /// What a stream plays, which decides what a pause means and whether there
 /// is a position to report.
 #[derive(Debug, Clone, PartialEq)]
@@ -566,6 +585,14 @@ impl VideoStream {
                     let mut paused_since: Option<Instant> = None;
                     let mut moved_at = Instant::now();
                     let mut has_moved = false;
+                    // The size of the last frame rendered, while mpv still
+                    // holds that frame to draw again (`redraw_now`): none
+                    // before the first frame, and none again from a
+                    // reposition until the new file's first frame. Loading
+                    // a file can free the frame mpv holds (vo_libmpv's
+                    // reconfig and uninit), and a redraw with none draws an
+                    // empty picture over the one on screen.
+                    let mut rendered: Option<(u32, u32)> = None;
 
                     'frames: while !stop.load(Ordering::Relaxed) {
                         for event in player.poll_events() {
@@ -726,6 +753,7 @@ impl VideoStream {
                                         if let Err(e) = recording.reposition(&player, at) {
                                             eprintln!("video: could not reposition: {e}");
                                         }
+                                        rendered = None;
                                     }
                                     moved_at = Instant::now();
                                 }
@@ -749,6 +777,7 @@ impl VideoStream {
                             if let Err(e) = recording.reposition(&player, secs) {
                                 eprintln!("video: could not reposition: {e}");
                             }
+                            rendered = None;
                             moved_at = Instant::now();
                             // A seek while paused opened fresh connections,
                             // so the pause that counts starts again here.
@@ -775,6 +804,7 @@ impl VideoStream {
                                 if let Err(e) = recording.reposition(&player, at) {
                                     eprintln!("video: could not reposition: {e}");
                                 }
+                                rendered = None;
                                 moved_at = Instant::now();
                             }
                         }
@@ -787,7 +817,16 @@ impl VideoStream {
                             applied_volume = wanted;
                         }
 
-                        if !player.wait_for_frame(Duration::from_millis(200)) {
+                        // A paused player that has changed size draws what
+                        // it holds again, at the new size, rather than wait
+                        // for a frame it will not send; see `redraw_now`.
+                        // Published below exactly as a decoded frame is.
+                        let redraw = redraw_now(
+                            applied_pause,
+                            rendered != Some((current_w, current_h)),
+                            rendered.is_some(),
+                        );
+                        if !redraw && !player.wait_for_frame(Duration::from_millis(200)) {
                             continue;
                         }
                         // A buffer per frame, given away rather than copied out
@@ -822,6 +861,7 @@ impl VideoStream {
                         frame.id = image_id;
 
                         *latest.lock().unwrap() = Some(Arc::new(frame));
+                        rendered = Some((current_w, current_h));
 
                         // Full channel means the UI has not consumed the last
                         // wake yet; it will see this frame when it gets there.
@@ -986,6 +1026,39 @@ mod tests {
         ] {
             assert_eq!(Stopped::from_end(quiet, None), None, "{quiet:?}");
         }
+    }
+
+    /// A paused pane that grows gets a frame at its new size at once, drawn
+    /// from the one mpv holds, rather than its old small one stretched until
+    /// it plays.
+    #[test]
+    fn a_paused_stream_redraws_when_its_size_changes() {
+        assert!(redraw_now(true, true, true));
+    }
+
+    /// A playing one waits: its next frame is a frame or two away and comes
+    /// at the new size anyway, so drawing the old one again would only cost
+    /// a render.
+    #[test]
+    fn a_playing_stream_waits_for_its_next_frame() {
+        assert!(!redraw_now(false, true, true));
+    }
+
+    /// With no frame to draw again — none decoded yet, or the one there was
+    /// dropped by a reposition reloading the file — a redraw would draw an
+    /// empty picture, so the loop waits for a frame as it always has.
+    #[test]
+    fn nothing_is_redrawn_before_a_first_frame() {
+        assert!(!redraw_now(true, true, false));
+        assert!(!redraw_now(false, true, false));
+    }
+
+    /// Once per change of size: the redraw is at the new size, after which
+    /// nothing has changed, so a paused player never spins.
+    #[test]
+    fn an_unchanged_size_never_redraws() {
+        assert!(!redraw_now(true, false, true));
+        assert!(!redraw_now(false, false, true));
     }
 
     /// A pane at 100 s, and a player of it that has not been published: one

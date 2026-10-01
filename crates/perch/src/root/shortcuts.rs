@@ -5,7 +5,7 @@
 use gpui::{Context, Window};
 use settings::Settings;
 
-use super::RootView;
+use super::{Page, RootView};
 use crate::browse::{Action, Place};
 use crate::keys;
 
@@ -291,15 +291,28 @@ impl RootView {
         }
     }
 
-    /// `P` on the watch page: the active pane into a window of its own, or
-    /// back from one. Nothing where the pop-out is not offered, and nothing
-    /// for a pane with no player to move; see `pop_out`.
+    /// `P`. On the watch page, the active pane into a window of its own, or
+    /// back from one. On the browse page, which has no active pane, the mini
+    /// player: every pane it shows out into windows of their own, as its
+    /// bar's `Pop out` does — or, with nothing left in it to pop out, every
+    /// popped pane back. Which of the two is the bar's own answer
+    /// (`mini_pop_out_offered`), so the key pops out exactly when the bar
+    /// offers to. Nothing where the pop-out is not offered, and nothing for
+    /// a pane with no player to move; see `pop_out`.
     pub(super) fn on_toggle_pop_out(
         &mut self,
         _: &keys::TogglePopOut,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.page == Page::Browse {
+            if self.mini_pop_out_offered() {
+                self.pop_out_all_shown(window, cx);
+            } else {
+                self.pop_in_all(window, cx);
+            }
+            return;
+        }
         let Some(key) = self
             .active_slot()
             .map(|index| self.slots[index].key.clone())
@@ -307,7 +320,7 @@ impl RootView {
             return;
         };
         if self.stage.is_popped(&key) {
-            self.pop_in(&key, cx);
+            self.pop_in(&key, window, cx);
         } else {
             self.pop_out(&key, window, cx);
         }

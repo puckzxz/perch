@@ -9,13 +9,18 @@
 //!
 //! Also the one answer the root gives a pane on its own account: bringing
 //! its header up over the picture for a moment when a key has just made it
-//! the active pane (`reveal_header`).
+//! the active pane (`reveal_header`). And the guard on the rest of a run of
+//! presses whose first one took a pane's player out from under the pointer
+//! (`run_guard`), which the player's own guard cannot follow it out of the
+//! window to stop.
 
-use gpui::{ClipboardItem, Context, Window};
+use gpui::{
+    canvas, prelude::*, ClipboardItem, Context, DispatchPhase, IntoElement, MouseDownEvent, Window,
+};
 
 use super::RootView;
 use crate::theme;
-use crate::video_view::{ChatButton, VideoEvent};
+use crate::video_view::{self, ChatButton, VideoEvent};
 use crate::watch::{placement, PaneAction, Placement};
 
 impl RootView {
@@ -65,7 +70,7 @@ impl RootView {
             // through `pop_out::to_root` — so the window measured and opened
             // against is always the main one.
             PaneAction::PopOut => self.pop_out(key, window, cx),
-            PaneAction::PopIn => self.pop_in(key, cx),
+            PaneAction::PopIn => self.pop_in(key, window, cx),
             PaneAction::StartWhenLive(on) => {
                 self.slots[index].start_when_live = on;
                 cx.notify();
@@ -215,7 +220,16 @@ impl RootView {
             VideoEvent::Stopped(reason) => self.stream_stopped(owner, reason.clone(), cx),
             // The bar's own: the same route as the pane's header and the
             // palette, by the key the player was subscribed with.
-            VideoEvent::Pane(action) => self.on_pane_action(owner, action.clone(), window, cx),
+            VideoEvent::Pane(action) => {
+                // More's `Pop out`, the one row that takes the player out of
+                // this window, and with it the guard the player keeps on the
+                // rest of a double-click its row took; the root takes the run
+                // over (`run_guard`). Nothing but that row sends it this way.
+                if matches!(action, PaneAction::PopOut) {
+                    self.take_rest_of_run();
+                }
+                self.on_pane_action(owner, action.clone(), window, cx)
+            }
             // A new rendition took over in place, or was given up on; see
             // `renditions`.
             VideoEvent::Swapped { generation } => self.on_swapped(owner, *generation, cx),
@@ -224,6 +238,64 @@ impl RootView {
                 quality,
             } => self.on_swap_failed(owner, *generation, quality, cx),
         }
+    }
+
+    /// Have the rest of the run of presses going on in the main window heard
+    /// by nothing: its first press has just taken away what was under the
+    /// pointer; see [`run_guard`](Self::run_guard).
+    pub(super) fn take_rest_of_run(&mut self) {
+        self.run_taken = true;
+    }
+
+    /// The rest of a run of presses whose first one took a pane's player out
+    /// from under the pointer: an element for the root to hold, a `canvas`
+    /// that listens at the window as it paints, the way `side_buttons` does.
+    ///
+    /// The platform counts a second press near the first as a double-click
+    /// whatever is under it by then (gpui's windows/window.rs:1049-1060), and
+    /// that holds even once another window has taken activation, as a
+    /// pop-out does when it opens. More's rows act on the press, and the
+    /// player stops the rest of a run its row took (`VideoView::run_guard`)
+    /// — but only while the main window draws the player, and `Pop out`
+    /// takes it, guard and all, into a window of its own. The second press
+    /// then reached the cell under the closed menu: its `Bring back`, which
+    /// sent the pane straight back, or its header's icons, which could do
+    /// that or close it. The mini player's pop-out controls take their tile,
+    /// or the whole player, from under the pointer the same way, and leave a
+    /// card or a tile there to take the second press.
+    ///
+    /// So each of those takes the run (`take_rest_of_run`), and this stops
+    /// every later press of it in the capture phase, before anything under
+    /// the pointer hears it, by the player's own rule
+    /// (`video_view::rest_of_row_run`). The bubble phase, where a click
+    /// begins, never comes, so the release makes no click either. The next
+    /// run's first press ends it. Held ahead of everything else the root
+    /// draws, so it listens first.
+    pub(super) fn run_guard(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let owner = cx.entity().downgrade();
+        canvas(
+            |_, _, _| {},
+            move |_, _, window, _| {
+                let owner = owner.clone();
+                window.on_mouse_event(move |event: &MouseDownEvent, phase, _window, cx| {
+                    if phase != DispatchPhase::Capture {
+                        return;
+                    }
+                    let swallowed = owner
+                        .update(cx, |this, _| {
+                            this.run_taken =
+                                video_view::rest_of_row_run(this.run_taken, event.click_count);
+                            this.run_taken
+                        })
+                        .unwrap_or(false);
+                    if swallowed {
+                        cx.stop_propagation();
+                    }
+                });
+            },
+        )
+        .absolute()
+        .size_full()
     }
 }
 

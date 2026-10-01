@@ -207,6 +207,7 @@ impl RootView {
                     next: self.next_up(slot, showing),
                     looking: slot.archives.waiting(),
                     start_offered: slot.is_live() && self.start_offered(&slot.channel),
+                    pop_out_offered: super::pop_out_offered(),
                 }
             })
             .collect();

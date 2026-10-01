@@ -40,6 +40,7 @@ mod bar;
 mod menu;
 mod swap;
 
+pub(crate) use menu::rest_of_row_run;
 pub use menu::Menu;
 pub use swap::{route, Wake, SWAP_LEAD};
 

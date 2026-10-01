@@ -15,18 +15,25 @@
 //! drawn after it, cover it. It is placed against the page's own column, so
 //! it never reaches over the rail, and in from the column's right edge by
 //! more than the list's scrollbar, so the whole track stays the list's.
+//!
+//! Where the pop-out is offered, each tile can pop its pane out into a
+//! window of its own, and the bar can pop out every pane it shows, each into
+//! its own window — the whole mini player, out on top of whatever else is
+//! on screen, one pane per window. A pane out is not shown here (it is on
+//! screen already), and the player goes once none is left.
 
-use gpui::{div, prelude::*, px, Context, ElementId, IntoElement, SharedString};
+use gpui::{div, prelude::*, px, Context, ElementId, IntoElement, SharedString, Window};
 
-use super::{Page, RootView};
+use super::{pop_out, Page, RootView};
 use crate::assets::Icon;
 use crate::controls::{self, Variant};
 use crate::layout::{self, MiniLayout};
+use crate::stage::Stage;
 use crate::watch::{Showing, Slot};
 use crate::{loudness, motion, theme};
 
-/// The group a tile's close watches for the pointer, so it shows only while
-/// the pointer is on that tile.
+/// The group a tile's controls watch for the pointer, so they show only
+/// while the pointer is on that tile.
 const TILE_GROUP: &str = "mini-tile";
 
 impl RootView {
@@ -48,10 +55,27 @@ impl RootView {
     /// its shape, its label and the room the browse lists leave for it are
     /// all counted from.
     pub(super) fn mini_slots(&self) -> Vec<&Slot> {
-        self.slots
-            .iter()
-            .filter(|slot| !self.stage.is_popped(&slot.key))
-            .collect()
+        at_home(&self.slots, |slot| &slot.key, &self.stage)
+    }
+
+    /// Whether the mini player has anything to pop out: it is up, the
+    /// pop-out is offered here, and a pane it shows has a player to move
+    /// (`RootView::pop_out`). A pane it shows starting, off, ended or failed
+    /// has none, and stays at home.
+    ///
+    /// One answer for its bar's `Pop out`, which shows only while this
+    /// holds, and for `P` on the browse page, which pops them out while it
+    /// holds and otherwise brings every popped pane back
+    /// (`on_toggle_pop_out`). Asked apart, the key went by whether the
+    /// player was up at all, and with only a pane that had ended left in
+    /// it, `P` there popped nothing out and brought nothing back.
+    pub(super) fn mini_pop_out_offered(&self) -> bool {
+        pop_out::offered_here()
+            && self.mini_player_shows()
+            && self
+                .mini_slots()
+                .iter()
+                .any(|slot| self.video_in_main(slot).is_some())
     }
 
     /// The player, bottom-right of the page, or nothing; see
@@ -120,15 +144,33 @@ impl RootView {
                 Variant::Pill,
                 quiet_words,
                 cx,
-                move |this, cx| this.set_quiet_all(!unmute, cx),
+                move |this, _window, cx| this.set_quiet_all(!unmute, cx),
             ))
+            // Every pane here out into windows of their own, where that is
+            // offered and a pane here has a player to move.
+            .when(self.mini_pop_out_offered(), |bar| {
+                bar.child(self.mini_control(
+                    "mini-pop-out",
+                    Icon::PopOut,
+                    Variant::Pill,
+                    "Pop out",
+                    cx,
+                    |this, window, cx| {
+                        // The player goes, or shrinks, from under the pointer
+                        // with them, and a card or a tile there would take a
+                        // double-click's second press; see `run_guard`.
+                        this.take_rest_of_run();
+                        this.pop_out_all_shown(window, cx);
+                    },
+                ))
+            })
             .child(self.mini_control(
                 "mini-expand",
                 Icon::Expand,
                 Variant::Pill,
                 "Back to watching",
                 cx,
-                |this, cx| this.go_watch(cx),
+                |this, _window, cx| this.go_watch(cx),
             ))
             .child(self.mini_control(
                 "mini-stop",
@@ -136,7 +178,7 @@ impl RootView {
                 Variant::Destructive,
                 "Stop all",
                 cx,
-                |this, cx| this.stop_all(cx),
+                |this, _window, cx| this.stop_all(cx),
             ));
 
         Some(
@@ -170,8 +212,9 @@ impl RootView {
     /// One stream in the player: its picture, or a word on why there is
     /// none. A click goes back to watching with this pane the one the keys
     /// talk to (`go_watch_pane`), and a close under the pointer shuts just
-    /// this pane — the
-    /// docked bar had a close per stream, and the player keeps it.
+    /// this pane — the docked bar had a close per stream, and the player
+    /// keeps it. Beside the close, where the pop-out is offered and the pane
+    /// has a player to move, the way out into a window of its own.
     ///
     /// The word is the pane's own reading of itself (`watch::Showing`), so a
     /// player whose first frame has not faded in yet says `Starting…`, as the
@@ -181,6 +224,25 @@ impl RootView {
         let close_key = slot.key.clone();
         let name = self.display_name(slot);
         let showing = self.showing_in_main(slot, cx);
+        let pop = (pop_out::offered_here() && self.video_in_main(slot).is_some()).then(|| {
+            let pop_key = slot.key.clone();
+            controls::icon_button(
+                ElementId::Name(format!("mini-pop-out-{key}").into()),
+                Icon::PopOut,
+                Variant::Pill,
+            )
+            .tooltip(controls::tip(format!("Pop out {name}")))
+            .on_click(cx.listener(move |this, _event, window, cx| {
+                // Or the tile under it goes back to watching too.
+                cx.stop_propagation();
+                this.focus.focus(window);
+                // The tile goes from under the pointer, and the tile or the
+                // card that comes there would take a double-click's second
+                // press; see `run_guard`.
+                this.take_rest_of_run();
+                this.pop_out(&pop_key, window, cx);
+            }))
+        });
 
         div()
             // By key, never by position: closing a tile moves the ones after
@@ -231,31 +293,45 @@ impl RootView {
             })
             .children(self.video_in_main(slot).cloned())
             .child(
-                controls::icon_button(
-                    ElementId::Name(format!("mini-close-{key}").into()),
-                    Icon::Close,
-                    // Filled, because it sits on a picture that could be any
-                    // colour; the card's overlays are drawn the same way.
-                    Variant::Pill,
-                )
-                .absolute()
-                .top(px(theme::GAP_WORD))
-                .right(px(theme::GAP_WORD))
-                // Hidden rather than transparent, like a card's overlays: at
-                // zero opacity a control still takes the click.
-                .invisible()
-                .group_hover(TILE_GROUP, |style| style.visible())
-                .tooltip(controls::tip(format!("Close {name}")))
-                .on_click(cx.listener(move |this, _event, window, cx| {
-                    // Or the tile under it goes back to watching too.
-                    cx.stop_propagation();
-                    this.focus.focus(window);
-                    // Looked up now, by key: the pane may have moved since
-                    // this was drawn, and the index is what `close_slot` takes.
-                    if let Some(index) = this.slot_index(&close_key) {
-                        this.close_slot(index, window, cx);
-                    }
-                })),
+                // The tile's controls, top-right: out into a window of its
+                // own, then the close. Filled, because they sit on a picture
+                // that could be any colour; the card's overlays are drawn the
+                // same way.
+                div()
+                    .absolute()
+                    .top(px(theme::GAP_WORD))
+                    .right(px(theme::GAP_WORD))
+                    .flex()
+                    .flex_row()
+                    .gap(px(theme::GAP_TIGHT))
+                    // Hidden rather than transparent, like a card's overlays:
+                    // at zero opacity a control still takes the click. A
+                    // hidden element paints none of its children, nor their
+                    // listeners, so this hides both.
+                    .invisible()
+                    .group_hover(TILE_GROUP, |style| style.visible())
+                    .children(pop)
+                    .child(
+                        controls::icon_button(
+                            ElementId::Name(format!("mini-close-{key}").into()),
+                            Icon::Close,
+                            Variant::Pill,
+                        )
+                        .tooltip(controls::tip(format!("Close {name}")))
+                        .on_click(cx.listener(
+                            move |this, _event, window, cx| {
+                                // Or the tile under it goes back to watching too.
+                                cx.stop_propagation();
+                                this.focus.focus(window);
+                                // Looked up now, by key: the pane may have
+                                // moved since this was drawn, and the index
+                                // is what `close_slot` takes.
+                                if let Some(index) = this.slot_index(&close_key) {
+                                    this.close_slot(index, window, cx);
+                                }
+                            },
+                        )),
+                    ),
             )
             .on_click(cx.listener(move |this, _event, window, cx| {
                 this.focus.focus(window);
@@ -263,8 +339,9 @@ impl RootView {
             }))
     }
 
-    /// One of the bar's three controls: an icon, what it does in words for
-    /// the pointer that rests on it, and the method it calls. A control whose
+    /// One of the bar's controls: an icon, what it does in words for the
+    /// pointer that rests on it, and the method it calls, with the main
+    /// window, which `Pop out` opens its windows against. A control whose
     /// words change with what it would do passes an `id` that changes with
     /// them; see `controls::tip`.
     ///
@@ -278,15 +355,27 @@ impl RootView {
         variant: Variant,
         tooltip: &'static str,
         cx: &mut Context<Self>,
-        on_click: impl Fn(&mut Self, &mut Context<Self>) + 'static,
+        on_click: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
     ) -> impl IntoElement {
         controls::icon_button(id, icon, variant)
             .tooltip(controls::tip(tooltip))
             .on_click(cx.listener(move |this, _event, window, cx| {
                 this.focus.focus(window);
-                on_click(this, cx);
+                on_click(this, window, cx);
             }))
     }
+}
+
+/// The panes the mini player shows, from `panes` in their order, each named
+/// by its `key`: every one the `stage` keeps at home, since a pane in a
+/// window of its own is on screen already. What `RootView::mini_slots`
+/// answers, and so what the tiles, the player's shape, its label and the
+/// room the browse lists leave for it are counted from.
+fn at_home<'a, T, P>(panes: &'a [T], key: impl Fn(&T) -> &str, stage: &Stage<P>) -> Vec<&'a T> {
+    panes
+        .iter()
+        .filter(|pane| !stage.is_popped(key(pane)))
+        .collect()
 }
 
 /// What the bar says is playing: one name, two joined, or the first and a
@@ -333,6 +422,31 @@ mod tests {
         assert_eq!(
             mini_label(&[("A", false), ("B", false), ("C", false), ("D", false)]),
             "A and 3 more"
+        );
+    }
+
+    /// A pane popped out into a window of its own is not in the mini player,
+    /// so the label neither names it nor counts it as paused: it says what
+    /// is still here.
+    #[test]
+    fn the_label_counts_only_panes_still_here() {
+        let panes = [
+            ("Asmongold", false),
+            ("Nubzombie", true),
+            ("Kaicenat", false),
+        ];
+        let mut stage = Stage::default();
+        assert!(stage.pop_out("Nubzombie", ()));
+        let here = at_home(&panes, |pane| pane.0, &stage);
+        assert_eq!(here, [&panes[0], &panes[2]]);
+        let label = mini_label(&here.into_iter().copied().collect::<Vec<_>>());
+        assert_eq!(label, "Asmongold and Kaicenat");
+
+        assert!(stage.pop_out("Asmongold", ()));
+        assert!(stage.pop_out("Kaicenat", ()));
+        assert!(
+            at_home(&panes, |pane| pane.0, &stage).is_empty(),
+            "nothing left for the player to show"
         );
     }
 

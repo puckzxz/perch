@@ -54,6 +54,7 @@ mod shortcuts;
 mod streams;
 mod title_bar;
 
+pub(crate) use self::pop_out::offered_here as pop_out_offered;
 pub(crate) use self::title_bar::window_min_size;
 
 use std::collections::{HashMap, HashSet};
@@ -308,6 +309,10 @@ pub(crate) struct RootView {
     /// Which pane-header reveal is the newest, so only its timer takes the
     /// header back down; see `reveal_header`.
     reveal_epoch: u64,
+    /// Whether the run of presses going on in the main window began on a
+    /// control that took away what was under the pointer, so that the rest
+    /// of the run is heard by nothing; see `run_guard`.
+    run_taken: bool,
     /// Keeps the resize observer alive; a dropped `Subscription` unsubscribes.
     _bounds: Subscription,
 }
@@ -465,6 +470,7 @@ impl RootView {
             save_epoch: 0,
             resize_epoch: 0,
             reveal_epoch: 0,
+            run_taken: false,
             _bounds,
         };
 
@@ -683,6 +689,9 @@ impl Render for RootView {
             .flex_col()
             .bg(theme::bg())
             .text_color(theme::text())
+            // Ahead of everything else drawn here, so it hears a press before
+            // anything under the pointer does; see `run_guard`.
+            .child(self.run_guard(cx))
             .children(self.title_bar(window, cx))
             .child(
                 // Everything under the bar. The modals, the toasts and the

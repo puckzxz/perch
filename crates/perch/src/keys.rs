@@ -94,8 +94,9 @@ actions!(
         /// Forward again along the trail, after going back.
         NavigateForward,
         /// Move the active pane into a window of its own, on top of every
-        /// other app, or bring it back from one. Windows only for now; see
-        /// `root::pop_out`.
+        /// other app, or bring it back from one; on the browse page, every
+        /// pane the mini player shows, or every one out back. Windows only
+        /// for now; see `root::pop_out`.
         TogglePopOut,
     ]
 );
@@ -266,10 +267,12 @@ fn bindings() -> Vec<KeyBinding> {
         // one along, or the one before.
         KeyBinding::new("tab", NextPane, Some(&watch)),
         KeyBinding::new("shift-tab", PreviousPane, Some(&watch)),
-        // Out into a window of its own, and back: the active pane here, and
-        // the pane itself in its window. Not `escape` in the pop-out, which a
-        // stray press would turn into video jumping between windows.
+        // Out into a window of its own, and back: the active pane here, the
+        // mini player's panes on the browse page, which has no active pane,
+        // and the pane itself in its window. Not `escape` in the pop-out,
+        // which a stray press would turn into video jumping between windows.
         KeyBinding::new("p", TogglePopOut, Some(&watch)),
+        KeyBinding::new("p", TogglePopOut, Some(&browse)),
         // The pop-out's own: the player's keys, `P` back, and `Ctrl+W`.
         KeyBinding::new("space", TogglePlayback, Some(&pop_out)),
         KeyBinding::new("m", ToggleMute, Some(&pop_out)),
@@ -381,7 +384,11 @@ pub const SHORTCUTS: [(&[&str], &str, &str); 19] = [
     (&PANE_KEYS, "1 – 4", "Talk to that pane"),
     (&["tab", "shift-tab"], "Tab", "The next pane"),
     (&["secondary-w"], secondary!("W"), "Close this pane"),
-    (&["p"], "P", "Pop this pane out, or bring it back (Windows)"),
+    (
+        &["p"],
+        "P",
+        "Pop this pane out, or bring it back — every pane, from the mini player (Windows)",
+    ),
     (&["escape"], "Esc", "Back to browsing, or to watching"),
     (
         &["alt-left"],
@@ -457,7 +464,8 @@ hints! {
     Fullscreen => "f" as ToggleFullscreen,
     // A pane header's ×, as `Ctrl+W` — `⌘W` on a Mac, from the sheet's label.
     Close => "secondary-w" as ClosePane,
-    // The pop-out's Bring back, on its bar.
+    // A pane header's pop-out and Bring back, and the pop-out's Bring back,
+    // on its bar.
     PopOut => "p" as TogglePopOut,
 }
 
@@ -492,7 +500,7 @@ mod tests {
     /// symptom is "the key does nothing", which is a poor thing to debug.
     #[test]
     fn every_binding_and_every_context_parses() {
-        assert_eq!(bindings().len(), 41);
+        assert_eq!(bindings().len(), 42);
         for context in [
             CONTEXT_WATCH,
             CONTEXT_BROWSE,
@@ -710,23 +718,35 @@ mod tests {
         }
     }
 
-    /// `P` pops out the active pane on the watch page, and the browse page
-    /// has no active pane for it to mean.
+    /// `P` answers in all three places it means something: the watch page's
+    /// active pane, the browse page's mini player and the pop-out's own
+    /// pane. A `p` typed into the search box, which is over both pages, is
+    /// the box's, and nothing behind a modal hears it.
     #[test]
-    fn p_pops_out_from_the_watch_page_only() {
+    fn p_pops_out_from_either_page_and_the_pop_out() {
         use std::any::TypeId;
 
         let keymap = gpui::Keymap::new(bindings());
-        let fires_in = |context: &str| {
-            let context = [KeyContext::parse(context).unwrap()];
+        let fires_in = |context: &[&str]| {
+            let context: Vec<KeyContext> = context
+                .iter()
+                .map(|context| KeyContext::parse(context).unwrap())
+                .collect();
             let (matched, _) =
                 keymap.bindings_for_input(&[Keystroke::parse("p").unwrap()], &context);
             matched
                 .iter()
                 .any(|binding| binding.action().as_any().type_id() == TypeId::of::<TogglePopOut>())
         };
-        assert!(fires_in(CONTEXT_WATCH));
-        assert!(!fires_in(CONTEXT_BROWSE));
+        for context in [CONTEXT_WATCH, CONTEXT_BROWSE, CONTEXT_POPOUT] {
+            assert!(fires_in(&[context]), "{context}");
+            assert!(
+                !fires_in(&[context, "Input"]),
+                "{context}: a p typed into a text box is the box's"
+            );
+        }
+        assert!(!fires_in(&[CONTEXT_MODAL]));
+        assert!(!fires_in(&[CONTEXT_SHEET]));
     }
 
     /// The listing is for humans, so it is not derived from the bindings — but

@@ -327,9 +327,20 @@ impl RootView {
         .detach();
     }
 
-    /// The window changed size, or went fullscreen and back. Quality is
-    /// chosen again once the run of changes has settled; see
+    /// Something a pane is drawn in changed size: the main window, resized
+    /// or gone fullscreen and back, or a pop-out, opened (`pop_out`) or
+    /// grown or shrunk (`pop_out_moved`). Quality is chosen again once the
+    /// run of changes has settled, the one settle for every window; see
     /// `RootView::sync_quality`.
+    ///
+    /// `window` is always the main one, whatever changed: a pop-out reaches
+    /// the root only through `pop_out::to_root`, and each pane is measured
+    /// by its own window regardless (`RootView::pane_height_for`). The wait
+    /// is bound to the main window's handle and needs no frame of it, so a
+    /// pop-out resized while the main window is minimised still has its
+    /// quality chosen again. Returning early here while the main window is
+    /// not on screen would leave every pop-out at the quality it opened
+    /// with.
     pub(super) fn on_window_resized(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.resize_epoch += 1;
         let epoch = self.resize_epoch;

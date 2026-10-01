@@ -99,7 +99,7 @@ Neither is any use when you are not holding the mouse.
 | `1 – 4` | Talk to that pane |
 | `Tab` | The next pane |
 | `Ctrl+W` | Close this pane |
-| `P` | Pop this pane out into a window of its own, on top of other apps, or bring it back (Windows) |
+| `P` | Pop this pane out into a window of its own, on top of other apps, or bring it back; on the browse page, every pane in the mini player (Windows) |
 | `Esc` | Back to browsing, or back to watching |
 | `Alt+←` | Back to where you were before — the mouse's back button too |
 | `Alt+→` | Forward again — the mouse's forward button too |
@@ -139,11 +139,11 @@ it. So are the two things under the bar's **More**, as `Copy link to …` and
 
 The bar over a playing pane has play, the speaker — crossed out whenever
 the pane is silent, Mute all included — and the volume at the left, and at
-the right the quality, chat, fullscreen and **More**, which has **Open on
-twitch.tv** and **Copy link**. A narrow pane drops the volume's figure
-first, then its slider, then folds the quality into More. A past broadcast
-with no chat to replay shows the chat icon crossed out, with nothing to
-press.
+the right the quality, chat, fullscreen and **More**, which has **Pop out**
+on Windows, **Open on twitch.tv** and **Copy link**. A narrow pane drops the
+volume's figure first, then its slider, then folds the quality into More. A
+past broadcast with no chat to replay shows the chat icon crossed out, with
+nothing to press.
 
 Back and forward work the way they do in a browser. `Alt+←` and `Alt+→`, the
 arrows in the title bar or the mouse's side buttons walk back through the
@@ -158,7 +158,8 @@ the app.
 
 Every pane has an × in its header, a lone one included, and like the bar's
 icons it names its key, `Ctrl+W`; closing the last pane goes back to the
-browse page.
+browse page. On Windows a playing pane's header also has the icon that pops
+it out into a window of its own, and brings it back, `P` (see below).
 
 A pane's header says `muted` or `paused` when either is true, so a channel
 that opens silent says so without the pointer having to be on the video. With
@@ -204,6 +205,39 @@ the top in the same pane once Twitch lists it, **Try again** and **Close**. The
 last broadcast and the recording need a sign-in to be found. Chat stays
 connected either way, which is where the goodnights are, until a recording
 takes the pane's place and brings its own chat replay.
+
+### A pane in a window of its own
+
+On Windows a pane can be popped out of the window into a small one of its
+own, which stays on top of every other app — a game, a browser, a document —
+while the rest of Perch goes behind them. Only its picture goes: its place,
+its number and its chat stay in the main window, whose cell says `Playing in
+its own window` and offers **Bring back**.
+
+A pane goes out from the pop-out icon in its header, **Pop out** under the
+bar's **More**, `P`, the palette's `Pop out …`, or the icon on its tile in the
+mini player. The mini player's own **Pop out**, or `P` on the browse page,
+pops out every pane it shows, each into a window of its own, stacked up from
+the screen's bottom-right corner so that none covers another; `P` there again
+brings them all back. A pane comes back from **Bring back** on its pop-out's
+bar or on its cell, the same icon in its header, `P` in either window, or the
+palette's `Bring … back`.
+
+The pop-out is dragged by its picture and resized from its edges. Its bar
+has play, the volume, a recording's seek row, **Bring back** and **Close**,
+and it answers `Space`, `M`, the arrows, `P` and `Ctrl+W`. Closing it the way
+Windows closes any window — `Alt+F4`, or from the taskbar — brings the pane
+back; its own **Close** closes the pane. Closing Perch closes every pop-out
+with it. A popped pane whose stream goes off or ends comes back to its cell,
+where what it offers next is.
+
+Its quality follows its own window, the way a pane's follows its cell: make
+the window larger and it moves to a sharper rendition once you stop, with no
+black; make it smaller and it keeps what it has. Bringing it back into a
+larger cell moves it up again.
+
+It is not offered elsewhere yet. On macOS the window gpui would use hides
+whenever another app is in front, which is the one thing a pop-out is for.
 
 ### Requirements
 
@@ -310,9 +344,11 @@ Whatever is playing while you browse keeps playing, with its sound, in a small
 player in the bottom-right corner of the page, clear of the list's scrollbar:
 one picture, or up to four two to a row.
 Click a picture to go back to watching it; the `×` that appears on a picture
-under the pointer closes just that stream. The bar under the pictures says what
-is playing and has three controls for all of it — Mute all (or Unmute all),
-Back to watching and Stop all. Mute all silences the streams without touching
+under the pointer closes just that stream, and on Windows the pop-out icon
+beside it moves that stream into a window of its own (see "A pane in a window
+of its own"). The bar under the pictures says what is playing and has controls
+for all of it — Mute all (or Unmute all), on Windows **Pop out**, which does
+that for every stream there, Back to watching and Stop all. Mute all silences the streams without touching
 anyone's volume: it is never saved, it lasts until you change a stream's volume
 yourself, and Unmute all leaves a stream you had muted muted. Every list leaves
 room at its foot, so nothing is stuck under the player. Settings can turn it
@@ -518,7 +554,8 @@ clamped to the source resolution — mpv never scales up, the GPU stretches the
 last bit instead, which is effectively free.
 
 The choice is made again whenever a pane changes size — another pane opening
-or closing, the rail folding, the window resizing or going fullscreen — and
+or closing, the rail folding, the window resizing or going fullscreen, a
+popped-out pane's own window resizing, or the pane coming back from it — and
 only ever upwards: a pane that has grown moves to a sharper rendition, and a
 pane that has shrunk keeps what it has. A quality picked from a pane's own
 menu is left alone; that choice was about the pane, whatever its size. The

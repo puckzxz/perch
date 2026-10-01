@@ -6,8 +6,19 @@
 //! picture is elsewhere and offers it back (`watch::Showing::Elsewhere`).
 //! Only the player moves, and it is the same player: one `VideoView`, drawn
 //! by one window at a time, which `crate::stage` decides and
-//! `VideoView::set_place` carries out. Its sound, its position, its
-//! quality and its stream are untouched by the move.
+//! `VideoView::set_place` carries out. Its sound, its position and its
+//! stream are untouched by the move. Its quality follows the window it is
+//! drawn in, upwards only and swapped in place as anywhere else: a pane out
+//! is measured by its own window (`PoppedOut::height`), and one brought
+//! back by its cell again.
+//!
+//! A pane goes out from its header's icon, its bar's More, `P`, the
+//! palette, or its tile in the mini player, whose bar also pops out every
+//! pane it shows, each into a window of its own ([`pop_out_all_shown`]).
+//! It comes back from its pop-out's Bring back, the `Bring back` on its
+//! cell, its header's icon, `P` in either window, or the palette.
+//!
+//! [`pop_out_all_shown`]: RootView::pop_out_all_shown
 //!
 //! Three rules hold everything here up, each because gpui fails otherwise:
 //!
@@ -69,6 +80,15 @@ pub(super) struct PoppedOut {
     /// reopened at its own `bounds` crept across the screen, a taskbar's
     /// width per close. The main window saves the same thing (`main`).
     pub(super) bounds: Bounds<Pixels>,
+    /// How tall the window draws the picture, in that window's own physical
+    /// pixels: what the pane's quality is chosen against while it is out
+    /// (`RootView::pane_height_for`), since the grid's cell it keeps in the
+    /// main window is not what it is drawn in. Its first guess is the bounds
+    /// it opens at, at the main window's scale, the display it opens on;
+    /// then whatever its window reports ([`PopOut`]'s bounds observer), at
+    /// that window's own scale, which on another monitor may not be the main
+    /// window's.
+    pub(super) height: f32,
 }
 
 /// Whether the pop-out is offered on `platform`: only where gpui's source
@@ -87,8 +107,10 @@ pub(super) fn offered(platform: Platform) -> bool {
     }
 }
 
-/// Whether the pop-out is offered on this platform; see [`offered`].
-pub(super) fn offered_here() -> bool {
+/// Whether the pop-out is offered on this platform; see [`offered`]. Asked
+/// by everything that offers it, the player's More menu included, through
+/// `root::pop_out_offered`.
+pub(crate) fn offered_here() -> bool {
     offered(Platform::CURRENT)
 }
 
@@ -132,8 +154,9 @@ pub(super) struct PopOut {
     /// Takes the focus back if it is ever lost, as the root does in the main
     /// window: with nothing focused, no key reaches anything.
     _focus_lost: Subscription,
-    /// Tells the root where this window is whenever it moves or is
-    /// resized; see `PoppedOut::bounds`.
+    /// Tells the root where this window is, and how tall it draws the
+    /// picture, whenever it moves or is resized; see `PoppedOut::bounds`
+    /// and `PoppedOut::height`.
     _bounds: Subscription,
 }
 
@@ -151,13 +174,14 @@ impl PopOut {
         });
         let _bounds = cx.observe_window_bounds(window, |this: &mut Self, window, cx| {
             let bounds = window.window_bounds().get_bounds();
+            // Measured here, in this window, at its own scale: the root only
+            // ever has the main window in hand (`to_root`), and on another
+            // monitor the two scales can differ.
+            let height = f32::from(window.viewport_size().height) * window.scale_factor();
             let (key, focus) = (this.key.clone(), this.focus.clone());
-            to_root(
-                this.root.clone(),
-                this.main,
-                cx,
-                move |root, _window, _cx| root.pop_out_moved(&key, &focus, bounds),
-            );
+            to_root(this.root.clone(), this.main, cx, move |root, window, cx| {
+                root.pop_out_moved(&key, &focus, bounds, height, window, cx)
+            });
         });
         window.focus(&focus);
         Self {
@@ -412,22 +436,60 @@ impl RootView {
                 window: None,
                 focus: focus.clone(),
                 bounds,
+                height: f32::from(bounds.size.height) * window.scale_factor(),
             },
         );
         self.restage(cx);
         self.open_pop_out(key.to_string(), title, bounds, display_id, focus, cx);
+        // Its quality is its window's now, which may be taller than the cell
+        // it left: a pop-out opened where a large one last closed. Once the
+        // window has opened and said how tall it really is, through the one
+        // settle every resize waits out.
+        self.on_window_resized(window, cx);
+    }
+
+    /// Pop out every pane the mini player shows, each into a window of its
+    /// own, stacked clear of one another (`layout::pop_out_bounds`): the mini
+    /// bar's `Pop out`, and `P` on the browse page. The mini player goes
+    /// once none is left at home (`mini_player_shows`). A pane with no
+    /// player to move stays where it is.
+    pub(super) fn pop_out_all_shown(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let shown: Vec<String> = self
+            .mini_slots()
+            .into_iter()
+            .filter(|slot| slot.video().is_some())
+            .map(|slot| slot.key.clone())
+            .collect();
+        for key in shown {
+            self.pop_out(&key, window, cx);
+        }
+    }
+
+    /// Bring every popped pane back: `P` on the browse page while the mini
+    /// player has nothing to pop out (`mini_pop_out_offered`). Each comes
+    /// back as [`pop_in`](Self::pop_in) brings one.
+    pub(super) fn pop_in_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let popped: Vec<String> = self.stage.iter().map(|(key, _)| key.to_string()).collect();
+        for key in popped {
+            self.pop_in(&key, window, cx);
+        }
     }
 
     /// Bring the pane `key` names back from its window, as the pane the keys
-    /// talk to: Bring back, the cell's own `Bring back`, `P` in either
-    /// window, and the window's own close.
+    /// talk to: Bring back, the cell's own `Bring back`, the header's icon,
+    /// `P` in either window, and the window's own close. `window` is the
+    /// main one, whatever asked.
     ///
     /// To somewhere it is drawn. Off the watch page with the mini player
     /// off, the main window draws no pane at home, and `restage` stops one
     /// that would be there with nothing drawing it; so a pane brought back
     /// then brings the watch page up with it. Bring back is asking to see
     /// the pane, not to stop it.
-    pub(super) fn pop_in(&mut self, key: &str, cx: &mut Context<Self>) {
+    ///
+    /// Its quality is chosen for its cell again: the cell may be taller than
+    /// the window it played in, and moving up is a swap in place, with no
+    /// black (`sync_quality`).
+    pub(super) fn pop_in(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
         if !self.stage.is_popped(key) {
             return;
         }
@@ -436,6 +498,7 @@ impl RootView {
         }
         self.come_home(key, cx);
         self.active = Some(key.to_string());
+        self.sync_quality(window, cx);
         cx.notify();
     }
 
@@ -467,14 +530,34 @@ impl RootView {
     }
 
     /// Where the pop-out `focus` was made for has moved to, or been resized
-    /// to: kept for placing the next one clear of it, and for opening one
-    /// there once it closes. Nothing for a window left over from an earlier
-    /// pop-out of the same pane, which is on its way out.
-    fn pop_out_moved(&mut self, key: &str, focus: &FocusHandle, bounds: Bounds<Pixels>) {
-        if let Some(popped) = self.stage.popped_mut(key) {
-            if popped.focus == *focus {
-                popped.bounds = bounds;
-            }
+    /// to, and how tall it draws the picture, in its own physical pixels.
+    /// The bounds are kept for placing the next one clear of it, and for
+    /// opening one there once it closes. A change of height chooses the
+    /// pane's quality again, for its window, once the run of changes has
+    /// settled — the one settle a resize of the main window waits out too
+    /// (`on_window_resized`, with the main window, which is what `window`
+    /// is). Upwards only, as ever, so a pop-out made small keeps what it has.
+    /// Nothing for a window left over from an earlier pop-out of the same
+    /// pane, which is on its way out.
+    fn pop_out_moved(
+        &mut self,
+        key: &str,
+        focus: &FocusHandle,
+        bounds: Bounds<Pixels>,
+        height: f32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(popped) = self.stage.popped_mut(key) else {
+            return;
+        };
+        if popped.focus != *focus {
+            return;
+        }
+        popped.bounds = bounds;
+        if popped.height.round() != height.round() {
+            popped.height = height;
+            self.on_window_resized(window, cx);
         }
     }
 
@@ -538,8 +621,8 @@ impl RootView {
                             return true;
                         }
                         let key = key.clone();
-                        to_root(root.clone(), main, cx, move |root, _window, cx| {
-                            root.pop_in(&key, cx)
+                        to_root(root.clone(), main, cx, move |root, window, cx| {
+                            root.pop_in(&key, window, cx)
                         });
                         false
                     });

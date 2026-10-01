@@ -343,7 +343,8 @@ impl VideoView {
         let buttons: [AnyElement; RIGHT_BUTTONS] = [
             chat,
             // phase 4: guide
-            // phase 3: maximize in window, pop out
+            // phase 3: maximize in window. Pop out is not here: it is the
+            // header's and More's, and this cluster never drops a button.
             fullscreen.into_any_element(),
             more.into_any_element(),
         ];

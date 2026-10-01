@@ -562,6 +562,10 @@ pub struct PaneInfo<'a> {
     /// for a channel the follows poll watches — see
     /// `RootView::start_offered`.
     pub start_offered: bool,
+    /// Whether the pop-out is offered on this platform at all
+    /// (`root::pop_out_offered`): where it is not, the header offers
+    /// neither to pop the pane out nor to bring it back.
+    pub pop_out_offered: bool,
 }
 
 /// A recording a stopped pane offers, and where it was left if it has been
@@ -599,12 +603,13 @@ pub enum PaneAction {
     OpenOnTwitch,
     /// Put the same link on the clipboard: More's, and the palette's.
     CopyLink,
-    /// Move its picture into a window of its own, on top of other apps: `P`
-    /// and the palette's row. Windows only for now; see `root::pop_out`.
+    /// Move its picture into a window of its own, on top of other apps: its
+    /// header's icon, More's row, `P` and the palette's row. Windows only
+    /// for now; see `root::pop_out`.
     PopOut,
     /// Bring its picture back from that window: the pop-out bar's Bring
-    /// back, the `Bring back` on the pane's own cell, `P` in either window,
-    /// and the palette's row.
+    /// back, the `Bring back` on the pane's own cell, its header's icon, `P`
+    /// in either window, and the palette's row.
     PopIn,
     /// Turn `Start when they go live` on or off: the switch on a stopped
     /// live pane.

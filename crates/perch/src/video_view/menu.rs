@@ -10,7 +10,9 @@
 //! the press, never on a click; `menu_row` says why, and a test below holds
 //! this file to it. The rest of a double-click whose first press a row took
 //! is swallowed whole, by `run_guard`, so it cannot land on whatever the
-//! closed menu left under the pointer.
+//! closed menu left under the pointer — or, after `Pop out`, which takes the
+//! player and that guard with it out of the window, by the root's
+//! (`RootView::run_guard`).
 
 use gpui::{
     canvas, div, prelude::*, px, Animation, AnimationExt, Context, DispatchPhase, Div, ElementId,
@@ -29,8 +31,8 @@ use crate::watch::PaneAction;
 pub enum Menu {
     /// The renditions this stream offers, under the settings' choice.
     Quality,
-    /// The rest: open the pane on twitch.tv, copy its link — and the
-    /// quality, while the bar has no room for its pill.
+    /// The rest: pop the pane out, open it on twitch.tv, copy its link —
+    /// and the quality, while the bar has no room for its pill.
     More,
 }
 
@@ -175,10 +177,10 @@ impl VideoView {
         rows
     }
 
-    /// More: the quality first while its pill has folded, then the pane's
-    /// way out to twitch.tv and its link. The last two are the root's to do
-    /// — it knows the pane, and the clipboard and the browser are the app's
-    /// — so they go up as `VideoEvent::Pane`.
+    /// More: the quality first while its pill has folded, then `Pop out`,
+    /// then the pane's way out to twitch.tv and its link. The last three are
+    /// the root's to do — it knows the pane, its windows, and the clipboard
+    /// and the browser are the app's — so they go up as `VideoEvent::Pane`.
     ///
     /// A recording opens and copies at the moment it is at, and says so:
     /// `Copy link at 1:02:03`, from its first whole second on, by the rule
@@ -201,7 +203,20 @@ impl VideoView {
                 .border_color(theme::border()),
             );
         }
-        // phase 3: Pop out
+        // The pane's picture into a window of its own, where the pop-out is
+        // offered. Only ever on a pane: no other place draws this menu
+        // (`open_menu`), and a popped pane's bar has Bring back instead. The
+        // player leaves the main window on this press, and `run_guard` with
+        // it, so the root guards the rest of the run (`RootView::run_guard`).
+        if crate::root::pop_out_offered() {
+            rows.push(menu_row(
+                "more-pop-out",
+                "Pop out".into(),
+                false,
+                |_this, _window, cx| cx.emit(VideoEvent::Pane(PaneAction::PopOut)),
+                cx,
+            ));
+        }
         rows.push(menu_row(
             "more-open",
             "Open on twitch.tv".into(),
@@ -278,7 +293,11 @@ impl VideoView {
 /// row took, given whether the run so far was a row's. The first press of a
 /// run never is, and ends whatever run went before, so this is also what
 /// `row_run` reads once the press has been heard.
-fn rest_of_row_run(row_run: bool, click_count: usize) -> bool {
+///
+/// The root's guard asks the same of a run whose first press took a player
+/// out from under the pointer, `Pop out` on one of these rows included, out
+/// of the reach of the player's own guard (`RootView::run_guard`).
+pub(crate) fn rest_of_row_run(row_run: bool, click_count: usize) -> bool {
     row_run && click_count > 1
 }
 

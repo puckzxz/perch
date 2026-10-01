@@ -1,5 +1,6 @@
 //! A pane's header: who is on, how many are watching, how long for, what
-//! they are doing, and the pane's ×. Where it goes is [`Placement`].
+//! they are doing, and the pane's own two icons — out into a window of its
+//! own and back, and its ×. Where it goes is [`Placement`].
 //!
 //! It is the same header in both places. Above (or below) chat it sits on
 //! the chat panel, where it costs nothing: chat is already a panel. With
@@ -11,7 +12,7 @@
 
 use gpui::{div, prelude::*, px, Context, SharedString, Window};
 
-use super::{pane_id, PaneAction, PaneInfo, Slot, StreamState};
+use super::{pane_id, PaneAction, PaneInfo, Showing, Slot, StreamState};
 use crate::assets::Icon;
 use crate::controls::{self, Variant};
 use crate::keys::Hint;
@@ -42,9 +43,37 @@ impl Placement {
     }
 }
 
+/// What a pane's header offers for a window of the pane's own: the
+/// proposal's "header gains pop out and close as icons", beside the ×.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PopOutButton {
+    /// Nothing: the pop-out is not offered here, or the pane has no player
+    /// to move — starting, or stopped.
+    Hidden,
+    /// Move the picture into a window of its own.
+    PopOut,
+    /// Bring it back from one.
+    PopIn,
+}
+
+impl PopOutButton {
+    /// Where the pop-out is `offered`: Bring back for a pane whose picture
+    /// is `popped`, whatever it is doing there, and Pop out for one at home
+    /// that is `playing`, which is the pane `RootView::pop_out` takes.
+    fn of(offered: bool, popped: bool, playing: bool) -> Self {
+        match (offered, popped, playing) {
+            (false, _, _) => PopOutButton::Hidden,
+            (true, true, _) => PopOutButton::PopIn,
+            (true, false, true) => PopOutButton::PopOut,
+            (true, false, false) => PopOutButton::Hidden,
+        }
+    }
+}
+
 /// Everything true about a stream that is not playback: who it is, how many
 /// people are there, how long it has been going, what they are doing — and
-/// the pane's ×, which names its key.
+/// the pane's icons, which name their keys: out into a window of its own or
+/// back (`P`), where that is offered, and its × (`Ctrl+W`).
 ///
 /// In a panel it is static information on a panel, where it costs nothing.
 /// Over the picture it is the same information on the picture, which is
@@ -185,6 +214,33 @@ pub(super) fn pane_header<V: 'static>(
         }))
     });
 
+    // Out into a window of its own, or back from it: what `P` does for the
+    // pane the keys talk to, offered on every pane that can go or come back.
+    // Its id follows what a press does, so a tooltip that came up over Pop
+    // out does not go on saying so once `P` has popped the pane; see
+    // `controls::tip`.
+    let pop = PopOutButton::of(
+        pane.pop_out_offered,
+        matches!(pane.showing, Showing::Elsewhere),
+        matches!(slot.state, StreamState::Playing(_)),
+    );
+    let pop = match pop {
+        PopOutButton::Hidden => None,
+        PopOutButton::PopOut => Some(("pop-out", Icon::PopOut, "Pop out", PaneAction::PopOut)),
+        PopOutButton::PopIn => Some(("pop-in", Icon::PopIn, "Bring back", PaneAction::PopIn)),
+    }
+    .map(|(id, icon, words, action)| {
+        let on_pane = on_pane.clone();
+        let key = key.clone();
+        controls::icon_button(pane_id(&slot.key, id), icon, Variant::OnVideo)
+            .when(window_hovered, |button| {
+                button.tooltip(controls::tip(Hint::PopOut.tooltip(words)))
+            })
+            .on_click(cx.listener(move |view, _event, window, cx| {
+                on_pane(view, &key, action.clone(), window, cx)
+            }))
+    });
+
     // On every pane, a lone one included. It used to go when only one pane
     // was left, while `Ctrl+W` went on closing that one — a control the
     // keyboard had and the pointer did not. An icon now, like every other
@@ -282,7 +338,7 @@ pub(super) fn pane_header<V: 'static>(
                 .when(paused, |header| header.child(controls::tag("paused")))
                 .child(div().flex_1())
                 // The right-hand cluster: chat back, when only this header
-                // can offer it, then the ×.
+                // can offer it, then out or back, then the ×.
                 .child(
                     div()
                         .flex_none()
@@ -291,7 +347,7 @@ pub(super) fn pane_header<V: 'static>(
                         .items_center()
                         .gap(px(theme::GAP_TIGHT))
                         .children(show_chat)
-                        // phase 3: maximize in window, pop out
+                        .children(pop)
                         .child(close),
                 ),
         )
@@ -314,4 +370,34 @@ pub(super) fn pane_header<V: 'static>(
                     .child(SharedString::from(about_line)),
             )
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A pane out offers to come back, whatever it is doing out there; one
+    /// at home offers to go only with a player to move; and where the
+    /// pop-out is not offered, no header says a word about it.
+    #[test]
+    fn the_header_offers_a_window_only_to_a_pane_that_can_go_or_come_back() {
+        assert_eq!(PopOutButton::of(true, false, true), PopOutButton::PopOut);
+        assert_eq!(PopOutButton::of(true, true, true), PopOutButton::PopIn);
+        assert_eq!(
+            PopOutButton::of(true, true, false),
+            PopOutButton::PopIn,
+            "restarting in its window"
+        );
+        assert_eq!(
+            PopOutButton::of(true, false, false),
+            PopOutButton::Hidden,
+            "starting or stopped at home"
+        );
+        for (popped, playing) in [(false, false), (false, true), (true, false), (true, true)] {
+            assert_eq!(
+                PopOutButton::of(false, popped, playing),
+                PopOutButton::Hidden
+            );
+        }
+    }
 }
