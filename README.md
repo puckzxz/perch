@@ -112,8 +112,10 @@ Neither is any use when you are not holding the mouse.
 On macOS every `Ctrl` on this page is `⌘` and every `Alt` is `⌥`. The `Ctrl`
 bindings are declared on gpui's `secondary` modifier, which is cmd there and
 ctrl everywhere else, so the two never drift apart. The settings sheet draws
-whichever one this machine actually binds, and a test holds it to that — and
-holds this table to the sheet, so a key the app lists is a key listed here.
+whichever one this machine actually binds, and so does every tooltip that
+names a key — a pane's × says `Close (⌘W)` on a Mac — and a test holds them
+to that, and holds this table to the sheet, so a key the app lists is a key
+listed here.
 
 Player keys act on the pane you last pointed at, or last clicked — clicking
 anywhere in a pane, video or chat, makes it the one the keyboard is talking to,

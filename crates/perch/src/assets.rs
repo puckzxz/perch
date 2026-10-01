@@ -18,12 +18,12 @@
 //!
 //! Perch's own controls draw from the same table — the title bar's rail
 //! toggle, back, forward and settings gear, the window's caption buttons, the
-//! mini player's, the rail's pin and the fold over its offline follows, and
-//! the player's control bar — through [`Icon`], so a control names an icon by
-//! a variant the compiler checks rather than by a path string nothing does. A
-//! variant is named for what it means, not what it looks like, and a file can
-//! serve a variant and the widget library both: the fold's chevrons are the
-//! dropdown's.
+//! mini player's, the rail's pin and the fold over its offline follows, the
+//! player's control bar and a pane's header — through [`Icon`], so a control
+//! names an icon by a variant the compiler checks rather than by a path
+//! string nothing does. A variant is named for what it means, not what it
+//! looks like, and a file can serve a variant and the widget library both:
+//! the fold's chevrons are the dropdown's.
 //! An `svg` element paints with its *own* `text_color` and nothing inherited,
 //! so a glyph that was not given one draws nothing; see `controls`.
 

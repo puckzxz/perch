@@ -142,7 +142,9 @@ pub fn scrim() -> Hsla {
 }
 
 /// Behind a badge on a picture: a viewer count on a thumbnail, a recording's
-/// length, the seek bar's time under the pointer.
+/// length, the seek bar's time under the pointer. And over a starting pane's
+/// poster (`watch::status`), dimming the picture being waited for under the
+/// pane's name and its breathing line, both in [`text`].
 ///
 /// Darker than [`scrim`], because this one is not dimming what is behind it —
 /// it is making its own contrast on top of an image that could be any colour at

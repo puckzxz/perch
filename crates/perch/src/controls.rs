@@ -146,8 +146,8 @@ variants! {
     /// accent rather than filled with it, so it reads as important without
     /// becoming the brightest thing on screen.
     Primary,
-    /// A control that is present but not being offered — close, in a header
-    /// whose job is the channel's name.
+    /// A control that is present but not being offered — the settings sheet's
+    /// Close, beside the Save that is the sheet's one thing to do.
     Quiet,
     /// A control that destroys something. Drawn like `Quiet`, and turns the
     /// colour of the thing it is about to do only under the pointer.
@@ -474,8 +474,9 @@ pub fn destructive(
 
 /// A state, said in a word: `muted`, `paused`. Not a control - no pointer, no
 /// hover - so it reads as a fact about the pane rather than as a button that
-/// would change it. The controls that change it are on the video, and the
-/// keys are in the settings sheet.
+/// would change it. The controls that change it are on the video's bar,
+/// whose tooltips name their keys, and every key is listed in the settings
+/// sheet.
 pub fn tag(label: impl Into<SharedString>) -> gpui::Div {
     div()
         .flex_none()
@@ -532,7 +533,8 @@ pub fn live_dot() -> gpui::Div {
 }
 
 /// A control that is not being offered right now: the Load more row while its
-/// page is in flight.
+/// page is in flight, or an ended pane's `Watch from the start` while its
+/// channel's archives are being asked for.
 ///
 /// Rendered as the same shape with no pointer and no hover, rather than as
 /// nothing — a row that disappears while you are reaching for it is worse than

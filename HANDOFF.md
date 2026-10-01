@@ -4,7 +4,7 @@ For whoever picks this up next. `README.md` covers *using* it; this covers
 *working on* it — the architecture, the traps, and the things that cost real
 time to discover and would cost the same again.
 
-Roughly 32,000 lines across seven crates. `cargo test --workspace`,
+Roughly 37,000 lines across seven crates. `cargo test --workspace`,
 `cargo clippy --workspace --all-targets` and `cargo fmt --all --check` are all
 expected to pass; if one does not, that is the change you are looking at, not
 the baseline.
@@ -712,6 +712,14 @@ window's edge, and over the picture an invisible band is still prepainted,
 so its tooltip would outlast the band itself. The title bar and the mini
 player sit on the window's edge as well and do not gate theirs yet.
 
+**The clipboard is the app's, not a window's.** Writing it is
+`cx.write_to_clipboard(gpui::ClipboardItem::new_string(..))` (app.rs:1041),
+which needs no focus and no window, and opening a link in the browser is
+`cx.open_url` (app.rs:1078). Perch writes the clipboard in one place,
+`RootView::on_pane_action`'s `CopyLink`, followed by the toast that says it
+did. Each platform has its own `write_to_clipboard` under gpui's; the macOS
+one is compiled by CI's Mac leg and has never been run for Perch.
+
 **`gpui_component::init(cx)` must run before any widget**, and `Root::new` must
 wrap the window's first view or overlays have nowhere to render.
 
@@ -1031,7 +1039,10 @@ way to the browse page, which never draws it.
 **A repeating animation never stops asking for frames.** `motion::waiting` is
 only ever attached to a state that ends. "Offline" and "failed" deliberately sit
 still: a pulsing error is a permanent 60 fps repaint, and it reads as progress
-when there is none.
+when there is none. So does the `Start when they go live` switch on a stopped
+pane, which is a setting rather than something being waited for, however long
+the channel stays off. `Watch from the start`, while the archives are being
+asked for, is the still `controls::waiting` shape rather than a pulse.
 
 **`on_hover` fires only when its value *changes*.** Since those listeners are
 now just repaint triggers, that matters in one place: GPUI's idea of hovered and
@@ -1100,6 +1111,18 @@ unconsidered.
   `full_text` for the rest of a line cut short — never a
   `gpui_component` `Tooltip` built at the call site — and a control whose
   words follow a state keys its id on that state too (see the GPUI traps).
+  The player's bar builds every icon through three helpers in
+  `video_view/bar.rs`: `bar_icon` is an `OnVideo` icon button that is
+  handed its `tip` only while `window.is_window_hovered()`, so that gate
+  holds by construction rather than by each caller remembering it;
+  `act_button` adds a click that closes any open menu and then acts;
+  `menu_button` adds a click that toggles its menu and closes nothing
+  first. Both act on a click, unlike a menu's rows, which act on the press
+  (see the GPUI traps). Callers build `tip` through `keys::Hint` where
+  there is a key — More has none, and the quality is a pill of words with
+  no tooltip — and pass ids keyed on the state the glyph shows
+  (`bar-pause`/`bar-play`); the bar takes the keys back for the root in the
+  capture phase (`VideoView::return_keys`), so no button has to.
 - **Casing** — words on controls are sentence case: `Refresh`, `Open
   settings`, `Save`, `+ Add`, `← Back`, `Try again`, the browse tabs, the
   channel page's shelves. That covers a control's stand-in too — the
@@ -1163,7 +1186,8 @@ unconsidered.
   `text_muted` 5.8, `text_dim` 4.7, accent 5.2, danger 6.8:1 — and is what
   the player's control bar sits on; `overlay()` (`#000000cc`) carries
   `text()` alone (10.2:1), because `text_muted`, `text_dim` and the accent
-  all fail on it over white, and is for badges only. `Variant::OnVideo`
+  all fail on it over white, and is for badges and the dim over a starting
+  pane's poster, under the pane's name in `text()`. `Variant::OnVideo`
   rests at `text_muted` and lifts to `text()` under the pointer — the hover
   wash alone is four percent white and all but invisible on the bar — and
   `controls.rs`'s `sits_on` measures it on that white frame under
@@ -1216,20 +1240,23 @@ there, on its way to `invisible()`.
 
 ### Where controls live
 
-**Nothing static is ever drawn on the video.** Static information on a moving
-picture is exactly what you end up staring past for three hours, so it lives in
-a header above chat instead — chat is already a panel, so it costs nothing
-there. What does come over the picture comes because something asked for it:
-the pointer on the pane, or a key that has just chosen it. A pane with no
-picture — starting, offline, ended, a player before its first frame — is not
-a picture, and its header rests over it. The split:
+**Nothing static sits on a playing picture.** Static information on a moving
+picture is exactly what you end up staring past for three hours, so it lives
+in the pane header on the chat panel instead — chat is already a panel, so it
+costs nothing there. What does come over the picture comes because something
+asked for it: the pointer on the pane, one of the bar's menus held open, or a
+key that has just chosen the pane. A pane with no picture — starting,
+offline, ended, a player before its first frame — is not a picture, and its
+header rests over it. The split:
 
 - **Pane header**, one per pane (`watch/header.rs`): a live dot *when the pane
   is actually showing a picture*, the channel name — which opens twitch.tv,
   the way out of a chat that is read-only by design — viewer count, uptime,
   `muted` and `paused`, and the pane's ×, a `Destructive` icon whose tooltip
-  names `Ctrl+W` through `keys::Hint::Close`. With more than one pane its
-  bottom border marks the one the keyboard is talking to. Under that row,
+  names `Ctrl+W` through `keys::Hint::Close`, at the end of a right-hand
+  cluster with a commented slot for phase 3's maximize in window and
+  pop-out. With more than one pane its bottom border marks the one the
+  keyboard is talking to. Under that row,
   what is actually on: the title and the game, joined the way the numbers
   above them are, clamped to one line, with the whole of both a hover away
   through `controls::full_text`. The live numbers go when the stream ends —
@@ -1259,9 +1286,10 @@ a picture, and its header rests over it. The split:
   offers chat back (`Show chat`, the chat glyph crossed out), and the status
   screen starts `theme::BAND_ROOM` down so the resting band never covers its
   words.
-- **Over the video**, hover-revealed only: the control bar
-  (`video_view/bar.rs`). At the left play or pause, the speaker — crossed out
-  whenever the pane is silent, Mute all's hold included — the volume slider
+- **Over the video**, only while the pointer is on it or one of its menus
+  is open: the control bar (`video_view/bar.rs`). At the left play or
+  pause, the speaker — crossed out whenever the pane is silent, Mute all's
+  hold included — the volume slider
   and its figure; at the right the quality pill, chat, fullscreen and More.
   Chat is crossed out while hidden, and drawn still, with a `No chat replay`
   tooltip, for a recording that has none, so the cluster keeps its shape. More
@@ -1272,7 +1300,8 @@ a picture, and its header rests over it. The split:
   words with no tooltip. A narrow pane drops the figure, then the slider, then
   folds the quality into More's first row (`bar::fit`, from the probe's
   width); play, the speaker and the right-hand buttons never go. The
-  right-hand cluster has commented slots for the pop-out and the guide, and
+  right-hand cluster has commented slots for phase 3's maximize in window
+  and pop-out and phase 4's guide, More a commented row for the pop-out, and
   `bar::RIGHT_BUTTONS` counts its buttons — `button_row` lays them out as an
   array that long — so a control added there narrows the bar sooner. What is
   the pane's rather than the player's — chat, the link — goes up as
@@ -1335,7 +1364,10 @@ a picture, and its header rests over it. The split:
   picture under the pointer closes that one pane through `close_slot`, looked
   up by key at the click, so the per-stream close the docked bar had is not
   lost. The players in it are compact (`VideoView::set_compact`): no control
-  bar, no hover, no double-click fullscreen. So a double-click on a picture is
+  bar, no hover, no double-click fullscreen. Going compact also closes a
+  pane's open menu and starts its bar's fade over from hidden, and
+  `RootView::set_compact` does the same for each pane's band, so coming back
+  never replays a fade (see Motion). So a double-click on a picture is
   two separate things: the first click puts the watch page under the second,
   which lands on whatever the page has in that corner — chat, in most
   layouts, so nothing more happens. Only a pane with no chat beside it puts
@@ -1374,9 +1406,9 @@ percent short, and a dragged divider keeps the box the user chose, smaller
 or not — the divider still works with chat hidden, and its share is every
 pane's. A vertical stream would gain from the whole cell, and is left capped.
 
-Everything in the header but the name comes from a `LiveStream` — the same
-record the browse cards use — looked up by login at render time rather than
-copied onto the `Slot`, so there is one source and it cannot go stale.
+Everything in the pane header but the name comes from a `LiveStream` — the
+same record the browse cards use — looked up by login at render time rather
+than copied onto the `Slot`, so there is one source and it cannot go stale.
 `RootView::stream_info` walks every live list the app holds, follows first and
 then popular, the open category and the last search, because a pane opened from
 Popular used to have no numbers and no title at all: the panes most likely to be
@@ -1432,8 +1464,8 @@ landed under a centred nav.
 
 Follows are **two lists that never merge**. `LiveStream` means *is live*, and
 three things read it that way — the went-live toasts, the card's viewer count,
-and the chat header's live dot — so an offline channel sitting in that vec would
-be wrong in all three at once. Offline follows are `Channel`s, and they are
+and the pane header's live dot — so an offline channel sitting in that vec
+would be wrong in all three at once. Offline follows are `Channel`s, and they are
 drawn as names rather than cards: a card is mostly a picture, and an offline
 channel has none worth showing — a thumbnail stale by hours, or a profile
 picture that costs another request per refresh and says nothing. Names also
@@ -2282,6 +2314,37 @@ message jumps the posted queue — so a probe sent straight after the move reads
 the previous position. Never post a bare `WM_NCLBUTTONDOWN` with `HTCAPTION`:
 `DefWindowProc`'s move loop would follow the real mouse.
 
+**Posted input cannot raise what the pointer raises, and what holds the bar up
+for it lasts one press.** The first posted `WM_MOUSEMOVE` makes gpui call
+`TrackMouseEvent` (windows/events.rs:1254-1273), and with the real cursor
+somewhere else Windows answers with a `WM_MOUSELEAVE` that clears the window's
+hovered flag (events.rs:318-327). Everything that waits on the pointer reads
+that flag — the player's bar and a pane's band through their probes, every
+gated tooltip — so none of it comes up. Hit testing is geometry alone, though
+(window.rs:775-797, `HitboxId::is_hovered` at 500), so a posted press lands on
+whatever is drawn under it. That is the way in: the palette's `Choose quality
+for …` opens a pane's quality menu, and an open menu holds the bar up wherever
+the pointer is (`VideoView::sync_controls`). Each opening is good for one
+press. A press on a row or on any of the bar's controls closes the menu, which
+ends the hold, and the bar fades out within `theme::MOTION_HOVER`; only More
+over the quality menu, the pill over More and More's quality row put one menu
+in place of another and keep it. So open the menu again from the palette
+before each press. Rows, the pill, More, chat and fullscreen act before the
+fade starts, and so do the slider and the seek row, which act on the press
+(the seek row holds the bar while its thumb is held, and seeks on the release
+wherever it lands). Play and the speaker act on a click, and their press
+closes the menu in the capture phase, which flips the bar's fade and so
+re-keys everything under it (`motion::Fade::animation_id`): a frame drawn
+before the release forgets the press, and no click comes. Post their down and
+up back to back, since gpui paints only once the posted queue is empty. Never
+post two presses in a run where the bar was: the first lets the bar go, which
+stops it blocking the picture at once, so the second reaches the picture,
+where a double-click is fullscreen. A stopped pane's band is up at rest, so
+its × and its screen's controls take posted presses with no help. Tooltips and
+the hover lift need a real pointer. Read from source; never post a press on
+`Open on twitch.tv`, the pane header's name or the palette's `Open … on
+twitch.tv`, which open a browser.
+
 **Verify animation by measuring, not by looking.** One still cannot tell a fade
 from a cut. Extend the same loop to burst-capture with a stopwatch and reduce a
 small crop to a mean brightness per frame, then read the numbers: a cut is one
@@ -2384,22 +2447,47 @@ errors kept to the list that asked; the rail as Pinned, Live and Offline,
 pinned from the rail itself; a settings sheet that saves only what it owns;
 and sentence case on every control.
 
-**The overhaul's later phases are agreed in outline**, and phase 1 left a
-seam for each. An omnibox takes the place of the title bar's search box,
+So is the second, the player. The bar over a playing picture is play, the
+speaker, the volume, then the quality as a pill of words, chat, fullscreen
+and More, which opens the pane on twitch.tv or copies its link, a
+recording's at the moment it is at. Its icons' tooltips name their keys
+where they have one; it sits on one wash every text tier passes on over a
+white frame, and it gives way as a pane narrows. Its menus
+take a press, one at a time, and hand the keys back to the root. A pane's
+header has an × that names `Ctrl+W`, and with chat hidden it rides a band
+over the top of the picture instead of a strip above it, coming up with the
+pointer and for a moment after a pane key. A starting pane shows the picture
+it is waiting for and fades in over it; an offline one offers the channel's
+last broadcast, played in its place, and the follows auto-start as a `Start
+when they go live` switch; an ended one offers that broadcast's recording
+from the start. One builder writes every twitch.tv link, and the palette
+reaches a pane's quality, `Copy link` and `Open on twitch.tv` by name. The
+two bugs phase 1 left for it are fixed: Mute all's tooltip kept its old
+words after a press, and a list asked for while signed out said it could not
+reach Twitch.
+
+**The overhaul's later phases are agreed in outline**, and the first two left
+a seam for each. An omnibox takes the place of the title bar's search box,
 which is one element in `title_bar_leading` so it can be swapped whole. A
 guide, and a Recommended group in the rail read from Twitch's unofficial
 `SideNav` query, with the unpublished-query risk the chat replay already
-carries (see "Known limits"). A pop-out player that stays on top — whether a
-`VideoView`'s pump and its atlas tile can move between windows is not known
-yet, and is the first thing to find out. Sound and chat stay per pane
-throughout.
+carries (see "Known limits"); the bar's right-hand cluster keeps a commented
+slot for the guide's button. A pop-out player that stays on top, and a pane
+maximised within the window — whether a `VideoView`'s pump and its atlas
+tile can move between windows is not known yet, and is the first thing to
+find out. The bar's cluster and the pane header's keep commented slots for
+both, More a commented row for the pop-out, and `bar::RIGHT_BUTTONS` counts
+the cluster, so a button added there narrows the bar sooner. Sound and chat
+stay per pane throughout.
 
 Left over from phase 1, smallest first:
 
-- The passive words the casing pass left alone — tags, toasts, a pane's
-  status line; see "Casing".
+- The passive words the casing pass left alone — tags, toasts, chat's
+  notices, and a failed pane's line, which is the failure in its own words;
+  see "Casing". Phase 2 put the rest of a pane's status lines in sentence
+  case.
 - Pin from a card, the channel page or the palette. `palette::entries` takes
-  seven positional arguments, its tests call it nearly thirty times, and it
+  seven positional arguments, its tests call it thirty-odd times, and it
   wants an inputs struct before it takes an eighth. Pinning a channel you do
   not follow needs the worker to poll it, since it asks Twitch about follows
   only.
@@ -2408,6 +2496,22 @@ Left over from phase 1, smallest first:
   alone is not enough, porting Zed's `start_window_move` into the vendored
   gpui is the fix (a `PERCH PATCH`, and `scripts/verify-vendor.sh` told about
   the file). `Cmd+[` and `Cmd+]` for back and forward were left unbound.
+
+Left over from phase 2, smallest first:
+
+- The title bar's and the mini player's tooltips are not yet gated on
+  `window.is_window_hovered()`, as the player's bar and the pane header's
+  are; see the GPUI traps.
+- The bar's and the status screen's room are estimates, to be tuned against
+  a capture of real panes: `theme::QUALITY_PILL_ROOM` (see "Known limits",
+  item 23) and `theme::STATUS_ROOM`, which decides when an offline pane's
+  last broadcast shrinks from a card to a pill; too small, and a card in a
+  short pane pushes `Try again` out of the box.
+- Arrow keys between a menu's rows, and a key of its own for a pane's
+  quality. The palette's `Choose quality for …` is the keyboard's way in
+  for now.
+- `Start when they go live` lasts for the session and is per pane. Keeping
+  it per channel would be a setting.
 
 Ranked by what would be noticed, roughly:
 
@@ -2420,12 +2524,18 @@ Ranked by what would be noticed, roughly:
    the same mapping.
 2. **Buffered range and muted-audio spans on the seek bar**, from
    `demuxer-cache-time` and the `-muted` segments a playlist names.
-3. **Stream metadata for channels in none of the lists.** The chat header now
-   reads from every live list the app holds, so a pane opened from popular, a
-   category or a search carries its numbers, title and game. A channel opened by
-   name still carries none: nothing has ever fetched it. `GET
-   /helix/streams?user_login=…` per open channel would fill it, and would also
-   keep a title that changes mid-stream honest, which the snapshot does not.
+3. **Watch the channels in none of the lists.** The pane header reads from
+   every live list the app holds, so a pane opened from popular, a category
+   or a search carries its numbers, title and game. A channel opened by name
+   still carries none: nothing has ever fetched it. `GET
+   /helix/streams?user_login=…` per open channel, on the follows poll's
+   minute, would fill it, and would also keep a title that changes
+   mid-stream honest, which the snapshot does not. The same poll is what
+   `Start when they go live` waits on for a channel you do not follow — the
+   switch is hidden there today — and it would give such a channel a
+   starting poster and an ended pane its broadcast's id. It touches the
+   worker's loop and adds a standing Helix request each minute, which is
+   why phase 2 left it.
 4. **Badges in the chat gutter** — sub, mod, VIP. The tags already arrive and
    are parsed into the map; nothing reads them.
 5. **Reply context lines.** `reply-parent-*` tags arrive too.
@@ -2596,6 +2706,19 @@ None of these is being worked on; all of them are real.
     archive Helix has not listed yet, or lists as ending more than ten minutes
     before the broadcast did (`STILL_GOING_SECS`). A broadcast split by a
     reconnect plays only its last part from the start.
+27. **A pane with chat hidden says `muted` and `paused` only while pointed
+    at.** Its header rides the band over the picture, which is up while the
+    pointer is on the pane, for a moment after a pane key, or over a status
+    screen, and the active pane's underline goes with it. Accepted under
+    "nothing static on a playing picture": the bar's speaker and play glyphs
+    say the same on the same hover, and a pane with chat on screen keeps
+    both in its header. See the Keyboard section.
+28. **A vertical stream in a stacked cell stays in the capped box with chat
+    hidden.** The box is the one a pane with chat has, so `C` never moves
+    the picture. A portrait stream is what would gain most from chat's
+    space; a 4:3 stream in a cell just narrow enough to stack, and a box the
+    divider was dragged smaller, give up a little width too. See "Where
+    controls live".
 
 ## Things not to redo
 
@@ -2631,6 +2754,13 @@ None of these is being worked on; all of them are real.
   perch owns — the log first of all — and do not answer a handover before its
   arguments are queued for a window that still exists. See "One perch".
 - Do not key animated-image element ids on position.
+- Do not draw on a picture without a wash measured for what goes on it.
+  `video_chrome()` carries the bar and a pane's header over the picture,
+  every tier; `overlay()` carries badges and a poster's dim, with `text()`
+  on it and nothing else, since `text_muted`, `text_dim` and the accent all
+  fail there over a white frame
+  (`every_tier_drawn_on_a_picture_reads_over_a_white_frame`). A new thing on
+  a picture is measured on `theme::over_white` of its wash, never on black.
 - Do not write a twitch.tv URL with a `format!` of its own. `target::link` is
   the one builder, and the tested inverse of `target::parse`
   (`a_link_reads_back_as_what_it_names`), so a link Perch hands out opens the

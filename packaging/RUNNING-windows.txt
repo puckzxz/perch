@@ -61,9 +61,12 @@ a minute and costs nothing:
 perch then shows a code to enter at twitch.tv/activate, and your follows list
 appears. Nothing secret is ever stored in the binary.
 
-Without it: the follows page says "Not signed in" and offers you Settings.
-Everything else — popular, categories, search, and watching a channel by name
-— still works.
+Without it: the follows page says "Not signed in" and offers you Settings,
+and Popular, Categories and search say "Not signed in" too, since every
+list perch asks Twitch for needs a sign-in, and so does a stopped pane's
+offer of the channel's last broadcast. Watching a channel by name —
+Ctrl+K and its name, or perch.exe followed by it — and its chat still
+work.
 
 
 Optional: the auth-token cookie
@@ -102,6 +105,15 @@ Getting around
 Player keys act on the pane you last pointed at or clicked. While the cursor
 is in a text box the keys stand aside for it, all but Ctrl+K, Ctrl+, and
 Ctrl+R, which type nothing.
+
+Point at a picture and its controls come up along the bottom of it: pause,
+the speaker and the volume, then the quality, chat, fullscreen and More,
+which opens what the pane is playing on twitch.tv or copies a link to it
+(a recording's link is at the moment it has reached). Those a key also
+works name the key in their tooltips; the quality and More have none. A
+channel that is off offers its last broadcast, and starts by itself when
+it comes back on if you follow it; a stream that ends offers its
+recording from the start.
 
 Back and forward go through the pages you have been on, the way a browser
 does. The mouse's side buttons and the arrows in the bar across the top do
