@@ -89,6 +89,11 @@ impl RootView {
     /// the watch page: the page used to flip before the count was checked,
     /// so a refused `+ Add` from the browse page took you away from it for
     /// nothing.
+    ///
+    /// A pane added beside the others shows them all again if one had the
+    /// page: a new pane has to be seen, and would otherwise open offstage.
+    /// One already open is chosen instead (`choose`), which takes the
+    /// maximize to it.
     pub(super) fn open_channel(
         &mut self,
         channel: String,
@@ -105,6 +110,7 @@ impl RootView {
                     this.retire_slots(|slot| slot.channel == channel, cx);
                 }
                 this.restage(cx);
+                this.choose(&channel, window, cx);
                 return;
             }
 
@@ -115,6 +121,7 @@ impl RootView {
                 return;
             }
             this.show_watch_page(window, cx);
+            this.stage.unmaximize();
 
             let chat = cx.new(|cx| {
                 ChatView::new(
@@ -176,8 +183,9 @@ impl RootView {
 
     /// [`open_video`](Self::open_video), from `start_at` seconds in: where a
     /// link pointed, or where the history says it was left. One step on the
-    /// trail, and refused where you are at four panes, as `open_channel` is.
-    /// The pane itself is [`video_slot`](Self::video_slot)'s.
+    /// trail, and refused where you are at four panes, as `open_channel` is,
+    /// and like it shows every pane for a new one, or chooses one already
+    /// open. The pane itself is [`video_slot`](Self::video_slot)'s.
     pub(super) fn open_video_at(
         &mut self,
         video: Video,
@@ -195,6 +203,7 @@ impl RootView {
                     this.retire_slots(|slot| slot.key == key, cx);
                 }
                 this.restage(cx);
+                this.choose(&key, window, cx);
                 return;
             }
 
@@ -205,6 +214,7 @@ impl RootView {
                 return;
             }
             this.show_watch_page(window, cx);
+            this.stage.unmaximize();
 
             let channel = video.user_login.clone();
             let slot = this.video_slot(video, start_at, window, cx);
@@ -295,11 +305,12 @@ impl RootView {
     /// one, which everything keyed on the pane — element ids, the player's
     /// subscription, the active pane — would then misname.
     ///
-    /// If that recording is already open in another pane, that pane is made
-    /// the active one instead, and this one is left as it is.
+    /// If that recording is already open in another pane, that pane is
+    /// chosen instead (`choose`), and this one is left as it is.
     ///
     /// A pane in a window of its own comes home first. Its pop-out finds its
-    /// player by the pane's key, which the new slot does not carry.
+    /// player by the pane's key, which the new slot does not carry. A
+    /// maximized pane stays maximized, under its new key (`Stage::rename`).
     pub(super) fn replace_with_video(
         &mut self,
         key: &str,
@@ -310,8 +321,7 @@ impl RootView {
     ) {
         let video_key = Slot::video_key(&video.id);
         if self.slot_index(&video_key).is_some() {
-            self.active = Some(video_key);
-            cx.notify();
+            self.choose(&video_key, window, cx);
             return;
         }
         if self.stage.is_popped(key) {
@@ -323,6 +333,7 @@ impl RootView {
         let mut slot = self.video_slot(video, start_at, window, cx);
         slot.take_over_from(&self.slots[index]);
         self.slots[index] = slot;
+        self.stage.rename(key, &video_key);
         self.active = Some(video_key.clone());
         self.start_stream(video_key, How::Cold, window, cx);
         self.restage(cx);
@@ -511,6 +522,7 @@ impl RootView {
                         self.slots[index].chat_hidden,
                         self.slots[index].chat.is_some(),
                     ),
+                    maximize: self.maximize_button_of(key),
                 };
                 // The pane's one player: its own size until the pane is
                 // measured, playing, and its position heard by the pane —
@@ -798,7 +810,9 @@ impl RootView {
     }
 
     /// Go back to watching with `key` the pane the keys talk to: what a click
-    /// on a mini-player tile asks for.
+    /// on a mini-player tile asks for, and the palette's quality row from the
+    /// browse page. Chosen (`choose`), so a pane that had the watch page
+    /// when it was left hands it to the one clicked.
     ///
     /// The pointer arrives on the watch page where the tile was, which can be
     /// over another pane's video. A pane's hover is measured every frame and
@@ -811,12 +825,17 @@ impl RootView {
     /// becomes active the next time the pointer comes into it. Its header
     /// over the picture, where it has one, still comes up, since `point`
     /// works that out every frame and not from the edge.
-    pub(super) fn go_watch_pane(&mut self, key: String, cx: &mut Context<Self>) {
-        self.active = Some(key);
+    pub(super) fn go_watch_pane(
+        &mut self,
+        key: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         for slot in &mut self.slots {
             slot.hovered = true;
         }
         self.go_watch(cx);
+        self.choose(&key, window, cx);
     }
 
     pub(super) fn stop_all(&mut self, cx: &mut Context<Self>) {

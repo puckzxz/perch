@@ -71,6 +71,7 @@ impl RootView {
             // against is always the main one.
             PaneAction::PopOut => self.pop_out(key, window, cx),
             PaneAction::PopIn => self.pop_in(key, window, cx),
+            PaneAction::Maximize => self.toggle_maximize(key, window, cx),
             PaneAction::StartWhenLive(on) => {
                 self.slots[index].start_when_live = on;
                 cx.notify();

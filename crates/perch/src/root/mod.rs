@@ -16,7 +16,7 @@
 //! | `navigation` | back and forward: where the app is as a `Route`, recording each step on the trail (`crate::trail`), and the three ways along it |
 //! | `streams` | opening, restarting and closing panes, and swapping one for a recording in place |
 //! | `renditions` | what each pane plays, and when it restarts: the quality chosen against each pane's own height (`pane_height_for`), the upward re-pick when the grid changes, a pick from the pane's menu; a new rendition resolved beside the picture and kept once its player has taken over in place (`video_view::swap`) |
-//! | `panes` | where each pane is drawn, applied: `restage`, the one funnel every change of state, membership, page or pop-out ends in; `set_slot_state`, the only write of a pane's state; `video_in_main`, the only way the main window reaches a player; `retire_homeless`, the one rule for which panes stop when nothing in the main window would draw them |
+//! | `panes` | where each pane is drawn, applied: `restage`, the one funnel every change of state, membership, page, pop-out or maximize ends in; `set_slot_state`, the only write of a pane's state; `video_in_main`, the only way the main window reaches a player; `retire_homeless`, the one rule for which panes stop when nothing in the main window would draw them; a pane given the watch page and every pane shown again (`toggle_maximize`, `show_all_panes`), and `choose`, which takes the maximize to the pane chosen |
 //! | `pop_out` | a pane in a window of its own, on top of other apps: moving its picture there and back, the window, and `to_root`, the only way back from it |
 //! | `broadcasts` | what a stopped live pane asks about its channel's past broadcasts, and whether it can start by itself |
 //! | `pane_actions` | what a pane asks for: its controls, and its player's requests; the header a pane key reveals |
@@ -179,7 +179,8 @@ pub(crate) struct RootView {
     /// The panes, in their order: the grid's, the keys `1`–`4` and `Tab`
     /// walk, the mini player's and the palette's. The one account of it.
     slots: Vec<Slot>,
-    /// Which panes are drawn in windows of their own, with each window; see
+    /// Which panes are drawn in windows of their own, with each window, and
+    /// which pane has the watch page to itself, if one has; see
     /// `crate::stage` and `panes`. Every other pane is the main window's.
     stage: Stage<PoppedOut>,
     /// The main window, which everything a pop-out asks of the root is
@@ -255,7 +256,9 @@ pub(crate) struct RootView {
     /// Which pane the player shortcuts act on, held as a pane's key rather
     /// than an index: closing a pane reindexes every pane after it, and a
     /// stored index would quietly start acting on somebody else — the same
-    /// trap that keys pane element ids on the key.
+    /// trap that keys pane element ids on the key. While a pane is
+    /// maximized, choosing another moves the maximize with it
+    /// (`RootView::choose`), so the keys talk to the pane on the page.
     active: Option<String>,
     /// Focus lives on the root and stays there. GPUI derives the whole key
     /// dispatch path from what is focused, and with nothing focused the context
@@ -532,16 +535,19 @@ impl RootView {
     /// The watch grid as it is cut now: [`layout::Grid::of`] the body and
     /// the [`cells`](Self::cells). The one grid the page is drawn in, a
     /// divider drag is measured against and a pane's quality is chosen for,
-    /// so the three cannot disagree about a pane's size.
+    /// so the three cannot disagree about a pane's size. Only a pane
+    /// maximized away is measured by another, the one it comes back to
+    /// (`pane_height_for`).
     fn grid(&self, window: &Window) -> layout::Grid {
-        layout::Grid::of(self.body(window), self.cells())
+        layout::Grid::of(self.body(window), self.cells().len())
     }
 
-    /// How many cells the watch grid has: one for every pane, a pane in a
-    /// window of its own included, since its cell stays where it was with
-    /// its chat in it.
-    fn cells(&self) -> usize {
-        self.slots.len()
+    /// The panes the watch grid draws, as positions in `slots`, in order:
+    /// one cell for every pane, a pane in a window of its own included,
+    /// since its cell stays where it was with its chat in it — or the
+    /// maximized pane's alone (`stage::Stage::cells`).
+    fn cells(&self) -> Vec<usize> {
+        self.stage.cells(&panes::pane_keys(&self.slots))
     }
 
     /// Whether the rail is drawn beside the page; see [`layout::rail_shown`].
@@ -582,16 +588,21 @@ impl RootView {
         }
     }
 
-    /// The pane a player shortcut acts on: the last one pointed at, or the
-    /// first if the pointer has not been in one yet.
+    /// The pane a player shortcut acts on: the last one pointed at or
+    /// chosen, or else the first the watch grid draws ([`cells`](Self::cells))
+    /// — the first pane, or the maximized one while a pane has the page.
     ///
     /// A stale channel simply does not resolve, which is the whole reason for
-    /// storing one rather than an index.
+    /// storing one rather than an index. What it falls back on is a cell the
+    /// grid draws rather than the first pane, which a maximize can leave
+    /// drawn nowhere: a popped pane chosen while another had the page, then
+    /// closed, would otherwise hand `Space`, `Ctrl+W` and `Z` to a pane
+    /// nobody can see.
     fn active_slot(&self) -> Option<usize> {
         self.active
             .as_deref()
             .and_then(|channel| self.slot_index(channel))
-            .or_else(|| (!self.slots.is_empty()).then_some(0))
+            .or_else(|| self.cells().first().copied())
     }
 
     fn active_video(&self) -> Option<Entity<VideoView>> {
@@ -682,6 +693,7 @@ impl Render for RootView {
             .on_action(cx.listener(Self::on_navigate_back))
             .on_action(cx.listener(Self::on_navigate_forward))
             .on_action(cx.listener(Self::on_toggle_pop_out))
+            .on_action(cx.listener(Self::on_toggle_maximize))
             .on_key_down(cx.listener(Self::on_palette_key))
             .relative()
             .size_full()

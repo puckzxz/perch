@@ -5,8 +5,9 @@
 //! everything you could reach while *browsing* was a click — the picker had
 //! no keyboard path at all past the search box. This is the one control that
 //! answers both: a channel to open, a recording to carry on with, a pane to
-//! close, choose the quality of, pop out, copy a link to or open on
-//! twitch.tv, a page to go to, typed rather than aimed at.
+//! close, choose the quality of, give the watch page to, pop out, copy a
+//! link to or open on twitch.tv, a page to go to, typed rather than aimed
+//! at.
 //!
 //! It is not a second search box. The search box asks *Twitch* a question and
 //! costs a request; this filters what the app already knows — who is live, what
@@ -19,6 +20,7 @@ use twitch_api::{Channel, LiveStream};
 
 use crate::browse::Tab;
 use crate::seek_bar;
+use crate::stage::MaximizeButton;
 use crate::target::{self, Target};
 use crate::theme;
 
@@ -62,6 +64,11 @@ pub enum Command {
     PopOut(usize),
     /// Bring the picture of the pane at this index back from its window.
     PopIn(usize),
+    /// Give the pane at this index the whole watch page, chat and all: `Z`,
+    /// by name.
+    Maximize(usize),
+    /// Show every pane again, after one was given the watch page.
+    ShowAllPanes,
     /// Look at a channel's past broadcasts.
     Videos {
         login: String,
@@ -105,10 +112,14 @@ pub struct OpenPane {
     /// Whether it could be popped out: it has a player to move, and the
     /// pop-out is offered on this platform at all (`root::pop_out`).
     pub can_pop_out: bool,
+    /// What its maximize control offers (`stage::Stage::maximize_button`):
+    /// a pane that can be given the page has a row for it, and one that has
+    /// it means `Show all panes` is offered.
+    pub maximize: MaximizeButton,
 }
 
-/// A live pane known only by its login, playing, which is all the tests
-/// need.
+/// A live pane known only by its login, playing, with no maximize to offer,
+/// which is all the tests need.
 #[cfg(test)]
 impl From<&str> for OpenPane {
     fn from(login: &str) -> Self {
@@ -118,6 +129,7 @@ impl From<&str> for OpenPane {
             playing: true,
             popped: false,
             can_pop_out: true,
+            maximize: MaximizeButton::Hidden,
         }
     }
 }
@@ -173,9 +185,10 @@ struct PaneRow {
 }
 
 /// The pane rows, in the order they are offered: the quality, which needs a
-/// bar to open over in the main window; the pop-out, out or back; then
-/// More's two by name, for every pane. See `entries`.
-const PANE_ROWS: [PaneRow; 5] = [
+/// bar to open over in the main window; the watch page given to it; the
+/// pop-out, out or back; then More's two by name, for every pane. See
+/// `entries`.
+const PANE_ROWS: [PaneRow; 6] = [
     PaneRow {
         // The menu hangs from the bar of a pane in the main window; a pane
         // in a window of its own has none to hang it from, and is brought
@@ -183,6 +196,13 @@ const PANE_ROWS: [PaneRow; 5] = [
         offered: |pane| pane.playing && !pane.popped,
         command: Command::ChooseQuality,
         words: |pane| format!("Choose quality for {pane}"),
+    },
+    PaneRow {
+        // Only where its control would offer it; the pane that has the page
+        // already is shown all again from `Show all panes`, below.
+        offered: |pane| pane.maximize == MaximizeButton::Maximize,
+        command: Command::Maximize,
+        words: |pane| format!("Maximize {pane}"),
     },
     PaneRow {
         offered: |pane| pane.can_pop_out && !pane.popped,
@@ -478,11 +498,18 @@ pub fn entries(
     // history, as often as not — and said otherwise.
     let tabs = Tab::ALL.map(|tab| (Command::ShowTab(tab), format!("Go to {}", tab.label())));
     let playing = !watching.is_empty();
+    // A pane has the watch page to itself. Only once something is typed, as
+    // the pane rows wait: `Esc` and `Z` are the everyday way back.
+    let maximized = !query.is_empty()
+        && watching
+            .iter()
+            .any(|pane| pane.maximize == MaximizeButton::Restore);
     let commands = tabs.into_iter().chain(
         [
             // Only with something to go back to, or to stop: a command that
             // does nothing is a row in the way of one that would.
             (playing, Command::GoWatch, "Back to watching"),
+            (maximized, Command::ShowAllPanes, "Show all panes"),
             (playing, Command::StopAll, "Stop all streams"),
             (true, Command::ToggleSidebar, "Toggle the follows rail"),
             (true, Command::Refresh, "Refresh this list"),
@@ -760,7 +787,24 @@ mod tests {
                 | Command::OpenOnTwitch(_)
                 | Command::PopOut(_)
                 | Command::PopIn(_)
+                | Command::Maximize(_)
+                | Command::ShowAllPanes
         )));
+        let maximized = OpenPane {
+            maximize: MaximizeButton::Restore,
+            .."forsen".into()
+        };
+        let other = OpenPane {
+            maximize: MaximizeButton::Maximize,
+            .."quin69".into()
+        };
+        let blank = entries("", &[], &[], &[], &[], &[maximized, other], true);
+        assert!(
+            !blank
+                .iter()
+                .any(|entry| matches!(entry.command, Command::Maximize(_) | Command::ShowAllPanes)),
+            "the maximize waits to be typed for too"
+        );
         let popped = OpenPane {
             popped: true,
             .."quin69".into()
@@ -795,6 +839,63 @@ mod tests {
             .find(|entry| entry.command == Command::PopIn(0))
             .expect("a popped pane offers to come back");
         assert_eq!(back.title, "Bring quin69 back");
+    }
+
+    /// A pane its control would give the page offers it by name, and the
+    /// pane that has it offers every pane back instead, as one command; a
+    /// lone pane, or one in a window of its own, offers neither.
+    #[test]
+    fn a_pane_can_be_given_the_page_by_name() {
+        let watching = [
+            OpenPane {
+                maximize: MaximizeButton::Maximize,
+                .."forsen".into()
+            },
+            OpenPane {
+                maximize: MaximizeButton::Maximize,
+                .."quin69".into()
+            },
+        ];
+        let found = entries("max quin", &[], &[], &[], &[], &watching, true);
+        let row = found
+            .iter()
+            .find(|entry| entry.command == Command::Maximize(1))
+            .expect("the second pane can be given the page");
+        assert_eq!(row.title, "Maximize quin69");
+        assert_eq!(row.kind, "pane");
+        assert!(!found
+            .iter()
+            .any(|entry| entry.command == Command::ShowAllPanes));
+
+        let watching = [
+            OpenPane {
+                maximize: MaximizeButton::Maximize,
+                .."forsen".into()
+            },
+            OpenPane {
+                maximize: MaximizeButton::Restore,
+                .."quin69".into()
+            },
+        ];
+        let found = entries("max quin", &[], &[], &[], &[], &watching, true);
+        assert!(
+            !found
+                .iter()
+                .any(|entry| entry.command == Command::Maximize(1)),
+            "the pane with the page is not offered it again"
+        );
+        let found = entries("show all", &[], &[], &[], &[], &watching, true);
+        let back = found
+            .iter()
+            .find(|entry| entry.command == Command::ShowAllPanes)
+            .expect("every pane can be shown again");
+        assert_eq!(back.title, "Show all panes");
+        assert_eq!(back.kind, "command");
+
+        let alone = entries("max", &[], &[], &[], &[], &["forsen".into()], true);
+        assert!(!alone
+            .iter()
+            .any(|entry| matches!(entry.command, Command::Maximize(_) | Command::ShowAllPanes)));
     }
 
     /// A pane with a player offers its pop-out by name where the pop-out is

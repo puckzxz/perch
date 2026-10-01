@@ -524,6 +524,24 @@ impl ChatView {
         self.hold = hold;
     }
 
+    /// Stop holding rows back, and land the ones held: for a pane whose chat
+    /// has gone off the screen — the browse page, or another pane given the
+    /// watch page — told so by `RootView::restage`.
+    ///
+    /// The hold is let go only by [`sync_hold`](Self::sync_hold), and that
+    /// runs only when the chat is drawn. Without this, a chat put away with
+    /// the pointer over it would go on holding every row that arrived, past
+    /// the cap that bounds the rows on screen, for as long as it was away.
+    /// Nothing for a chat holding nothing back, which is most of them, so
+    /// telling one on every restage costs nothing.
+    pub fn let_go_hold(&mut self, cx: &mut Context<Self>) {
+        if !self.hold && self.held.is_empty() {
+            return;
+        }
+        self.sync_hold(false);
+        cx.notify();
+    }
+
     /// The frame every row shares.
     ///
     /// One column, not two. There used to be a fixed 34px timestamp gutter down

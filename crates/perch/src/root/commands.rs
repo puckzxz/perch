@@ -5,6 +5,7 @@
 use gpui::{App, Context, IntoElement, KeyDownEvent, Window};
 use gpui_component::input::Input;
 
+use super::panes::pane_keys;
 use super::{pop_out, Page, RootView};
 use crate::channel_page;
 use crate::history_page;
@@ -20,6 +21,7 @@ impl RootView {
     /// a follows poll, a pane closing and every keystroke.
     pub(super) fn palette_entries(&self, cx: &App) -> Vec<palette::Entry> {
         let pop_out = pop_out::offered_here();
+        let keys = pane_keys(&self.slots);
         let watching: Vec<palette::OpenPane> = self
             .slots
             .iter()
@@ -46,6 +48,8 @@ impl RootView {
                 popped: self.stage.is_popped(&slot.key),
                 // A player to move, where the pop-out is offered at all.
                 can_pop_out: pop_out && slot.video().is_some(),
+                // What its maximize control offers, by the one answer.
+                maximize: self.stage.maximize_button(&slot.key, &keys),
             })
             .collect();
         palette::entries(
@@ -138,7 +142,7 @@ impl RootView {
             palette::Command::Watch(channel) => self.open_channel(channel, true, window, cx),
             palette::Command::Add(channel) => self.open_channel(channel, false, window, cx),
             palette::Command::Close(index) => self.close_slot(index, window, cx),
-            palette::Command::ChooseQuality(index) => self.choose_quality(index, cx),
+            palette::Command::ChooseQuality(index) => self.choose_quality(index, window, cx),
             // More's rows by name, down the route More takes, by the pane's
             // key: the same link, the same toast.
             palette::Command::CopyLink(index) => {
@@ -152,6 +156,17 @@ impl RootView {
             }
             palette::Command::PopIn(index) => {
                 self.pane_command(index, PaneAction::PopIn, window, cx)
+            }
+            // What the watch page shows, so from the browse page they bring
+            // it up: a pane given the page, or every pane, that nobody sees
+            // is a row that seemed to do nothing.
+            palette::Command::Maximize(index) => {
+                self.go_watch(cx);
+                self.pane_command(index, PaneAction::Maximize, window, cx)
+            }
+            palette::Command::ShowAllPanes => {
+                self.go_watch(cx);
+                self.show_all_panes(window, cx);
             }
             palette::Command::Videos {
                 login,
@@ -203,12 +218,14 @@ impl RootView {
     /// the bar: an open menu holds the bar up wherever the pointer is. From
     /// the browse page it goes back to watching first, with that pane the
     /// one the keys talk to, as a press on its tile would; on the watch page
-    /// that pane takes the keys. Any other pane's menu closes, since a menu
+    /// that pane takes the keys. Either way it is chosen (`choose`), so a
+    /// pane maximized away takes the page and has a bar to open the menu
+    /// over. Any other pane's menu closes, since a menu
     /// opened from here comes with no press elsewhere to dismiss the last.
     /// Nothing at all for a pane with no picture yet, which the palette
     /// offers no row for either: the menu would not open, so neither does
     /// the page change for it.
-    fn choose_quality(&mut self, index: usize, cx: &mut Context<Self>) {
+    fn choose_quality(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(slot) = self.slots.get(index) else {
             return;
         };
@@ -221,9 +238,9 @@ impl RootView {
         };
         let key = slot.key.clone();
         if self.page == Page::Watch {
-            self.active = Some(key);
+            self.choose(&key, window, cx);
         } else {
-            self.go_watch_pane(key, cx);
+            self.go_watch_pane(key, window, cx);
         }
         let others: Vec<_> = self
             .slots

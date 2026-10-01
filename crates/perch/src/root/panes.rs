@@ -1,28 +1,51 @@
 //! Where each pane is drawn, applied: the one funnel every change of a
-//! pane's state, of which panes there are, of the page and of what is popped
-//! out goes through ([`restage`](RootView::restage)), and the one way the
-//! main window reaches a pane's player
-//! ([`video_in_main`](RootView::video_in_main)).
+//! pane's state, of which panes there are, of the page, of what is popped
+//! out and of which pane is maximized goes through
+//! ([`restage`](RootView::restage)), and the one way the main window reaches
+//! a pane's player ([`video_in_main`](RootView::video_in_main)).
 //!
 //! The answer itself is `crate::stage`'s. This is the root holding it to
 //! what the slots are now: a popped pane that has closed or stopped comes
-//! home, and every player is told where it is drawn and which window's focus
-//! takes its keys back — and no player is told by anything else
-//! (`VideoView::set_place`), so the two cannot disagree.
+//! home, a maximize ends once its pane has gone or a popped pane comes home
+//! to a cell it would hide, and every player is told where it is drawn,
+//! which window's focus takes its keys back and what its maximize control
+//! offers — and no player is told by anything else (`VideoView::set_place`,
+//! `VideoView::set_maximize`), so the two cannot disagree.
+//!
+//! And the maximize itself, as the root drives it: giving a pane the watch
+//! page and showing every pane again
+//! ([`toggle_maximize`](RootView::toggle_maximize),
+//! [`show_all_panes`](RootView::show_all_panes)), and choosing a pane
+//! ([`choose`](RootView::choose)), which takes the maximize with it.
 
-use gpui::{App, Context, Entity, FocusHandle};
+use gpui::{App, Context, Entity, FocusHandle, Window};
 
 use super::{Page, RootView};
 use crate::motion;
-use crate::stage::Place;
+use crate::stage::{MaximizeButton, Place};
 use crate::video_view::VideoView;
 use crate::watch::{self, Showing, Slot, StreamState};
 
+/// Every pane's key, in the panes' order: what `crate::stage` is asked about
+/// the panes there are. A free function over the slots rather than a method,
+/// so it borrows them alone and the stage beside them can still be changed.
+pub(super) fn pane_keys(slots: &[Slot]) -> Vec<&str> {
+    slots.iter().map(|slot| slot.key.as_str()).collect()
+}
+
 impl RootView {
     /// Where the pane `key` names is drawn: its own window if it is popped,
-    /// and otherwise the watch grid or a mini-player tile, by the page.
+    /// and otherwise the watch grid or a mini-player tile, by the page — or
+    /// nowhere, on the watch page while another pane is maximized.
     pub(super) fn place_of(&self, key: &str) -> Place {
         self.stage.place(self.page == Page::Watch, key)
+    }
+
+    /// What the maximize control of the pane `key` names offers; see
+    /// `stage::MaximizeButton`. For a player being made (`Start::maximize`),
+    /// which `restage` then keeps told.
+    pub(super) fn maximize_button_of(&self, key: &str) -> MaximizeButton {
+        self.stage.maximize_button(key, &pane_keys(&self.slots))
     }
 
     /// The focus of the window the pane `key` names is drawn in: its
@@ -83,10 +106,13 @@ impl RootView {
     ///
     /// A popped pane that has closed, or stopped — offline, ended or failed
     /// — comes home: its window closes, deferred, and its main cell is where
-    /// what it offers next is drawn. Then each player hears its place and
-    /// its window's focus, and each pane off the screen starts its header
-    /// over, hidden. Every change of which panes there are, of their states,
-    /// of the page or of what is popped ends here.
+    /// what it offers next is drawn. A maximize ends once its pane has gone,
+    /// a lone pane is left, or a popped pane comes home (`Stage::retain`).
+    /// Then each player hears its place, its window's focus and its maximize
+    /// control, and each pane off the screen starts its header over, hidden,
+    /// and lets its chat go. Every change of which panes there are, of their
+    /// states, of the page, of what is popped or of what is maximized ends
+    /// here.
     ///
     /// And so does a pane coming home to a main window that draws none
     /// there: off the watch page with the mini player off. It is stopped,
@@ -97,9 +123,19 @@ impl RootView {
     /// whoever called this may go on to use the index of the pane it moved,
     /// and stopping a pane takes it out of `slots`. Bring back never gets
     /// here that way: it brings the watch page up first (`pop_in`).
+    ///
+    /// A maximize that ends here rather than through `maximize_changed`
+    /// brings back panes `sync_quality` left alone while they were put away,
+    /// whose cells may have grown meanwhile — a resize, a pane closed — so
+    /// each pane's quality is chosen again once this is done, through the
+    /// main window, which this is called without; after any pane stopped
+    /// above, so none is re-picked on its way out. A caller that chooses
+    /// again itself (`close_slot`) costs nothing more: a second look finds
+    /// the rendition already resolving (`wants_swap`).
     pub(super) fn restage(&mut self, cx: &mut Context<Self>) {
+        let was_maximized = self.stage.maximized().is_some();
         let slots = &self.slots;
-        let gone = self.stage.retain(|key| {
+        let gone = self.stage.retain(&pane_keys(slots), |key| {
             slots
                 .iter()
                 .any(|slot| slot.key == key && !stalled(&slot.state))
@@ -111,6 +147,15 @@ impl RootView {
             let root = cx.entity().downgrade();
             cx.defer(move |cx| {
                 let _ = root.update(cx, |this, cx| this.retire_homeless(cx));
+            });
+        }
+        if was_maximized && self.stage.maximized().is_none() {
+            let root = cx.entity().downgrade();
+            let main = self.main_window;
+            cx.defer(move |cx| {
+                let _ = main.update(cx, |_, window, cx| {
+                    let _ = root.update(cx, |this, cx| this.sync_quality(window, cx));
+                });
             });
         }
         self.sync_presentation(cx);
@@ -150,33 +195,138 @@ impl RootView {
         self.retire_slots(move |slot| popped.contains(&slot.key), cx);
     }
 
-    /// Tell every player where it is drawn, and in which window's focus; see
-    /// `VideoView::set_place`, which does nothing for a player already told.
+    /// Tell every player where it is drawn, in which window's focus, and
+    /// what its maximize control offers; see `VideoView::set_place`, which
+    /// does nothing for a player already told, and `VideoView::set_maximize`,
+    /// the control's mirror, which nothing else writes after `Start`.
     ///
-    /// Off the watch page, each pane's header over the picture also starts
-    /// over, hidden, as the player does its bar: the browse page never draws
-    /// it, and a fade that came back after frames without its element would
-    /// replay its last flip on the way back (see `motion::Fade::apply`). A
-    /// reveal still running goes with it. Where the pointer was is left
-    /// alone: it decides which pane takes the keys on the way back, and
-    /// `go_watch_pane` sets it for that. A popped pane's header is still
-    /// drawn on the watch page, over its cell, and is left as it is there.
+    /// Each pane whose cell is off the screen — every one off the watch
+    /// page, and on it every one but the maximized pane's while one is — also
+    /// has its header over the picture start over, hidden, as the player
+    /// does its bar: nothing draws it there, and a fade that came back after
+    /// frames without its element would replay its last flip on the way
+    /// back (see `motion::Fade::apply`). A reveal still running goes with
+    /// it. And its chat lets go of the rows it was holding back for a
+    /// pointer over it (`ChatView::let_go_hold`), which only its drawing
+    /// would otherwise do, so they cannot pile up for as long as it is
+    /// away. A popped pane's cell is still drawn on the watch page, its
+    /// header and chat with it, and is left as it is there while every pane
+    /// is shown; with another pane maximized its cell is off the screen too,
+    /// and goes the same way.
+    ///
+    /// And on the watch page, each pane whose cell is off the screen counts
+    /// as pointed at already (`Slot::hovered`), as on the way back from a
+    /// mini-player tile (`go_watch_pane`). Its probe is not drawn to keep
+    /// that true or false, and the grid comes back under a pointer that has
+    /// not moved however a maximize ends — `Z`, `Esc`, the maximized pane
+    /// popped out or closed, a popped pane coming home — so the rising edge
+    /// of whichever pane is now under it would take the keys from the pane
+    /// they were talking to. Off the watch page it is left alone: the way
+    /// back from a tile sets it for that.
     fn sync_presentation(&mut self, cx: &mut Context<Self>) {
         let watching = self.page == Page::Watch;
-        for slot in &mut self.slots {
-            let place = self.stage.place(watching, &slot.key);
+        let keys = pane_keys(&self.slots);
+        let cells = self.stage.cells(&keys);
+        let told: Vec<(Place, MaximizeButton, bool)> = keys
+            .iter()
+            .enumerate()
+            .map(|(index, key)| {
+                (
+                    self.stage.place(watching, key),
+                    self.stage.maximize_button(key, &keys),
+                    watching && cells.contains(&index),
+                )
+            })
+            .collect();
+        for (slot, (place, button, on_screen)) in self.slots.iter_mut().zip(told) {
             if let Some(view) = slot.video() {
                 let focus = self
                     .stage
                     .popped(&slot.key)
                     .map_or_else(|| self.focus.clone(), |popped| popped.focus.clone());
-                view.update(cx, |video, cx| video.set_place(place, focus, cx));
+                view.update(cx, |video, cx| {
+                    video.set_place(place, focus, cx);
+                    video.set_maximize(button, cx);
+                });
             }
-            if !watching {
+            if !on_screen {
+                if watching {
+                    slot.hovered = true;
+                }
                 slot.header = motion::Fade::hidden();
                 slot.revealed = false;
+                if let Some(chat) = &slot.chat {
+                    chat.update(cx, |chat, cx| chat.let_go_hold(cx));
+                }
             }
         }
+    }
+
+    /// Give the pane `key` names the whole watch page, chat and all, or, on
+    /// the pane that has it, show every pane again: `Z` on the active pane,
+    /// its bar's control or More's row, and the palette's `Maximize …`. What
+    /// a press does is what the control offers (`Stage::toggle_maximize`),
+    /// so nothing for a lone pane or one in a window of its own.
+    ///
+    /// The other panes are drawn as nothing while it lasts, and play on as
+    /// they were, with their sound; see `crate::stage` for why nothing.
+    pub(super) fn toggle_maximize(
+        &mut self,
+        key: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.stage.toggle_maximize(key, &pane_keys(&self.slots)) {
+            self.maximize_changed(window, cx);
+        }
+    }
+
+    /// Show every pane again, if one has the watch page: `Esc`, on its way
+    /// off the page, and the palette's `Show all panes`. Returns whether one
+    /// had, so `Esc` stops there.
+    pub(super) fn show_all_panes(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if !self.stage.unmaximize() {
+            return false;
+        }
+        self.maximize_changed(window, cx);
+        true
+    }
+
+    /// Make the pane `key` names the one the keys talk to, by choice: its
+    /// number, `Tab`, its mini-player tile, the palette's `Choose quality
+    /// for …` row, bringing it back from its window, or opening what it
+    /// already plays. While a pane is maximized the chosen one takes the
+    /// maximize (`Stage::choose`), so `Space`, `M` and `Ctrl+W` always act
+    /// on the pane on the page — or on a popped one, in its own window —
+    /// never on one drawn nowhere. A pointer coming into a pane, or a press
+    /// on one, is no choice to make here: only a pane on the page can be
+    /// pointed at.
+    pub(super) fn choose(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.active = Some(key.to_string());
+        if self.stage.choose(key) {
+            self.maximize_changed(window, cx);
+        }
+        cx.notify();
+    }
+
+    /// The pane with the watch page changed, or none has it any more: the
+    /// keys follow the pane given it, and every player hears where it is
+    /// drawn now (`restage`), each pane put away letting go of what it was
+    /// doing. Each of those counts as pointed at already until it is drawn
+    /// again (`sync_presentation`), so the grid coming back under a still
+    /// pointer gives the keys to nobody.
+    ///
+    /// Then each pane's quality is chosen again: the maximized pane is
+    /// measured by the whole body now (`pane_height_for`), and moves up in
+    /// place if a sharper rendition fits; one shown in the grid again has
+    /// shrunk, which never changes what plays, and the others come back to
+    /// cells that may have grown while they were away.
+    fn maximize_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(key) = self.stage.maximized().map(str::to_string) {
+            self.active = Some(key);
+        }
+        self.restage(cx);
+        self.sync_quality(window, cx);
     }
 }
 

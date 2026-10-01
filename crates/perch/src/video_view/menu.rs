@@ -2,8 +2,8 @@
 //! opens in, and its rows.
 //!
 //! Two of them: the quality, and More — what else there is to do with the
-//! pane, which also carries the quality when the bar is too narrow for its
-//! pill. Hand-rolled rather than gpui-component's `DropdownMenu`, which
+//! pane, which also carries the quality and the maximize control when the
+//! bar is too narrow for them. Hand-rolled rather than gpui-component's `DropdownMenu`, which
 //! serves only that library's own `Button`. One is open at a time, all of
 //! them open from the bar's right-hand cluster (`bar::button_row`), and `Esc`
 //! closes whichever it is, through `RootView::on_go_browse`. The rows act on
@@ -19,7 +19,7 @@ use gpui::{
     MouseButton, MouseDownEvent, SharedString, Stateful, Window,
 };
 
-use super::{VideoEvent, VideoView};
+use super::{bar, VideoEvent, VideoView};
 use crate::seek_bar;
 use crate::stage::Place;
 use crate::target;
@@ -32,7 +32,8 @@ pub enum Menu {
     /// The renditions this stream offers, under the settings' choice.
     Quality,
     /// The rest: pop the pane out, open it on twitch.tv, copy its link —
-    /// and the quality, while the bar has no room for its pill.
+    /// and the quality and the maximize control, while the bar has no room
+    /// for them.
     More,
 }
 
@@ -177,10 +178,12 @@ impl VideoView {
         rows
     }
 
-    /// More: the quality first while its pill has folded, then `Pop out`,
-    /// then the pane's way out to twitch.tv and its link. The last three are
-    /// the root's to do — it knows the pane, its windows, and the clipboard
-    /// and the browser are the app's — so they go up as `VideoEvent::Pane`.
+    /// More: what the bar has folded away first — the quality while its
+    /// pill has, then the maximize control once it has too — ruled off from
+    /// the rest; then `Pop out`, then the pane's way out to twitch.tv and its
+    /// link. All but the quality are the root's to do — it knows the panes,
+    /// its windows, and the clipboard and the browser are the app's — so they
+    /// go up as `VideoEvent::Pane`.
     ///
     /// A recording opens and copies at the moment it is at, and says so:
     /// `Copy link at 1:02:03`, from its first whole second on, by the rule
@@ -188,21 +191,38 @@ impl VideoView {
     /// drawn, which a playing picture does with every frame, so the time on
     /// the row is the time a press copies.
     fn more_rows(&self, cx: &mut Context<Self>) -> Vec<Stateful<Div>> {
-        let mut rows = Vec::new();
+        let mut folded = Vec::new();
         if !self.fit.quality {
-            rows.push(
-                menu_row(
-                    "more-quality",
-                    format!("Quality · {}", self.qualities.playing).into(),
-                    false,
-                    // In place of this menu, as if from the pill.
-                    |this, _window, cx| this.open_menu(Menu::Quality, cx),
-                    cx,
-                )
-                .border_b_1()
-                .border_color(theme::border()),
-            );
+            folded.push(menu_row(
+                "more-quality",
+                format!("Quality · {}", self.qualities.playing).into(),
+                false,
+                // In place of this menu, as if from the pill.
+                |this, _window, cx| this.open_menu(Menu::Quality, cx),
+                cx,
+            ));
         }
+        // The bar's maximize control, in the words it has there, while the
+        // bar has no room for it (`bar::fit` folds it after the pill).
+        if let Some(control) = bar::maximize_control(self.maximize).filter(|_| !self.fit.maximize) {
+            folded.push(menu_row(
+                control.row_id,
+                control.words.into(),
+                false,
+                |_this, _window, cx| cx.emit(VideoEvent::Pane(PaneAction::Maximize)),
+                cx,
+            ));
+        }
+        let ruled = folded.len();
+        let mut rows: Vec<Stateful<Div>> = folded
+            .into_iter()
+            .enumerate()
+            .map(|(index, row)| {
+                row.when(index + 1 == ruled, |row| {
+                    row.border_b_1().border_color(theme::border())
+                })
+            })
+            .collect();
         // The pane's picture into a window of its own, where the pop-out is
         // offered. Only ever on a pane: no other place draws this menu
         // (`open_menu`), and a popped pane's bar has Bring back instead. The

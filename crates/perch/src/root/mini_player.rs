@@ -335,7 +335,7 @@ impl RootView {
             )
             .on_click(cx.listener(move |this, _event, window, cx| {
                 this.focus.focus(window);
-                this.go_watch_pane(key.clone(), cx);
+                this.go_watch_pane(key.clone(), window, cx);
             }))
     }
 

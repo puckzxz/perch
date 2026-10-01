@@ -486,6 +486,10 @@ impl RootView {
     /// then brings the watch page up with it. Bring back is asking to see
     /// the pane, not to stop it.
     ///
+    /// Chosen as it comes (`choose`), so while another pane has the watch
+    /// page, the pane brought back takes it rather than coming home to be
+    /// drawn nowhere.
+    ///
     /// Its quality is chosen for its cell again: the cell may be taller than
     /// the window it played in, and moving up is a swap in place, with no
     /// black (`sync_quality`).
@@ -497,7 +501,7 @@ impl RootView {
             self.go_watch(cx);
         }
         self.come_home(key, cx);
-        self.active = Some(key.to_string());
+        self.choose(key, window, cx);
         self.sync_quality(window, cx);
         cx.notify();
     }
@@ -517,7 +521,8 @@ impl RootView {
     /// stage too, so a window still on its way to opening is closed the
     /// moment it arrives (`pop_out_opened`).
     pub(crate) fn close_pop_outs(&mut self, cx: &mut Context<Self>) {
-        for (_, popped) in self.stage.retain(|_| false) {
+        let panes = super::panes::pane_keys(&self.slots);
+        for (_, popped) in self.stage.retain(&panes, |_| false) {
             close_window(popped.window, cx);
         }
     }

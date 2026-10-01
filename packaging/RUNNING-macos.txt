@@ -105,6 +105,7 @@ Getting around
   Up/Down   Volume                   ⌘0         Reset the pane sizes
   ⌘W        Close this pane          Esc        Back to browsing, or to watching
   ⌥Left     Back                     ⌥Right     Forward
+  Z         Maximize, or show all panes
 
 Player keys act on the pane you last pointed at or clicked. While the cursor
 is in a text box the keys stand aside for it, all but ⌘K, ⌘, and ⌘R, which
@@ -118,6 +119,10 @@ works name the key in their tooltips; the quality and More have none. A
 channel that is off offers its last broadcast, and starts by itself when
 it comes back on if you follow it; a stream that ends offers its
 recording from the start.
+
+With more than one pane open, Z gives the one you are on the whole window,
+chat and all; the others keep playing, with their sound, out of sight, and
+1 to 4 or Tab hands the window to another. Z or Esc shows them all again.
 
 Back and forward go through the pages you have been on, the way a browser
 does. The mouse's side buttons and the arrows in the bar across the top do

@@ -611,6 +611,11 @@ pub enum PaneAction {
     /// back, the `Bring back` on the pane's own cell, its header's icon, `P`
     /// in either window, and the palette's row.
     PopIn,
+    /// Give it the whole watch page, chat and all, or, on the pane that has
+    /// it, show every pane again: its bar's maximize control, More's row
+    /// once that has folded, and the palette's `Maximize …`. `Z` does the
+    /// same for the active pane; see `RootView::toggle_maximize`.
+    Maximize,
     /// Turn `Start when they go live` on or off: the switch on a stopped
     /// live pane.
     StartWhenLive(bool),
@@ -1045,7 +1050,17 @@ fn pane<V: 'static>(
 /// order, and `panes` is what the app knows about each of them, in the same
 /// order — see [`PaneInfo`]. Everything a pane sends back names it by its
 /// key, and `active` is the key of the pane the keys talk to, so a page
-/// drawing only some of the slots cannot act on the wrong one.
+/// drawing only some of the slots cannot act on the wrong one — the
+/// maximized pane alone, while one has the page (`stage::Stage::cells`).
+///
+/// No element from here down to a pane's cell carries an id — not the
+/// grid, its rows or a cell — and nothing inside one is keyed by
+/// where it sits or by what is maximized, only by the pane's key
+/// ([`pane_id`]). An element's state in gpui is found by the ids of every
+/// ancestor that has one, so a pane given the whole page in a grid of one,
+/// or put back among the others, is the same element as before: its fades,
+/// its hover and its player go on as they were, rather than every pane
+/// mounting afresh and replaying its fades.
 /// `window_hovered` is `window.is_window_hovered()`, which the panes'
 /// headers give their tooltips by; see `header::pane_header`. `cache` is
 /// the app's image cache, for what a pane's status screen shows.
@@ -1075,6 +1090,7 @@ pub fn page<V: 'static>(
         mark_active: slots.len() > 1,
     };
 
+    // No ids on the grid, its rows or its cells; see above.
     let mut lines = div()
         .size_full()
         .flex()

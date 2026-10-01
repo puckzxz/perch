@@ -879,6 +879,29 @@ mod tests {
         }
     }
 
+    /// A pane given the watch page is a grid of one cell, however many panes
+    /// there are: the whole body, to draw in and to choose its quality for,
+    /// with no seams to take out.
+    #[test]
+    fn the_maximized_pane_has_the_whole_body() {
+        for aspect in [WIDE, ULTRAWIDE, PORTRAIT] {
+            let body = body_of(aspect);
+            let maximized = Grid::of(body, 1);
+            assert_eq!((maximized.rows, maximized.cols), (1, 1));
+            assert_eq!(maximized.cell_width, body.width);
+            assert_eq!(maximized.cell_height, body.height);
+            assert_eq!(maximized.share_height, body.height);
+            for panes in 2..=4 {
+                let grid = Grid::of(body, panes);
+                assert!(
+                    maximized.cell_width * maximized.cell_height
+                        > grid.cell_width * grid.cell_height,
+                    "{panes} panes at {aspect}: the maximized cell is no larger"
+                );
+            }
+        }
+    }
+
     /// The shape is cut from the number of cells handed in, and each cell is
     /// its share of the body less the seams between them.
     #[test]

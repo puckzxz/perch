@@ -49,7 +49,7 @@ macro_rules! icon {
 /// Anything not on this list is answered `None`, which is exactly what the app
 /// did for all of them until now — so an icon nobody drew degrades to the
 /// blank it already was rather than to a crash.
-const ICONS: [(&str, &[u8]); 30] = [
+const ICONS: [(&str, &[u8]); 32] = [
     icon!("arrow-left"),
     icon!("arrow-right"),
     icon!("chat"),
@@ -67,6 +67,8 @@ const ICONS: [(&str, &[u8]); 30] = [
     icon!("inbox"),
     icon!("minus"),
     icon!("more"),
+    icon!("pane-grid"),
+    icon!("pane-maximize"),
     icon!("panel-left"),
     icon!("pause"),
     icon!("pin"),
@@ -138,6 +140,12 @@ perch_icons! {
     More => "more",
     PopIn => "pop-in",
     PopOut => "pop-out",
+    // A pane given the watch page, and the grid back: the bar's maximize
+    // control, which shows what a press leaves on the page. Not the
+    // caption's `Maximize`, which is the window's, nor `Expand`, the mini
+    // player's way back, nor fullscreen's corners.
+    PaneMaximize => "pane-maximize",
+    PaneGrid => "pane-grid",
 }
 
 /// What `Application::new().with_assets(..)` is handed.

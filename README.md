@@ -98,9 +98,10 @@ Neither is any use when you are not holding the mouse.
 | `← / →` | Skip ten seconds in a past broadcast |
 | `1 – 4` | Talk to that pane |
 | `Tab` | The next pane |
+| `Z` | Give this pane the whole window, chat and all, or show every pane again |
 | `Ctrl+W` | Close this pane |
 | `P` | Pop this pane out into a window of its own, on top of other apps, or bring it back; on the browse page, every pane in the mini player (Windows) |
-| `Esc` | Back to browsing, or back to watching |
+| `Esc` | Back to browsing, or back to watching — after showing every pane again, if one has the window |
 | `Alt+←` | Back to where you were before — the mouse's back button too |
 | `Alt+→` | Forward again — the mouse's forward button too |
 | `Ctrl+F` | Search, from either page |
@@ -132,18 +133,21 @@ after a search. A search typed on the watch page leaves it for the results, the
 way `Esc` does. The same list is in the settings sheet. Double-clicking the
 video is fullscreen too. `Esc` from the watch page goes back to whichever tab, category
 or channel you left the browse page on — and first closes a pane's open menu,
-if there is one. A playing pane's quality menu is in the palette as well:
+if there is one, and then shows every pane again, if one has the window. A
+playing pane's quality menu is in the palette as well:
 type `quality` and some of the pane's name, and `Choose quality for …` opens
 it. So are the two things under the bar's **More**, as `Copy link to …` and
-`Open … on twitch.tv`.
+`Open … on twitch.tv`, and the maximize, as `Maximize …` and `Show all
+panes`.
 
 The bar over a playing pane has play, the speaker — crossed out whenever
 the pane is silent, Mute all included — and the volume at the left, and at
-the right the quality, chat, fullscreen and **More**, which has **Pop out**
-on Windows, **Open on twitch.tv** and **Copy link**. A narrow pane drops the
-volume's figure first, then its slider, then folds the quality into More. A
-past broadcast with no chat to replay shows the chat icon crossed out, with
-nothing to press.
+the right the quality, with two panes or more the maximize, then chat,
+fullscreen and **More**, which has **Pop out** on Windows, **Open on
+twitch.tv** and **Copy link**. A narrow pane drops the volume's figure
+first, then its slider, then folds the quality into More, and the maximize
+after it. A past broadcast with no chat to replay shows the chat icon
+crossed out, with nothing to press.
 
 Back and forward work the way they do in a browser. `Alt+←` and `Alt+→`, the
 arrows in the title bar or the mouse's side buttons walk back through the
@@ -205,6 +209,28 @@ the top in the same pane once Twitch lists it, **Try again** and **Close**. The
 last broadcast and the recording need a sign-in to be found. Chat stays
 connected either way, which is where the goodnights are, until a recording
 takes the pane's place and brings its own chat replay.
+
+### One pane, the whole window
+
+With two panes or more, `Z` or the maximize on a pane's bar gives that pane
+the whole of the watch page, its chat included, as if it were the only one.
+The others are not drawn at all — no strip of names, no thumbnails, which
+would take room from the pane you chose — and go on playing as they were,
+each with its own sound. `1` to `4` and `Tab` move the maximize to the pane
+they choose, so the keys always act on the pane you can see, and so does
+picking a pane's quality from the palette, bringing one back from its own
+window or opening one that is already open. `Z` or the same control again
+shows every pane, back where it was, and so does `Esc`, before a second
+`Esc` leaves the page; the palette has `Maximize …` and `Show all panes`
+too.
+
+Adding another pane, closing or popping out the one maximized, being left
+with a single pane, or a pane in its own window coming back because its
+stream stopped shows them all again. Leaving the watch page keeps the
+maximize for when you come back, and the mini player shows every pane
+meanwhile. The pane given the window has its quality chosen for its new
+size, moving up to a sharper rendition with no black where one fits; the
+others keep theirs, and the grid coming back lowers none.
 
 ### A pane in a window of its own
 

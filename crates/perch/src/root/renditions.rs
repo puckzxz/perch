@@ -29,6 +29,7 @@ use streamlink::{quality, StreamEvent};
 use super::streams::{self, How, NO_PLAYLIST};
 use super::RootView;
 use crate::layout;
+use crate::stage::Place;
 use crate::video::{StartOptions, VideoStream};
 use crate::video_view::SWAP_LEAD;
 use crate::watch::{Restart, Slot, StreamState};
@@ -154,18 +155,29 @@ impl RootView {
     /// whichever page is up: a mini-player tile is not one of the sizes a
     /// quality is chosen for. The cell's share of the body's height, seams
     /// included (`Grid::share_height`, which says why), at the main window's
-    /// scale, which is what `window` always is.
+    /// scale, which is what `window` always is. The maximized pane's cell is
+    /// the whole body, the one cell that grid has while it lasts.
     ///
-    /// Except a pane in a window of its own, which is measured by that
+    /// Except a pane maximized away, which has no cell in that grid: it is
+    /// measured by the grid it comes back to, every pane's, so the maximize
+    /// never moves it, and showing every pane again moves none back down.
+    ///
+    /// And a pane in a window of its own, which is measured by that
     /// window: the picture's height there, in that window's own physical
     /// pixels (`PoppedOut::height`), which its window keeps the root told
     /// of. Its cell in the main window says only where it will come back to.
     pub(super) fn pane_height_for(&self, key: &str, window: &Window) -> u32 {
         let own_window = self.stage.popped(key).map(|popped| popped.height);
-        measured_height(
-            own_window,
-            self.grid(window).share_height * window.scale_factor(),
-        )
+        let maximized_away = self
+            .stage
+            .maximized()
+            .is_some_and(|maximized| maximized != key);
+        let grid = if maximized_away {
+            layout::Grid::of(self.body(window), self.slots.len())
+        } else {
+            self.grid(window)
+        };
+        measured_height(own_window, grid.share_height * window.scale_factor())
     }
 
     /// Choose each pane's quality again, for the size it is now — and move
@@ -191,13 +203,18 @@ impl RootView {
     /// and its log line says the height it was measured at. A pane in a
     /// window of its own is measured by that window, whose resizes call this
     /// as the main window's do (`pop_out_moved`); a small pop-out keeps what
-    /// it played at home, by the same upwards-only rule.
+    /// it played at home, by the same upwards-only rule. A maximized pane is
+    /// measured by the whole body, and so moves up when it is given the page
+    /// (`maximize_changed`); the panes maximized away are left until the
+    /// grid comes back, when this runs again for them — from
+    /// `maximize_changed`, or from `restage` for a maximize that ends there.
     pub(super) fn sync_quality(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let restart: Vec<(usize, u32)> = self
             .slots
             .iter()
             .enumerate()
             .filter(|(_, slot)| slot.quality_override.is_none())
+            .filter(|(_, slot)| self.place_of(&slot.key) != Place::Offstage)
             .filter_map(|(index, slot)| {
                 let pane_height = self.pane_height_for(&slot.key, window);
                 let view = slot.video()?.read(cx);
@@ -447,6 +464,18 @@ mod tests {
             "the least a pane asks for"
         );
         assert_eq!(measured_height(None, 540.0), 540, "a pane at home");
+    }
+
+    /// The maximized pane is measured by the whole body, the grid's one
+    /// cell while it lasts, and so asks for more than its cell among four
+    /// did: being given the page is a re-pick upward.
+    #[test]
+    fn a_maximized_pane_is_measured_by_the_whole_body() {
+        let body = layout::Body::of(gpui::size(gpui::px(1600.0), gpui::px(900.0)), 0.0, 0.0);
+        let whole = layout::Grid::of(body, 1).share_height;
+        let cell = layout::Grid::of(body, 4).share_height;
+        assert_eq!(whole, body.height);
+        assert!(measured_height(None, whole) > measured_height(None, cell));
     }
 
     /// Only a picture that covers its pane is kept through a rendition

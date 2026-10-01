@@ -38,7 +38,11 @@
 //! pane's header up over its picture for a moment (`RootView::reveal_header`),
 //! when chat is hidden and the header lives there. Nothing the pane does
 //! answers "which pane are the keys talking to now?", and the pointer cannot
-//! either: pointing at a pane is what makes it the active one.
+//! either: pointing at a pane is what makes it the active one. While `Z` has
+//! given one pane the whole watch page, `1`–`4` and `Tab` take the page to
+//! the pane they choose (`RootView::choose`), so the keys never talk to a
+//! pane that is drawn nowhere; and `Esc` shows every pane again before it
+//! leaves the page.
 
 use gpui::{actions, Action, App, KeyBinding};
 
@@ -61,6 +65,8 @@ actions!(
         ClosePane,
         /// Leave the watch page, keeping the streams playing, with their
         /// sound, in the mini player — or stopping them, with it turned off.
+        /// Once whatever is in the way has gone: an open menu, then a pane
+        /// given the whole page, which shows every pane again first.
         GoBrowse,
         /// Open the settings sheet, or close it if it is already open.
         ToggleSettings,
@@ -98,6 +104,10 @@ actions!(
         /// pane the mini player shows, or every one out back. Windows only
         /// for now; see `root::pop_out`.
         TogglePopOut,
+        /// Give the active pane the whole watch page, chat and all, or show
+        /// every pane again from the pane that has it. The others are drawn
+        /// as nothing meanwhile, and play on; see `crate::stage`.
+        ToggleMaximize,
     ]
 );
 
@@ -273,6 +283,10 @@ fn bindings() -> Vec<KeyBinding> {
         // which a stray press would turn into video jumping between windows.
         KeyBinding::new("p", TogglePopOut, Some(&watch)),
         KeyBinding::new("p", TogglePopOut, Some(&browse)),
+        // The active pane given the whole page, or every pane back. The
+        // watch page's alone: the browse page draws every pane as a tile,
+        // and a pane in a window of its own is not on the page to fill it.
+        KeyBinding::new("z", ToggleMaximize, Some(&watch)),
         // The pop-out's own: the player's keys, `P` back, and `Ctrl+W`.
         KeyBinding::new("space", TogglePlayback, Some(&pop_out)),
         KeyBinding::new("m", ToggleMute, Some(&pop_out)),
@@ -373,7 +387,7 @@ macro_rules! alt {
 ///
 /// Back and forward are two rows rather than one `Alt+← / →`: the key column
 /// is sized for the longest label in it, and that one would not fit.
-pub const SHORTCUTS: [(&[&str], &str, &str); 19] = [
+pub const SHORTCUTS: [(&[&str], &str, &str); 20] = [
     (&["space"], "Space", "Pause or resume"),
     (&["m"], "M", "Mute or unmute"),
     (&["c"], "C", "Show or hide this chat"),
@@ -383,6 +397,7 @@ pub const SHORTCUTS: [(&[&str], &str, &str); 19] = [
     (&["left", "right"], "← / →", "Skip 10 s in a past broadcast"),
     (&PANE_KEYS, "1 – 4", "Talk to that pane"),
     (&["tab", "shift-tab"], "Tab", "The next pane"),
+    (&["z"], "Z", "Give this pane the window, or show them all"),
     (&["secondary-w"], secondary!("W"), "Close this pane"),
     (
         &["p"],
@@ -467,6 +482,8 @@ hints! {
     // A pane header's pop-out and Bring back, and the pop-out's Bring back,
     // on its bar.
     PopOut => "p" as TogglePopOut,
+    // The bar's maximize control, as `Maximize` and as `Show all panes`.
+    Maximize => "z" as ToggleMaximize,
 }
 
 impl Hint {
@@ -500,7 +517,7 @@ mod tests {
     /// symptom is "the key does nothing", which is a poor thing to debug.
     #[test]
     fn every_binding_and_every_context_parses() {
-        assert_eq!(bindings().len(), 42);
+        assert_eq!(bindings().len(), 43);
         for context in [
             CONTEXT_WATCH,
             CONTEXT_BROWSE,
@@ -573,6 +590,7 @@ mod tests {
             ("1", TypeId::of::<ActivatePane>()),
             ("tab", TypeId::of::<NextPane>()),
             ("escape", TypeId::of::<GoBrowse>()),
+            ("z", TypeId::of::<ToggleMaximize>()),
         ] {
             assert!(
                 !fires_watching(keystroke, action),
@@ -747,6 +765,35 @@ mod tests {
         }
         assert!(!fires_in(&[CONTEXT_MODAL]));
         assert!(!fires_in(&[CONTEXT_SHEET]));
+    }
+
+    /// `Z` gives the active pane the watch page, and only there: not on the
+    /// browse page, which draws every pane as a tile, not in a pop-out,
+    /// whose pane is not on the page, and not typed into a text box.
+    #[test]
+    fn z_maximizes_on_the_watch_page_alone() {
+        use std::any::TypeId;
+
+        let keymap = gpui::Keymap::new(bindings());
+        let fires_in = |context: &[&str]| {
+            let context: Vec<KeyContext> = context
+                .iter()
+                .map(|context| KeyContext::parse(context).unwrap())
+                .collect();
+            let (matched, _) =
+                keymap.bindings_for_input(&[Keystroke::parse("z").unwrap()], &context);
+            matched.iter().any(|binding| {
+                binding.action().as_any().type_id() == TypeId::of::<ToggleMaximize>()
+            })
+        };
+        assert!(fires_in(&[CONTEXT_WATCH]));
+        assert!(
+            !fires_in(&[CONTEXT_WATCH, "Input"]),
+            "a z typed into the search box is the box's"
+        );
+        for context in [CONTEXT_BROWSE, CONTEXT_POPOUT, CONTEXT_MODAL, CONTEXT_SHEET] {
+            assert!(!fires_in(&[context]), "{context}");
+        }
     }
 
     /// The listing is for humans, so it is not derived from the bindings — but

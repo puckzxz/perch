@@ -74,9 +74,9 @@ App modules:
 | `instance/` | one perch per settings file: the claim, and a later launch handing its arguments to the running one — a named pipe on Windows, `flock` and a socket on Unix |
 | `launch.rs` | what a launch's arguments ask for, read the one way at startup and on a handover (pure, tested) |
 | `trail.rs` | back and forward: the places behind and ahead, what a step passes over, and forgetting a place that is gone (pure, tested) |
-| `stage.rs` | where each pane is drawn — a pane, a mini-player tile, or a window of its own (`Place`) — and which panes are popped out (`Stage`): the one owner of the answer both windows ask before drawing a player (pure, tested) |
+| `stage.rs` | where each pane is drawn — a pane, a mini-player tile, a window of its own, or nowhere while another pane has the watch page (`Place`) — which panes are popped out and which one is maximized (`Stage`), the cells the watch grid draws (`cells`) and what a pane's maximize control offers (`MaximizeButton`): the one owner of the answer both windows ask before drawing a player (pure, tested) |
 | `os_window.rs` | what Perch asks of a window that gpui does not: its platform handle, and keeping a pop-out above every other app (`keep_on_top`, Windows only) |
-| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams` (opening, restarting, closing, and `replace_with_video`, a recording swapped in for a live pane in place), `renditions` (what each pane plays, and when it restarts: the quality chosen against each pane's own height, `pane_height_for`, the upward re-pick when the grid changes, `sync_quality`, a pick from the pane's own menu, and how each changes what plays, `change_rendition` — beside a picture that covers the pane, to take over in place, and cold otherwise; and the root's half of that swap: what a start resolving beside a pane does with its events, `pending_event`, and what the pane keeps once its player has taken over or been given up on, `on_swapped` and `on_swap_failed`; tested), `panes` (where each pane is drawn, applied: `restage`, the one funnel every change of a pane's state, of which panes there are, of the page and of what is popped out ends in; `set_slot_state`, the only write of a pane's state, which a test holds the root to; `video_in_main`, the only way the main window reaches a player, which a test holds the mini player and the pages to), `pop_out` (a pane's picture in a window of its own, on top of other apps: the `PopOut` view, opening and closing it through `cx.defer`, `to_root`, the only way back to the root from it, and `offered`, Windows only), `broadcasts` (what a stopped live pane asks about its channel's past broadcasts, and whether it may offer to start by itself), `pane_actions` (what a pane asks for, by its key: a press on it or one of its controls, which takes the keys back for the root first, and its player's requests; the moment a pane key brings a pane's header up over its picture; and `run_guard`, which swallows the rest of a double-click whose first press took a player out from under the pointer — More's `Pop out`, the mini player's — where the player's own guard cannot follow), `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `prefs`, `recommended` (the rail's Recommended group: when to ask the worker, what its answer becomes, and the hooks that call it), `chrome` (pills, toasts, the rail), `mini_player` (what plays on while you browse, in the corner of the page), `title_bar` (the bar Perch draws across the top of the window — the rail button, back and forward, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`) |
+| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams` (opening, restarting, closing, and `replace_with_video`, a recording swapped in for a live pane in place), `renditions` (what each pane plays, and when it restarts: the quality chosen against each pane's own height, `pane_height_for`, the upward re-pick when the grid changes, `sync_quality`, a pick from the pane's own menu, and how each changes what plays, `change_rendition` — beside a picture that covers the pane, to take over in place, and cold otherwise; and the root's half of that swap: what a start resolving beside a pane does with its events, `pending_event`, and what the pane keeps once its player has taken over or been given up on, `on_swapped` and `on_swap_failed`; tested), `panes` (where each pane is drawn, applied: `restage`, the one funnel every change of a pane's state, of which panes there are, of the page, of what is popped out and of what is maximized ends in; `set_slot_state`, the only write of a pane's state, which a test holds the root to; `video_in_main`, the only way the main window reaches a player, which a test holds the mini player and the pages to; and the maximize as the root drives it, `toggle_maximize`, `show_all_panes`, and `choose`, which takes it to the pane chosen), `pop_out` (a pane's picture in a window of its own, on top of other apps: the `PopOut` view, opening and closing it through `cx.defer`, `to_root`, the only way back to the root from it, and `offered`, Windows only), `broadcasts` (what a stopped live pane asks about its channel's past broadcasts, and whether it may offer to start by itself), `pane_actions` (what a pane asks for, by its key: a press on it or one of its controls, which takes the keys back for the root first, and its player's requests; the moment a pane key brings a pane's header up over its picture; and `run_guard`, which swallows the rest of a double-click whose first press took a player out from under the pointer — More's `Pop out`, the mini player's — where the player's own guard cannot follow), `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `prefs`, `recommended` (the rail's Recommended group: when to ask the worker, what its answer becomes, and the hooks that call it), `chrome` (pills, toasts, the rail), `mini_player` (what plays on while you browse, in the corner of the page), `title_bar` (the bar Perch draws across the top of the window — the rail button, back and forward, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`) |
 | `target.rs` | what a typed or pasted thing means: a login, or a twitch.tv link to a channel or a recording; `link`, its inverse and the one place a twitch.tv URL is written, and `moment`, the second a link to a recording starts at (pure, tested) |
 | `browse.rs` | the picker page: following, popular, categories, search; which of them is on screen (`Discovery::place`) and which lists are still being waited on |
 | `channel_page.rs` | one channel's past broadcasts, and when each was; the recording card both pages use, and a stopped pane too; a recording's poster, and `archive_of`, which finds the recording of a broadcast that just ended (tested) |
@@ -85,10 +85,10 @@ App modules:
 | `watch/header.rs` | a pane's header — name, numbers, what is on, `muted`/`paused`, the pop-out icon that turns into Bring back, and the × — each icon naming its key — and `Placement`, the one rule for where it goes: the chat panel, or over the picture with no chat on screen (tested) |
 | `watch/status.rs` | a pane with no picture: `Showing`, the one reading of its state that the pane's sentence and the mini player's word both come from, and the screen drawn from it under the player — a starting pane's poster, a stopped one's next steps and what room it has for them (`next_up_room`), and `Elsewhere`, a pane whose picture is in a window of its own, with `Bring back` (tested) |
 | `layout.rs` | derives grid shape from window aspect, as `Grid::of`, the one grid the watch page, the divider drag and each pane's quality read; `quality_height`, the height a pane asks a rendition for; the page's `Body`, the title bar's height and drag edge, and the mini player's tiles, how far in it floats clear of the scrollbar, and the `Room` a browse list leaves for it; where a pop-out opens, stacked clear of where the open ones really are (`pop_out_bounds`) (pure, tested) |
-| `video_view.rs` | the player element: its sound, its hover, the picture; drawn as a pane, a mini-player tile or in a pop-out (`stage::Place`), moved between them only by `set_place`, and belonging to no window |
+| `video_view.rs` | the player element: its sound, its hover, the picture; drawn as a pane, a mini-player tile, in a pop-out or not at all while another pane is maximized (`stage::Place`), moved between them only by `set_place`, and belonging to no window |
 | `video_view/swap.rs` | a rendition swapped in place: the new stream started beside the one on screen inside the same view, held to it by `align` (tested) and promoted once it has a picture and, on a recording, has caught up; `route`, the one rule a stream's frame wakes and its streamlink events reach the right start by (tested) |
-| `video_view/bar.rs` | the control bar over a playing picture: the seek row on a recording, the icons and their key-naming tooltips, what fits at the pane's width (`fit`, tested), the one anchor menus open from; a pop-out's own right-hand end, Bring back and Close |
-| `video_view/menu.rs` | the bar's menus, the quality and More (with `Pop out` where the pop-out is offered): which is open (`Menu`, one at a time), the box, rows that act on the press (tested), and `run_guard`, which swallows the rest of a double-click a row took (tested) — after `Pop out`, which takes the player out of the window, the root's `run_guard` does |
+| `video_view/bar.rs` | the control bar over a playing picture: the seek row on a recording, the icons and their key-naming tooltips, the maximize control (`maximize_control`), what fits at the pane's width (`fit`, tested — the maximize folds into More after the quality pill), the one anchor menus open from; a pop-out's own right-hand end, Bring back and Close |
+| `video_view/menu.rs` | the bar's menus, the quality and More (with the maximize once the bar has folded it, and `Pop out` where the pop-out is offered): which is open (`Menu`, one at a time), the box, rows that act on the press (tested), and `run_guard`, which swallows the rest of a double-click a row took (tested) — after `Pop out`, which takes the player out of the window, the root's `run_guard` does |
 | `loudness.rs` | one pane's level and the Mute all hush over it: what mpv hears, and the only level ever reported to be remembered (pure, tested) |
 | `seek_bar.rs` | the bar on a recording, and the arithmetic behind it |
 | `video.rs` | render thread; owns the mpv `Player` |
@@ -341,7 +341,18 @@ same 750 ms settle a main-window resize does (`pop_out_moved`, then
 `on_window_resized` with the main window), and so does opening one, which
 may open where a large one closed. Upwards only, as everywhere, so a small
 pop-out keeps what it played at home; bringing a pane back re-picks for its
-cell straight away (`pop_in`), and a rise is a swap in place.
+cell straight away (`pop_in`), and a rise is a swap in place. A maximized
+pane is measured by the whole body, the one cell `RootView::grid` has while
+it lasts, so being given the page re-picks it upward at once
+(`maximize_changed`). The panes maximized away are measured by the grid they
+come back to, every pane's, and `sync_quality` leaves them until it does, so
+the maximize never moves them; meanwhile they go on decoding at the size they
+were last drawn at, which is the quality rule's price, not a saving anybody
+asked for. Their cells can grow while they are away — a resize, a pane
+closed — so the grid coming back chooses again, upwards only as ever:
+`maximize_changed` does, and so does `restage`, once it is done, for a
+maximize that ends there (a popped pane coming home, the maximized pane
+closed), which it is called without a window for.
 
 **A rendition change keeps the picture: the new stream is swapped in under
 it.** When a pane whose picture covers it changes rendition — the re-pick
@@ -874,9 +885,12 @@ pop-out controls do the same to their tile, or to the whole player, and
 leave a card or another tile under the pointer. So each of those takes the
 run for the root (`RootView::take_rest_of_run`), whose own window-level
 listener, held ahead of everything the root draws, swallows the rest of it
-by the same rule (`RootView::run_guard`). A control that stays put and only
-toggles — the header's pop-out icon turning into Bring back — takes no run,
-like every other toggle: a double-click there is two presses of it.
+by the same rule (`RootView::run_guard`). The bar's maximize control marks
+the run on the player's own guard as a row does (`row_run`): the pane grows,
+or the grid comes back, under the pointer, and the second press would land
+on a picture, whose double-click is fullscreen. A control that stays put and
+only toggles — the header's pop-out icon turning into Bring back — takes no
+run, like every other toggle: a double-click there is two presses of it.
 
 **A tooltip keeps the words it came up with.** gpui builds the tooltip's view
 once, when its delay runs out, keeps it in the element's state, and sets that
@@ -1278,8 +1292,16 @@ draws it, and a pop-out is another window, whose animations start from
 nothing. A pane's band, the header over its picture with chat hidden, does
 both: `watch::pane` mounts it on every frame, empty when the header is in the
 panel, under an id keyed by `pane_id` so a pane closing beside it never hands
-it another pane's fade; and `RootView::restage` resets every slot's `header`
-to hidden while the browse page is up, which never draws it.
+it another pane's fade; and `RootView::restage` resets to hidden the `header`
+of every pane whose cell is off the screen — every one while the browse page
+is up, and every one but the maximized pane's while a pane has the watch
+page — since nothing draws it there. It lets go of each such pane's chat
+hold too (`ChatView::let_go_hold`): `sync_hold` runs only while a chat is
+drawn, so one put away with the pointer over it would hold back every row
+that arrived, past the cap on the rows, for as long as it was away. And on
+the watch page it counts each such pane as pointed at already
+(`Slot::hovered`), so its cell coming back under a pointer that has not
+moved is no rising edge to take the keys with.
 
 **Element ids are namespaced by every ancestor that has one**, plus an implicit
 `ElementId::View(entity_id)` per entity. So `"controls"` is unique inside a
@@ -1415,7 +1437,11 @@ unconsidered.
   Its rows, columns, cell size and whether a cell stacks its chat come from
   that one call, made by `RootView::grid`, which hands it to the watch page
   and reads it for the divider drag (`effective_video_share`,
-  `on_mouse_move`) and for each pane's quality (`pane_height_for`). The
+  `on_mouse_move`) and for each pane's quality (`pane_height_for`). The cells
+  it is cut for are `RootView::cells`, from `stage::Stage::cells`: every
+  pane's, or the maximized pane's alone, which the page draws through the
+  same `watch::pane` in a grid of one; `pane_height_for` alone measures a
+  pane maximized away by the grid it comes back to. The
   page, the drag and the quality used to work the shape out for themselves,
   four copies of one sum, so a change to how cells are counted had four
   places to miss. `grid_shape` and the cell helpers are private to
@@ -1568,7 +1594,8 @@ header rests over it. The split:
   is open: the control bar (`video_view/bar.rs`). At the left play or
   pause, the speaker — crossed out whenever the pane is silent, Mute all's
   hold included — the volume slider
-  and its figure; at the right the quality pill, chat, fullscreen and More.
+  and its figure; at the right the quality pill, with two panes or more the
+  maximize control, then chat, fullscreen and More.
   Chat is crossed out while hidden, and drawn still, with a `No chat replay`
   tooltip, for a recording that has none, so the cluster keeps its shape. More
   pops the pane out where the pop-out is offered, opens the pane on twitch.tv
@@ -1577,17 +1604,25 @@ header rests over it. The split:
   press does, and the key that does the same where there is one, from
   `keys::Hint`; More has no key, and the quality pill is words with no
   tooltip. A narrow pane drops the figure, then the slider, then
-  folds the quality into More's first row (`bar::fit`, from the probe's
-  width); play, the speaker and the right-hand buttons never go. The
-  right-hand cluster has commented slots for phase 3's maximize in window
-  and phase 4's guide — never a pop-out, which is the header's and More's,
-  since this cluster has no room and never drops a button — and
-  `bar::RIGHT_BUTTONS` counts its buttons — `button_row` lays them out as an
-  array that long — so a control added there narrows the bar sooner. What is
+  folds the quality into More's first row and the maximize into the row
+  after it (`bar::fit`, from the probe's width); play, the speaker and the
+  right-hand buttons never go. The maximize control — `Maximize`, or `Show
+  all panes` on the pane that has the page, each with its own id and both
+  naming `Z` through `keys::Hint::Maximize` (`bar::maximize_control`) —
+  stands between the pill and chat and is not one of the cluster's
+  buttons: it folds where they never drop, so a narrow pane's bar runs no
+  further past its edge for it, and with one pane it is not drawn and takes
+  no room. `bar::RIGHT_BUTTONS` counts the cluster's buttons — `button_row`
+  lays them out as an array that long — so a control added there narrows
+  the bar sooner; it keeps a commented slot for phase 4's guide, and never a
+  pop-out, which is the header's and More's, since this cluster has no room
+  and never drops a button. What is
   the pane's rather than the player's — chat, the link, popping out — goes
   up as `VideoEvent::Pane` and is resolved by key in `root/pane_actions.rs`,
   the route the header's close takes; the clipboard is written there and nowhere
-  else. The chat glyph reads `video_view::ChatButton`, a mirror of the slot's
+  else. The maximize control reads `VideoView::maximize`, a mirror of
+  `stage::MaximizeButton` that only `Start` and `RootView::restage` write.
+  The chat glyph reads `video_view::ChatButton`, a mirror of the slot's
   `chat_hidden` that only `Start` and `RootView::toggle_chat` write. Point at
   the video and the bar comes up; look away and the picture is all that is
   left. Nothing page-level is drawn over the panes.
@@ -1692,6 +1727,40 @@ header rests over it. The split:
   ways back are the pop-out's Bring back, the cell's, the header's icon, `P`
   in either window and the palette. The window's own close (`Alt+F4`, the
   taskbar) brings the pane back; the bar's Close and `Ctrl+W` close it.
+- **A pane given the window** (`stage.rs`, `root/panes.rs`), with two panes
+  or more: `Z`, the bar's maximize control, More's row once that has folded,
+  and the palette's `Maximize …` give one pane the whole watch page, chat and
+  all. The grid draws its cell alone (`Stage::cells`), through the same
+  `watch::pane` in a grid of one, so its element path is unchanged and
+  nothing remounts. The others are drawn as nothing —
+  `stage::Place::Offstage`, through `VideoView::set_place` like any change
+  of place — and play on with their sound, at the size they were last drawn
+  at, redrawing no window while the palette is closed: the page reads only
+  the panes it draws, but the palette reads every player in the main window
+  to know which can offer `Choose quality for …` (`palette_entries`), and so
+  redraws the main window at their frame rate while it is open. Nothing rather
+  than a strip or thumbnails: a strip of names is static chrome that takes
+  height from the pane given the page, and so lowers the rendition it is
+  picked; moving thumbnails would be the focus layout that chat per pane
+  rules out; and a pane drawn small asks its player for a small frame, which
+  comes back soft when the grid does. Choosing a pane — `1`–`4`, `Tab`, its
+  tile, its palette row `Choose quality for …`, opening one already open,
+  bringing one back from its window — moves the maximize to it
+  (`RootView::choose`); a popped pane chosen keeps the keys in its own
+  window and leaves the maximize where it is. `Z` or the control again,
+  `Esc` and the palette's `Show all panes` show every pane
+  (`show_all_panes`). Adding a pane (`open_channel`, `open_video_at`), the
+  maximized pane closing or being the one left, a popped pane coming home
+  because its stream stopped (`Stage::retain`, from `restage`), or popping
+  the maximized pane out (`Stage::pop_out`) ends it too; a recording swapped
+  in for it keeps it (`Stage::rename`). However it ends, the grid comes back
+  under a pointer that has not moved, and each pane that was off the screen
+  counts as pointed at already (`sync_presentation`), as on the way back
+  from a tile, so the pane now under the pointer does not take the keys; and
+  should the pane the keys talked to have closed meanwhile, they fall back on
+  the first cell the grid draws (`RootView::active_slot`), never on a pane
+  drawn nowhere. Leaving the page keeps it, and the mini player shows every
+  pane meanwhile. For the session only.
 
 The watch page used to float a back pill and, with the rail folded away, the
 control that brought it back, in its top-left corner, revealed with the video
@@ -2398,6 +2467,19 @@ at all or only panes that are starting or stopped — every popped pane back
 out` is offered by (`mini_pop_out_offered`), so the key pops out exactly
 when the bar offers to.
 
+**`Esc` on the watch page takes back one thing at a time.** An open menu
+closes first, then a pane given the whole page shows every pane again
+(`show_all_panes`), and only then is the page left (`on_go_browse`). While a
+pane has the page, choosing another — `1`–`4`, `Tab`, its tile, its
+palette row `Choose quality for …` — moves the maximize to it
+(`RootView::choose`), so `Space`, `M` and `Ctrl+W` always act on the pane on
+screen, or on a popped one in its own window, never on one drawn nowhere;
+once the pane they talked to has closed, they fall back on the first cell
+the grid draws, the maximized pane's while one has the page
+(`RootView::active_slot`), not on the first pane. `Z`
+is bound on the watch page alone: the browse page draws every pane as a
+tile, and a pop-out's pane is not on the page to fill it.
+
 **The title bar's search box outlives a change of page.** While the box was
 in the browse header, leaving that page took it off screen and
 `on_focus_lost` handed the keys back to the root. In the bar it is on both
@@ -2892,9 +2974,10 @@ unpublished-query risk the chat replay already carries, is built (see
 "Browsing" and "Known limits"); the palette and the guide do not show
 recommendations yet, and `recommended::Recommended::shown` is what they would
 read. A pop-out player that stays on top is built, on Windows only (see "A
-pane's pop-out" under "Where controls live"); a pane maximised within the
-window is still to come. The bar's cluster keeps a commented slot for the
-maximize — the pop-out went in the pane header and More instead — and
+pane's pop-out" under "Where controls live"), and so is a pane maximised
+within the window (see "A pane given the window" there), whose control
+stands before the bar's cluster and folds into More after the quality pill
+rather than joining it — the pop-out went in the pane header and More — and
 `bar::RIGHT_BUTTONS` counts the cluster, so a button added there narrows the
 bar sooner. Sound and chat stay per pane throughout.
 
@@ -3347,6 +3430,12 @@ None of these is being worked on; all of them are real.
   pane's past broadcasts are `Request::Broadcasts`, not `Request::Videos`:
   that one lands on a channel page's shelf, ends the page's wait, and says its
   failure on the page, none of which a pane's answer should do.
+- Do not give an element between the watch page and a pane's cell an id —
+  the grid, its rows, the cell — nor key anything in a cell by its position
+  or by what is maximized. gpui finds an element's state by the ids of every
+  ancestor that has one, so maximizing a pane or showing them all again
+  would remount every pane and replay its fades; a cell's ids name its pane
+  alone (`watch::pane_id`, and the doc on `watch::page`).
 - Do not give a slot a new key in place. Everything keyed on a pane — its
   element ids, its player's subscription, the active pane — would go on
   naming the old one; `replace_with_video` makes a new slot and swaps it in.

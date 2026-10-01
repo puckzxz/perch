@@ -179,13 +179,21 @@ impl RootView {
         self.hold_live(LiveList::Following, false, cx);
 
         // The panes the page draws, in the order it draws them, and the grid
-        // it draws them in: every slot, for now, in one cell each. Both from
+        // it draws them in: every slot in a cell of its own, or the
+        // maximized pane alone in a grid of one, through the same `pane` —
+        // the others are drawn as nothing (see `crate::stage`). Both from
         // here, so the page and the root agree about them by construction.
-        let slots: Vec<&Slot> = self.slots.iter().collect();
+        let slots: Vec<&Slot> = self
+            .cells()
+            .into_iter()
+            .map(|index| &self.slots[index])
+            .collect();
         let grid = self.grid(window);
         // Resolved here, for the panes on screen only: `live_info` walks
         // every list the app holds, and doing that per pane per frame inside
-        // the page would be the same walk four times over.
+        // the page would be the same walk four times over. A pane maximized
+        // away is not read at all, its player included, so its frames
+        // redraw no window.
         let panes: Vec<PaneInfo> = slots
             .iter()
             .map(|&slot| {

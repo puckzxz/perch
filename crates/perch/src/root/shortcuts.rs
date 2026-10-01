@@ -115,15 +115,17 @@ impl RootView {
         }
     }
 
+    /// `Esc` on the watch page: one step out of it, taking back the last
+    /// thing that was opened first. A menu open over a pane goes first —
+    /// leaving the page with the menu still up was two steps taken for one
+    /// press — then a pane given the whole page shows every pane again
+    /// (`show_all_panes`), and only then is the page left.
     pub(super) fn on_go_browse(
         &mut self,
         _: &keys::GoBrowse,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // A menu open over a pane goes first: `Esc` takes back the last thing
-        // that was opened, and leaving the page with the menu still up was two
-        // steps taken for one press.
         let videos: Vec<_> = self
             .slots
             .iter()
@@ -133,8 +135,27 @@ impl RootView {
         for view in videos {
             closed |= view.update(cx, |view, cx| view.close_menu(cx));
         }
-        if !closed {
-            self.go_browse(cx);
+        if closed || self.show_all_panes(window, cx) {
+            return;
+        }
+        self.go_browse(cx);
+    }
+
+    /// `Z`: the active pane given the whole watch page, chat and all, or
+    /// every pane shown again from the pane that has it; see
+    /// `toggle_maximize`. Nothing for a lone pane, or one in a window of its
+    /// own.
+    pub(super) fn on_toggle_maximize(
+        &mut self,
+        _: &keys::ToggleMaximize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(key) = self
+            .active_slot()
+            .map(|index| self.slots[index].key.clone())
+        {
+            self.toggle_maximize(&key, window, cx);
         }
     }
 
@@ -208,50 +229,50 @@ impl RootView {
     }
 
     /// Point the keyboard at pane `index`, counting from the top left, and
-    /// show which that is; see `reveal_header`.
+    /// show which that is; see `reveal_header`. With a pane maximized, the
+    /// chosen one takes the page (`choose`).
     pub(super) fn on_activate_pane(
         &mut self,
         action: &keys::ActivatePane,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(key) = self.slots.get(action.index).map(|slot| slot.key.clone()) {
-            self.active = Some(key.clone());
+            self.choose(&key, window, cx);
             self.reveal_active(&key, cx);
-            cx.notify();
         }
     }
 
     pub(super) fn on_next_pane(
         &mut self,
         _: &keys::NextPane,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.step_active(1, cx);
+        self.step_active(1, window, cx);
     }
 
     pub(super) fn on_previous_pane(
         &mut self,
         _: &keys::PreviousPane,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.step_active(-1, cx);
+        self.step_active(-1, window, cx);
     }
 
     /// Move the active pane along the grid, wrapping at either end, and show
-    /// which it landed on.
-    fn step_active(&mut self, delta: isize, cx: &mut Context<Self>) {
+    /// which it landed on — taking the page with it, while a pane has it, so
+    /// `Tab` walks the panes one whole page at a time.
+    fn step_active(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
         let count = self.slots.len();
         let Some(current) = self.active_slot() else {
             return;
         };
         let next = (current as isize + delta).rem_euclid(count as isize) as usize;
         let key = self.slots[next].key.clone();
-        self.active = Some(key.clone());
+        self.choose(&key, window, cx);
         self.reveal_active(&key, cx);
-        cx.notify();
     }
 
     /// Reveal the header of the pane a pane key just chose, with more than

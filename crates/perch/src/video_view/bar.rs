@@ -29,8 +29,17 @@
 //!   press on it, in the capture phase (`control_bar`).
 //!
 //! What fits at the pane's width is [`fit`]: a narrow pane drops the volume
-//! figure, then the slider, then folds the quality pill into More, and never
-//! drops play, volume or a button of the right-hand cluster.
+//! figure, then the slider, then folds the quality pill into More, then the
+//! maximize control after it, and never drops play, volume or a button of
+//! the right-hand cluster.
+//!
+//! The maximize control gives the pane the whole watch page, chat and all,
+//! and on the pane that has it shows every pane again (`stage`'s
+//! `MaximizeButton`, mirrored as `VideoView::maximize`). It stands just
+//! before the cluster, after the pill, and is not one of the cluster's
+//! buttons: it folds, where they never drop, so a narrow pane's bar runs no
+//! further past its edge for it than it did before there was one. With
+//! fewer than two panes it is not drawn and takes no room.
 //!
 //! A pane popped into a window of its own has a bar of its own shape: the
 //! seek row and the left-hand end as a pane has them, and at the right only
@@ -48,7 +57,7 @@ use crate::assets::Icon;
 use crate::controls::{self, Variant};
 use crate::keys::Hint;
 use crate::seek_bar;
-use crate::stage::Place;
+use crate::stage::{MaximizeButton, Place};
 use crate::theme;
 use crate::watch::PaneAction;
 
@@ -56,41 +65,83 @@ use crate::watch::PaneAction;
 /// More. `button_row` lays them out as an array this long, so a control
 /// cannot join the cluster without this count changing with it, and with it
 /// what [`fit`] leaves room for. The quality pill is not one of them: it is
-/// words, and it folds.
+/// words, and it folds. Nor is the maximize control, which folds after it.
 pub(super) const RIGHT_BUTTONS: usize = 3;
 
 /// The same for a pop-out's cluster: Bring back and Close.
 pub(super) const POP_OUT_BUTTONS: usize = 2;
 
 /// The right-hand end of a bar, as [`fit`] makes room for it: how many icon
-/// buttons it has, and whether the quality pill stands before them.
+/// buttons it has, and whether the quality pill and the maximize control
+/// stand before them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Cluster {
     buttons: usize,
     pill: bool,
+    maximize: bool,
 }
 
-/// A pane's: the quality pill, then chat, fullscreen and More.
+/// A pane's, with nothing to maximize it over: the quality pill, then chat,
+/// fullscreen and More.
 const PANE: Cluster = Cluster {
     buttons: RIGHT_BUTTONS,
     pill: true,
+    maximize: false,
 };
 
 /// A pop-out's: Bring back and Close, and no pill. Counting room for one
 /// it never draws took the slider off a pop-out wide enough for it — the
-/// width a vertical stream opens at among them.
+/// width a vertical stream opens at among them. No maximize either: a pane
+/// out of the main window is not on the page to fill it.
 const POP_OUT: Cluster = Cluster {
     buttons: POP_OUT_BUTTONS,
     pill: false,
+    maximize: false,
 };
 
-/// The right-hand end of the bar of a player in `place`, for [`fit`]. A
-/// tile draws no bar, and is counted as a pane, whose bar it would be.
-pub(super) fn cluster(place: Place) -> Cluster {
+/// The right-hand end of the bar of a player in `place`, whose maximize
+/// control offers `maximize`, for [`fit`]. A tile and a player offstage
+/// draw no bar, and are counted as a pane, whose bar they would be.
+pub(super) fn cluster(place: Place, maximize: MaximizeButton) -> Cluster {
     match place {
-        Place::Pane | Place::Tile => PANE,
+        Place::Pane | Place::Tile | Place::Offstage => Cluster {
+            maximize: maximize != MaximizeButton::Hidden,
+            ..PANE
+        },
         Place::PopOut => POP_OUT,
     }
+}
+
+/// What the maximize control is while it offers `button`: its ids on the
+/// bar and in More — keyed on what it offers, so a press that flips it
+/// drops a tooltip still up with the old words (`controls::tip`) — its
+/// icon, and its words. `None` while it is hidden. One answer for the bar
+/// and More's row, so the two can never offer different things.
+pub(super) fn maximize_control(button: MaximizeButton) -> Option<MaximizeControl> {
+    match button {
+        MaximizeButton::Hidden => None,
+        MaximizeButton::Maximize => Some(MaximizeControl {
+            bar_id: "bar-maximize",
+            row_id: "more-maximize",
+            icon: Icon::PaneMaximize,
+            words: "Maximize",
+        }),
+        MaximizeButton::Restore => Some(MaximizeControl {
+            bar_id: "bar-show-all",
+            row_id: "more-show-all",
+            icon: Icon::PaneGrid,
+            words: "Show all panes",
+        }),
+    }
+}
+
+/// The maximize control as it is drawn; see [`maximize_control`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct MaximizeControl {
+    pub(super) bar_id: &'static str,
+    pub(super) row_id: &'static str,
+    pub(super) icon: Icon,
+    pub(super) words: &'static str,
 }
 
 impl VideoView {
@@ -237,7 +288,9 @@ impl VideoView {
         });
 
         let right = match self.place {
-            Place::Pane | Place::Tile => self.pane_cluster(window, cx).into_any_element(),
+            Place::Pane | Place::Tile | Place::Offstage => {
+                self.pane_cluster(window, cx).into_any_element()
+            }
             Place::PopOut => pop_out_cluster(window, cx).into_any_element(),
         };
 
@@ -255,8 +308,8 @@ impl VideoView {
             .child(right)
     }
 
-    /// A pane's right-hand cluster: the quality pill, chat, fullscreen and
-    /// More, and the one anchor every menu opens from.
+    /// A pane's right-hand cluster: the quality pill, the maximize control,
+    /// chat, fullscreen and More, and the one anchor every menu opens from.
     fn pane_cluster(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let window_hovered = window.is_window_hovered();
 
@@ -340,11 +393,35 @@ impl VideoView {
             cx,
         );
 
+        // The pane given the watch page, or every pane back. After the pill
+        // and before the buttons that never drop, since it folds into More
+        // right after the pill does: the two that give way stand together,
+        // and folding either moves none of the three. A press takes the
+        // rest of its run, as a menu row's does (`run_guard`): the pane
+        // grows, or the grid comes back, under the pointer, and the second
+        // press of a double-click would land on whatever is there now — a
+        // picture, whose double-click is fullscreen.
+        let maximize = maximize_control(self.maximize)
+            .filter(|_| self.fit.maximize)
+            .map(|control| {
+                act_button(
+                    control.bar_id,
+                    control.icon,
+                    Variant::OnVideo,
+                    Hint::Maximize.tooltip(control.words),
+                    window,
+                    cx,
+                    |this, _window, cx| {
+                        this.row_run = true;
+                        cx.emit(VideoEvent::Pane(PaneAction::Maximize));
+                    },
+                )
+            });
+
         let buttons: [AnyElement; RIGHT_BUTTONS] = [
             chat,
-            // phase 4: guide
-            // phase 3: maximize in window. Pop out is not here: it is the
-            // header's and More's, and this cluster never drops a button.
+            // phase 4: guide. Pop out is not here: it is the header's and
+            // More's, and this cluster never drops a button.
             fullscreen.into_any_element(),
             more.into_any_element(),
         ];
@@ -374,6 +451,7 @@ impl VideoView {
                 }))
             })
             .children(quality)
+            .children(maximize)
             .children(buttons)
             .when_some(self.menu, |anchor, which| {
                 anchor.child(self.menu_box(which, cx))
@@ -485,6 +563,11 @@ pub(super) struct Fit {
     /// only by a pane's cluster: a pop-out has neither pill nor More, and
     /// [`fit`] counts no room for the pill there.
     pub(super) quality: bool,
+    /// The maximize control, where the cluster has one. Without it, More
+    /// carries it, after the quality. Read only while the control is
+    /// offered: a cluster with none counts no room for it, so this says
+    /// nothing there.
+    pub(super) maximize: bool,
 }
 
 impl Fit {
@@ -493,14 +576,16 @@ impl Fit {
         figure: true,
         slider: true,
         quality: true,
+        maximize: true,
     };
 }
 
 /// The bar at each width it gives way at, widest first: each drops one more
 /// thing, in the order they go. The figure first, because the slider shows
 /// the same level; then the slider, since the speaker and the keys still
-/// change it; then the quality pill, which More can carry.
-const NARROWINGS: [Fit; 4] = [
+/// change it; then the quality pill, which More can carry; then the
+/// maximize control, which More carries after it, and `Z` does too.
+const NARROWINGS: [Fit; 5] = [
     Fit::EVERYTHING,
     Fit {
         figure: false,
@@ -509,21 +594,28 @@ const NARROWINGS: [Fit; 4] = [
     Fit {
         figure: false,
         slider: false,
-        quality: true,
+        ..Fit::EVERYTHING
     },
     Fit {
         figure: false,
         slider: false,
         quality: false,
+        maximize: true,
+    },
+    Fit {
+        figure: false,
+        slider: false,
+        quality: false,
+        maximize: false,
     },
 ];
 
 /// How wide the bar has to be to hold `fit`, with `cluster` at its
 /// right-hand end: its padding, play and volume, the spacer between the two
 /// ends, the cluster's buttons, and whatever `fit` adds, each with the gap
-/// before it — the pill only where the cluster has one. The sizes are the
-/// ones `button_row` draws with, from `theme`; the quality pill's is an
-/// estimate (`theme::QUALITY_PILL_ROOM`).
+/// before it — the pill and the maximize control only where the cluster has
+/// them. The sizes are the ones `button_row` draws with, from `theme`; the
+/// quality pill's is an estimate (`theme::QUALITY_PILL_ROOM`).
 fn needs(fit: Fit, cluster: Cluster) -> f32 {
     let gap = theme::GAP_TIGHT;
     let shown = |kept: bool, width: f32| if kept { width + gap } else { 0.0 };
@@ -539,6 +631,7 @@ fn needs(fit: Fit, cluster: Cluster) -> f32 {
         + shown(fit.slider, theme::VOLUME_SLIDER)
         + shown(fit.figure, theme::VOLUME_FIGURE)
         + shown(cluster.pill && fit.quality, theme::QUALITY_PILL_ROOM)
+        + shown(cluster.maximize && fit.maximize, theme::ICON_BUTTON)
 }
 
 /// What fits on a bar `width` logical pixels wide with `cluster` at its
@@ -570,6 +663,13 @@ mod tests {
         (0..=3840).map(|width| width as f32)
     }
 
+    /// A pane's cluster with the maximize control in it: one of two panes
+    /// or more on the watch page.
+    const PANE_MAX: Cluster = Cluster {
+        maximize: true,
+        ..PANE
+    };
+
     #[test]
     fn a_wide_bar_shows_everything() {
         assert_eq!(fit(1600.0, PANE), Fit::EVERYTHING);
@@ -581,28 +681,31 @@ mod tests {
     }
 
     /// Narrowing gives things up one at a time and in order — the figure,
-    /// then the slider — and never takes one back as it goes on narrowing.
+    /// then the slider — and never takes one back as it goes on narrowing,
+    /// with the maximize control in the bar or not.
     #[test]
     fn narrowing_drops_the_figure_then_the_slider() {
-        let mut last = 0;
-        for width in widths().rev() {
-            let fit = fit(width, PANE);
-            assert!(
-                rank(fit) >= last,
-                "at {width}px the bar took something back"
-            );
-            last = rank(fit);
-            assert!(
-                !fit.figure || fit.slider,
-                "at {width}px the figure stayed after the slider it labels went"
-            );
-        }
-        let seen: Vec<Fit> = widths().map(|width| fit(width, PANE)).collect();
-        for narrowing in NARROWINGS {
-            assert!(
-                seen.contains(&narrowing),
-                "no width gives {narrowing:?}, so a step is skipped"
-            );
+        for cluster in [PANE, PANE_MAX] {
+            let mut last = 0;
+            for width in widths().rev() {
+                let fit = fit(width, cluster);
+                assert!(
+                    rank(fit) >= last,
+                    "at {width}px the bar took something back"
+                );
+                last = rank(fit);
+                assert!(
+                    !fit.figure || fit.slider,
+                    "at {width}px the figure stayed after the slider it labels went"
+                );
+            }
+            let seen: Vec<Fit> = widths().map(|width| fit(width, cluster)).collect();
+            for narrowing in NARROWINGS {
+                assert!(
+                    seen.contains(&narrowing),
+                    "no width gives {narrowing:?} for {cluster:?}, so a step is skipped"
+                );
+            }
         }
     }
 
@@ -633,16 +736,100 @@ mod tests {
     fn play_volume_and_the_right_cluster_always_stay() {
         let narrowest = NARROWINGS[NARROWINGS.len() - 1];
         assert_eq!(fit(0.0, PANE), narrowest);
+        assert_eq!(fit(0.0, PANE_MAX), narrowest);
         assert_eq!(
             narrowest,
             Fit {
                 figure: false,
                 slider: false,
                 quality: false,
+                maximize: false,
             }
         );
         let squares = 2.0 + PANE.buttons as f32;
         assert!(needs(narrowest, PANE) >= 2.0 * theme::PANEL_PAD + squares * theme::ICON_BUTTON);
+    }
+
+    /// The maximize control folds right after the quality pill: never while
+    /// the pill is still up, and at some width the pill has gone and it has
+    /// not. Folded, it takes no room, so the narrowest bar — a beside pane
+    /// at its narrowest, which already runs past its edge — runs no further
+    /// for there being one.
+    #[test]
+    fn the_maximize_button_folds_after_the_quality_pill() {
+        for width in widths() {
+            let fit = fit(width, PANE_MAX);
+            assert!(
+                fit.maximize || !fit.quality,
+                "at {width}px the maximize folded with the pill still up"
+            );
+        }
+        assert!(
+            widths().any(|width| {
+                let fit = fit(width, PANE_MAX);
+                fit.maximize && !fit.quality
+            }),
+            "the maximize and the pill went at the same width"
+        );
+        let narrowest = NARROWINGS[NARROWINGS.len() - 1];
+        assert_eq!(needs(narrowest, PANE_MAX), needs(narrowest, PANE));
+        assert!(needs(Fit::EVERYTHING, PANE_MAX) > needs(Fit::EVERYTHING, PANE));
+    }
+
+    /// A pane with nothing to be maximized over — the only one — has no
+    /// control, and gives up nothing for it: at every width its bar keeps
+    /// what a bar without the control keeps, and keeps at least as much as
+    /// one with it.
+    #[test]
+    fn a_hidden_maximize_takes_no_room() {
+        assert_eq!(cluster(Place::Pane, MaximizeButton::Hidden), PANE);
+        for button in [MaximizeButton::Maximize, MaximizeButton::Restore] {
+            assert_eq!(cluster(Place::Pane, button), PANE_MAX);
+        }
+        for narrowing in NARROWINGS {
+            assert_eq!(
+                needs(narrowing, PANE),
+                needs(
+                    Fit {
+                        maximize: false,
+                        ..narrowing
+                    },
+                    PANE
+                ),
+                "{narrowing:?} counted room for a control that is not there"
+            );
+        }
+        for width in widths() {
+            assert!(
+                rank(fit(width, PANE)) <= rank(fit(width, PANE_MAX)),
+                "at {width}px the bar with no maximize gave up more"
+            );
+        }
+        assert_eq!(maximize_control(MaximizeButton::Hidden), None);
+    }
+
+    /// The control offers what a press does, under an id keyed on it, with
+    /// the same words on the bar and in More; and it is not the window's
+    /// maximize, the mini player's way back, nor fullscreen.
+    #[test]
+    fn the_maximize_control_says_what_a_press_does() {
+        let maximize = maximize_control(MaximizeButton::Maximize).expect("offered");
+        let restore = maximize_control(MaximizeButton::Restore).expect("offered");
+        assert_eq!(maximize.words, "Maximize");
+        assert_eq!(restore.words, "Show all panes");
+        assert_ne!(maximize.bar_id, restore.bar_id);
+        assert_ne!(maximize.row_id, restore.row_id);
+        for control in [maximize, restore] {
+            for other in [
+                Icon::Maximize,
+                Icon::Restore,
+                Icon::Expand,
+                Icon::Fullscreen,
+                Icon::FullscreenExit,
+            ] {
+                assert_ne!(control.icon.path(), other.path(), "{control:?}");
+            }
+        }
     }
 
     /// A pane's cluster with one more button in it.
@@ -651,9 +838,9 @@ mod tests {
         ..PANE
     };
 
-    /// A control added to the right-hand cluster — the guide, maximize —
-    /// takes its room from what folds: at any width the bar gives up at
-    /// least as much as it did, and somewhere strictly more.
+    /// A control added to the right-hand cluster — the guide — takes its
+    /// room from what folds: at any width the bar gives up at least as much
+    /// as it did, and somewhere strictly more.
     #[test]
     fn more_on_the_right_narrows_sooner() {
         for width in widths() {
@@ -675,8 +862,13 @@ mod tests {
             needs(narrowest, POP_OUT) <= theme::POP_OUT_MIN_WIDTH,
             "the smallest pop-out's bar runs past its edge"
         );
-        assert_eq!(cluster(Place::PopOut), POP_OUT);
-        assert_eq!(cluster(Place::Pane), PANE);
+        for button in [
+            MaximizeButton::Hidden,
+            MaximizeButton::Maximize,
+            MaximizeButton::Restore,
+        ] {
+            assert_eq!(cluster(Place::PopOut, button), POP_OUT);
+        }
     }
 
     /// With no pill to make room for, a pop-out's slider and figure are up
@@ -690,6 +882,7 @@ mod tests {
             figure: false,
             slider: true,
             quality: false,
+            maximize: false,
         };
         for width in widths() {
             let fit = fit(width, POP_OUT);

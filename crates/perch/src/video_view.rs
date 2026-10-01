@@ -7,8 +7,9 @@
 //! like any other layer.
 //!
 //! This file is the player: what it starts with, its sound, its hover, where
-//! it is drawn — a pane, a mini-player tile or a window of its own, its
-//! [`Place`] — and the picture. What is drawn over the
+//! it is drawn — a pane, a mini-player tile, a window of its own, or nowhere
+//! while another pane has the watch page, its [`Place`] — and the picture.
+//! What is drawn over the
 //! picture lives beside it, in child modules that see the player's private
 //! fields: `bar`, the control bar along the bottom — its icons, and what fits
 //! at the pane's width — and `menu`, the menus that bar opens, which one is
@@ -58,7 +59,7 @@ use crate::controls;
 use crate::loudness::Loudness;
 use crate::motion;
 use crate::seek_bar;
-use crate::stage::Place;
+use crate::stage::{MaximizeButton, Place};
 use crate::theme;
 use crate::video::{SizeHandle, Stopped, VideoStream};
 use crate::watch::PaneAction;
@@ -181,9 +182,10 @@ pub struct VideoView {
     /// The menu open over the control bar, if any: one at a time, so opening
     /// one is closing whichever was open (`menu::toggled`).
     menu: Option<Menu>,
-    /// Whether the run of presses going on began on a menu row, whose later
-    /// presses — the second of a double-click — go nowhere; see
-    /// `VideoView::run_guard`.
+    /// Whether the run of presses going on began on a menu row, or on the
+    /// bar's maximize control, whose later presses — the second of a
+    /// double-click — go nowhere; see `VideoView::run_guard`. Both change
+    /// what is under the pointer before the run is over.
     row_run: bool,
     /// The focus of the window drawing this player — the root's in the main
     /// window, the pop-out's own in a pop-out — which a press on the bar or
@@ -192,9 +194,21 @@ pub struct VideoView {
     root_focus: FocusHandle,
     /// What the bar's chat glyph offers; see [`ChatButton`].
     chat: ChatButton,
+    /// What the bar's maximize control offers, or More's row once it has
+    /// folded: to give the pane the watch page, to show every pane again,
+    /// or nothing.
+    ///
+    /// A mirror, on [`ChatButton`]'s pattern: which pane is maximized is the
+    /// root's (`crate::stage`), and the player cannot see it. Written in
+    /// exactly two places — [`Start::maximize`] when the player is made, and
+    /// [`set_maximize`](Self::set_maximize), which only `RootView::restage`
+    /// calls, the funnel every change of the stage ends in — so a change of
+    /// the maximize, of which panes there are or of what is popped out
+    /// cannot leave the control offering the opposite of what a press does.
+    maximize: MaximizeButton,
     /// What the bar has room for at the pane's width, measured by the probe
-    /// (`bar::fit`): the volume figure and slider, and the quality pill,
-    /// which folds into More when it does not fit.
+    /// (`bar::fit`): the volume figure and slider, and the quality pill and
+    /// the maximize control, which fold into More when they do not fit.
     fit: bar::Fit,
     /// Whether the pointer is over this player, measured from the pane's own
     /// bounds rather than taken from GPUI's `on_hover`.
@@ -218,7 +232,8 @@ pub struct VideoView {
     controls: motion::Fade,
     /// Where the player is drawn. Presentation only: a tile draws no control
     /// bar, answers no hover and labels no seek bar, because the tile is a
-    /// way back to the watch page rather than a player of its own; only a
+    /// way back to the watch page rather than a player of its own; a player
+    /// offstage is drawn by nothing, and is a tile in all of that; only a
     /// pane opens menus and goes fullscreen on a double-click; and a pop-out
     /// is dragged by its picture. What it sounds like is `loudness`, and
     /// nothing here. Changed by [`set_place`](Self::set_place) alone.
@@ -266,6 +281,9 @@ pub struct Start {
     pub focus: FocusHandle,
     /// What the pane's chat is at the start; see [`ChatButton`].
     pub chat: ChatButton,
+    /// What its maximize control offers at the start; see
+    /// `VideoView::maximize`.
+    pub maximize: MaximizeButton,
 }
 
 impl VideoView {
@@ -340,6 +358,7 @@ impl VideoView {
             row_run: false,
             root_focus: start.focus,
             chat: start.chat,
+            maximize: start.maximize,
             // Until the probe has measured the pane: the bar is hidden on
             // the first frame, and the probe's first pass corrects it.
             fit: bar::Fit::EVERYTHING,
@@ -483,14 +502,16 @@ impl VideoView {
     }
 
     /// Move the player to `place`, drawn in the window whose focus is
-    /// `focus`: between the watch page, a tile in the mini player and a
-    /// window of its own. The only way a player changes place or window;
-    /// `RootView::restage` is the only caller, after `Start`.
+    /// `focus`: between the watch page, a tile in the mini player, a window
+    /// of its own, and offstage while another pane has the watch page. The
+    /// only way a player changes place or window; `RootView::restage` is the
+    /// only caller, after `Start`.
     ///
     /// How it is drawn and nothing else: the pane keeps its sound, which is
-    /// the point of the mini player and of the pop-out. Everything the
-    /// pointer was doing is let go ([`let_go`](Self::let_go)), since the
-    /// new place will never hear the release.
+    /// the point of the mini player, of the pop-out and of a maximize, which
+    /// hides the other panes and silences none. Everything the pointer was
+    /// doing is let go ([`let_go`](Self::let_go)), since the new place will
+    /// never hear the release.
     ///
     /// The tile goes too, from every window's atlas. Each window keeps its
     /// own, and `render` skips uploading a frame it already holds, so a
@@ -649,6 +670,16 @@ impl VideoView {
         }
     }
 
+    /// What the pane's maximize control offers now, from
+    /// `RootView::restage`; see `VideoView::maximize` for why nothing else
+    /// calls this.
+    pub fn set_maximize(&mut self, maximize: MaximizeButton, cx: &mut Context<Self>) {
+        if self.maximize != maximize {
+            self.maximize = maximize;
+            cx.notify();
+        }
+    }
+
     /// Note what the bar has room for, from the probe. Returns whether that
     /// changed, the only time a repaint is worth it: the width moves with
     /// every pixel of a window being dragged, and what fits changes a few
@@ -701,11 +732,12 @@ fn covered(since_first: Option<Duration>) -> bool {
 }
 
 /// Whether a player in `place` draws its control bar: a pane and a pop-out
-/// do, a tile does not.
+/// do, a tile does not, and nor does a player offstage, which is not drawn
+/// at all.
 fn draws_bar(place: Place) -> bool {
     match place {
         Place::Pane | Place::PopOut => true,
-        Place::Tile => false,
+        Place::Tile | Place::Offstage => false,
     }
 }
 
@@ -716,8 +748,9 @@ impl VideoView {
     /// switch read as deliberate instead of a glitch; the poster under them
     /// is what they fade in over. Only until the picture covers the pane:
     /// once it has, a player drawn somewhere new — popped out, brought
-    /// back, between the pages — comes up as it is, rather than fading in
-    /// again out of the black behind it.
+    /// back, between the pages, back in the grid after another pane had the
+    /// page — comes up as it is, rather than fading in again out of the
+    /// black behind it.
     fn picture(&self, frame: Arc<RenderImage>) -> gpui::AnyElement {
         let picture = img(frame).flex_1().min_h_0().w_full();
         if self.covers() {
@@ -813,7 +846,7 @@ impl Render for VideoView {
         }
 
         let stream_size = self.stream.size_handle();
-        let cluster = bar::cluster(self.place);
+        let cluster = bar::cluster(self.place, self.maximize);
         let this = cx.entity().downgrade();
         let probe = canvas(
             move |bounds, window, cx| {

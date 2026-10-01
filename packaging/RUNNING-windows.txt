@@ -101,7 +101,7 @@ Getting around
   Up/Down   Volume                   Ctrl+0     Reset the pane sizes
   Ctrl+W    Close this pane          Esc        Back to browsing, or to watching
   Alt+Left  Back                     Alt+Right  Forward
-  P         Pop out, or bring back
+  P         Pop out, or bring back   Z          Maximize, or show all panes
 
 Player keys act on the pane you last pointed at or clicked. While the cursor
 is in a text box the keys stand aside for it, all but Ctrl+K, Ctrl+, and
@@ -121,6 +121,10 @@ its own that stays on top of other apps; its chat stays put. P again, or
 Bring back, returns it. On the browse page P, or Pop out on the mini
 player, does it for every pane there, each in its own window. Alt+F4 on the
 small window brings the pane back; its Close closes the pane.
+
+With more than one pane open, Z gives the one you are on the whole window,
+chat and all; the others keep playing, with their sound, out of sight, and
+1 to 4 or Tab hands the window to another. Z or Esc shows them all again.
 
 Back and forward go through the pages you have been on, the way a browser
 does. The mouse's side buttons and the arrows in the bar across the top do
