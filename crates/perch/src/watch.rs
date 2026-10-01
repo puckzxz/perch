@@ -599,14 +599,17 @@ struct PaneLayout {
 /// The pointer's position and which way the pane is split; the *sizes* it moves
 /// come from settings, which is where they end up again — so the drag itself
 /// holds nothing that has to be kept in step with anything.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct ResizeStart {
+    /// Which pane's divider was pulled, by its key. The share that results
+    /// applies to every pane, but the drag has to start from where *this*
+    /// pane's divider is, and with the box sized from each stream's shape
+    /// that differs. A key rather than a position, like everything a pane
+    /// sends: the page may come to draw fewer panes than there are slots,
+    /// and a position in what it drew would then name some other slot.
+    pub key: String,
     pub origin: gpui::Point<Pixels>,
     pub portrait: bool,
-    /// Which pane's divider was pulled. The share that results applies to
-    /// every pane, but the drag has to start from where *this* pane's divider
-    /// is, and with the box sized from each stream's shape that differs.
-    pub index: usize,
 }
 
 /// The seam between video and chat, as something you can pull.
@@ -620,12 +623,12 @@ pub struct ResizeStart {
 /// because nothing is meant to grab *it*.
 fn divider<V: 'static>(
     key: &str,
-    index: usize,
     portrait: bool,
     on_resize: impl Fn(&mut V, ResizeStart, &mut Window, &mut Context<V>) + 'static,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
     let half = theme::DIVIDER_GRAB / 2.0;
+    let owner = key.to_string();
     let handle = div()
         .id(pane_id(key, "divider"))
         .absolute()
@@ -657,9 +660,9 @@ fn divider<V: 'static>(
                 on_resize(
                     view,
                     ResizeStart {
+                        key: owner.clone(),
                         origin: event.position,
                         portrait,
-                        index,
                     },
                     window,
                     cx,
@@ -735,7 +738,6 @@ fn chat_or_why(slot: &Slot) -> AnyElement {
 /// a recording's card find their pictures.
 #[allow(clippy::too_many_arguments)]
 fn pane<V: 'static>(
-    index: usize,
     slot: &Slot,
     info: &PaneInfo,
     layout: PaneLayout,
@@ -744,7 +746,7 @@ fn pane<V: 'static>(
     cache: &ImageCache,
     on_pane: impl Fn(&mut V, &str, PaneAction, &mut Window, &mut Context<V>) + Clone + 'static,
     on_resize: impl Fn(&mut V, ResizeStart, &mut Window, &mut Context<V>) + 'static,
-    on_hover: impl Fn(&mut V, usize, bool, &mut Context<V>) + 'static,
+    on_hover: impl Fn(&mut V, &str, bool, &mut Context<V>) + 'static,
     cx: &mut Context<V>,
 ) -> gpui::AnyElement {
     let placement = placement(slot);
@@ -821,11 +823,12 @@ fn pane<V: 'static>(
     // something in the window is being dragged. The listener below only exists
     // to wake a repaint so this runs again.
     let owner = cx.entity().downgrade();
+    let hovered_key = slot.key.clone();
     let hover_probe = canvas(
         move |bounds, window, cx| {
             let inside = window.is_window_hovered() && bounds.contains(&window.mouse_position());
             owner
-                .update(cx, |view, cx| on_hover(view, index, inside, cx))
+                .update(cx, |view, cx| on_hover(view, &hovered_key, inside, cx))
                 .ok();
         },
         |_, _, _, _| {},
@@ -976,70 +979,74 @@ fn pane<V: 'static>(
         }
     })
     .child(video_pane)
-    .child(divider(&slot.key, index, layout.portrait, on_resize, cx))
+    .child(divider(&slot.key, layout.portrait, on_resize, cx))
     .child(chat_pane)
     .into_any_element()
 }
 
-/// The whole watch page, laid out in the room the `body` says it has. See
-/// [`layout::Body`] for why that is a type rather than the viewport.
+/// The whole watch page: `slots`, in the cells of `grid`, row by row.
 ///
-/// `panes` is what the app knows about each slot, in the same order — see
-/// [`PaneInfo`]. `window_hovered` is `window.is_window_hovered()`, which the
-/// panes' headers give their tooltips by; see `header::pane_header`.
-/// `cache` is the app's image cache, for what a pane's status screen shows.
+/// The grid is the root's, cut from the room the page has and the cells it
+/// draws (`layout::Grid::of`, through `RootView::grid`), so the page, the
+/// divider drag and each pane's quality are sized from one answer rather
+/// than each working it out again. `slots` are the panes it draws, in that
+/// order, and `panes` is what the app knows about each of them, in the same
+/// order — see [`PaneInfo`]. Everything a pane sends back names it by its
+/// key, and `active` is the key of the pane the keys talk to, so a page
+/// drawing only some of the slots cannot act on the wrong one.
+/// `window_hovered` is `window.is_window_hovered()`, which the panes'
+/// headers give their tooltips by; see `header::pane_header`. `cache` is
+/// the app's image cache, for what a pane's status screen shows.
 #[allow(clippy::too_many_arguments)]
 pub fn page<V: 'static>(
-    slots: &[Slot],
+    slots: &[&Slot],
     panes: &[PaneInfo],
-    body: layout::Body,
+    grid: layout::Grid,
     chat_width: f32,
     video_share: f32,
-    active: Option<usize>,
+    active: Option<&str>,
     window_hovered: bool,
     cache: &ImageCache,
     on_pane: impl Fn(&mut V, &str, PaneAction, &mut Window, &mut Context<V>) + Clone + 'static,
     on_resize: impl Fn(&mut V, ResizeStart, &mut Window, &mut Context<V>) + Clone + 'static,
-    on_hover: impl Fn(&mut V, usize, bool, &mut Context<V>) + Clone + 'static,
+    on_hover: impl Fn(&mut V, &str, bool, &mut Context<V>) + Clone + 'static,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
-    let (rows, cols) = layout::grid_shape(slots.len(), body.aspect());
     let cell = PaneLayout {
-        portrait: layout::cell_is_portrait(layout::cell_aspect(body.aspect(), rows, cols)),
+        portrait: grid.portrait,
         // Clamped here rather than where it is stored: settings is a file
         // anyone can hand-edit, and a nonsense width would hide the video.
         chat_width: chat_width.clamp(theme::CHAT_WIDTH_MIN, theme::CHAT_WIDTH_MAX),
-        cell_width: layout::cell_extent(body.width, cols),
-        cell_height: layout::cell_extent(body.height, rows),
+        cell_width: grid.cell_width,
+        cell_height: grid.cell_height,
         video_share,
         mark_active: slots.len() > 1,
     };
 
-    let mut grid = div()
+    let mut lines = div()
         .size_full()
         .flex()
         .flex_col()
         .gap(px(theme::PANE_GAP))
         .bg(theme::bg());
 
-    for row in 0..rows {
+    for row in 0..grid.rows {
         let mut line = div()
             .flex_1()
             .min_h_0()
             .flex()
             .flex_row()
             .gap(px(theme::PANE_GAP));
-        for col in 0..cols {
-            let index = row * cols + col;
+        for col in 0..grid.cols {
+            let index = row * grid.cols + col;
             let (Some(slot), Some(info)) = (slots.get(index), panes.get(index)) else {
                 continue;
             };
             line = line.child(pane(
-                index,
                 slot,
                 info,
                 cell,
-                active == Some(index),
+                active == Some(slot.key.as_str()),
                 window_hovered,
                 cache,
                 on_pane.clone(),
@@ -1048,9 +1055,9 @@ pub fn page<V: 'static>(
                 cx,
             ));
         }
-        grid = grid.child(line);
+        lines = lines.child(line);
     }
-    grid
+    lines
 }
 
 #[cfg(test)]

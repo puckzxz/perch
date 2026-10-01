@@ -76,7 +76,7 @@ App modules:
 | `trail.rs` | back and forward: the places behind and ahead, what a step passes over, and forgetting a place that is gone (pure, tested) |
 | `stage.rs` | where each pane is drawn — a pane, a mini-player tile, or a window of its own (`Place`) — and which panes are popped out (`Stage`): the one owner of the answer both windows ask before drawing a player (pure, tested) |
 | `os_window.rs` | what Perch asks of a window that gpui does not: its platform handle, and keeping a pop-out above every other app (`keep_on_top`, Windows only) |
-| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams` (opening, restarting, closing, and `replace_with_video`, a recording swapped in for a live pane in place), `panes` (where each pane is drawn, applied: `restage`, the one funnel every change of a pane's state, of which panes there are, of the page and of what is popped out ends in; `set_slot_state`, the only write of a pane's state, which a test holds the root to; `video_in_main`, the only way the main window reaches a player), `pop_out` (a pane's picture in a window of its own, on top of other apps: the `PopOut` view, opening and closing it through `cx.defer`, `to_root`, the only way back to the root from it, and `offered`, Windows only), `broadcasts` (what a stopped live pane asks about its channel's past broadcasts, and whether it may offer to start by itself), `pane_actions` (what a pane asks for, by its key: a press on it or one of its controls, which takes the keys back for the root first, and its player's requests; and the moment a pane key brings a pane's header up over its picture), `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `prefs`, `recommended` (the rail's Recommended group: when to ask the worker, what its answer becomes, and the hooks that call it), `chrome` (pills, toasts, the rail), `mini_player` (what plays on while you browse, in the corner of the page), `title_bar` (the bar Perch draws across the top of the window — the rail button, back and forward, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`) |
+| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams` (opening, restarting, closing, and `replace_with_video`, a recording swapped in for a live pane in place), `renditions` (what each pane plays, and when it restarts: the quality chosen against each pane's own height, `pane_height_for`, the upward re-pick when the grid changes, `sync_quality`, a pick from the pane's own menu, and the restart each ends in), `panes` (where each pane is drawn, applied: `restage`, the one funnel every change of a pane's state, of which panes there are, of the page and of what is popped out ends in; `set_slot_state`, the only write of a pane's state, which a test holds the root to; `video_in_main`, the only way the main window reaches a player), `pop_out` (a pane's picture in a window of its own, on top of other apps: the `PopOut` view, opening and closing it through `cx.defer`, `to_root`, the only way back to the root from it, and `offered`, Windows only), `broadcasts` (what a stopped live pane asks about its channel's past broadcasts, and whether it may offer to start by itself), `pane_actions` (what a pane asks for, by its key: a press on it or one of its controls, which takes the keys back for the root first, and its player's requests; and the moment a pane key brings a pane's header up over its picture), `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `prefs`, `recommended` (the rail's Recommended group: when to ask the worker, what its answer becomes, and the hooks that call it), `chrome` (pills, toasts, the rail), `mini_player` (what plays on while you browse, in the corner of the page), `title_bar` (the bar Perch draws across the top of the window — the rail button, back and forward, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`) |
 | `target.rs` | what a typed or pasted thing means: a login, or a twitch.tv link to a channel or a recording; `link`, its inverse and the one place a twitch.tv URL is written, and `moment`, the second a link to a recording starts at (pure, tested) |
 | `browse.rs` | the picker page: following, popular, categories, search; which of them is on screen (`Discovery::place`) and which lists are still being waited on |
 | `channel_page.rs` | one channel's past broadcasts, and when each was; the recording card both pages use, and a stopped pane too; a recording's poster, and `archive_of`, which finds the recording of a broadcast that just ended (tested) |
@@ -84,7 +84,7 @@ App modules:
 | `watch.rs` | the grid of panes; `Slot` lives here, made by `Slot::new`, and `PaneAction`, everything a pane asks of the root; the band a header rides over the picture on, and when it is up (`Slot::point`, `band_wanted`, tested) |
 | `watch/header.rs` | a pane's header — name, numbers, what is on, `muted`/`paused`, the × that names its key — and `Placement`, the one rule for where it goes: the chat panel, or over the picture with no chat on screen (tested) |
 | `watch/status.rs` | a pane with no picture: `Showing`, the one reading of its state that the pane's sentence and the mini player's word both come from, and the screen drawn from it under the player — a starting pane's poster, a stopped one's next steps and what room it has for them (`next_up_room`), and `Elsewhere`, a pane whose picture is in a window of its own, with `Bring back` (tested) |
-| `layout.rs` | derives grid shape from window aspect; the page's `Body`, the title bar's height and drag edge, and the mini player's tiles, how far in it floats clear of the scrollbar, and the `Room` a browse list leaves for it; where a pop-out opens, stacked clear of where the open ones really are (`pop_out_bounds`) (pure, tested) |
+| `layout.rs` | derives grid shape from window aspect, as `Grid::of`, the one grid the watch page, the divider drag and each pane's quality read; `quality_height`, the height a pane asks a rendition for; the page's `Body`, the title bar's height and drag edge, and the mini player's tiles, how far in it floats clear of the scrollbar, and the `Room` a browse list leaves for it; where a pop-out opens, stacked clear of where the open ones really are (`pop_out_bounds`) (pure, tested) |
 | `video_view.rs` | the player element: its sound, its hover, the picture; drawn as a pane, a mini-player tile or in a pop-out (`stage::Place`), moved between them only by `set_place`, and belonging to no window |
 | `video_view/bar.rs` | the control bar over a playing picture: the seek row on a recording, the icons and their key-naming tooltips, what fits at the pane's width (`fit`, tested), the one anchor menus open from; a pop-out's own right-hand end, Bring back and Close |
 | `video_view/menu.rs` | the bar's menus, the quality and More: which is open (`Menu`, one at a time), the box, rows that act on the press (tested), and `run_guard`, which swallows the rest of a double-click a row took (tested) |
@@ -237,6 +237,18 @@ and is not one.
 **mpv's `bgr0` has no alpha.** The fourth byte is documented as "uninitialized
 garbage". Not filling it with `0xFF` makes every frame render fully transparent.
 
+**A player that cannot open has to say so.** The pane is `Playing` from the
+moment `VideoStream::start` returns, and a view with no frame draws the
+starting screen under it. When `Player::open_with` failed, the render thread
+used to log it and end, and the pane said "Starting…" for good. It now fills
+`stopped` with `Stopped::Failed("could not open the player: …")` and wakes the
+frame channel, as an end of file does, so the view emits `VideoEvent::Stopped`,
+`stream_stopped` retires the player, and the pane offers `Try again`. A
+recording whose playlist cannot be written already did this. Not yet the
+loop's own exits: a frame that fails to render, a buffer that does not match
+its size, and mpv's `Shutdown` still end the thread without a word, leaving
+the last frame up as if paused.
+
 **`mpv_render_context_render` blocks until the frame's display time**, up to
 `video-timing-offset` (50 ms default). That wait is what keeps video timed to
 audio, so it is wanted — but calling it on the UI thread stalls the whole GPUI
@@ -284,10 +296,17 @@ and a choice made from the pane's own menu is left alone. A restart is the
 only way to change rendition, since streamlink is resolved again, so it costs
 a few seconds of black: worth it for a picture that was soft, not for a CPU
 saving in a pane that hides nothing — which is also why the re-pick waits for
-a resize to settle rather than running per event. The mini player is not one
-of the sizes it chooses for: `pane_height` measures the watch grid whichever
-page is up, so a tile never feeds it, the rendition playing in the corner is
-the one you go back to, and going back to watching never restarts a stream.
+a resize to settle rather than running per event. Each pane is measured on its
+own, by its key (`RootView::pane_height_for`, in `root/renditions.rs` with the
+rest of the quality code): its cell of the one grid, in physical pixels
+(`layout::quality_height`), measured as its share of the body's height with
+the seams left in (`Grid::share_height`), as panes always were. The cell as
+cut is a pixel or two shorter in two rows, and renditions are picked by exact
+heights, so measuring that would move a pane at the edge to a softer
+rendition. The mini player is not one of the sizes it chooses for:
+`pane_height_for` measures the watch grid whichever page is up, so a tile
+never feeds it, the rendition playing in the corner is the one you go back
+to, and going back to watching never restarts a stream.
 A player that does restart off the watch page — the re-pick after a resize, a
 quality change from the settings — is born where its pane is drawn
 (`video_view::Start::place`, from `RootView::place_of`): a tile, as the one it
@@ -346,10 +365,16 @@ Three things that took finding:
   comma-separated list, so it is quoted with mpv's `%N%` length prefix.
   `Recording::mpv_options` builds both.
 - **The demuxer keeps the playlist file open, and Windows will not rename over
-  an open file.** Every reposition writes a new file, `<video>-<quality>-<n>.m3u8`
-  under the temp directory, and deletes the previous one once `FileLoaded` says
-  the new one is in; anything still held is retried at the next reposition and
-  at teardown.
+  an open file.** Every reposition writes a new file,
+  `<video>-<quality>-<player>-<n>.m3u8` under the temp directory, and deletes
+  the previous one once `FileLoaded` says the new one is in; anything still
+  held is retried at the next reposition and at teardown. `<player>` is a
+  number no other player of the run has (`vod::playlist_label`): a player
+  deletes what it wrote when it tears down, and two players of one recording
+  under one name — a pane restarted at the rendition it had, whose old
+  player's thread is still letting go, or a second player started beside the
+  first — deleted and rewrote each other's files. Nothing reads a label back
+  but `sweep_scratch`, which clears the directory whole.
 - **A broadcast still being recorded is a playlist with no end marker that grows
   by a segment every ten seconds.** ffmpeg re-reads such a playlist when it
   runs out of segments, and it re-reads a *file* too. So the keeper thread
@@ -378,6 +403,26 @@ so the bar does not sit on the old position while the player reopens. mpv's
 length comes from the playlist (`vod::Extent`), grown by the keeper, and the
 bar's extent adds the seconds since the keeper last said, so a growing
 recording's end moves smoothly rather than in ten-second steps.
+
+**A player reports its position to itself, and to the pane only while it
+publishes.** Every position a player learns — where it opens, `time-pos`,
+where a seek sends it — goes through `video::Positions::report`, which always
+writes the player's own handle and writes the pane's shared one (what the
+chat replay, the history and a link to the moment read) only once the player
+publishes. The render thread reads its own: reopening after a long pause and
+the stall watchdog are about this player's place in its file.
+`VideoStream::position` answers with it too, and so does the seek bar, which
+asks the player on screen. A pane's one player publishes from the start
+(`StartOptions::publish`, as `start_stream` asks), so nothing changes for it;
+the gate is for a second player of the pane started beside the one on screen,
+whose position moving would otherwise reset the replay to a moment nobody is
+watching and note that moment in the history. Nothing starts one yet; the
+quality swap that keeps the picture will. `Positions::publish` hands the pane
+where the player is at that moment, not where it next reports. Such a player
+is also handed the pane's `SizeHandle` (`StartOptions::size`): a stream keeps
+the handle it is given rather than a copy of the size, so two players of one
+pane follow one probe and the second renders at the pane's size from its
+first frame.
 
 The replaced file's end arrives as `MPV_EVENT_END_FILE` with reason `Stop`,
 which `Stopped::from_end` already ignores — the same reason a closing pane
@@ -1235,6 +1280,27 @@ unconsidered.
   bar. The bar itself is drawn at `layout::title_bar_height`, the number the
   body takes off — whether there is a bar at all included — so the two are one
   decision (`the_bar_is_as_tall_as_the_room_the_page_leaves_it`).
+- **The watch grid is `layout::Grid::of(body, cells)`, and nothing else.**
+  Its rows, columns, cell size and whether a cell stacks its chat come from
+  that one call, made by `RootView::grid`, which hands it to the watch page
+  and reads it for the divider drag (`effective_video_share`,
+  `on_mouse_move`) and for each pane's quality (`pane_height_for`). The
+  page, the drag and the quality used to work the shape out for themselves,
+  four copies of one sum, so a change to how cells are counted had four
+  places to miss. `grid_shape` and the cell helpers are private to
+  `layout.rs`, so a fifth cannot start; `one_cell_gets_the_whole_body` and
+  `the_grid_is_cut_from_the_cells_it_is_given` hold the grid to the cells it
+  is given. Whether a cell stacks is judged on its share of the body before
+  the seams come out, as `grid_shape` scores shapes and as the page always
+  stacked, not on `cell_width / cell_height`: within a few pixels of
+  `PORTRAIT_ASPECT` a seam tips the cell as cut the other way, and the share
+  keeps the switch where it was (`a_grids_portrait_flag_is_its_cells_share`,
+  `a_seam_does_not_tip_a_cell_into_stacking`). A pane's quality is measured
+  on the share too (`share_height`, held by
+  `a_panes_quality_is_measured_with_the_seams_left_in`); the page and the
+  drag use the cell as cut. Everything the page sends back about a pane — a
+  press, its hover, a divider pulled (`watch::ResizeStart`) — names the pane
+  by its key, never by its place in what was drawn.
 - **Sizes the user dragged are settings, not view state.** `chat_width` and
   `video_share` live in `settings.json`, and the drag writes them on mouse *up*
   rather than on every move — a drag is hundreds of events and each save is a
@@ -2118,7 +2184,10 @@ minute of chat and then the right one. "Watch again" starts a player at zero,
 which the replay reads as a seek back and reloads from the start.
 `VideoStream::start` writes the start position into the handle at once, so
 neither the bar nor the replay sits on the last player's position for the
-seconds a player takes to open. The history reads the same handle, which is
+seconds a player takes to open — when the player publishes from the start,
+as a pane's one player does; one that does not leaves the handle to the
+player on screen (see "A player reports its position to itself" under
+Recordings). The history reads the same handle, which is
 why a pane still opening, or one whose player has stopped, is noted where it
 is rather than at zero.
 
@@ -2963,7 +3032,8 @@ None of these is being worked on; all of them are real.
   transport-stream recording and never on a fragmented-MP4 one, and the second
   kind is most channels. Reposition by rewriting the playlist, as `vod.rs` does.
 - Do not rename or rewrite a playlist the player is reading. Write a new file
-  for a reposition; append for growth.
+  for a reposition; append for growth. And never let two players write under
+  one name: each player's label is its own (`vod::playlist_label`).
 - Do not resume a recording paused for a while by unpausing it, or wait on
   ffmpeg to notice a connection that died under it. A silently dropped one
   hangs the demuxer for good; reopen where it is. See the Recordings trap.

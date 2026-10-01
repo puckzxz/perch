@@ -35,7 +35,7 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write as _;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -64,6 +64,33 @@ pub fn sweep_scratch() {
     for entry in entries.flatten() {
         let _ = fs::remove_file(entry.path());
     }
+}
+
+/// Numbers the labels [`playlist_label`] hands out, from one for the first
+/// player of the run. Process-wide, so no two players ever draw the same one.
+static PLAYERS: AtomicU32 = AtomicU32::new(0);
+
+/// The name one player's playlists are written under, as
+/// `<label>-<n>.m3u8`: the recording and the rendition, which is what
+/// somebody reading the scratch directory wants to know, then a number no
+/// other player of this run has.
+///
+/// The number is what keeps two players of one recording apart. A player
+/// deletes the files it wrote once it has torn down, and on a reposition the
+/// one before, so two players writing under one name delete each other's: a
+/// pane restarted at the rendition it was already playing starts its new
+/// player while the old one's thread may still be tearing down, and that
+/// thread's last act is to delete the files it wrote — among them, if it was
+/// never seeked, `<video>-<quality>-1.m3u8`, the name the new player had
+/// just written its first playlist to. A second player
+/// started beside the first at another moment would rewrite a playlist the
+/// first is reading (see "Do not rename or rewrite a playlist the player is
+/// reading" in the handoff). Nothing reads a label back but
+/// [`sweep_scratch`], which clears the whole directory, so the names need
+/// not be the same from one run to the next.
+pub fn playlist_label(video_id: &str, quality: &str) -> String {
+    let player = PLAYERS.fetch_add(1, Ordering::Relaxed) + 1;
+    format!("{video_id}-{quality}-{player}")
 }
 
 /// What the demuxer may fetch from a playlist it read off disk. Left to
@@ -374,6 +401,27 @@ fn keep_growing(shared: Arc<Mutex<Shared>>, extent: Extent, stop: Arc<AtomicBool
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Two players of the same recording at the same rendition — a pane
+    /// restarted at the quality it had, or a second player started beside
+    /// the first — write under names that differ, so neither writes over or
+    /// deletes a file the other's demuxer is reading. Both still say what
+    /// they are playing.
+    #[test]
+    fn two_players_of_one_recording_never_share_a_playlist() {
+        let first = playlist_label("2389012345", "1080p60");
+        let second = playlist_label("2389012345", "1080p60");
+        assert_ne!(first, second);
+        assert!(first.starts_with("2389012345-1080p60-"), "{first}");
+        assert!(second.starts_with("2389012345-1080p60-"), "{second}");
+        // Nor can one player's later files take another's names: the
+        // player's number ends at a dash, so `<a>-<n>` is never `<b>-<m>`.
+        for n in 1..=12 {
+            for m in 1..=12 {
+                assert_ne!(format!("{first}-{n}"), format!("{second}-{m}"));
+            }
+        }
+    }
 
     #[test]
     fn a_short_pause_just_unpauses_and_a_long_one_reopens() {

@@ -178,13 +178,17 @@ impl RootView {
         // pointer was on the card that opened this page — standing for good.
         self.hold_live(LiveList::Following, false, cx);
 
+        // The panes the page draws, in the order it draws them, and the grid
+        // it draws them in: every slot, for now, in one cell each. Both from
+        // here, so the page and the root agree about them by construction.
+        let slots: Vec<&Slot> = self.slots.iter().collect();
+        let grid = self.grid(window);
         // Resolved here, for the panes on screen only: `live_info` walks
         // every list the app holds, and doing that per pane per frame inside
         // the page would be the same walk four times over.
-        let panes: Vec<PaneInfo> = self
-            .slots
+        let panes: Vec<PaneInfo> = slots
             .iter()
-            .map(|slot| {
+            .map(|&slot| {
                 let showing = self.showing_in_main(slot, cx);
                 PaneInfo {
                     player: self.video_in_main(slot).cloned(),
@@ -212,28 +216,32 @@ impl RootView {
         // leads off the page is `Esc`, a search from the box up there, and
         // the palette's "Go to" rows. A row in the rail does not: it opens
         // that channel here.
+        let active = self
+            .active_slot()
+            .map(|index| self.slots[index].key.as_str());
         div().size_full().relative().child(watch::page(
-            &self.slots,
+            &slots,
             &panes,
-            self.body(window),
+            grid,
             self.settings.chat_width,
             self.settings.video_share,
-            self.active_slot(),
+            active,
             window.is_window_hovered(),
             &self.cache,
             |this: &mut RootView, key: &str, action, window, cx| {
                 this.on_pane_action(key, action, window, cx)
             },
             |this: &mut RootView, start, window, cx| this.start_resize(start, window, cx),
-            |this: &mut RootView, index, inside, cx| {
+            |this: &mut RootView, key: &str, inside, cx| {
                 // What the header over the picture follows besides the
                 // pointer: whether there is a picture to keep clear — one
                 // that covers the pane, not a status screen under a player
                 // still fading in — and whether a menu on the bar has the
-                // space.
-                let Some(slot) = this.slots.get(index) else {
+                // space. Looked up by key, as everything a pane sends is.
+                let Some(index) = this.slot_index(key) else {
                     return;
                 };
+                let slot = &this.slots[index];
                 // Through the main window's own access to a player, so a
                 // pane whose picture is in a window of its own reads as one
                 // with nothing to cover, and nothing here reads its player.

@@ -4,7 +4,10 @@
 //! derived: try every column count, and pick the one whose resulting cells come
 //! closest to the shape a video pane actually wants. That falls out correctly
 //! for an ultrawide, a square window and a vertical monitor without any of them
-//! being special-cased.
+//! being special-cased. The answer is a [`Grid`], made by [`Grid::of`] and
+//! nothing else, so the page, the divider drag and the quality a pane is
+//! chosen for all read one grid; [`quality_height`] turns a cell of it into
+//! the height a rendition is chosen for.
 //!
 //! It also owns the few numbers more than one part of the window has to agree
 //! on: how much of the window the title bar takes, whether the rail is drawn,
@@ -314,8 +317,87 @@ fn cell_penalty(cell_aspect: f32) -> f32 {
     beside.min(below)
 }
 
+/// The watch grid: how many rows and columns of cells, how large each cell
+/// is, and whether a cell stacks its chat under the picture.
+///
+/// One answer, made in one place ([`Grid::of`]), for everything that has to
+/// agree about a pane's size: the watch page that draws the cells, the
+/// divider drag measured against them, and the quality each pane is chosen
+/// for (`RootView::grid`, `RootView::pane_height_for`). Each of those used
+/// to work the shape out again from the body and the number of panes, four
+/// copies of one sum that had to be kept in step by hand.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Grid {
+    pub rows: usize,
+    pub cols: usize,
+    /// One cell's width and height, with the seams between panes taken out.
+    pub cell_width: f32,
+    pub cell_height: f32,
+    /// A cell's share of the body's height before the seams are taken out:
+    /// what its quality is chosen against (`RootView::pane_height_for`,
+    /// through [`quality_height`]), as a pane always has been.
+    ///
+    /// Not `cell_height`, which is shorter by its part of the seams in a
+    /// grid of more than one row. A rendition is picked by exact heights
+    /// (720p is 1:1 in a pane 720 pixels tall, and one 721 tall already
+    /// wants 1080p), so a pixel or two less would move a pane at the edge to
+    /// a softer rendition than it plays today, for no saving anybody asked
+    /// for.
+    pub share_height: f32,
+    /// Chat under the picture rather than beside it: a cell's share of the
+    /// body is narrower than [`theme::PORTRAIT_ASPECT`].
+    ///
+    /// Judged on the share before the seams are taken out — the body's
+    /// aspect over the columns, times the rows — not on
+    /// `cell_width / cell_height`. That share is what [`grid_shape`] scores
+    /// each shape by, and what the page has always stacked by, so chat moves
+    /// under the picture at the window width it always did. The two differ
+    /// only within a few pixels of the threshold, where a seam can tip the
+    /// cell as cut to the other side of it.
+    ///
+    /// [`theme::PORTRAIT_ASPECT`]: crate::theme::PORTRAIT_ASPECT
+    pub portrait: bool,
+}
+
+impl Grid {
+    /// The grid `cells` panes are drawn in, in the room the `body` says the
+    /// page has: the shape whose cells come closest to what a pane wants
+    /// (see [`grid_shape`]), cut from the cells it is given rather than from
+    /// whatever else the caller might count. No cells is the shape of one.
+    pub fn of(body: Body, cells: usize) -> Self {
+        let (rows, cols) = grid_shape(cells, body.aspect());
+        Self {
+            rows,
+            cols,
+            cell_width: cell_extent(body.width, cols),
+            cell_height: cell_extent(body.height, rows),
+            share_height: body.height / rows as f32,
+            portrait: cell_is_portrait(cell_aspect(body.aspect(), rows, cols)),
+        }
+    }
+}
+
+/// The least height a pane's quality is chosen for: under it, every rendition
+/// is too big already, and a minimised window's zero would ask for nothing.
+const QUALITY_HEIGHT_MIN: f32 = 180.0;
+
+/// The height a pane `physical_px` tall asks its stream's rendition for:
+/// whole pixels, no less than [`QUALITY_HEIGHT_MIN`] and no more than the
+/// render thread will ever draw (`video::MAX_RENDER_HEIGHT`).
+///
+/// Physical pixels, not logical ones: on a display at 150% a 720 px pane is
+/// 1080 pixels tall, and a rendition chosen for 720 would be stretched to
+/// fill it. `RootView::pane_height_for` is the one reader, with the pane's
+/// [`Grid::share_height`] multiplied by its window's scale.
+pub fn quality_height(physical_px: f32) -> u32 {
+    physical_px
+        .round()
+        .clamp(QUALITY_HEIGHT_MIN, crate::video::MAX_RENDER_HEIGHT as f32) as u32
+}
+
 /// Rows and columns for `count` panes in a window of `aspect` (width / height).
-pub fn grid_shape(count: usize, aspect: f32) -> (usize, usize) {
+/// Read through [`Grid::of`], the one grid, and nowhere else.
+fn grid_shape(count: usize, aspect: f32) -> (usize, usize) {
     let count = count.max(1);
     let aspect = if aspect.is_finite() && aspect > 0.0 {
         aspect
@@ -347,18 +429,18 @@ pub fn grid_shape(count: usize, aspect: f32) -> (usize, usize) {
 
 /// Whether a cell of this aspect should stack chat under the video rather than
 /// beside it.
-pub fn cell_is_portrait(cell_aspect: f32) -> bool {
+fn cell_is_portrait(cell_aspect: f32) -> bool {
     cell_aspect < crate::theme::PORTRAIT_ASPECT
 }
 
 /// The aspect of one cell in the given grid.
-pub fn cell_aspect(window_aspect: f32, rows: usize, cols: usize) -> f32 {
+fn cell_aspect(window_aspect: f32, rows: usize, cols: usize) -> f32 {
     (window_aspect / cols.max(1) as f32) * rows.max(1) as f32
 }
 
 /// One cell's width or height along an axis of `total` pixels split `count`
 /// ways, with the seams between panes taken out first.
-pub fn cell_extent(total: f32, count: usize) -> f32 {
+fn cell_extent(total: f32, count: usize) -> f32 {
     let count = count.max(1);
     let seams = crate::theme::PANE_GAP * (count - 1) as f32;
     ((total - seams) / count as f32).max(0.0)
@@ -774,6 +856,167 @@ mod tests {
     fn narrow_cells_stack_their_chat() {
         assert!(cell_is_portrait(0.6));
         assert!(!cell_is_portrait(WIDE));
+    }
+
+    /// The room a page has in a window of `aspect`, 900 px tall, with no rail
+    /// and no bar.
+    fn body_of(aspect: f32) -> Body {
+        Body::of(gpui::size(px(900.0 * aspect), px(900.0)), 0.0, 0.0)
+    }
+
+    /// One pane is the whole page, and so is none: a page with nothing on it
+    /// is one empty cell, not a grid divided by zero.
+    #[test]
+    fn one_cell_gets_the_whole_body() {
+        for aspect in [WIDE, ULTRAWIDE, PORTRAIT] {
+            let body = body_of(aspect);
+            for cells in [0, 1] {
+                let grid = Grid::of(body, cells);
+                assert_eq!((grid.rows, grid.cols), (1, 1), "{cells} at {aspect}");
+                assert_eq!(grid.cell_width, body.width);
+                assert_eq!(grid.cell_height, body.height);
+            }
+        }
+    }
+
+    /// The shape is cut from the number of cells handed in, and each cell is
+    /// its share of the body less the seams between them.
+    #[test]
+    fn the_grid_is_cut_from_the_cells_it_is_given() {
+        let body = body_of(WIDE);
+        let four = Grid::of(body, 4);
+        assert_eq!((four.rows, four.cols), (2, 2));
+        assert_eq!(four.cell_width, (body.width - crate::theme::PANE_GAP) / 2.0);
+        assert_eq!(
+            four.cell_height,
+            (body.height - crate::theme::PANE_GAP) / 2.0
+        );
+
+        let body = body_of(PORTRAIT);
+        let two = Grid::of(body, 2);
+        assert_eq!((two.rows, two.cols), (2, 1));
+        assert_eq!(two.cell_width, body.width);
+        assert_eq!(
+            two.cell_height,
+            (body.height - crate::theme::PANE_GAP) / 2.0
+        );
+    }
+
+    /// Two panes side by side in a body 1981 px wide and 900 tall, within
+    /// a few pixels of where chat moves under the picture.
+    fn two_beside_at_the_threshold() -> Body {
+        Body::of(gpui::size(px(1981.0), px(900.0)), 0.0, 0.0)
+    }
+
+    /// Whether a cell stacks its chat is judged on the cell's share of the
+    /// body before the seams come out: the body's aspect over the columns,
+    /// times the rows, the measure `grid_shape` scores each shape by. For
+    /// every count of panes on every window shape tried here, and at the
+    /// threshold, where the cell as cut would answer differently (see
+    /// `a_seam_does_not_tip_a_cell_into_stacking`).
+    #[test]
+    fn a_grids_portrait_flag_is_its_cells_share() {
+        let bodies = [WIDE, ULTRAWIDE, PORTRAIT]
+            .map(body_of)
+            .into_iter()
+            .chain([two_beside_at_the_threshold()]);
+        for body in bodies {
+            for cells in 1..=4 {
+                let grid = Grid::of(body, cells);
+                let share = body.aspect() / grid.cols as f32 * grid.rows as f32;
+                assert_eq!(
+                    grid.portrait,
+                    share < crate::theme::PORTRAIT_ASPECT,
+                    "{cells} cells in {} x {}: a {share:.4} share",
+                    body.width,
+                    body.height
+                );
+            }
+        }
+    }
+
+    /// At the threshold the share decides, not the cell as cut. Each of two
+    /// panes beside each other in 1981 x 900 has a share a hair wider than
+    /// `PORTRAIT_ASPECT`, and the seam between them makes the cell as cut a
+    /// hair narrower. Their chat stays beside, as it did before there was a
+    /// `Grid`: the switch to stacking stays at the window width it was.
+    #[test]
+    fn a_seam_does_not_tip_a_cell_into_stacking() {
+        let grid = Grid::of(two_beside_at_the_threshold(), 2);
+        assert_eq!((grid.rows, grid.cols), (1, 2));
+        let cut = grid.cell_width / grid.cell_height;
+        assert!(
+            cut < crate::theme::PORTRAIT_ASPECT,
+            "the cell as cut is {cut:.4}, under the threshold"
+        );
+        assert!(!grid.portrait, "but its share is over it, and stays beside");
+    }
+
+    /// Never under the floor, never over what the render thread draws, and
+    /// whole pixels between.
+    #[test]
+    fn quality_height_is_clamped_to_what_can_be_rendered() {
+        assert_eq!(quality_height(0.0), 180, "a minimised window");
+        assert_eq!(quality_height(-40.0), 180);
+        assert_eq!(quality_height(120.0), 180);
+        assert_eq!(quality_height(1080.0), 1080);
+        assert_eq!(quality_height(720.4), 720);
+        assert_eq!(quality_height(720.6), 721);
+        assert_eq!(
+            quality_height(4320.0),
+            crate::video::MAX_RENDER_HEIGHT,
+            "an 8K display asks for no more than is ever rendered"
+        );
+    }
+
+    /// A pane is measured in the pixels its picture is drawn in: the same
+    /// cell asks half again as much on a display at 150%, so it is not given
+    /// a rendition that is then stretched to fill it.
+    #[test]
+    fn quality_height_counts_physical_pixels() {
+        let cell = Grid::of(body_of(WIDE), 1).share_height;
+        assert_eq!(quality_height(cell), 900);
+        assert_eq!(quality_height(cell * 1.5), 1350);
+        let shared = Grid::of(body_of(WIDE), 4).share_height;
+        assert_eq!(
+            quality_height(shared * 2.0),
+            quality_height(shared * 2.0 - 0.4),
+            "rounded to whole pixels"
+        );
+        assert!(quality_height(shared * 2.0) > quality_height(shared));
+    }
+
+    /// A pane's quality is chosen against its share of the body's height
+    /// with the seams left in, as it always has been: the body's height over
+    /// the rows, at any scale. In two rows of a body 1442 px tall each pane
+    /// asks for 721, so a stream offering 720p and 1080p plays 1080p there;
+    /// the cell as cut, 719.5, would round to 720 and be handed 720p. One
+    /// row has no seams to differ by.
+    #[test]
+    fn a_panes_quality_is_measured_with_the_seams_left_in() {
+        let tall = Body::of(gpui::size(px(800.0), px(1442.0)), 0.0, 0.0);
+        let two = Grid::of(tall, 2);
+        assert_eq!((two.rows, two.cols), (2, 1));
+        assert_eq!(quality_height(two.share_height), 721);
+        assert_eq!(quality_height(two.cell_height), 720, "the cell as cut");
+
+        let grids = [(tall, 2), (body_of(PORTRAIT), 2), (body_of(WIDE), 4)];
+        for (body, cells) in grids {
+            let grid = Grid::of(body, cells);
+            for scale in [1.0, 1.25, 1.5, 2.0] {
+                assert_eq!(
+                    quality_height(grid.share_height * scale),
+                    quality_height(body.height * scale / grid.rows as f32),
+                    "{cells} cells in {} x {} at {scale}",
+                    body.width,
+                    body.height
+                );
+            }
+        }
+        for aspect in [WIDE, ULTRAWIDE, PORTRAIT] {
+            let one = Grid::of(body_of(aspect), 1);
+            assert_eq!(one.share_height, one.cell_height, "one row at {aspect}");
+        }
     }
 
     fn rect(x: f32, y: f32, width: f32, height: f32) -> Bounds<Pixels> {

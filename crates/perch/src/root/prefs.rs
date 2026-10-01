@@ -156,40 +156,40 @@ impl RootView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let video_share = self.effective_video_share(&start.key, window, cx);
         self.resize = Some(Resize {
             start,
             chat_width: self.settings.chat_width,
-            video_share: self.effective_video_share(start.index, window, cx),
+            video_share,
         });
     }
 
-    /// What share of a stacked cell the video has right now, in pane `index`.
+    /// What share of a stacked cell the video has right now, in the pane
+    /// `key` names.
     ///
     /// A drag has to start from what is on screen, and until somebody has
     /// dragged one there is no stored share — only the box the layout derives
     /// from that pane's stream. Reading it back means the first pull moves from
-    /// where the divider actually is rather than jumping to a default.
-    pub(super) fn effective_video_share(&self, index: usize, window: &Window, cx: &App) -> f32 {
+    /// where the divider actually is rather than jumping to a default. The
+    /// cell is the one grid's (`RootView::grid`), the page's own.
+    pub(super) fn effective_video_share(&self, key: &str, window: &Window, cx: &App) -> f32 {
         if self.settings.video_share > 0.0 {
             return self.settings.video_share;
         }
-        let body = self.body(window);
-        let (rows, cols) = layout::grid_shape(self.slots.len().max(1), body.aspect());
-        let cell_height = layout::cell_extent(body.height, rows);
-        if cell_height <= 0.0 {
+        let grid = self.grid(window);
+        if grid.cell_height <= 0.0 {
             return theme::VIDEO_SHARE_MIN;
         }
-        let cell_width = layout::cell_extent(body.width, cols);
         // Through what the cell is drawn from, so the drag starts where the
         // page drew the divider: a pane in a window of its own has its
         // picture there and a 16:9 box here (`watch::pane`).
         let aspect = self
-            .slots
-            .get(index)
-            .and_then(|slot| self.video_in_main(slot))
+            .slot_index(key)
+            .and_then(|index| self.video_in_main(&self.slots[index]))
             .and_then(|view| view.read(cx).source_aspect())
             .unwrap_or(layout::VIDEO_ASPECT);
-        (layout::stacked_video_height(cell_width, cell_height, aspect, 0.0) / cell_height)
+        (layout::stacked_video_height(grid.cell_width, grid.cell_height, aspect, 0.0)
+            / grid.cell_height)
             .clamp(theme::VIDEO_SHARE_MIN, theme::VIDEO_SHARE_MAX)
     }
 
@@ -246,9 +246,7 @@ impl RootView {
         };
 
         if resize.start.portrait {
-            let body = self.body(window);
-            let rows = layout::grid_shape(self.slots.len().max(1), body.aspect()).0;
-            let cell_height = layout::cell_extent(body.height, rows);
+            let cell_height = self.grid(window).cell_height;
             if cell_height <= 0.0 {
                 return;
             }

@@ -150,10 +150,25 @@ impl Stopped {
 ///
 /// Handed to the UI so a layout pass can report the pane's real size without
 /// holding a borrow on the stream itself.
+///
+/// The stream keeps the handle it was started with (`StartOptions::size`)
+/// as its own target, not a copy of the size in it. So two streams given
+/// clones of one handle follow one probe: a second player of the same pane,
+/// started with the first one's handle, renders at the pane's size from its
+/// first frame rather than at whatever size it was started at.
 #[derive(Clone)]
 pub struct SizeHandle(Arc<AtomicU64>);
 
 impl SizeHandle {
+    /// A handle asking for `width` x `height` physical pixels, capped as
+    /// [`request`](Self::request) caps it: the size a stream renders at until
+    /// its pane is first measured.
+    pub fn new(width: u32, height: u32) -> Self {
+        let handle = Self(Arc::new(AtomicU64::new(0)));
+        handle.request(width, height);
+        handle
+    }
+
     /// Ask for a new render size in physical pixels.
     ///
     /// Capped so that maximising onto a 4K display does not quietly start
@@ -164,18 +179,29 @@ impl SizeHandle {
         let height = height.clamp(90, MAX_RENDER_HEIGHT);
         self.0.store(pack_size(width, height), Ordering::Relaxed);
     }
+
+    /// The size asked for last, as `(width, height)`: what the render thread
+    /// renders at, between frames.
+    fn get(&self) -> (u32, u32) {
+        unpack_size(self.0.load(Ordering::Relaxed))
+    }
 }
 
 /// Where a recording is, shared between the render thread that learns it
-/// and whatever follows it: the seek bar, and the chat replay, which reads
-/// it a few times a second to know what to say next.
+/// and whatever follows the pane: the chat replay, which reads it a few
+/// times a second to know what to say next, the history, and a link to the
+/// moment. The seek bar asks the player on screen, which is the one
+/// publishing here.
 ///
 /// Made by whoever opens the pane rather than by the stream, and handed to
 /// each stream the pane starts, so a quality change — which is a new player
 /// — picks up the position the old one reached rather than starting the bar
 /// at zero, and the replay following it sees playback carry on rather than
-/// a jump. Whole milliseconds inside: an atomic cannot hold an `f64`, and
-/// nothing reads finer.
+/// a jump. A stream writes it only while it publishes its position (see
+/// [`Positions`]), so a second player of the pane, still getting ready
+/// beside the one on screen, moves none of them. Whole
+/// milliseconds inside: an atomic cannot hold an `f64`, and nothing reads
+/// finer.
 #[derive(Clone, Default)]
 pub struct PositionHandle(Arc<AtomicU64>);
 
@@ -219,15 +245,93 @@ impl std::fmt::Debug for PositionHandle {
     }
 }
 
+/// Where one player is in its recording, and whether its pane hears it.
+///
+/// Every position the player learns — where it opens, where mpv says it
+/// is, where a seek sends it — is [`report`](Self::report)ed here. It always
+/// lands in the player's own handle, which is what the player itself reads
+/// (to reopen where it is, to tell a stall from a wait) and what
+/// `VideoStream::position` answers with, so the seek bar of the player on
+/// screen. It reaches the pane's shared handle, which the chat replay, the
+/// history and a link to the moment follow, only while the player
+/// publishes. A pane's one player publishes from the start. A second player
+/// of the same pane, getting ready beside the one on screen at another
+/// rendition, does not until it takes over ([`publish`](Self::publish)):
+/// before then, its position moving would reset the replay to a moment
+/// nobody is watching, and note that moment in the history.
+#[derive(Clone)]
+struct Positions {
+    /// The pane's, shared with whoever follows it; see [`PositionHandle`].
+    shared: PositionHandle,
+    /// This player's alone.
+    own: PositionHandle,
+    publishing: Arc<AtomicBool>,
+}
+
+impl Positions {
+    /// A player's positions, reaching `shared` only once published.
+    fn new(shared: PositionHandle) -> Self {
+        Self {
+            shared,
+            own: PositionHandle::new(),
+            publishing: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// The player is at `secs`: always its own, and the pane's while it
+    /// publishes.
+    fn report(&self, secs: f64) {
+        self.own.set(secs);
+        if self.publishing.load(Ordering::SeqCst) {
+            self.shared.set(secs);
+        }
+    }
+
+    /// From now on the pane hears this player, starting with where it is.
+    ///
+    /// The flag first, then the hand-over: a report racing it on the render
+    /// thread either sees the flag and writes the pane itself, or wrote its
+    /// own handle before the hand-over read it. At worst the pane is one
+    /// report behind for a frame, and the next report puts it right.
+    fn publish(&self) {
+        self.publishing.store(true, Ordering::SeqCst);
+        self.shared.set(self.own.get());
+    }
+
+    /// Where this player is, published or not.
+    fn get(&self) -> f64 {
+        self.own.get()
+    }
+}
+
+/// How a stream starts: everything about it but what it plays.
+pub struct StartOptions {
+    /// The render size to follow, shared with whatever measures the pane;
+    /// see [`SizeHandle`]. A new pane's is [`SizeHandle::new`]; a second
+    /// player of a pane already on screen is handed that pane's.
+    pub size: SizeHandle,
+    /// The level mpv opens at, 0-100: what the user chose, or nothing for a
+    /// pane Mute all is holding.
+    pub volume: u8,
+    /// Whether it opens paused. Applied on the render thread's first pass,
+    /// before it waits for a frame, the way every later pause is.
+    pub paused: bool,
+    /// Whether its position reaches the pane from the start; see
+    /// [`Positions`]. A pane's one player does; a player started beside it
+    /// does not until it takes over.
+    pub publish: bool,
+}
+
 /// A running stream. Dropping this stops the render thread and tears down mpv.
 pub struct VideoStream {
     latest: Arc<Mutex<Option<Arc<RenderImage>>>>,
     stop: Arc<AtomicBool>,
-    /// Render size in physical pixels, packed as `(width << 32) | height`.
-    ///
-    /// One atomic rather than two so width and height can never be read from
-    /// different frames, which would allocate a buffer that matches neither.
-    target: Arc<AtomicU64>,
+    /// Render size in physical pixels: the handle the stream was started
+    /// with, kept rather than copied, so whoever else holds it — a second
+    /// player of the same pane — follows the same probe. Packed into one
+    /// atomic so width and height can never be read from different frames,
+    /// which would allocate a buffer that matches neither.
+    target: SizeHandle,
     /// Paused state, applied between frames like volume.
     paused: Arc<AtomicBool>,
     /// Written by the UI, read by the render thread between frames.
@@ -250,9 +354,10 @@ pub struct VideoStream {
     source: Arc<AtomicU64>,
     /// Seconds into a recording, as mpv last reported them — counted from the
     /// start of the recording, not of the file the player happens to be
-    /// reading. Only ever written for [`Playback::Vod`], whose pane it is
-    /// shared with; a live stream has no position anybody wants.
-    position: PositionHandle,
+    /// reading. Only ever written for [`Playback::Vod`]; a live stream has no
+    /// position anybody wants. The pane hears it only while this player
+    /// publishes; see [`Positions`].
+    positions: Positions,
     /// A seek the UI has asked for and the render thread has not yet applied.
     ///
     /// A slot rather than a queue, like volume: only the last target matters,
@@ -266,36 +371,49 @@ pub struct VideoStream {
 }
 
 impl VideoStream {
-    /// Start playing `playback`, rendering frames at `width` x `height`.
+    /// Start playing `playback`, as `options` say: at the size its handle
+    /// asks for, at its volume, paused or not, and with its position reaching
+    /// the pane or kept to itself.
     ///
     /// Returns the stream plus a channel that fires once per new frame. The
     /// channel carries no data - the frame itself lives in the slot, so a
     /// missed notification just means the UI coalesces two frames into one.
+    /// The same channel carries the news that the stream has stopped, or
+    /// never started: a player mpv could not open is reported as
+    /// [`Stopped::Failed`], so its pane offers to try again rather than
+    /// saying it is starting for good.
     pub fn start(
-        width: u32,
-        height: u32,
-        volume: u8,
+        options: StartOptions,
         playback: Playback,
     ) -> anyhow::Result<(Self, mpsc::Receiver<()>)> {
+        let StartOptions {
+            size: target,
+            volume,
+            paused: start_paused,
+            publish,
+        } = options;
         let latest: Arc<Mutex<Option<Arc<RenderImage>>>> = Arc::new(Mutex::new(None));
         let stop = Arc::new(AtomicBool::new(false));
         let volume_level = Arc::new(AtomicU8::new(volume));
-        let target = Arc::new(AtomicU64::new(pack_size(width, height)));
-        let paused = Arc::new(AtomicBool::new(false));
+        let paused = Arc::new(AtomicBool::new(start_paused));
         let source_size = Arc::new(AtomicU64::new(0));
         let stopped: Arc<Mutex<Option<Stopped>>> = Arc::new(Mutex::new(None));
-        let position = match &playback {
-            Playback::Live { .. } => PositionHandle::new(),
+        let positions = match &playback {
+            Playback::Live { .. } => Positions::new(PositionHandle::new()),
             // Said now rather than when the player reports: for the seconds
             // it takes to open, the bar and the replay would otherwise sit on
             // wherever the last player left the handle.
             Playback::Vod {
                 position, start_at, ..
             } => {
-                position.set(*start_at);
-                position.clone()
+                let positions = Positions::new(position.clone());
+                positions.report(*start_at);
+                positions
             }
         };
+        if publish {
+            positions.publish();
+        }
         let seek: Arc<Mutex<Option<f64>>> = Arc::new(Mutex::new(None));
         let live = matches!(playback, Playback::Live { .. });
         let extent = match &playback {
@@ -330,7 +448,7 @@ impl VideoStream {
                 let paused = paused.clone();
                 let source_size = source_size.clone();
                 let stopped = stopped.clone();
-                let position = position.clone();
+                let positions = positions.clone();
                 let seek = seek.clone();
                 let extent = extent.clone();
                 move || {
@@ -375,6 +493,13 @@ impl VideoStream {
                             if let Some(recording) = recording {
                                 recording.finish();
                             }
+                            // Said, as a stop is: the pane is waiting on this
+                            // channel for its first frame, and a thread that
+                            // just ended left it saying "Starting…" for good.
+                            *stopped.lock().unwrap() = Some(Stopped::Failed(format!(
+                                "could not open the player: {e}"
+                            )));
+                            let _ = tx.try_send(());
                             return;
                         }
                     };
@@ -427,8 +552,11 @@ impl VideoStream {
                     // effectively free.
                     let mut source: Option<(u32, u32)> = None;
                     let (mut source_w, mut source_h) = (None, None);
-                    let (mut current_w, mut current_h) = (width, height);
+                    let (mut current_w, mut current_h) = target.get();
                     let mut applied_volume = volume;
+                    // mpv opens playing, so a stream started paused differs
+                    // from this on the first pass, which pauses it before
+                    // it waits for a frame.
                     let mut applied_pause = false;
                     let mut last_drops = 0u64;
                     // What getting a recording going again needs to know:
@@ -454,7 +582,7 @@ impl VideoStream {
                                         let secs = value.and_then(|v| v.parse::<f64>().ok());
                                         if let (Some(secs), Some(recording)) = (secs, &recording) {
                                             if let Some(at) = recording.position(secs) {
-                                                position.set(at);
+                                                positions.report(at);
                                                 moved_at = Instant::now();
                                                 has_moved = true;
                                             }
@@ -553,7 +681,7 @@ impl VideoStream {
                         // it is asked for, so following the pane means never
                         // paying to render pixels that get thrown away - and
                         // never capping a 1440p stream at 720p either.
-                        let (mut want_w, mut want_h) = unpack_size(target.load(Ordering::Relaxed));
+                        let (mut want_w, mut want_h) = target.get();
                         if let Some((source_w, source_h)) = source {
                             want_w = want_w.min(source_w);
                             want_h = want_h.min(source_h);
@@ -590,7 +718,7 @@ impl VideoStream {
                                     // second. Queued ahead of the unpause, so
                                     // mpv takes the new file first.
                                     if vod::reopen_on_resume(since.elapsed()) {
-                                        let at = position.get();
+                                        let at = positions.get();
                                         eprintln!(
                                             "video: resuming after {}s paused by reopening at {at:.1}",
                                             since.elapsed().as_secs()
@@ -617,7 +745,7 @@ impl VideoStream {
                             // Said now rather than when the new file reports
                             // its first position, so the bar does not sit on
                             // the old one while the player reopens.
-                            position.set(secs);
+                            positions.report(secs);
                             if let Err(e) = recording.reposition(&player, secs) {
                                 eprintln!("video: could not reposition: {e}");
                             }
@@ -635,7 +763,7 @@ impl VideoStream {
                         // mid-segment is the one seen, but the remedy does
                         // not depend on the cause.
                         if let Some(recording) = &mut recording {
-                            let at = position.get();
+                            let at = positions.get();
                             if !applied_pause
                                 && has_moved
                                 && vod::stalled(moved_at.elapsed(), at, &recording.timeline())
@@ -718,7 +846,7 @@ impl VideoStream {
                 volume: volume_level,
                 stopped,
                 source: source_size,
-                position,
+                positions,
                 seek,
                 live,
                 extent,
@@ -735,9 +863,10 @@ impl VideoStream {
     }
 
     /// Seconds into a recording, as mpv last reported. Zero on a live stream,
-    /// which reports none.
+    /// which reports none. This player's own, whether or not its pane hears
+    /// it yet; see [`Positions`].
     pub fn position(&self) -> f64 {
-        self.position.get()
+        self.positions.get()
     }
 
     /// Ask a recording to jump to `secs`. Applied between frames, like volume;
@@ -759,9 +888,10 @@ impl VideoStream {
         }
     }
 
-    /// A handle the UI can use to report the pane size each layout pass.
+    /// A handle the UI can use to report the pane size each layout pass: the
+    /// one the stream was started with.
     pub fn size_handle(&self) -> SizeHandle {
-        SizeHandle(self.target.clone())
+        self.target.clone()
     }
 
     /// Pause or resume. Resuming jumps back to the live edge.
@@ -837,5 +967,86 @@ mod tests {
         ] {
             assert_eq!(Stopped::from_end(quiet, None), None, "{quiet:?}");
         }
+    }
+
+    /// A pane at 100 s, and a player of it that has not been published: one
+    /// getting ready beside the player on screen.
+    fn unpublished() -> (PositionHandle, Positions) {
+        let pane = PositionHandle::starting_at(100.0);
+        let player = Positions::new(pane.clone());
+        (pane, player)
+    }
+
+    /// Where an unpublished player opens, where mpv says it is and where a
+    /// seek sends it all stay its own: the chat replay and the history go on
+    /// following the player on screen.
+    #[test]
+    fn a_private_position_reaches_nobody_until_published() {
+        let (pane, player) = unpublished();
+        for secs in [104.0, 250.5, 0.0] {
+            player.report(secs);
+            assert_eq!(pane.get(), 100.0, "the pane heard {secs}");
+        }
+    }
+
+    /// Taking over hands the pane where the player is at that moment, not
+    /// where it next reports, so the replay does not sit on the old player's
+    /// place until mpv next speaks.
+    #[test]
+    fn publishing_hands_over_where_the_player_is() {
+        let (pane, player) = unpublished();
+        player.report(104.25);
+        player.publish();
+        assert_eq!(pane.get(), 104.25);
+    }
+
+    /// Once published, every report reaches the pane, a step back included.
+    #[test]
+    fn a_published_position_follows_every_report() {
+        let (pane, player) = unpublished();
+        player.publish();
+        for secs in [101.0, 102.5, 60.0] {
+            player.report(secs);
+            assert_eq!(pane.get(), secs);
+        }
+    }
+
+    /// The player reads its own position, published or not: reopening where
+    /// it is after a long pause, and telling a stall from a wait, are about
+    /// this player's place in its file, not the pane's.
+    #[test]
+    fn the_player_reads_its_own_position_even_unpublished() {
+        let (pane, player) = unpublished();
+        player.report(250.0);
+        assert_eq!(player.get(), 250.0);
+        assert_eq!(pane.get(), 100.0);
+        player.publish();
+        player.report(251.0);
+        assert_eq!(player.get(), 251.0);
+    }
+
+    /// A stream keeps the handle it is given, so streams given clones of one
+    /// handle follow one probe: the pane's measure reaches both, and a second
+    /// player started with the first one's handle starts at the size the
+    /// pane already asked for rather than at the size a new pane starts at.
+    #[test]
+    fn streams_given_one_size_handle_follow_one_target() {
+        let pane = SizeHandle::new(1280, 720);
+        let first = pane.clone();
+        pane.request(1600, 900);
+        let second = first.clone();
+        assert_eq!(
+            second.get(),
+            (1600, 900),
+            "the second starts at the pane's size"
+        );
+        pane.request(960, 540);
+        assert_eq!(first.get(), (960, 540));
+        assert_eq!(second.get(), (960, 540));
+        // And a new one is capped as every request is.
+        assert_eq!(
+            SizeHandle::new(7680, 4320).get(),
+            (MAX_RENDER_WIDTH, MAX_RENDER_HEIGHT)
+        );
     }
 }

@@ -1,20 +1,21 @@
 //! Opening, restarting and closing panes: a channel or a recording becomes a
 //! `Slot`, streamlink is started for it, and its player is stood up when the
-//! stream resolves. Everything a pane is *playing* is decided here; how it is
-//! drawn is `crate::watch`.
+//! stream resolves. Everything a pane is *playing* is decided here, except
+//! which rendition and when it restarts for one, which is `renditions`; how
+//! it is drawn is `crate::watch`.
 
 use gpui::{prelude::*, App, Context, Focusable, SharedString, Window};
 use settings::QualityPreference;
-use streamlink::{quality, StreamEvent, StreamOptions, StreamSupervisor};
+use streamlink::{StreamEvent, StreamOptions, StreamSupervisor};
 use twitch_api::{LiveStream, Video, VideoKind};
 
 use super::navigation::Route;
 use super::{Page, RootView};
 use crate::chat::{ChatView, Feed};
-use crate::video::{self, Playback, PositionHandle, Stopped, VideoStream};
+use crate::video::{Playback, PositionHandle, SizeHandle, StartOptions, Stopped, VideoStream};
 use crate::video_view::{ChatButton, Qualities, Start, VideoView};
 use crate::watch::{LiveInfo, Lookup, Slot, Source, StreamState, MAX_PANES};
-use crate::{layout, settings_view};
+use crate::{settings_view, vod};
 
 /// Starting render size. Each pane measures itself on the first layout pass and
 /// its render thread follows from then on, so this only decides what the first
@@ -315,7 +316,7 @@ impl RootView {
         };
 
         // Quality targets the pane this stream will actually render into.
-        let pane_height = self.pane_height(window);
+        let pane_height = self.pane_height_for(&key, window);
 
         // A recording is only resolved: streamlink names the playlist and
         // retires, and the player opens it itself. See the streamlink crate.
@@ -389,7 +390,9 @@ impl RootView {
                     (Source::Video { video, position }, Some(playlist)) => Playback::Vod {
                         playlist,
                         start_at: self.slots[index].resume_at,
-                        label: format!("{}-{quality}", video.id),
+                        // This player's alone, so no other player of the
+                        // recording writes or deletes its files.
+                        label: vod::playlist_label(&video.id, &quality),
                         position: position.clone(),
                     },
                     (Source::Video { .. }, None) => {
@@ -418,8 +421,16 @@ impl RootView {
                         self.slots[index].chat.is_some(),
                     ),
                 };
-                let audible = if quiet { 0 } else { volume };
-                match VideoStream::start(RENDER_WIDTH, RENDER_HEIGHT, audible, playback) {
+                // The pane's one player: its own size until the pane is
+                // measured, playing, and its position heard by the pane —
+                // the chat replay, the history — from the start.
+                let options = StartOptions {
+                    size: SizeHandle::new(RENDER_WIDTH, RENDER_HEIGHT),
+                    volume: if quiet { 0 } else { volume },
+                    paused: false,
+                    publish: true,
+                };
+                match VideoStream::start(options, playback) {
                     Ok((stream, frames)) => {
                         let qualities = Qualities {
                             playing: SharedString::from(quality),
@@ -613,136 +624,6 @@ impl RootView {
         cx.notify();
     }
 
-    /// Start pane `index`'s stream over, from where a recording has got to.
-    /// For a quality change from anywhere: the pane's menu, the settings
-    /// sheet, or the pane changing size.
-    pub(super) fn restart_stream(
-        &mut self,
-        index: usize,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(slot) = self.slots.get_mut(index) else {
-            return;
-        };
-        // A recording picks up where it was, not from the top. Read before
-        // the state changes, since that is what drops the player.
-        if let Some(position) = slot.video().map(|view| view.read(cx).position()) {
-            slot.resume_at = position;
-        }
-        let key = slot.key.clone();
-        self.set_slot_state(index, StreamState::Starting, cx);
-        self.start_stream(key, window, cx);
-    }
-
-    /// What the settings would have a pane of `pane_height` play, from the
-    /// renditions its stream offers. The one answer to that question, for
-    /// the re-pick after a resize and for a pane handed back to the default.
-    fn settings_pick(&self, available: &[String], pane_height: u32) -> Option<quality::Quality> {
-        match &self.settings.quality {
-            QualityPreference::Auto => quality::select(available, pane_height),
-            QualityPreference::Fixed(name) => quality::select_named(available, name, pane_height),
-        }
-    }
-
-    /// A quality chosen from pane `index`'s own menu: a rendition, which holds
-    /// until the pane closes, or `None`, which hands the pane back to the
-    /// settings.
-    ///
-    /// The stream restarts only when that changes what plays — a restart is
-    /// seconds of black, and pinning the rendition already playing, or going
-    /// back to a default that picks the same one, should cost nothing. Going
-    /// back re-picks for the pane as it is now, down as well as up: that is
-    /// an answer somebody asked for, where the re-pick after a resize is not.
-    pub(super) fn request_quality(
-        &mut self,
-        index: usize,
-        name: Option<String>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(view) = self.slots.get(index).and_then(Slot::video).cloned() else {
-            return;
-        };
-        let (playing, available) = {
-            let view = view.read(cx);
-            (view.quality().to_string(), view.available().to_vec())
-        };
-        let target = match &name {
-            Some(name) => Some(name.clone()),
-            None => self
-                .settings_pick(&available, self.pane_height(window))
-                .map(|pick| pick.name),
-        };
-        let picked = name.is_some();
-        self.slots[index].quality_override = name;
-        if target.as_deref() == Some(playing.as_str()) {
-            // Nothing to restart, so the menu the pane already has says it.
-            view.update(cx, |view, cx| view.set_picked(picked, cx));
-        } else {
-            self.restart_stream(index, window, cx);
-        }
-        cx.notify();
-    }
-
-    /// How tall a pane is right now, in physical pixels: what a quality is
-    /// chosen against, when a stream starts and again in
-    /// [`sync_quality`](Self::sync_quality). With several panes the window is
-    /// shared, so each one asks for proportionally less.
-    pub(super) fn pane_height(&self, window: &Window) -> u32 {
-        let scale = window.scale_factor();
-        let body = self.body(window);
-        let (rows, _) = layout::grid_shape(self.slots.len().max(1), body.aspect());
-        (body.height * scale / rows as f32)
-            .round()
-            .clamp(180.0, video::MAX_RENDER_HEIGHT as f32) as u32
-    }
-
-    /// Choose each pane's quality again, for the size it is now — and move
-    /// only upwards.
-    ///
-    /// A quality is picked when a stream opens, against the pane it will
-    /// render into — and the pane changes size every time another opens or
-    /// closes, the rail folds, or the window does. A pane opened as one of
-    /// four stayed at the small rendition after the other three closed,
-    /// which was a soft picture in a large pane for as long as nobody touched
-    /// the menu. So the choice is made again whenever the grid changes, and
-    /// a *sharper* answer restarts the stream: a restart is a few seconds of
-    /// black while streamlink resolves again, worth it for the picture. A
-    /// pane that has shrunk keeps what it has — the smaller pane hides
-    /// nothing, the CPU it costs is what it cost when it opened, and a
-    /// restart there would trade a visible interruption for a saving. A
-    /// quality picked by hand from the pane's own menu is left alone; that
-    /// choice was about this pane, whatever its size. So, for now, is a pane
-    /// in a window of its own, whose window is not the grid's cell this
-    /// measures.
-    pub(super) fn sync_quality(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let pane_height = self.pane_height(window);
-        let restart: Vec<usize> = self
-            .slots
-            .iter()
-            .enumerate()
-            .filter(|(_, slot)| slot.quality_override.is_none())
-            .filter(|(_, slot)| !self.stage.is_popped(&slot.key))
-            .filter_map(|(index, slot)| {
-                let view = slot.video()?.read(cx);
-                let wanted = self.settings_pick(view.available(), pane_height)?;
-                let playing = quality::parse_quality(view.quality()).map_or(0, |q| q.height);
-                (wanted.height > playing).then_some(index)
-            })
-            .collect();
-        for index in &restart {
-            eprintln!(
-                "video: {} re-choosing quality for a {pane_height}px pane",
-                self.slots[*index].key
-            );
-            self.restart_stream(*index, window, cx);
-        }
-        if !restart.is_empty() {
-            cx.notify();
-        }
-    }
-
     pub(super) fn close_slot(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(key) = self.slots.get(index).map(|slot| slot.key.clone()) {
             self.retire_slots(|slot| slot.key != key, cx);
@@ -778,8 +659,8 @@ impl RootView {
     /// tiles in the mini player — cheaper to draw as well as smaller, since
     /// render size follows the element and a small one is scaled into a small
     /// buffer. Not cheaper to fetch: the rendition stays the one chosen for
-    /// the watch grid, because `pane_height` measures that grid whichever page
-    /// is up, so the tile never trades away the picture you go back to. With
+    /// the watch grid, because `pane_height_for` measures that grid whichever
+    /// page is up, so the tile never trades away the picture you go back to. With
     /// the miniplayer off they stop, which is what somebody who came here to
     /// pick the next thing wanted: a stream in a tile is still decoding and
     /// still pulling bytes. One step on the trail — which `Alt+←` takes back
