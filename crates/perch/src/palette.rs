@@ -5,8 +5,8 @@
 //! everything you could reach while *browsing* was a click — the picker had
 //! no keyboard path at all past the search box. This is the one control that
 //! answers both: a channel to open, a recording to carry on with, a pane to
-//! close, choose the quality of, copy a link to or open on twitch.tv, a page
-//! to go to, typed rather than aimed at.
+//! close, choose the quality of, pop out, copy a link to or open on
+//! twitch.tv, a page to go to, typed rather than aimed at.
 //!
 //! It is not a second search box. The search box asks *Twitch* a question and
 //! costs a request; this filters what the app already knows — who is live, what
@@ -57,6 +57,11 @@ pub enum Command {
     /// Open the pane at this index on twitch.tv, the same way: More's
     /// `Open on twitch.tv`.
     OpenOnTwitch(usize),
+    /// Move the picture of the pane at this index into a window of its own,
+    /// on top of other apps: `P` on the watch page, by name.
+    PopOut(usize),
+    /// Bring the picture of the pane at this index back from its window.
+    PopIn(usize),
     /// Look at a channel's past broadcasts.
     Videos {
         login: String,
@@ -90,10 +95,16 @@ pub struct OpenPane {
     /// What a row about the pane calls it: the channel's name as it writes
     /// it, with the kind of recording after it for one — "(replay)".
     pub title: String,
-    /// Whether it has a picture up, and so a control bar with a quality menu
-    /// to open. A pane starting, still waiting for its first frame, stopped or
-    /// offline has neither.
+    /// Whether it has a picture up in the main window, and so a control bar
+    /// with a quality menu to open. A pane starting, still waiting for its
+    /// first frame, stopped, offline or in a window of its own has neither.
     pub playing: bool,
+    /// Whether its picture is in a window of its own, which it can be
+    /// brought back from.
+    pub popped: bool,
+    /// Whether it could be popped out: it has a player to move, and the
+    /// pop-out is offered on this platform at all (`root::pop_out`).
+    pub can_pop_out: bool,
 }
 
 /// A live pane known only by its login, playing, which is all the tests
@@ -105,6 +116,8 @@ impl From<&str> for OpenPane {
             login: Some(login.to_string()),
             title: login.to_string(),
             playing: true,
+            popped: false,
+            can_pop_out: true,
         }
     }
 }
@@ -151,29 +164,43 @@ const RECENT_SHOWN: usize = 5;
 const TITLE_QUERY_MIN: usize = 3;
 
 /// A row the palette offers for each open pane once something is typed:
-/// whether only a pane with a picture up has it, what it runs, and what it
-/// says, from what the pane is called.
+/// which panes have it, what it runs, and what it says, from what the pane
+/// is called.
 struct PaneRow {
-    needs_picture: bool,
+    offered: fn(&OpenPane) -> bool,
     command: fn(usize) -> Command,
     words: fn(&str) -> String,
 }
 
 /// The pane rows, in the order they are offered: the quality, which needs a
-/// bar to open over, then More's two by name. See `entries`.
-const PANE_ROWS: [PaneRow; 3] = [
+/// bar to open over in the main window; the pop-out, out or back; then
+/// More's two by name, for every pane. See `entries`.
+const PANE_ROWS: [PaneRow; 5] = [
     PaneRow {
-        needs_picture: true,
+        // The menu hangs from the bar of a pane in the main window; a pane
+        // in a window of its own has none to hang it from, and is brought
+        // back to choose.
+        offered: |pane| pane.playing && !pane.popped,
         command: Command::ChooseQuality,
         words: |pane| format!("Choose quality for {pane}"),
     },
     PaneRow {
-        needs_picture: false,
+        offered: |pane| pane.can_pop_out && !pane.popped,
+        command: Command::PopOut,
+        words: |pane| format!("Pop out {pane}"),
+    },
+    PaneRow {
+        offered: |pane| pane.popped,
+        command: Command::PopIn,
+        words: |pane| format!("Bring {pane} back"),
+    },
+    PaneRow {
+        offered: |_| true,
         command: Command::CopyLink,
         words: |pane| format!("Copy link to {pane}"),
     },
     PaneRow {
-        needs_picture: false,
+        offered: |_| true,
         command: Command::OpenOnTwitch,
         words: |pane| format!("Open {pane} on twitch.tv"),
     },
@@ -420,17 +447,18 @@ pub fn entries(
     }
 
     // A pane's quality, by name, for a pane with a picture to choose it for;
-    // then More's two rows by name, for every pane, since a stopped one still
-    // has a channel or a recording to hand out. Only once something is
-    // typed: with nothing typed they would be three rows per pane between the
-    // recents and the commands, for things done now and then. After every
-    // `Close` row rather than beside their pane's, because their letters
-    // answer to most short queries: `c quin` is still Enter away from closing
-    // quin69 rather than opening some other pane's menu or copying its link.
+    // its pop-out, out or back; then More's two rows by name, for every pane,
+    // since a stopped one still has a channel or a recording to hand out.
+    // Only once something is typed: with nothing typed they would be rows
+    // per pane between the recents and the commands, for things done now and
+    // then. After every `Close` row rather than beside their pane's, because
+    // their letters answer to most short queries: `c quin` is still Enter
+    // away from closing quin69 rather than opening some other pane's menu or
+    // copying its link.
     if !query.is_empty() {
         for row in PANE_ROWS {
             for (index, pane) in watching.iter().enumerate() {
-                if row.needs_picture && !pane.playing {
+                if !(row.offered)(pane) {
                     continue;
                 }
                 let title = (row.words)(&pane.title);
@@ -727,8 +755,66 @@ mod tests {
         let blank = entries("", &[], &[], &[], &[], &watching, true);
         assert!(!blank.iter().any(|entry| matches!(
             entry.command,
-            Command::ChooseQuality(_) | Command::CopyLink(_) | Command::OpenOnTwitch(_)
+            Command::ChooseQuality(_)
+                | Command::CopyLink(_)
+                | Command::OpenOnTwitch(_)
+                | Command::PopOut(_)
+                | Command::PopIn(_)
         )));
+        let popped = OpenPane {
+            popped: true,
+            .."quin69".into()
+        };
+        let blank = entries("", &[], &[], &[], &[], &[popped], true);
+        assert!(
+            !blank
+                .iter()
+                .any(|entry| matches!(entry.command, Command::PopIn(_))),
+            "bringing a pane back waits to be typed for too"
+        );
+    }
+
+    /// A pane in a window of its own has no bar in the main window to hang
+    /// the quality menu from, and its pop-out's bar has none either: it
+    /// offers to come back instead, and not to go out again.
+    #[test]
+    fn a_popped_pane_offers_no_quality_row() {
+        let popped = OpenPane {
+            popped: true,
+            .."quin69".into()
+        };
+        let found = entries("quin", &[], &[], &[], &[], &[popped], true);
+        assert!(!found
+            .iter()
+            .any(|entry| matches!(entry.command, Command::ChooseQuality(_))));
+        assert!(!found
+            .iter()
+            .any(|entry| matches!(entry.command, Command::PopOut(_))));
+        let back = found
+            .iter()
+            .find(|entry| entry.command == Command::PopIn(0))
+            .expect("a popped pane offers to come back");
+        assert_eq!(back.title, "Bring quin69 back");
+    }
+
+    /// A pane with a player offers its pop-out by name where the pop-out is
+    /// offered, and nowhere else.
+    #[test]
+    fn a_playing_pane_offers_its_pop_out_where_it_is_offered() {
+        let found = entries("pop quin", &[], &[], &[], &[], &["quin69".into()], true);
+        let row = found
+            .iter()
+            .find(|entry| entry.command == Command::PopOut(0))
+            .expect("the pane offers to pop out");
+        assert_eq!(row.title, "Pop out quin69");
+        let elsewhere = OpenPane {
+            can_pop_out: false,
+            .."quin69".into()
+        };
+        let found = entries("pop quin", &[], &[], &[], &[], &[elsewhere], true);
+        assert!(!found
+            .iter()
+            .any(|entry| matches!(entry.command, Command::PopOut(_))));
     }
 
     /// More's two rows, by name, for each pane the query names — a stopped

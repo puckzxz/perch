@@ -15,6 +15,8 @@
 //! | `browsing` | the browse page's requests: tabs, search, categories, channels |
 //! | `navigation` | back and forward: where the app is as a `Route`, recording each step on the trail (`crate::trail`), and the three ways along it |
 //! | `streams` | opening, restarting and closing panes, and swapping one for a recording in place |
+//! | `panes` | where each pane is drawn, applied: `restage`, the one funnel every change of state, membership, page or pop-out ends in; `set_slot_state`, the only write of a pane's state; `video_in_main`, the only way the main window reaches a player; `retire_homeless`, the one rule for which panes stop when nothing in the main window would draw them |
+//! | `pop_out` | a pane in a window of its own, on top of other apps: moving its picture there and back, the window, and `to_root`, the only way back from it |
 //! | `broadcasts` | what a stopped live pane asks about its channel's past broadcasts, and whether it can start by itself |
 //! | `pane_actions` | what a pane asks for: its controls, and its player's requests; the header a pane key reveals |
 //! | `launches` | what the command line named, at startup and from later launches |
@@ -42,6 +44,8 @@ mod mini_player;
 mod navigation;
 mod pages;
 mod pane_actions;
+mod panes;
+mod pop_out;
 mod prefs;
 mod recommended;
 mod shortcuts;
@@ -57,8 +61,8 @@ use std::sync::Arc;
 use emotes::ImageCache;
 use futures::channel::mpsc::UnboundedReceiver;
 use gpui::{
-    div, prelude::*, Context, Entity, FocusHandle, ScrollHandle, SharedString, Subscription, Task,
-    Window,
+    div, prelude::*, AnyWindowHandle, Bounds, Context, Entity, FocusHandle, Pixels, ScrollHandle,
+    SharedString, Subscription, Task, Window,
 };
 use gpui_component::input::{InputEvent, InputState};
 use settings::history::{Forgotten, History};
@@ -67,11 +71,13 @@ use twitch_api::{Channel, LiveStream};
 
 use self::follows::LiveList;
 use self::navigation::Route;
+use self::pop_out::PoppedOut;
 use crate::browse::{self, Discovery, SignIn};
 use crate::launch::Launch;
 use crate::layout::Body;
 use crate::recommended::Recommended;
 use crate::settings_view::SettingsPanel;
+use crate::stage::Stage;
 use crate::trail::Trail;
 use crate::twitch::TwitchService;
 use crate::video_view::VideoView;
@@ -167,7 +173,20 @@ pub(crate) struct RootView {
     cache: Arc<ImageCache>,
 
     page: Page,
+    /// The panes, in their order: the grid's, the keys `1`–`4` and `Tab`
+    /// walk, the mini player's and the palette's. The one account of it.
     slots: Vec<Slot>,
+    /// Which panes are drawn in windows of their own, with each window; see
+    /// `crate::stage` and `panes`. Every other pane is the main window's.
+    stage: Stage<PoppedOut>,
+    /// The main window, which everything a pop-out asks of the root is
+    /// answered with (`pop_out::to_root`).
+    main_window: AnyWindowHandle,
+    /// Where the last pop-out was when it closed, for the next one to open
+    /// at while a display still holds it and no pop-out open covers it
+    /// (`layout::pop_out_bounds`). For this session only: nothing of the
+    /// pop-out is saved.
+    pop_out_last: Option<Bounds<Pixels>>,
 
     follows: Vec<LiveStream>,
     /// Everyone followed, live or not. Kept apart from `follows` all the way to
@@ -404,6 +423,9 @@ impl RootView {
             cache,
             page: Page::Browse,
             slots: Vec::new(),
+            stage: Stage::default(),
+            main_window: window.window_handle(),
+            pop_out_last: None,
             follows: Vec::new(),
             offline: Vec::new(),
             refreshing: false,
@@ -636,6 +658,7 @@ impl Render for RootView {
             .on_action(cx.listener(Self::on_step_out))
             .on_action(cx.listener(Self::on_navigate_back))
             .on_action(cx.listener(Self::on_navigate_forward))
+            .on_action(cx.listener(Self::on_toggle_pop_out))
             .on_key_down(cx.listener(Self::on_palette_key))
             .relative()
             .size_full()

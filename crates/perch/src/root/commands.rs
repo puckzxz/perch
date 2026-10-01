@@ -5,7 +5,7 @@
 use gpui::{App, Context, IntoElement, KeyDownEvent, Window};
 use gpui_component::input::Input;
 
-use super::{Page, RootView};
+use super::{pop_out, Page, RootView};
 use crate::channel_page;
 use crate::history_page;
 use crate::palette;
@@ -19,6 +19,7 @@ impl RootView {
     /// view already owns, and holding a copy would mean keeping it in step with
     /// a follows poll, a pane closing and every keystroke.
     pub(super) fn palette_entries(&self, cx: &App) -> Vec<palette::Entry> {
+        let pop_out = pop_out::offered_here();
         let watching: Vec<palette::OpenPane> = self
             .slots
             .iter()
@@ -36,8 +37,15 @@ impl RootView {
                 },
                 // A picture, not just a player: one still waiting for its
                 // first frame draws no bar, so it has no menu to offer
-                // (`VideoView::open_menu`).
-                playing: slot.video().is_some_and(|view| view.read(cx).has_picture()),
+                // (`VideoView::open_menu`). Read through the main window's
+                // own access, which a pane in a window of its own has none
+                // of, since this is drawn in the main window.
+                playing: self
+                    .video_in_main(slot)
+                    .is_some_and(|view| view.read(cx).has_picture()),
+                popped: self.stage.is_popped(&slot.key),
+                // A player to move, where the pop-out is offered at all.
+                can_pop_out: pop_out && slot.video().is_some(),
             })
             .collect();
         palette::entries(
@@ -138,6 +146,12 @@ impl RootView {
             }
             palette::Command::OpenOnTwitch(index) => {
                 self.pane_command(index, PaneAction::OpenOnTwitch, window, cx)
+            }
+            palette::Command::PopOut(index) => {
+                self.pane_command(index, PaneAction::PopOut, window, cx)
+            }
+            palette::Command::PopIn(index) => {
+                self.pane_command(index, PaneAction::PopIn, window, cx)
             }
             palette::Command::Videos {
                 login,

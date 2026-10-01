@@ -59,6 +59,13 @@ impl RootView {
                 cx.write_to_clipboard(ClipboardItem::new_string(self.slots[index].link(true)));
                 self.toast("link copied", cx);
             }
+            // Out into a window of its own, and back. This arrives with the
+            // main window whoever asked — the pop-out's bar through the
+            // player's subscription, which is the main window's, and its keys
+            // through `pop_out::to_root` — so the window measured and opened
+            // against is always the main one.
+            PaneAction::PopOut => self.pop_out(key, window, cx),
+            PaneAction::PopIn => self.pop_in(key, cx),
             PaneAction::StartWhenLive(on) => {
                 self.slots[index].start_when_live = on;
                 cx.notify();

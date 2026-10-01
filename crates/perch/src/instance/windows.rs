@@ -200,17 +200,10 @@ impl Listener {
 /// foreground to this process before saying anything ([`give_way`]), so
 /// asking is enough.
 pub fn bring_forward(window: &gpui::Window) {
-    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-
-    // Through the trait: gpui's own `Window::window_handle` is its id for the
-    // window, not the platform's.
-    let Ok(handle) = HasWindowHandle::window_handle(window) else {
+    // The platform's handle, from the one place that asks for it.
+    let Some(hwnd) = crate::os_window::hwnd(window) else {
         return;
     };
-    let RawWindowHandle::Win32(win32) = handle.as_raw() else {
-        return;
-    };
-    let hwnd = win32.hwnd.get() as Handle;
     // SAFETY: the window's own handle, alive while `window` is borrowed.
     unsafe {
         if IsIconic(hwnd) != 0 {

@@ -11,7 +11,7 @@ use gpui::{
 };
 use settings::SheetFields;
 
-use super::{Page, Resize, RootView};
+use super::{Resize, RootView};
 use crate::browse::{Discovery, SignIn};
 use crate::settings_view::{SettingsEvent, SettingsPanel};
 use crate::watch::ResizeStart;
@@ -94,8 +94,10 @@ impl RootView {
                         }
                         this.settings_panel = None;
 
-                        if miniplayer_off && this.page == Page::Browse {
-                            this.retire_slots(|_| false, cx);
+                        // By the rule leaving the page with it off stops
+                        // panes by: those in windows of their own play on.
+                        if miniplayer_off {
+                            this.retire_homeless(cx);
                         }
 
                         // Apply immediately rather than asking for a restart,
@@ -178,10 +180,13 @@ impl RootView {
             return theme::VIDEO_SHARE_MIN;
         }
         let cell_width = layout::cell_extent(body.width, cols);
+        // Through what the cell is drawn from, so the drag starts where the
+        // page drew the divider: a pane in a window of its own has its
+        // picture there and a 16:9 box here (`watch::pane`).
         let aspect = self
             .slots
             .get(index)
-            .and_then(|slot| slot.video())
+            .and_then(|slot| self.video_in_main(slot))
             .and_then(|view| view.read(cx).source_aspect())
             .unwrap_or(layout::VIDEO_ASPECT);
         (layout::stacked_video_height(cell_width, cell_height, aspect, 0.0) / cell_height)

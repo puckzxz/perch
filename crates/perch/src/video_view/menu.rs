@@ -19,6 +19,7 @@ use gpui::{
 
 use super::{VideoEvent, VideoView};
 use crate::seek_bar;
+use crate::stage::Place;
 use crate::target;
 use crate::theme;
 use crate::watch::PaneAction;
@@ -61,15 +62,16 @@ impl VideoView {
     /// open menu holds the bar up (`sync_controls`), so the bar comes up with
     /// it, wherever the pointer is.
     ///
-    /// Nothing on a compact tile, or on a player still waiting for its first
-    /// frame: neither draws a bar to hang a menu from. A menu opened there
-    /// would be invisible, would take the next `Esc` for itself with nothing
-    /// on screen changing, could not be dismissed by a press elsewhere, since
-    /// the anchor that hears it is not drawn, and would flip the bar's fade
-    /// while the bar is not mounted, the replay `motion::Fade::apply` warns
-    /// of.
+    /// Nothing anywhere but a pane, or on a player still waiting for its
+    /// first frame: a tile and a starting player draw no bar to hang a menu
+    /// from, and a pop-out's bar has no menu button and no anchor. A menu
+    /// opened there would be invisible, would take the next `Esc` for itself
+    /// with nothing on screen changing, could not be dismissed by a press
+    /// elsewhere, since the anchor that hears it is not drawn, and would flip
+    /// the bar's fade while the bar is not mounted, the replay
+    /// `motion::Fade::apply` warns of.
     pub fn open_menu(&mut self, which: Menu, cx: &mut Context<Self>) {
-        if self.compact || !self.has_picture() || self.menu == Some(which) {
+        if self.place != Place::Pane || !self.has_picture() || self.menu == Some(which) {
             return;
         }
         self.menu = Some(which);

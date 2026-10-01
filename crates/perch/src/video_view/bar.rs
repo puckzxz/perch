@@ -31,6 +31,12 @@
 //! What fits at the pane's width is [`fit`]: a narrow pane drops the volume
 //! figure, then the slider, then folds the quality pill into More, and never
 //! drops play, volume or a button of the right-hand cluster.
+//!
+//! A pane popped into a window of its own has a bar of its own shape: the
+//! seek row and the left-hand end as a pane has them, and at the right only
+//! Bring back and Close. No quality, chat, fullscreen or More — the pane's
+//! chat and its menus stay with its cell in the main window, and the window
+//! is too small to want them.
 
 use gpui::{
     div, prelude::*, px, AnyElement, Context, Div, MouseButton, SharedString, Stateful, Window,
@@ -42,15 +48,50 @@ use crate::assets::Icon;
 use crate::controls::{self, Variant};
 use crate::keys::Hint;
 use crate::seek_bar;
+use crate::stage::Place;
 use crate::theme;
 use crate::watch::PaneAction;
 
-/// The icon buttons in the bar's right-hand cluster: chat, fullscreen and
+/// The icon buttons in a pane's right-hand cluster: chat, fullscreen and
 /// More. `button_row` lays them out as an array this long, so a control
 /// cannot join the cluster without this count changing with it, and with it
 /// what [`fit`] leaves room for. The quality pill is not one of them: it is
 /// words, and it folds.
 pub(super) const RIGHT_BUTTONS: usize = 3;
+
+/// The same for a pop-out's cluster: Bring back and Close.
+pub(super) const POP_OUT_BUTTONS: usize = 2;
+
+/// The right-hand end of a bar, as [`fit`] makes room for it: how many icon
+/// buttons it has, and whether the quality pill stands before them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Cluster {
+    buttons: usize,
+    pill: bool,
+}
+
+/// A pane's: the quality pill, then chat, fullscreen and More.
+const PANE: Cluster = Cluster {
+    buttons: RIGHT_BUTTONS,
+    pill: true,
+};
+
+/// A pop-out's: Bring back and Close, and no pill. Counting room for one
+/// it never draws took the slider off a pop-out wide enough for it — the
+/// width a vertical stream opens at among them.
+const POP_OUT: Cluster = Cluster {
+    buttons: POP_OUT_BUTTONS,
+    pill: false,
+};
+
+/// The right-hand end of the bar of a player in `place`, for [`fit`]. A
+/// tile draws no bar, and is counted as a pane, whose bar it would be.
+pub(super) fn cluster(place: Place) -> Cluster {
+    match place {
+        Place::Pane | Place::Tile => PANE,
+        Place::PopOut => POP_OUT,
+    }
+}
 
 impl VideoView {
     /// The seek bar, on a recording. A live stream has no timeline and gets
@@ -132,8 +173,9 @@ impl VideoView {
             .child(self.button_row(window, cx))
     }
 
-    /// Play, volume, then the right-hand cluster — quality, chat, fullscreen
-    /// and More: the row every stream has.
+    /// Play, volume, then the right-hand cluster — a pane's quality, chat,
+    /// fullscreen and More, or a pop-out's Bring back and Close: the row
+    /// every stream has.
     fn button_row(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         // The figure is the level chosen, beside the slider showing it; the
         // speaker says whether the pane can be heard, which a pane held
@@ -149,6 +191,7 @@ impl VideoView {
         let playback = act_button(
             id,
             icon,
+            Variant::OnVideo,
             Hint::Playback.tooltip(words),
             window,
             cx,
@@ -163,6 +206,7 @@ impl VideoView {
         let mute = act_button(
             id,
             icon,
+            Variant::OnVideo,
             Hint::Mute.tooltip(words),
             window,
             cx,
@@ -192,6 +236,30 @@ impl VideoView {
                 .child(SharedString::from(format!("{volume}%")))
         });
 
+        let right = match self.place {
+            Place::Pane | Place::Tile => self.pane_cluster(window, cx).into_any_element(),
+            Place::PopOut => pop_out_cluster(window, cx).into_any_element(),
+        };
+
+        div()
+            .w_full()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(theme::GAP_TIGHT))
+            .child(playback)
+            .child(mute)
+            .children(slider)
+            .children(figure)
+            .child(div().flex_1())
+            .child(right)
+    }
+
+    /// A pane's right-hand cluster: the quality pill, chat, fullscreen and
+    /// More, and the one anchor every menu opens from.
+    fn pane_cluster(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let window_hovered = window.is_window_hovered();
+
         // The pill says what is playing, and opens the menu to change it.
         // Words rather than an icon, so it is the first thing to go when
         // the bar runs out of room: More then carries it as its first row.
@@ -205,6 +273,7 @@ impl VideoView {
             ChatButton::Shown => act_button(
                 "bar-chat-hide",
                 Icon::Chat,
+                Variant::OnVideo,
                 Hint::Chat.tooltip("Hide chat"),
                 window,
                 cx,
@@ -214,6 +283,7 @@ impl VideoView {
             ChatButton::Hidden => act_button(
                 "bar-chat-show",
                 Icon::ChatOff,
+                Variant::OnVideo,
                 Hint::Chat.tooltip("Show chat"),
                 window,
                 cx,
@@ -253,6 +323,7 @@ impl VideoView {
         let fullscreen = act_button(
             id,
             icon,
+            Variant::OnVideo,
             Hint::Fullscreen.tooltip(words),
             window,
             cx,
@@ -277,58 +348,88 @@ impl VideoView {
             more.into_any_element(),
         ];
 
+        // The right-hand cluster, and the one anchor every menu opens from.
+        // Every control that joins the bar's right-hand end joins this
+        // cluster, so a press on one is never "elsewhere".
         div()
-            .w_full()
+            .relative()
             .flex()
             .flex_row()
             .items_center()
             .gap(px(theme::GAP_TIGHT))
-            .child(playback)
-            .child(mute)
-            .children(slider)
-            .children(figure)
-            .child(div().flex_1())
-            .child(
-                // The right-hand cluster, and the one anchor every menu opens
-                // from. Every control that joins the bar's right-hand end
-                // joins this cluster, so a press on one is never "elsewhere".
-                div()
-                    .relative()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(theme::GAP_TIGHT))
-                    // A press anywhere else closes the menu, the way every
-                    // menu does. On the anchor rather than the menu, so a
-                    // press on the button is not "elsewhere": that would
-                    // close the menu, and the click that followed would open
-                    // it straight again. The menu itself hangs outside the
-                    // anchor's bounds, so a press on one of its rows counts
-                    // as elsewhere too, which is why rows act on the press;
-                    // see `menu::menu_row`. What is inside the anchor closes
-                    // the menu itself, or toggles it: `act_button`,
-                    // `menu_button`, the pill and the still chat glyph. Only
-                    // the narrow gaps between them close nothing.
-                    .when(self.menu.is_some(), |anchor| {
-                        anchor.on_mouse_down_out(cx.listener(|this, _event, _window, cx| {
-                            this.close_menu(cx);
-                        }))
-                    })
-                    .children(quality)
-                    .children(buttons)
-                    .when_some(self.menu, |anchor, which| {
-                        anchor.child(self.menu_box(which, cx))
-                    }),
-            )
+            // A press anywhere else closes the menu, the way every menu does.
+            // On the anchor rather than the menu, so a press on the button is
+            // not "elsewhere": that would close the menu, and the click that
+            // followed would open it straight again. The menu itself hangs
+            // outside the anchor's bounds, so a press on one of its rows
+            // counts as elsewhere too, which is why rows act on the press;
+            // see `menu::menu_row`. What is inside the anchor closes the menu
+            // itself, or toggles it: `act_button`, `menu_button`, the pill and
+            // the still chat glyph. Only the narrow gaps between them close
+            // nothing.
+            .when(self.menu.is_some(), |anchor| {
+                anchor.on_mouse_down_out(cx.listener(|this, _event, _window, cx| {
+                    this.close_menu(cx);
+                }))
+            })
+            .children(quality)
+            .children(buttons)
+            .when_some(self.menu, |anchor, which| {
+                anchor.child(self.menu_box(which, cx))
+            })
     }
 }
 
-/// An icon on the bar: an on-video [`controls::icon_button`], which lifts
-/// under the pointer, and after the tooltip delay says `tip` — while the
-/// pointer is in the window; see the module. `id` is keyed on whatever
-/// state `tip` follows, for the same reason.
-fn bar_icon(id: &'static str, icon: Icon, tip: String, window: &Window) -> Stateful<Div> {
-    controls::icon_button(id, icon, Variant::OnVideo).when(window.is_window_hovered(), |button| {
+/// A pop-out's right-hand cluster: the way back, then the way out. Both go
+/// up to the root as the pane's own (`VideoEvent::Pane`), which answers them
+/// with the main window, the way it answers the pane's header. Close is red
+/// as the header's × is, and names the same key: `Ctrl+W` closes the pane
+/// in the pop-out too. The window's own close — Alt+F4, the taskbar — brings
+/// the pane back instead, so nothing is lost to a reflex.
+fn pop_out_cluster(window: &Window, cx: &mut Context<VideoView>) -> impl IntoElement {
+    let buttons: [AnyElement; POP_OUT_BUTTONS] = [
+        act_button(
+            "bar-pop-in",
+            Icon::PopIn,
+            Variant::OnVideo,
+            Hint::PopOut.tooltip("Bring back"),
+            window,
+            cx,
+            |_this, _window, cx| cx.emit(VideoEvent::Pane(PaneAction::PopIn)),
+        )
+        .into_any_element(),
+        act_button(
+            "bar-close",
+            Icon::Close,
+            Variant::Destructive,
+            Hint::Close.tooltip("Close"),
+            window,
+            cx,
+            |_this, _window, cx| cx.emit(VideoEvent::Pane(PaneAction::Close)),
+        )
+        .into_any_element(),
+    ];
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(theme::GAP_TIGHT))
+        .children(buttons)
+}
+
+/// An icon on the bar: a [`controls::icon_button`] in `variant` — on-video,
+/// which lifts under the pointer, or red for a close — that after the
+/// tooltip delay says `tip`, while the pointer is in the window; see the
+/// module. `id` is keyed on whatever state `tip` follows, for the same
+/// reason.
+fn bar_icon(
+    id: &'static str,
+    icon: Icon,
+    variant: Variant,
+    tip: String,
+    window: &Window,
+) -> Stateful<Div> {
+    controls::icon_button(id, icon, variant).when(window.is_window_hovered(), |button| {
         button.tooltip(controls::tip(tip))
     })
 }
@@ -341,15 +442,18 @@ fn bar_icon(id: &'static str, icon: Icon, tip: String, window: &Window) -> State
 fn act_button(
     id: &'static str,
     icon: Icon,
+    variant: Variant,
     tip: String,
     window: &Window,
     cx: &mut Context<VideoView>,
     act: impl Fn(&mut VideoView, &mut Window, &mut Context<VideoView>) + 'static,
 ) -> Stateful<Div> {
-    bar_icon(id, icon, tip, window).on_click(cx.listener(move |this, _event, window, cx| {
-        this.close_menu(cx);
-        act(this, window, cx);
-    }))
+    bar_icon(id, icon, variant, tip, window).on_click(cx.listener(
+        move |this, _event, window, cx| {
+            this.close_menu(cx);
+            act(this, window, cx);
+        },
+    ))
 }
 
 /// An icon that opens `which`, or closes it when it is the menu open. Closes
@@ -365,7 +469,7 @@ fn menu_button(
     window: &Window,
     cx: &mut Context<VideoView>,
 ) -> Stateful<Div> {
-    bar_icon(id, icon, tip, window)
+    bar_icon(id, icon, Variant::OnVideo, tip, window)
         .on_click(cx.listener(move |this, _event, _window, cx| this.toggle_menu(which, cx)))
 }
 
@@ -376,7 +480,9 @@ pub(super) struct Fit {
     pub(super) figure: bool,
     /// The volume slider. The speaker and `↑`/`↓` still set the level.
     pub(super) slider: bool,
-    /// The quality pill. Without it, More's first row is the quality.
+    /// The quality pill. Without it, More's first row is the quality. Read
+    /// only by a pane's cluster: a pop-out has neither pill nor More, and
+    /// [`fit`] counts no room for the pill there.
     pub(super) quality: bool,
 }
 
@@ -411,16 +517,16 @@ const NARROWINGS: [Fit; 4] = [
     },
 ];
 
-/// How wide the bar has to be to hold `fit`, with `right_buttons` icon
-/// buttons in its right-hand cluster: its padding, play and volume, the
-/// spacer between the two ends, the cluster's buttons, and whatever `fit`
-/// adds, each with the gap before it. The sizes are the ones `button_row`
-/// draws with, from `theme`; the quality pill's is an estimate
-/// (`theme::QUALITY_PILL_ROOM`).
-fn needs(fit: Fit, right_buttons: usize) -> f32 {
+/// How wide the bar has to be to hold `fit`, with `cluster` at its
+/// right-hand end: its padding, play and volume, the spacer between the two
+/// ends, the cluster's buttons, and whatever `fit` adds, each with the gap
+/// before it — the pill only where the cluster has one. The sizes are the
+/// ones `button_row` draws with, from `theme`; the quality pill's is an
+/// estimate (`theme::QUALITY_PILL_ROOM`).
+fn needs(fit: Fit, cluster: Cluster) -> f32 {
     let gap = theme::GAP_TIGHT;
     let shown = |kept: bool, width: f32| if kept { width + gap } else { 0.0 };
-    let buttons = right_buttons as f32;
+    let buttons = cluster.buttons as f32;
     2.0 * theme::PANEL_PAD
         // Play and volume.
         + 2.0 * theme::ICON_BUTTON
@@ -431,18 +537,18 @@ fn needs(fit: Fit, right_buttons: usize) -> f32 {
         + (buttons - 1.0).max(0.0) * gap
         + shown(fit.slider, theme::VOLUME_SLIDER)
         + shown(fit.figure, theme::VOLUME_FIGURE)
-        + shown(fit.quality, theme::QUALITY_PILL_ROOM)
+        + shown(cluster.pill && fit.quality, theme::QUALITY_PILL_ROOM)
 }
 
-/// What fits on a bar `width` logical pixels wide with `right_buttons` icon
-/// buttons in its right-hand cluster: the widest of [`NARROWINGS`] that does,
-/// or the narrowest when none does. Narrower than that the bar still holds
-/// play, volume and the cluster, and runs past the pane's edge — a beside
-/// pane at its narrowest, which is a known limit.
-pub(super) fn fit(width: f32, right_buttons: usize) -> Fit {
+/// What fits on a bar `width` logical pixels wide with `cluster` at its
+/// right-hand end: the widest of [`NARROWINGS`] that does, or the narrowest
+/// when none does. Narrower than that the bar still holds play, volume and
+/// the cluster, and runs past the pane's edge — a beside pane at its
+/// narrowest, which is a known limit.
+pub(super) fn fit(width: f32, cluster: Cluster) -> Fit {
     NARROWINGS
         .into_iter()
-        .find(|fit| needs(*fit, right_buttons) <= width)
+        .find(|fit| needs(*fit, cluster) <= width)
         .unwrap_or(NARROWINGS[NARROWINGS.len() - 1])
 }
 
@@ -465,9 +571,9 @@ mod tests {
 
     #[test]
     fn a_wide_bar_shows_everything() {
-        assert_eq!(fit(1600.0, RIGHT_BUTTONS), Fit::EVERYTHING);
+        assert_eq!(fit(1600.0, PANE), Fit::EVERYTHING);
         assert_eq!(
-            fit(needs(Fit::EVERYTHING, RIGHT_BUTTONS), RIGHT_BUTTONS),
+            fit(needs(Fit::EVERYTHING, PANE), PANE),
             Fit::EVERYTHING,
             "a bar exactly wide enough holds it all"
         );
@@ -479,7 +585,7 @@ mod tests {
     fn narrowing_drops_the_figure_then_the_slider() {
         let mut last = 0;
         for width in widths().rev() {
-            let fit = fit(width, RIGHT_BUTTONS);
+            let fit = fit(width, PANE);
             assert!(
                 rank(fit) >= last,
                 "at {width}px the bar took something back"
@@ -490,7 +596,7 @@ mod tests {
                 "at {width}px the figure stayed after the slider it labels went"
             );
         }
-        let seen: Vec<Fit> = widths().map(|width| fit(width, RIGHT_BUTTONS)).collect();
+        let seen: Vec<Fit> = widths().map(|width| fit(width, PANE)).collect();
         for narrowing in NARROWINGS {
             assert!(
                 seen.contains(&narrowing),
@@ -504,7 +610,7 @@ mod tests {
     #[test]
     fn the_quality_pill_folds_after_the_slider() {
         for width in widths() {
-            let fit = fit(width, RIGHT_BUTTONS);
+            let fit = fit(width, PANE);
             assert!(
                 !fit.slider || fit.quality,
                 "at {width}px the pill folded with the slider still up"
@@ -512,7 +618,7 @@ mod tests {
         }
         assert!(
             widths().any(|width| {
-                let fit = fit(width, RIGHT_BUTTONS);
+                let fit = fit(width, PANE);
                 fit.quality && !fit.slider
             }),
             "the pill and the slider went at the same width"
@@ -525,7 +631,7 @@ mod tests {
     #[test]
     fn play_volume_and_the_right_cluster_always_stay() {
         let narrowest = NARROWINGS[NARROWINGS.len() - 1];
-        assert_eq!(fit(0.0, RIGHT_BUTTONS), narrowest);
+        assert_eq!(fit(0.0, PANE), narrowest);
         assert_eq!(
             narrowest,
             Fit {
@@ -534,24 +640,80 @@ mod tests {
                 quality: false,
             }
         );
-        let squares = 2.0 + RIGHT_BUTTONS as f32;
-        assert!(
-            needs(narrowest, RIGHT_BUTTONS)
-                >= 2.0 * theme::PANEL_PAD + squares * theme::ICON_BUTTON
-        );
+        let squares = 2.0 + PANE.buttons as f32;
+        assert!(needs(narrowest, PANE) >= 2.0 * theme::PANEL_PAD + squares * theme::ICON_BUTTON);
     }
 
-    /// A control added to the right-hand cluster — the guide, the pop-out —
+    /// A pane's cluster with one more button in it.
+    const ANOTHER: Cluster = Cluster {
+        buttons: RIGHT_BUTTONS + 1,
+        ..PANE
+    };
+
+    /// A control added to the right-hand cluster — the guide, maximize —
     /// takes its room from what folds: at any width the bar gives up at
     /// least as much as it did, and somewhere strictly more.
     #[test]
     fn more_on_the_right_narrows_sooner() {
         for width in widths() {
             assert!(
-                rank(fit(width, RIGHT_BUTTONS + 1)) >= rank(fit(width, RIGHT_BUTTONS)),
+                rank(fit(width, ANOTHER)) >= rank(fit(width, PANE)),
                 "at {width}px another button gave the bar more room"
             );
         }
-        assert!(widths().any(|width| fit(width, RIGHT_BUTTONS + 1) != fit(width, RIGHT_BUTTONS)));
+        assert!(widths().any(|width| fit(width, ANOTHER) != fit(width, PANE)));
+    }
+
+    /// A pop-out at the least size its window may be is still a player: its
+    /// bar holds play, the speaker, Bring back and Close inside the window's
+    /// width.
+    #[test]
+    fn a_pop_out_bar_keeps_play_volume_and_its_two_buttons() {
+        let narrowest = fit(theme::POP_OUT_MIN_WIDTH, POP_OUT);
+        assert!(
+            needs(narrowest, POP_OUT) <= theme::POP_OUT_MIN_WIDTH,
+            "the smallest pop-out's bar runs past its edge"
+        );
+        assert_eq!(cluster(Place::PopOut), POP_OUT);
+        assert_eq!(cluster(Place::Pane), PANE);
+    }
+
+    /// With no pill to make room for, a pop-out's slider and figure are up
+    /// at every width that holds them beside its two buttons — including
+    /// the width a vertical stream's pop-out opens at, which lost its
+    /// slider to room kept for a pill it never draws — and at the width a
+    /// widescreen one opens at, both are.
+    #[test]
+    fn a_pop_out_keeps_its_slider_wherever_it_fits() {
+        let slider_only = Fit {
+            figure: false,
+            slider: true,
+            quality: false,
+        };
+        for width in widths() {
+            let fit = fit(width, POP_OUT);
+            assert_eq!(
+                fit.slider,
+                width >= needs(slider_only, POP_OUT),
+                "the slider at {width}px"
+            );
+            assert_eq!(
+                fit.figure,
+                width >= needs(Fit::EVERYTHING, POP_OUT),
+                "the figure at {width}px"
+            );
+        }
+        let display = gpui::Bounds {
+            origin: gpui::point(px(0.0), px(0.0)),
+            size: gpui::size(px(1920.0), px(1080.0)),
+        };
+        for aspect in [9.0 / 16.0, crate::layout::VIDEO_ASPECT, 4.0 / 3.0] {
+            let opens = crate::layout::pop_out_bounds(display, aspect, &[], None);
+            assert!(
+                fit(f32::from(opens.size.width), POP_OUT).slider,
+                "a {aspect} pop-out opens without its slider"
+            );
+        }
+        assert_eq!(fit(theme::POP_OUT_WIDTH, POP_OUT), Fit::EVERYTHING);
     }
 }

@@ -22,7 +22,7 @@ use super::{Page, RootView};
 use crate::assets::Icon;
 use crate::controls::{self, Variant};
 use crate::layout::{self, MiniLayout};
-use crate::watch::{self, Showing, Slot};
+use crate::watch::{Showing, Slot};
 use crate::{loudness, motion, theme};
 
 /// The group a tile's close watches for the pointer, so it shows only while
@@ -31,13 +31,27 @@ const TILE_GROUP: &str = "mini-tile";
 
 impl RootView {
     /// Whether the mini player is up: on the browse page, with the miniplayer
-    /// on, and something playing.
+    /// on, and something playing here rather than in a window of its own.
     ///
-    /// Whenever there are panes this is exactly the complement of the watch
-    /// page, so a player is never drawn twice in one frame. One answer, read
-    /// by the player itself and by the room the browse lists leave for it.
+    /// Whenever the main window holds a pane at home — any of
+    /// [`mini_slots`](Self::mini_slots) — this is exactly the complement of
+    /// the watch page, so a player is never drawn twice in one frame, nor
+    /// left with nothing drawing it: browsing with the mini player off, no
+    /// pane stays at home (`RootView::retire_homeless`). One answer, read by
+    /// the player itself and by the room the browse lists leave for it.
     pub(super) fn mini_player_shows(&self) -> bool {
-        self.page == Page::Browse && self.settings.miniplayer && !self.slots.is_empty()
+        self.page == Page::Browse && self.settings.miniplayer && !self.mini_slots().is_empty()
+    }
+
+    /// The panes the mini player shows, in their order: every one but those
+    /// in windows of their own, which are on screen already. What its tiles,
+    /// its shape, its label and the room the browse lists leave for it are
+    /// all counted from.
+    pub(super) fn mini_slots(&self) -> Vec<&Slot> {
+        self.slots
+            .iter()
+            .filter(|slot| !self.stage.is_popped(&slot.key))
+            .collect()
     }
 
     /// The player, bottom-right of the page, or nothing; see
@@ -46,10 +60,11 @@ impl RootView {
         if !self.mini_player_shows() {
             return None;
         }
-        let mini = layout::mini_player(self.slots.len());
+        let shown = self.mini_slots();
+        let mini = layout::mini_player(shown.len());
 
         let mut tiles = div().flex().flex_col().gap(px(theme::PANE_GAP));
-        for row in self.slots.chunks(mini.cols) {
+        for row in shown.chunks(mini.cols) {
             let mut line = div().flex().flex_row().gap(px(theme::PANE_GAP));
             for slot in row {
                 line = line.child(self.mini_tile(slot, mini, cx));
@@ -57,11 +72,12 @@ impl RootView {
             tiles = tiles.child(line);
         }
 
-        let playing: Vec<(String, bool)> = self
-            .slots
+        let playing: Vec<(String, bool)> = shown
             .iter()
             .map(|slot| {
-                let paused = slot.video().is_some_and(|view| view.read(cx).is_paused());
+                let paused = self
+                    .video_in_main(slot)
+                    .is_some_and(|view| view.read(cx).is_paused());
                 (self.display_name(slot), paused)
             })
             .collect();
@@ -164,7 +180,7 @@ impl RootView {
         let key = slot.key.clone();
         let close_key = slot.key.clone();
         let name = self.display_name(slot);
-        let showing = watch::showing(slot, slot.covered(cx));
+        let showing = self.showing_in_main(slot, cx);
 
         div()
             // By key, never by position: closing a tile moves the ones after
@@ -213,7 +229,7 @@ impl RootView {
                         .child(word),
                 )
             })
-            .children(slot.video().cloned())
+            .children(self.video_in_main(slot).cloned())
             .child(
                 controls::icon_button(
                     ElementId::Name(format!("mini-close-{key}").into()),

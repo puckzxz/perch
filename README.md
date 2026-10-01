@@ -99,6 +99,7 @@ Neither is any use when you are not holding the mouse.
 | `1 – 4` | Talk to that pane |
 | `Tab` | The next pane |
 | `Ctrl+W` | Close this pane |
+| `P` | Pop this pane out into a window of its own, on top of other apps, or bring it back (Windows) |
 | `Esc` | Back to browsing, or back to watching |
 | `Alt+←` | Back to where you were before — the mouse's back button too |
 | `Alt+→` | Forward again — the mouse's forward button too |

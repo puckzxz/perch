@@ -57,12 +57,13 @@ use crate::controls::{self, Variant};
 use crate::keys::Hint;
 use crate::{layout, theme};
 
-/// The platforms whose title bars differ. Taken from `cfg!` rather than
-/// `#[cfg]` so every arm compiles on every platform: the Windows build
+/// The platforms whose title bars differ — and, for `pop_out::offered`,
+/// where a pop-out has been proven to stay on top. Taken from `cfg!` rather
+/// than `#[cfg]` so every arm compiles on every platform: the Windows build
 /// type-checks the macOS one, which is the closest thing to a macOS build
 /// this machine can do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Platform {
+pub(super) enum Platform {
     Windows,
     MacOs,
     /// Linux and the rest, where the window manager draws the frame.
@@ -70,7 +71,7 @@ enum Platform {
 }
 
 impl Platform {
-    const CURRENT: Platform = if cfg!(windows) {
+    pub(super) const CURRENT: Platform = if cfg!(windows) {
         Platform::Windows
     } else if cfg!(target_os = "macos") {
         Platform::MacOs

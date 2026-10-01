@@ -291,6 +291,28 @@ impl RootView {
         }
     }
 
+    /// `P` on the watch page: the active pane into a window of its own, or
+    /// back from one. Nothing where the pop-out is not offered, and nothing
+    /// for a pane with no player to move; see `pop_out`.
+    pub(super) fn on_toggle_pop_out(
+        &mut self,
+        _: &keys::TogglePopOut,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(key) = self
+            .active_slot()
+            .map(|index| self.slots[index].key.clone())
+        else {
+            return;
+        };
+        if self.stage.is_popped(&key) {
+            self.pop_in(&key, cx);
+        } else {
+            self.pop_out(&key, window, cx);
+        }
+    }
+
     /// Back along the trail; see `navigation`.
     pub(super) fn on_navigate_back(
         &mut self,

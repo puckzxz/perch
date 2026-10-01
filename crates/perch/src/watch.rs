@@ -23,8 +23,8 @@ use std::path::PathBuf;
 use chrono::{DateTime, Utc};
 use emotes::ImageCache;
 use gpui::{
-    canvas, div, prelude::*, px, AnyElement, App, Context, CursorStyle, ElementId, Entity,
-    IntoElement, MouseButton, MouseDownEvent, Pixels, SharedString, Task, Window,
+    canvas, div, prelude::*, px, AnyElement, Context, CursorStyle, ElementId, Entity, IntoElement,
+    MouseButton, MouseDownEvent, Pixels, SharedString, Task, Window,
 };
 use settings::history::Watched;
 use streamlink::StreamSupervisor;
@@ -300,28 +300,14 @@ impl Slot {
         self.quiet = old.quiet;
     }
 
+    /// The pane's player, wherever it is drawn. Something that draws it in
+    /// the main window asks `RootView::video_in_main` instead, which says
+    /// none while the pane plays in a window of its own; see `crate::stage`.
     pub fn video(&self) -> Option<&Entity<VideoView>> {
         match &self.state {
             StreamState::Playing(view) => Some(view),
             _ => None,
         }
-    }
-
-    /// Whether the pane has a player with a frame decoded in it, and so a
-    /// bar it can draw. A player still waiting for its first frame draws
-    /// neither.
-    pub fn has_picture(&self, cx: &App) -> bool {
-        self.video().is_some_and(|view| view.read(cx).has_picture())
-    }
-
-    /// Whether the pane's picture covers it: a player whose first frame has
-    /// faded all the way in (`VideoView::covers`). Until then the pane is
-    /// still starting, and what it was waiting for stays drawn under the
-    /// fading picture — so for what goes over the top of the pane it is a
-    /// pane with nothing to cover, like one stopped. What
-    /// [`showing`](status::showing) is told.
-    pub fn covered(&self, cx: &App) -> bool {
-        self.video().is_some_and(|view| view.read(cx).covers())
     }
 
     /// Where the pointer is, from the pane's probe, every frame the pane is
@@ -495,6 +481,16 @@ impl<'a> From<&'a SimilarChannel> for LiveInfo<'a> {
 /// What the root knows about a pane beyond its slot, resolved once per frame
 /// in `RootView::watch_page` rather than per pane inside the page.
 pub struct PaneInfo<'a> {
+    /// The player this window draws in the pane: `RootView::video_in_main`,
+    /// which is none while the pane plays in a window of its own, so the
+    /// main window never draws, nor reads, a player another window draws.
+    /// Everything the pane says about its player — its picture, its shape,
+    /// `muted` and `paused` — is read from this, never from the slot.
+    pub player: Option<Entity<VideoView>>,
+    /// What the pane is showing, read once for the frame
+    /// (`RootView::showing_in_main`): the one reading its status screen is
+    /// drawn from, and the root's poster and next offer were chosen by.
+    pub showing: Showing<'a>,
     /// What the header's numbers, title and game come from, when a list the
     /// app has fetched carries the channel — see `RootView::live_info`.
     /// `None` for a recording, whose header speaks for the recording, and for
@@ -556,6 +552,13 @@ pub enum PaneAction {
     OpenOnTwitch,
     /// Put the same link on the clipboard: More's, and the palette's.
     CopyLink,
+    /// Move its picture into a window of its own, on top of other apps: `P`
+    /// and the palette's row. Windows only for now; see `root::pop_out`.
+    PopOut,
+    /// Bring its picture back from that window: the pop-out bar's Bring
+    /// back, the `Bring back` on the pane's own cell, `P` in either window,
+    /// and the palette's row.
+    PopIn,
     /// Turn `Start when they go live` on or off: the switch on a stopped
     /// live pane.
     StartWhenLive(bool),
@@ -748,8 +751,9 @@ fn pane<V: 'static>(
 
     // Below the video, the box is the shape of the stream, so chat starts
     // where the picture stops. 16:9 until the first frame says otherwise.
-    let aspect = slot
-        .video()
+    let aspect = info
+        .player
+        .as_ref()
         .and_then(|view| view.read(cx).source_aspect())
         .unwrap_or(layout::VIDEO_ASPECT);
     let video_height = layout::stacked_video_height(
@@ -763,7 +767,7 @@ fn pane<V: 'static>(
     // the picture has faded all the way in, and the player draws nothing
     // until it has a frame, so a starting pane goes from its poster to its
     // picture with no black between them.
-    let showing = status::showing(slot, slot.covered(cx));
+    let showing = info.showing;
     let screen = (showing != Showing::Picture).then(|| {
         // The room the screen has for what it offers: the video's box, less
         // the header resting over its top when there is no chat panel.
@@ -789,7 +793,12 @@ fn pane<V: 'static>(
             cx,
         )
     });
-    let player = slot.video().cloned();
+    let player = info.player.clone();
+    // Whether the player has a frame decoded, and so a bar it can draw. A
+    // player still waiting for its first frame draws neither.
+    let picture = player
+        .as_ref()
+        .is_some_and(|view| view.read(cx).has_picture());
 
     // Built once, and drawn in one place: the panel, or the band over the
     // picture. Never both, since its elements' ids are the pane's.
@@ -798,7 +807,7 @@ fn pane<V: 'static>(
         info,
         placement,
         layout.mark_active && active,
-        slot.has_picture(cx),
+        picture,
         window_hovered,
         on_pane.clone(),
         cx,

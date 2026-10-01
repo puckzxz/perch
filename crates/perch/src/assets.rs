@@ -49,7 +49,7 @@ macro_rules! icon {
 /// Anything not on this list is answered `None`, which is exactly what the app
 /// did for all of them until now — so an icon nobody drew degrades to the
 /// blank it already was rather than to a crash.
-const ICONS: [(&str, &[u8]); 28] = [
+const ICONS: [(&str, &[u8]); 29] = [
     icon!("arrow-left"),
     icon!("arrow-right"),
     icon!("chat"),
@@ -72,6 +72,7 @@ const ICONS: [(&str, &[u8]); 28] = [
     icon!("pin"),
     icon!("play"),
     icon!("plus"),
+    icon!("pop-in"),
     icon!("search"),
     icon!("settings"),
     icon!("volume"),
@@ -134,6 +135,7 @@ perch_icons! {
     Chat => "chat",
     ChatOff => "chat-off",
     More => "more",
+    PopIn => "pop-in",
 }
 
 /// What `Application::new().with_assets(..)` is handed.

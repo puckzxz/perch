@@ -26,7 +26,7 @@ impl RootView {
         let room = layout::Room {
             width: self.body(window).width,
             bottom: if self.mini_player_shows() {
-                layout::mini_reserve(self.slots.len())
+                layout::mini_reserve(self.mini_slots().len())
             } else {
                 0.0
             },
@@ -185,8 +185,10 @@ impl RootView {
             .slots
             .iter()
             .map(|slot| {
-                let showing = watch::showing(slot, slot.covered(cx));
+                let showing = self.showing_in_main(slot, cx);
                 PaneInfo {
+                    player: self.video_in_main(slot).cloned(),
+                    showing,
                     // A recording's header speaks for the recording; the live
                     // numbers would be about a different broadcast.
                     live: if slot.is_live() {
@@ -232,8 +234,12 @@ impl RootView {
                 let Some(slot) = this.slots.get(index) else {
                     return;
                 };
-                let picture = slot.covered(cx);
-                let menu_open = slot.video().is_some_and(|view| view.read(cx).menu_open());
+                // Through the main window's own access to a player, so a
+                // pane whose picture is in a window of its own reads as one
+                // with nothing to cover, and nothing here reads its player.
+                let player = this.video_in_main(slot);
+                let picture = player.is_some_and(|view| view.read(cx).covers());
+                let menu_open = player.is_some_and(|view| view.read(cx).menu_open());
                 let pointed = this.slots[index].point(inside, picture, menu_open);
                 // Sticky, unlike `hovered`: a keyboard shortcut has to keep
                 // working once the pointer has moved into chat or off the

@@ -14,7 +14,7 @@ use crate::chat::{ChatView, Feed};
 use crate::video::{self, Playback, PositionHandle, Stopped, VideoStream};
 use crate::video_view::{ChatButton, Qualities, Start, VideoView};
 use crate::watch::{LiveInfo, Lookup, Slot, Source, StreamState, MAX_PANES};
-use crate::{layout, motion, settings_view};
+use crate::{layout, settings_view};
 
 /// Starting render size. Each pane measures itself on the first layout pass and
 /// its render thread follows from then on, so this only decides what the first
@@ -45,8 +45,7 @@ impl RootView {
                 if solo {
                     this.retire_slots(|slot| slot.channel == channel, cx);
                 }
-                this.set_compact(false, cx);
-                cx.notify();
+                this.restage(cx);
                 return;
             }
 
@@ -87,7 +86,7 @@ impl RootView {
             this.update_recommended();
             this.active = Some(channel.clone());
             this.start_stream(channel, window, cx);
-            this.set_compact(false, cx);
+            this.restage(cx);
             // The others share the window with one more pane now.
             this.sync_quality(window, cx);
         })
@@ -136,8 +135,7 @@ impl RootView {
                 if solo {
                     this.retire_slots(|slot| slot.key == key, cx);
                 }
-                this.set_compact(false, cx);
-                cx.notify();
+                this.restage(cx);
                 return;
             }
 
@@ -161,7 +159,7 @@ impl RootView {
             this.update_recommended();
             this.active = Some(key.clone());
             this.start_stream(key, window, cx);
-            this.set_compact(false, cx);
+            this.restage(cx);
             this.sync_quality(window, cx);
         })
     }
@@ -240,6 +238,9 @@ impl RootView {
     ///
     /// If that recording is already open in another pane, that pane is made
     /// the active one instead, and this one is left as it is.
+    ///
+    /// A pane in a window of its own comes home first. Its pop-out finds its
+    /// player by the pane's key, which the new slot does not carry.
     pub(super) fn replace_with_video(
         &mut self,
         key: &str,
@@ -254,6 +255,9 @@ impl RootView {
             cx.notify();
             return;
         }
+        if self.stage.is_popped(key) {
+            self.come_home(key, cx);
+        }
         let Some(index) = self.slot_index(key) else {
             return;
         };
@@ -262,6 +266,7 @@ impl RootView {
         self.slots[index] = slot;
         self.active = Some(video_key.clone());
         self.start_stream(video_key, window, cx);
+        self.restage(cx);
         self.sync_quality(window, cx);
         cx.notify();
     }
@@ -359,7 +364,7 @@ impl RootView {
         };
 
         match event {
-            StreamEvent::Resolving => self.slots[index].set_state(StreamState::Starting),
+            StreamEvent::Resolving => self.set_slot_state(index, StreamState::Starting, cx),
             StreamEvent::Ready {
                 url,
                 quality,
@@ -388,10 +393,11 @@ impl RootView {
                         position: position.clone(),
                     },
                     (Source::Video { .. }, None) => {
-                        self.slots[index].set_state(StreamState::Failed(
-                            "the recording came without a playlist".into(),
-                        ));
-                        cx.notify();
+                        self.set_slot_state(
+                            index,
+                            StreamState::Failed("the recording came without a playlist".into()),
+                            cx,
+                        );
                         return;
                     }
                     (Source::Live, _) => Playback::Live { url },
@@ -400,12 +406,13 @@ impl RootView {
                 // slider will show; and one started while you browse — the
                 // re-pick after a resize, a quality change from the settings —
                 // starts as the tile it replaces, not as a big player with
-                // its controls up in the corner of the browse page.
+                // its controls up in the corner of the browse page. One
+                // started in a pop-out starts there, with its window's focus.
                 let quiet = self.slots[index].quiet;
                 let start = Start {
-                    compact: self.page != Page::Watch,
+                    place: self.place_of(key),
                     quiet,
-                    focus: self.focus.clone(),
+                    focus: self.focus_of(key),
                     chat: ChatButton::of(
                         self.slots[index].chat_hidden,
                         self.slots[index].chat.is_some(),
@@ -421,9 +428,7 @@ impl RootView {
                             picked: self.slots[index].quality_override.is_some(),
                         };
                         let view = cx.new(|cx| {
-                            VideoView::from_stream(
-                                stream, frames, qualities, volume, start, window, cx,
-                            )
+                            VideoView::from_stream(stream, frames, qualities, volume, start, cx)
                         });
                         // What the player asks for, resolved by the pane's key
                         // when it arrives; see `on_video_event`.
@@ -436,20 +441,20 @@ impl RootView {
                             },
                         )
                         .detach();
-                        self.slots[index].set_state(StreamState::Playing(view));
+                        self.set_slot_state(index, StreamState::Playing(view), cx);
                     }
                     Err(e) => {
-                        self.slots[index].set_state(StreamState::Failed(e.to_string().into()))
+                        self.set_slot_state(index, StreamState::Failed(e.to_string().into()), cx)
                     }
                 }
             }
             StreamEvent::Offline => {
-                self.slots[index].set_state(StreamState::Offline);
+                self.set_slot_state(index, StreamState::Offline, cx);
                 // What the channel broadcast last, for the pane to offer.
                 self.ask_broadcasts(index);
             }
             StreamEvent::Failed { reason } => {
-                self.slots[index].set_state(StreamState::Failed(reason.into()))
+                self.set_slot_state(index, StreamState::Failed(reason.into()), cx)
             }
         }
         cx.notify();
@@ -574,7 +579,7 @@ impl RootView {
             Stopped::Failed(message) => StreamState::Failed(message.into()),
         };
         let ended = matches!(state, StreamState::Ended);
-        self.slots[index].set_state(state);
+        self.set_slot_state(index, state, cx);
         // A recording that reached its end is finished, and one that failed
         // is left where it failed: either way the history hears now.
         if !self.slots[index].is_live() && self.note_watching(cx) {
@@ -603,7 +608,7 @@ impl RootView {
         let Some(index) = self.slot_index(key) else {
             return;
         };
-        self.slots[index].set_state(StreamState::Starting);
+        self.set_slot_state(index, StreamState::Starting, cx);
         self.start_stream(key.to_string(), window, cx);
         cx.notify();
     }
@@ -625,8 +630,8 @@ impl RootView {
         if let Some(position) = slot.video().map(|view| view.read(cx).position()) {
             slot.resume_at = position;
         }
-        slot.set_state(StreamState::Starting);
         let key = slot.key.clone();
+        self.set_slot_state(index, StreamState::Starting, cx);
         self.start_stream(key, window, cx);
     }
 
@@ -708,7 +713,9 @@ impl RootView {
     /// nothing, the CPU it costs is what it cost when it opened, and a
     /// restart there would trade a visible interruption for a saving. A
     /// quality picked by hand from the pane's own menu is left alone; that
-    /// choice was about this pane, whatever its size.
+    /// choice was about this pane, whatever its size. So, for now, is a pane
+    /// in a window of its own, whose window is not the grid's cell this
+    /// measures.
     pub(super) fn sync_quality(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let pane_height = self.pane_height(window);
         let restart: Vec<usize> = self
@@ -716,6 +723,7 @@ impl RootView {
             .iter()
             .enumerate()
             .filter(|(_, slot)| slot.quality_override.is_none())
+            .filter(|(_, slot)| !self.stage.is_popped(&slot.key))
             .filter_map(|(index, slot)| {
                 let view = slot.video()?.read(cx);
                 let wanted = self.settings_pick(view.available(), pane_height)?;
@@ -747,28 +755,6 @@ impl RootView {
         cx.notify();
     }
 
-    /// Draw every player as a tile, or as a pane, for moving between pages.
-    /// How they look and nothing else: see `VideoView::set_compact`.
-    ///
-    /// Leaving the watch page also starts each pane's header over the
-    /// picture over, hidden, as the player does its bar: the browse page
-    /// never draws it, and a fade that came back after frames without its
-    /// element would replay its last flip on the way back (see
-    /// `motion::Fade::apply`). A reveal still running goes with it. Where
-    /// the pointer was is left alone: it decides which pane takes the keys
-    /// on the way back, and `go_watch_pane` sets it for that.
-    pub(super) fn set_compact(&mut self, compact: bool, cx: &mut Context<Self>) {
-        for slot in &mut self.slots {
-            if let Some(view) = slot.video() {
-                view.update(cx, |video, cx| video.set_compact(compact, cx));
-            }
-            if compact {
-                slot.header = motion::Fade::hidden();
-                slot.revealed = false;
-            }
-        }
-    }
-
     /// Mute all, or unmute all: every pane held silent, or let go.
     ///
     /// Per pane and for the session only. Each slot remembers it, so a player
@@ -798,15 +784,15 @@ impl RootView {
     /// pick the next thing wanted: a stream in a tile is still decoding and
     /// still pulling bytes. One step on the trail — which `Alt+←` takes back
     /// while something is still playing to go back to.
+    ///
+    /// A pane in a window of its own plays on either way: it is somewhere
+    /// else on screen, and was put there to be kept. Which panes stop is
+    /// `retire_homeless`'s, the one rule for it.
     pub(super) fn go_browse(&mut self, cx: &mut Context<Self>) {
         self.record(|this| {
             this.page = Page::Browse;
-            if this.settings.miniplayer {
-                this.set_compact(true, cx);
-            } else {
-                this.retire_slots(|_| false, cx);
-            }
-            cx.notify();
+            this.retire_homeless(cx);
+            this.restage(cx);
         })
     }
 
@@ -818,8 +804,7 @@ impl RootView {
                 return;
             }
             this.page = Page::Watch;
-            this.set_compact(false, cx);
-            cx.notify();
+            this.restage(cx);
         })
     }
 
@@ -866,7 +851,8 @@ impl RootView {
     ///
     /// The rail's recommendations hear of it here too, for the same reason:
     /// a pane gone is a seed that may have gone with it, and a channel that
-    /// may be recommended again.
+    /// may be recommended again. And so does the stage, which closes the
+    /// window of a pane that was popped out (`restage`).
     pub(super) fn retire_slots(&mut self, keep: impl Fn(&Slot) -> bool, cx: &mut Context<Self>) {
         let recording_leaves = self.slots.iter().any(|slot| !slot.is_live() && !keep(slot));
         if recording_leaves && self.note_watching(cx) {
@@ -877,5 +863,6 @@ impl RootView {
             self.trail.forget(|route| *route == Route::Watch);
         }
         self.update_recommended();
+        self.restage(cx);
     }
 }

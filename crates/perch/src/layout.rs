@@ -10,10 +10,11 @@
 //! on: how much of the window the title bar takes, whether the rail is drawn,
 //! and where on the bar a drag begins; how the mini player is cut into tiles,
 //! how far in from the page's edge it floats, and how much room a browse list
-//! leaves at its foot so nothing ends up stuck under the player. Each is read
-//! from here rather than recomputed where it is used.
+//! leaves at its foot so nothing ends up stuck under the player. And where a
+//! pane popped into a window of its own opens. Each is read from here rather
+//! than recomputed where it is used.
 
-use gpui::{Pixels, Size};
+use gpui::{point, px, size, Bounds, Pixels, Size};
 
 /// The room a page has: the window less the rail and the title bar.
 ///
@@ -162,6 +163,131 @@ pub fn mini_reserve(panes: usize) -> f32 {
         return 0.0;
     }
     mini_player(panes).height + 2.0 * crate::theme::GAP
+}
+
+/// Where a pane popped into a window of its own opens, on a display whose
+/// bounds are `display`, for a stream `aspect` wide to its height, clear of
+/// the pop-outs already `open`, and with `last` the bounds the last pop-out
+/// closed at this session, if one has.
+///
+/// It goes back to where the last one was left while the display still
+/// holds all of it and no pop-out open covers any of it: somebody who moved
+/// a pop-out out of the way meant that place. Otherwise pop-outs stack
+/// upwards from the display's bottom-right corner, [`theme::POP_OUT_EDGE`]
+/// in from its edges, and a column that has run out of height starts
+/// another to its left, so four fit a 1080p display. Each is
+/// [`theme::POP_OUT_WIDTH`] wide in the stream's shape — 16:9 for a stream
+/// that has not said — never smaller than its window may be resized to, and
+/// a vertical stream no taller than half the display. And always inside the
+/// display, which Windows asks of a window it opens: one that is not is put
+/// somewhere of the platform's choosing (gpui's windows/window.rs:1316-1321).
+///
+/// Stacked against where the open ones really are, not against a count of
+/// them. Pop-outs come in every shape and may have been dragged, resized or
+/// sent back to the last place, so a place worked out from a number — the
+/// third up the stack is two heights up — lands on one taller than this, or
+/// on one moved there: a 4:3 at the bottom and a 16:9 above it overlapped
+/// by 80 px. So the places tried are the corner and the spots just above
+/// and just left of each open pop-out, lowest of the rightmost column
+/// first, and the first that covers none of them wins. A pop-out brought
+/// home leaves its place for the next one that way too. Only on a display
+/// with no room left anywhere does a new one go to the corner over the
+/// others.
+///
+/// [`theme::POP_OUT_EDGE`]: crate::theme::POP_OUT_EDGE
+/// [`theme::POP_OUT_WIDTH`]: crate::theme::POP_OUT_WIDTH
+pub fn pop_out_bounds(
+    display: Bounds<Pixels>,
+    aspect: f32,
+    open: &[Bounds<Pixels>],
+    last: Option<Bounds<Pixels>>,
+) -> Bounds<Pixels> {
+    let clear = |bounds: &Bounds<Pixels>| !open.iter().any(|other| overlaps(*bounds, *other));
+    if let Some(last) = last.filter(|last| holds(display, *last) && clear(last)) {
+        return last;
+    }
+    let (width, height) = pop_out_size(display, aspect);
+    let edge = crate::theme::POP_OUT_EDGE;
+    let gap = crate::theme::GAP;
+    let left = f32::from(display.origin.x) + edge;
+    let top = f32::from(display.origin.y) + edge;
+    let corner_x = f32::from(display.right()) - edge - width;
+    let corner_y = f32::from(display.bottom()) - edge - height;
+    // Rightmost column first, and in each the lowest place first. A hair of
+    // slack, so the corner itself is never lost to rounding.
+    let mut xs: Vec<f32> = std::iter::once(corner_x)
+        .chain(
+            open.iter()
+                .map(|other| f32::from(other.origin.x) - gap - width),
+        )
+        .filter(|x| *x >= left - 0.5 && *x <= corner_x + 0.5)
+        .collect();
+    let mut ys: Vec<f32> = std::iter::once(corner_y)
+        .chain(
+            open.iter()
+                .map(|other| f32::from(other.origin.y) - gap - height),
+        )
+        .filter(|y| *y >= top - 0.5 && *y <= corner_y + 0.5)
+        .collect();
+    xs.sort_by(|a, b| b.total_cmp(a));
+    ys.sort_by(|a, b| b.total_cmp(a));
+    xs.iter()
+        .flat_map(|x| ys.iter().map(move |y| (*x, *y)))
+        .map(|(x, y)| inside(display, x, y, width, height))
+        .find(clear)
+        .unwrap_or_else(|| inside(display, corner_x, corner_y, width, height))
+}
+
+/// How large a pop-out opens on `display` for a stream `aspect` wide to its
+/// height; see [`pop_out_bounds`].
+fn pop_out_size(display: Bounds<Pixels>, aspect: f32) -> (f32, f32) {
+    let aspect = if aspect.is_finite() && aspect > 0.0 {
+        aspect
+    } else {
+        VIDEO_ASPECT
+    };
+    let mut width = crate::theme::POP_OUT_WIDTH;
+    let mut height = width / aspect;
+    let tallest = f32::from(display.size.height) / 2.0;
+    if height > tallest {
+        height = tallest;
+        width = height * aspect;
+    }
+    (
+        width.max(crate::theme::POP_OUT_MIN_WIDTH),
+        height.max(crate::theme::POP_OUT_MIN_HEIGHT),
+    )
+}
+
+/// A `width` by `height` box at `x`, `y`, moved as little as it takes to sit
+/// inside `display` — against its top-left edge where it is the larger.
+fn inside(display: Bounds<Pixels>, x: f32, y: f32, width: f32, height: f32) -> Bounds<Pixels> {
+    let left = f32::from(display.origin.x);
+    let top = f32::from(display.origin.y);
+    let width = width.min(f32::from(display.size.width));
+    let height = height.min(f32::from(display.size.height));
+    let x = x.clamp(left, f32::from(display.right()) - width);
+    let y = y.clamp(top, f32::from(display.bottom()) - height);
+    Bounds {
+        origin: point(px(x), px(y)),
+        size: size(px(width), px(height)),
+    }
+}
+
+/// Whether all of `inner` is on `outer`.
+fn holds(outer: Bounds<Pixels>, inner: Bounds<Pixels>) -> bool {
+    inner.origin.x >= outer.origin.x
+        && inner.origin.y >= outer.origin.y
+        && inner.right() <= outer.right()
+        && inner.bottom() <= outer.bottom()
+}
+
+/// Whether two boxes share any area. Touching edges do not.
+fn overlaps(a: Bounds<Pixels>, b: Bounds<Pixels>) -> bool {
+    a.origin.x < b.right()
+        && b.origin.x < a.right()
+        && a.origin.y < b.bottom()
+        && b.origin.y < a.bottom()
 }
 
 /// A cell holding 16:9 video with chat *beside* it, so the cell is wider than
@@ -648,5 +774,202 @@ mod tests {
     fn narrow_cells_stack_their_chat() {
         assert!(cell_is_portrait(0.6));
         assert!(!cell_is_portrait(WIDE));
+    }
+
+    fn rect(x: f32, y: f32, width: f32, height: f32) -> Bounds<Pixels> {
+        Bounds {
+            origin: point(px(x), px(y)),
+            size: size(px(width), px(height)),
+        }
+    }
+
+    /// A 1080p primary, a 1440p monitor to its right sitting lower, and one
+    /// to the left of the primary, at negative coordinates.
+    fn displays() -> [Bounds<Pixels>; 3] {
+        [
+            rect(0., 0., 1920., 1080.),
+            rect(1920., 312., 2560., 1440.),
+            rect(-1920., 0., 1920., 1080.),
+        ]
+    }
+
+    /// The shapes a stream comes in: widescreen, the old 4:3, a little
+    /// taller than widescreen, vertical, and wider than any monitor.
+    const SHAPES: [f32; 5] = [VIDEO_ASPECT, 4.0 / 3.0, 16.0 / 10.0, 9.0 / 16.0, 32.0 / 9.0];
+
+    /// `aspects` popped out one after another on `display`, nothing brought
+    /// home in between: each placed clear of those before it.
+    fn pop_out_all(display: Bounds<Pixels>, aspects: &[f32]) -> Vec<Bounds<Pixels>> {
+        let mut open = Vec::new();
+        for aspect in aspects {
+            let bounds = pop_out_bounds(display, *aspect, &open, None);
+            open.push(bounds);
+        }
+        open
+    }
+
+    /// No two of `stack` share any area.
+    fn assert_apart(stack: &[Bounds<Pixels>]) {
+        for (i, a) in stack.iter().enumerate() {
+            for b in &stack[i + 1..] {
+                assert!(!overlaps(*a, *b), "{a:?} covers {b:?}");
+            }
+        }
+    }
+
+    /// Windows puts a window whose bounds are off its display wherever it
+    /// likes, so every pop-out, the first and the tenth, opens on the display.
+    #[test]
+    fn a_pop_out_sits_inside_the_display() {
+        for display in displays() {
+            for aspect in SHAPES {
+                for bounds in pop_out_all(display, &[aspect; 10]) {
+                    assert!(
+                        holds(display, bounds),
+                        "{aspect} left {display:?}: {bounds:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The stack starts at the bottom-right, clear of a taskbar, goes up,
+    /// and no two pop-outs in it cover each other, whatever shapes they are
+    /// and in whichever order they come: a 4:3 under a 16:9 overlapped it by
+    /// 80 px when each place was worked out from its own height alone.
+    #[test]
+    fn pop_outs_stack_without_overlapping() {
+        let display = displays()[0];
+        let stack = pop_out_all(display, &[VIDEO_ASPECT; 4]);
+        let edge = crate::theme::POP_OUT_EDGE;
+        assert_eq!(f32::from(stack[0].right()), 1920.0 - edge);
+        assert_eq!(f32::from(stack[0].bottom()), 1080.0 - edge);
+        assert!(
+            stack[1].origin.y < stack[0].origin.y,
+            "the second goes up the stack"
+        );
+        assert_apart(&stack);
+        for display in displays() {
+            for a in SHAPES {
+                for b in SHAPES {
+                    for c in SHAPES {
+                        for d in SHAPES {
+                            let stack = pop_out_all(display, &[a, b, c, d]);
+                            assert_apart(&stack);
+                            for bounds in &stack {
+                                assert!(holds(display, *bounds), "{bounds:?}");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// A full stack of four on an ordinary monitor: the column runs out of
+    /// height at three, and the fourth starts a column to the left.
+    #[test]
+    fn four_pop_outs_fit_a_1080p_display() {
+        let display = displays()[0];
+        let stack = pop_out_all(display, &[VIDEO_ASPECT; 4]);
+        for bounds in &stack {
+            assert!(holds(display, *bounds), "{bounds:?}");
+        }
+        assert!(
+            stack[3].right() <= stack[0].origin.x,
+            "the fourth should start a column left of the first"
+        );
+        assert_eq!(stack[3].bottom(), stack[0].bottom());
+    }
+
+    /// The window is the stream's shape at the width it opens at, 16:9 until
+    /// the stream says, and a vertical stream is held to half the display.
+    #[test]
+    fn a_pop_out_keeps_the_streams_shape() {
+        let display = displays()[0];
+        let shape = |aspect: f32| {
+            let bounds = pop_out_bounds(display, aspect, &[], None);
+            (f32::from(bounds.size.width), f32::from(bounds.size.height))
+        };
+        let (width, height) = shape(VIDEO_ASPECT);
+        assert_eq!(width, crate::theme::POP_OUT_WIDTH);
+        assert!((width / height - VIDEO_ASPECT).abs() < 0.01);
+        let (width, height) = shape(4.0 / 3.0);
+        assert!((width / height - 4.0 / 3.0).abs() < 0.01);
+        for unknown in [0.0, f32::NAN, -1.0] {
+            assert_eq!(shape(unknown), shape(VIDEO_ASPECT), "aspect {unknown}");
+        }
+        let (width, height) = shape(9.0 / 16.0);
+        assert_eq!(height, 540.0, "a vertical stream at half the display");
+        assert!((width / height - 9.0 / 16.0).abs() < 0.01);
+        let (width, height) = shape(32.0 / 9.0);
+        assert!(width >= crate::theme::POP_OUT_MIN_WIDTH);
+        assert!(
+            height >= crate::theme::POP_OUT_MIN_HEIGHT,
+            "never under its least size"
+        );
+    }
+
+    /// A pop-out goes back to where the last one was left, while the display
+    /// still holds all of it and no pop-out open covers it.
+    #[test]
+    fn the_last_place_is_reused_while_a_display_holds_it() {
+        let display = displays()[0];
+        let moved = rect(200., 150., 640., 360.);
+        assert_eq!(
+            pop_out_bounds(display, VIDEO_ASPECT, &[], Some(moved)),
+            moved
+        );
+        let half_off = rect(1700., 150., 640., 360.);
+        assert_eq!(
+            pop_out_bounds(display, VIDEO_ASPECT, &[], Some(half_off)),
+            pop_out_bounds(display, VIDEO_ASPECT, &[], None),
+            "a place the display no longer holds is not reused"
+        );
+        let there = rect(400., 300., 480., 270.);
+        assert_eq!(
+            pop_out_bounds(display, VIDEO_ASPECT, &[there], Some(moved)),
+            pop_out_bounds(display, VIDEO_ASPECT, &[there], None),
+            "a place a pop-out open covers is not reused"
+        );
+    }
+
+    /// The last place can be one up the stack. Two out, both brought home,
+    /// the second last: the next goes where the second was, and the one
+    /// after it must not open over it — where the second went when the
+    /// first was in the corner.
+    #[test]
+    fn a_pop_out_never_opens_over_one_sent_back_up_the_stack() {
+        let display = displays()[0];
+        let pair = pop_out_all(display, &[VIDEO_ASPECT; 2]);
+        let third = pop_out_bounds(display, VIDEO_ASPECT, &[], Some(pair[1]));
+        assert_eq!(third, pair[1]);
+        let fourth = pop_out_bounds(display, VIDEO_ASPECT, &[third], Some(pair[1]));
+        assert!(!overlaps(third, fourth), "{fourth:?} covers {third:?}");
+        assert_eq!(fourth, pair[0], "the corner is free, so it goes there");
+    }
+
+    /// A pop-out brought home leaves its place for the next one, and one
+    /// dragged away leaves its place too.
+    #[test]
+    fn a_place_left_is_taken_again() {
+        let display = displays()[0];
+        let stack = pop_out_all(display, &[VIDEO_ASPECT; 3]);
+        assert_eq!(
+            pop_out_bounds(display, VIDEO_ASPECT, &[stack[1], stack[2]], None),
+            stack[0],
+            "the corner, once the first came home"
+        );
+        assert_eq!(
+            pop_out_bounds(display, VIDEO_ASPECT, &[stack[0], stack[2]], None),
+            stack[1],
+            "the gap in the middle"
+        );
+        let dragged = rect(100., 100., 480., 270.);
+        assert_eq!(
+            pop_out_bounds(display, VIDEO_ASPECT, &[dragged], None),
+            stack[0],
+            "the corner, once the one there moved"
+        );
     }
 }

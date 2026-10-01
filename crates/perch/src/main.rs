@@ -31,12 +31,14 @@ mod launch;
 mod layout;
 mod loudness;
 mod motion;
+mod os_window;
 mod palette;
 mod recommended;
 mod root;
 mod seek_bar;
 mod settings_view;
 mod sidebar;
+mod stage;
 mod target;
 mod theme;
 mod trail;
@@ -274,6 +276,12 @@ fn main() {
                 // reports the restore bounds for a maximised or fullscreen
                 // window, so what is saved is always a size that can be
                 // opened windowed.
+                //
+                // And take every pop-out with it. Windows quits once the last
+                // window is destroyed, and a pop-out left open would be a
+                // player with no app around it. This window goes first — its
+                // destruction is queued as it drops — and the process ends
+                // when the last pop-out's goes through.
                 window.on_window_should_close(cx, {
                     let root = root.downgrade();
                     move |window, cx| {
@@ -281,6 +289,7 @@ fn main() {
                         root.update(cx, |this, cx| {
                             this.remember_window(placement, cx);
                             this.remember_watching(cx);
+                            this.close_pop_outs(cx);
                         })
                         .ok();
                         // A launch arriving from here on is turned away, and

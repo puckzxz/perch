@@ -34,7 +34,8 @@ serde_json.workspace = true
 libc = "0.2"
 
 # Only for the window's own handle, which `instance` brings forward when a
-# later launch hands over; gpui uses the same crate and does not re-export it.
+# later launch hands over and `os_window` keeps a pop-out on top with; gpui
+# uses the same crate and does not re-export it.
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6"
 

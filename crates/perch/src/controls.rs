@@ -19,15 +19,16 @@
 //! what it heads is [`fold`], built on [`group_heading`], the plain heading
 //! it sits among. The window's minimise, maximise and close are here too, as
 //! [`caption_button`], because they look like controls — but they are the
-//! platform's to press, not the app's.
+//! platform's to press, not the app's. So is the picture a pop-out is
+//! dragged by, [`drag_layer`].
 
 use gpui::{
-    div, prelude::*, px, svg, AnyView, App, Div, ElementId, SharedString, Stateful, Window,
-    WindowControlArea,
+    div, prelude::*, px, svg, AnyView, App, Context, Div, ElementId, SharedString, Stateful,
+    Window, WindowControlArea,
 };
 
 use crate::assets::Icon;
-use crate::theme;
+use crate::{layout, theme};
 
 /// How wide a tooltip carrying full text is.
 ///
@@ -429,6 +430,45 @@ pub fn caption_button(
                         }),
                 ),
         )
+}
+
+/// A window's caption, as a layer over whatever its parent draws: absolute
+/// from [`layout::drag_top`] down to the bottom, edge to edge. A pop-out has
+/// no title bar, so its picture is what it is dragged by.
+///
+/// The same three rules as the title bar's strip (`root::title_bar`), for
+/// the same reasons:
+///
+/// - **It blocks the pointer.** Every window's root tracks focus, and its
+///   mouse-down marks every press it hears as handled; gpui reports a
+///   handled press on a caption to Windows as done, which swallows the move.
+///   Blocked, the root never hears it.
+/// - **It listens for no press.** A listener that took the press would do
+///   the same. The one listener it has hears moves, and only wakes a repaint
+///   as the pointer comes or goes — under it, nothing else can hear the
+///   pointer arrive, and a paused picture sends no frames to repaint for.
+/// - **It starts below the top edge**, which is the platform's to resize by:
+///   gpui asks for a window control before it asks Windows about the frame.
+///
+/// The pointer over it still counts as over the window: a move on a caption
+/// arrives as a non-client move, which gpui hears as hover all the same.
+/// Whatever must stay pressable goes over it, and blocks the pointer while
+/// it is up — the pop-out's bar.
+pub fn drag_layer<V: 'static>(
+    id: impl Into<ElementId>,
+    window: &Window,
+    cx: &mut Context<V>,
+) -> Stateful<Div> {
+    div()
+        .id(id)
+        .absolute()
+        .top(px(layout::drag_top(window.is_maximized())))
+        .left_0()
+        .right_0()
+        .bottom_0()
+        .occlude()
+        .window_control_area(WindowControlArea::Drag)
+        .on_hover(cx.listener(|_, _: &bool, _window, cx| cx.notify()))
 }
 
 /// The box a group's name sits in over the rows it heads, with nothing in it

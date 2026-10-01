@@ -519,6 +519,26 @@ pub const VIDEO_SHARE_MAX: f32 = 0.8;
 /// `RootView::go_browse`. The player is wider than this by its
 /// [`MINI_PLAYER_INSET`] either side and its border.
 pub const MINI_PLAYER_WIDTH: f32 = 320.0;
+
+/// How wide a pane popped into a window of its own opens, in logical pixels,
+/// with its height from the stream's shape (`layout::pop_out_bounds`, the
+/// only reader). A window that sits over other work rather than being the
+/// work: wide enough to follow a game in, small enough to keep out of the
+/// way. Its quality is still the one chosen for the pane's cell in the
+/// watch grid, which is a larger box than this.
+pub const POP_OUT_WIDTH: f32 = 480.0;
+/// The least a pop-out can be resized to, which its window is told
+/// (`root::pop_out`) and `layout::pop_out_bounds` never opens it under:
+/// the narrowest the pop-out's bar still holds play, the speaker and its two
+/// buttons at (`video_view::bar`), and 16:9 under that.
+pub const POP_OUT_MIN_WIDTH: f32 = 256.0;
+pub const POP_OUT_MIN_HEIGHT: f32 = 144.0;
+/// How far a pop-out opens in from the edges of its display, and so how
+/// far apart the stack of them starts from the corner
+/// (`layout::pop_out_bounds`). Clear of a taskbar along the bottom: gpui
+/// 0.2.2 reports a display's whole bounds and has no work area to ask for,
+/// so this stands in for one, at a little more than a taskbar's height.
+pub const POP_OUT_EDGE: f32 = 48.0;
 /// The strip under the mini player's tiles: what is playing, and the three
 /// controls for all of it. Tall enough for an `ICON_BUTTON` with room round it.
 pub const MINI_BAR_HEIGHT: f32 = 36.0;

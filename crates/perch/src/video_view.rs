@@ -6,8 +6,9 @@
 //! overlap it. Here the video is just an element, and UI composites over it
 //! like any other layer.
 //!
-//! This file is the player: what it starts with, its sound, its hover, the
-//! switch to a mini-player tile, and the picture. What is drawn over the
+//! This file is the player: what it starts with, its sound, its hover, where
+//! it is drawn — a pane, a mini-player tile or a window of its own, its
+//! [`Place`] — and the picture. What is drawn over the
 //! picture lives beside it, in child modules that see the player's private
 //! fields: `bar`, the control bar along the bottom — its icons, and what fits
 //! at the pane's width — and `menu`, the menus that bar opens, which one is
@@ -22,6 +23,12 @@
 //! status screen, under it, or a mini-player tile's word — and paints the
 //! black behind it. So the first frame fades in over what was being waited
 //! for rather than out of black; see [`VideoView::covers`].
+//!
+//! A player belongs to no window. Its frames wake it through a task of its
+//! own and its tile is freed in every window when it goes, so the one view
+//! can move between the main window and a pop-out — through
+//! [`VideoView::set_place`] and nothing else — and be drawn by exactly one
+//! window at a time; see `crate::stage`.
 
 mod bar;
 mod menu;
@@ -38,9 +45,11 @@ use gpui::{
 };
 use gpui_component::slider::{SliderEvent, SliderState};
 
+use crate::controls;
 use crate::loudness::Loudness;
 use crate::motion;
 use crate::seek_bar;
+use crate::stage::Place;
 use crate::theme;
 use crate::video::{Stopped, VideoStream};
 use crate::watch::PaneAction;
@@ -117,9 +126,13 @@ pub struct VideoView {
     ///
     /// Every frame from one stream carries the same `ImageId` (see
     /// `video::VideoStream::start`), so this is really "the atlas key this view
-    /// owns" — kept so `on_release_in` has something to hand `drop_image`, and
-    /// so `render` can tell a genuinely new frame from a repaint of the one the
-    /// atlas already holds.
+    /// owns" — kept so the release hook and [`set_place`](Self::set_place)
+    /// have something to hand `drop_image`, and so `render` can tell a
+    /// genuinely new frame from a repaint of the one the atlas already holds.
+    ///
+    /// Each window has an atlas of its own, so this is the tile in the window
+    /// that drew the view last. `set_place` empties it, and the next draw —
+    /// in whichever window — uploads the frame afresh.
     current: Option<Arc<RenderImage>>,
     /// When `current` was first filled: the moment the first frame began
     /// to fade in, which [`covers`](Self::covers) counts from.
@@ -137,8 +150,10 @@ pub struct VideoView {
     /// presses — the second of a double-click — go nowhere; see
     /// `VideoView::run_guard`.
     row_run: bool,
-    /// The root's focus, which a press on the bar or on a menu hands the keys
-    /// back to; see `return_keys`.
+    /// The focus of the window drawing this player — the root's in the main
+    /// window, the pop-out's own in a pop-out — which a press on the bar or
+    /// on a menu hands the keys back to; see `return_keys`. Changed with the
+    /// window, by [`set_place`](Self::set_place).
     root_focus: FocusHandle,
     /// What the bar's chat glyph offers; see [`ChatButton`].
     chat: ChatButton,
@@ -166,12 +181,13 @@ pub struct VideoView {
     /// Whether the control bar is up, and how far through fading it is.
     /// Derived from `hovered` and the open menu by `sync_controls`.
     controls: motion::Fade,
-    /// True while the player is a tile in the mini player on the browse page.
-    /// Presentation only: a compact player draws no control bar, answers no
-    /// hover, labels no seek bar and does not go fullscreen on a double-click,
-    /// because the tile is a way back to the watch page rather than a player
-    /// of its own. What it sounds like is `loudness`, and nothing here.
-    compact: bool,
+    /// Where the player is drawn. Presentation only: a tile draws no control
+    /// bar, answers no hover and labels no seek bar, because the tile is a
+    /// way back to the watch page rather than a player of its own; only a
+    /// pane opens menus and goes fullscreen on a double-click; and a pop-out
+    /// is dragged by its picture. What it sounds like is `loudness`, and
+    /// nothing here. Changed by [`set_place`](Self::set_place) alone.
+    place: Place,
     /// A scrub in progress: where along the bar the pointer has dragged the
     /// thumb. The seek happens when it lets go — see `seek_bar` for why not
     /// on every move.
@@ -183,6 +199,12 @@ pub struct VideoView {
     /// what the label above it names. Measured by the probe against `track`,
     /// for the reason `hovered` is.
     pointing: Option<f32>,
+    /// The window that drew this player last, since its last change of
+    /// place: what `render` holds the one-window rule to, in debug builds
+    /// only. Freeing the tile needs no record of it — `drop_image` visits
+    /// every window — so a release build keeps none.
+    #[cfg(debug_assertions)]
+    drawn_in: Option<gpui::AnyWindowHandle>,
     _pump: Task<()>,
     /// Keeps the release hook alive; see [`VideoView::from_stream`].
     _release: Subscription,
@@ -194,11 +216,12 @@ impl EventEmitter<VideoEvent> for VideoView {}
 /// while you browse — a quality change, the re-pick after a resize — has to
 /// come up as the tile it is replacing, not as a watch-page player.
 pub struct Start {
-    /// Drawn as a tile in the mini player; see `VideoView::compact`.
-    pub compact: bool,
+    /// Where it is drawn; see `VideoView::place`.
+    pub place: Place,
     /// Held silent by Mute all; see `Loudness`.
     pub quiet: bool,
-    /// The root's focus handle, kept as `VideoView::root_focus`.
+    /// The focus of the window it is drawn in, kept as
+    /// `VideoView::root_focus`.
     pub focus: FocusHandle,
     /// What the pane's chat is at the start; see [`ChatButton`].
     pub chat: ChatButton,
@@ -218,10 +241,12 @@ impl VideoView {
         qualities: Qualities,
         level: u8,
         start: Start,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let pump = cx.spawn_in(window, async move |this, cx| {
+        // Bound to no window, so the player can move between windows: a
+        // task bound to the main one would stop waking it the moment the
+        // main window went, with a pop-out still drawing it.
+        let pump = cx.spawn(async move |this, cx| {
             use futures::StreamExt as _;
             while frames.next().await.is_some() {
                 // The same wake carries both: a new frame to draw, and - once
@@ -260,11 +285,16 @@ impl VideoView {
         // view is destroyed on every ordinary action — Ctrl+W, closing a pane,
         // going back to browse, and every quality or credentials change, which
         // replace `Playing` with `Starting` — so each would otherwise leak a
-        // full-size frame. `Drop` cannot do this; it has no `Window`.
-        // `on_release_in` does.
-        let release = cx.on_release_in(window, |this: &mut Self, window, _cx| {
+        // full-size frame. `Drop` cannot do this; it has no `App`.
+        //
+        // Through `App::drop_image`, which visits every window, rather than
+        // the one window the view was made in: the view may be drawn in a
+        // pop-out by now, and its tile is in that window's atlas. A release
+        // runs as effects are flushed, after whatever window was being
+        // updated has been put back, so none is skipped as leased.
+        let release = cx.on_release(|this: &mut Self, cx| {
             if let Some(frame) = this.current.take() {
-                let _ = window.drop_image(frame);
+                cx.drop_image(frame, None);
             }
         });
 
@@ -284,10 +314,12 @@ impl VideoView {
             fit: bar::Fit::EVERYTHING,
             hovered: false,
             controls: motion::Fade::hidden(),
-            compact: start.compact,
+            place: start.place,
             scrub: None,
             track: None,
             pointing: None,
+            #[cfg(debug_assertions)]
+            drawn_in: None,
             _pump: pump,
             _release: release,
         }
@@ -357,9 +389,11 @@ impl VideoView {
     /// label moved.
     fn follow_pointer(&mut self, pointer: Option<Point<Pixels>>) -> bool {
         let pointing = match (pointer, self.track) {
-            // A compact player draws no bar, so wherever its track was last
-            // laid out is somewhere else on the screen by now.
-            (Some(pointer), Some(track)) if !self.compact => seek_bar::hover_at(&track, pointer),
+            // A tile draws no bar, so wherever its track was last laid out
+            // is somewhere else on the screen by now.
+            (Some(pointer), Some(track)) if draws_bar(self.place) => {
+                seek_bar::hover_at(&track, pointer)
+            }
             _ => None,
         };
         if self.pointing == pointing {
@@ -407,24 +441,55 @@ impl VideoView {
         self.set_volume(self.loudness.toggled(), window, cx);
     }
 
-    /// Move the player between the watch page and a tile in the mini player.
+    /// Move the player to `place`, drawn in the window whose focus is
+    /// `focus`: between the watch page, a tile in the mini player and a
+    /// window of its own. The only way a player changes place or window;
+    /// `RootView::restage` is the only caller, after `Start`.
     ///
     /// How it is drawn and nothing else: the pane keeps its sound, which is
-    /// the point of the mini player. Everything the pointer was doing to the
-    /// big player is let go here, because the tile will never hear the
-    /// release — a held scrub in particular would go on asking for a frame
-    /// every frame for as long as the tile was up.
+    /// the point of the mini player and of the pop-out. Everything the
+    /// pointer was doing is let go ([`let_go`](Self::let_go)), since the
+    /// new place will never hear the release.
     ///
-    /// The bar's fade starts over, hidden, rather than being set hidden. The
-    /// tile never draws the bar, and gpui keeps an animation's state only
-    /// from one frame to the next, so a fade that came back with its history
-    /// would replay its last flip from the start on the first frame of the
-    /// big player: the bar flashing up and fading away over the picture.
-    pub fn set_compact(&mut self, compact: bool, cx: &mut Context<Self>) {
-        if self.compact == compact {
+    /// The tile goes too, from every window's atlas. Each window keeps its
+    /// own, and `render` skips uploading a frame it already holds, so a
+    /// window the view came back to would paint its own old tile — a
+    /// paused picture from before the move, for as long as it stayed
+    /// paused. Freed later in the same flush rather than now, since the
+    /// window drawing this may be the one being updated; and the notify
+    /// dirties every window that drew the view last frame, so none shows a
+    /// scene that names the freed tile again before it has drawn a new one.
+    /// The first frame is left alone, so the picture does not fade in again
+    /// in its new place.
+    pub fn set_place(&mut self, place: Place, focus: FocusHandle, cx: &mut Context<Self>) {
+        if self.place == place && self.root_focus == focus {
             return;
         }
-        self.compact = compact;
+        if let Some(frame) = self.current.take() {
+            cx.defer(move |cx| cx.drop_image(frame, None));
+        }
+        #[cfg(debug_assertions)]
+        {
+            self.drawn_in = None;
+        }
+        self.place = place;
+        self.root_focus = focus;
+        self.let_go();
+        cx.notify();
+    }
+
+    /// Let go of everything the pointer was doing to the player, and close
+    /// its menu: for a change of place, where the release will never come —
+    /// a held scrub in particular would go on asking for a frame every frame
+    /// for as long as the player was somewhere else.
+    ///
+    /// The bar's fade starts over, hidden, rather than being set hidden. A
+    /// tile never draws the bar, and gpui keeps an animation's state only
+    /// from one frame to the next and one window at a time, so a fade that
+    /// came back with its history would replay its last flip from the start
+    /// on the first frame in its new place: the bar flashing up and fading
+    /// away over the picture.
+    fn let_go(&mut self) {
         self.menu = None;
         self.row_run = false;
         self.hovered = false;
@@ -432,7 +497,6 @@ impl VideoView {
         self.scrub = None;
         self.track = None;
         self.controls = motion::Fade::hidden();
-        cx.notify();
     }
 
     /// Hold the pane silent for Mute all, or let it go.
@@ -462,7 +526,7 @@ impl VideoView {
         // And while the thumb is held, wherever the pointer has dragged it:
         // a bar that faded out mid-scrub would take the thumb with it.
         let visible =
-            !self.compact && (self.hovered || self.menu.is_some() || self.scrub.is_some());
+            draws_bar(self.place) && (self.hovered || self.menu.is_some() || self.scrub.is_some());
         self.controls.set(visible)
     }
 
@@ -581,6 +645,39 @@ fn covered(since_first: Option<Duration>) -> bool {
     since_first.is_some_and(|since| since >= theme::MOTION_VIDEO)
 }
 
+/// Whether a player in `place` draws its control bar: a pane and a pop-out
+/// do, a tile does not.
+fn draws_bar(place: Place) -> bool {
+    match place {
+        Place::Pane | Place::PopOut => true,
+        Place::Tile => false,
+    }
+}
+
+impl VideoView {
+    /// The frame, as the element that fills the player.
+    ///
+    /// The first frames fade in rather than cut, which makes a channel
+    /// switch read as deliberate instead of a glitch; the poster under them
+    /// is what they fade in over. Only until the picture covers the pane:
+    /// once it has, a player drawn somewhere new — popped out, brought
+    /// back, between the pages — comes up as it is, rather than fading in
+    /// again out of the black behind it.
+    fn picture(&self, frame: Arc<RenderImage>) -> gpui::AnyElement {
+        let picture = img(frame).flex_1().min_h_0().w_full();
+        if self.covers() {
+            return picture.into_any_element();
+        }
+        picture
+            .with_animation(
+                ElementId::from("video-fade-in"),
+                Animation::new(theme::MOTION_VIDEO),
+                |element, delta| element.opacity(delta),
+            )
+            .into_any_element()
+    }
+}
+
 impl Render for VideoView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(frame) = self.stream.latest_frame() else {
@@ -593,6 +690,21 @@ impl Render for VideoView {
             // it with.
             return div().size_full().into_any_element();
         };
+
+        // One window at a time; see `crate::stage`. A second window drawing
+        // this view would freeze on the first tile it was given, since the
+        // upload below is skipped for a frame already held, and the two
+        // probes would fight over the render size. Only `set_place` may
+        // move it, and it starts this over.
+        #[cfg(debug_assertions)]
+        {
+            let here = window.window_handle();
+            debug_assert!(
+                self.drawn_in.is_none_or(|drawn| drawn == here),
+                "a VideoView drew in a second window without set_place"
+            );
+            self.drawn_in = Some(here);
+        }
 
         // One tile for the life of the stream: every frame carries the same
         // `ImageId`, so this overwrites the pixels already in the atlas instead
@@ -637,6 +749,7 @@ impl Render for VideoView {
         }
 
         let stream_size = self.stream.size_handle();
+        let cluster = bar::cluster(self.place);
         let this = cx.entity().downgrade();
         let probe = canvas(
             move |bounds, window, cx| {
@@ -648,7 +761,7 @@ impl Render for VideoView {
                 let pointer = window.mouse_position();
                 let inside = window.is_window_hovered() && bounds.contains(&pointer);
                 // In logical pixels, the bar's own: the bar spans the pane.
-                let fit = bar::fit(f32::from(bounds.size.width), bar::RIGHT_BUTTONS);
+                let fit = bar::fit(f32::from(bounds.size.width), cluster);
                 this.update(cx, |view: &mut Self, cx| {
                     let hovered = view.set_hovered(inside);
                     let scrubbed = view.follow_scrub(pointer.x);
@@ -687,13 +800,14 @@ impl Render for VideoView {
             // so the probe above decides; but a paused stream sends no frames,
             // and without this nothing would ask the probe to run again.
             .on_hover(cx.listener(|_, _: &bool, _window, cx| cx.notify()))
-            // The gesture every player has. A single click does nothing on
+            // The gesture a pane's player has. A single click does nothing on
             // purpose - it is how a pane is made the active one, and pausing
             // on a click would turn choosing a pane into stopping it. Not on
-            // a compact tile, whose click is the way back to the watch page.
+            // a tile, whose click is the way back to the watch page, nor in
+            // a pop-out, whose picture is what the window is dragged by.
             // A double-click whose first press chose a menu row never gets
             // here: `run_guard`, below, stops the second press.
-            .when(!self.compact, |pane| {
+            .when(self.place == Place::Pane, |pane| {
                 pane.on_click(|event: &ClickEvent, window, _cx| {
                     if event.click_count() == 2 {
                         window.toggle_fullscreen();
@@ -702,17 +816,18 @@ impl Render for VideoView {
             })
             .child(probe)
             // Ahead of the bar and its menus, so it hears a press before
-            // anything on them does; see `run_guard`. A tile has no menus.
-            .when(!self.compact, |pane| pane.child(Self::run_guard(cx)))
-            // Fade the first frames in rather than cutting to them, which
-            // makes a channel switch read as deliberate instead of a glitch;
-            // the poster under it is what it fades in over.
-            .child(img(frame).flex_1().min_h_0().w_full().with_animation(
-                ElementId::from("video-fade-in"),
-                Animation::new(theme::MOTION_VIDEO),
-                |element, delta| element.opacity(delta),
-            ))
-            .when(!self.compact, |pane| {
+            // anything on them does; see `run_guard`. Only a pane has menus.
+            .when(self.place == Place::Pane, |pane| {
+                pane.child(Self::run_guard(cx))
+            })
+            .child(self.picture(frame))
+            // In a pop-out the picture is the window's handle: under the bar,
+            // which blocks the pointer only while it is up, so a button on
+            // screen is never under the drag.
+            .when(self.place == Place::PopOut, |pane| {
+                pane.child(controls::drag_layer("video-drag", window, cx))
+            })
+            .when(draws_bar(self.place), |pane| {
                 // Hidden until the pointer is over the video, so nothing covers
                 // the picture while you are just watching - and faded rather
                 // than cut, because over a moving image a hard switch reads as

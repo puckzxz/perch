@@ -74,17 +74,19 @@ App modules:
 | `instance/` | one perch per settings file: the claim, and a later launch handing its arguments to the running one — a named pipe on Windows, `flock` and a socket on Unix |
 | `launch.rs` | what a launch's arguments ask for, read the one way at startup and on a handover (pure, tested) |
 | `trail.rs` | back and forward: the places behind and ahead, what a step passes over, and forgetting a place that is gone (pure, tested) |
-| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams` (opening, restarting, closing, and `replace_with_video`, a recording swapped in for a live pane in place), `broadcasts` (what a stopped live pane asks about its channel's past broadcasts, and whether it may offer to start by itself), `pane_actions` (what a pane asks for, by its key: a press on it or one of its controls, which takes the keys back for the root first, and its player's requests; and the moment a pane key brings a pane's header up over its picture), `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `prefs`, `recommended` (the rail's Recommended group: when to ask the worker, what its answer becomes, and the hooks that call it), `chrome` (pills, toasts, the rail), `mini_player` (what plays on while you browse, in the corner of the page), `title_bar` (the bar Perch draws across the top of the window — the rail button, back and forward, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`) |
+| `stage.rs` | where each pane is drawn — a pane, a mini-player tile, or a window of its own (`Place`) — and which panes are popped out (`Stage`): the one owner of the answer both windows ask before drawing a player (pure, tested) |
+| `os_window.rs` | what Perch asks of a window that gpui does not: its platform handle, and keeping a pop-out above every other app (`keep_on_top`, Windows only) |
+| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams` (opening, restarting, closing, and `replace_with_video`, a recording swapped in for a live pane in place), `panes` (where each pane is drawn, applied: `restage`, the one funnel every change of a pane's state, of which panes there are, of the page and of what is popped out ends in; `set_slot_state`, the only write of a pane's state, which a test holds the root to; `video_in_main`, the only way the main window reaches a player), `pop_out` (a pane's picture in a window of its own, on top of other apps: the `PopOut` view, opening and closing it through `cx.defer`, `to_root`, the only way back to the root from it, and `offered`, Windows only), `broadcasts` (what a stopped live pane asks about its channel's past broadcasts, and whether it may offer to start by itself), `pane_actions` (what a pane asks for, by its key: a press on it or one of its controls, which takes the keys back for the root first, and its player's requests; and the moment a pane key brings a pane's header up over its picture), `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `prefs`, `recommended` (the rail's Recommended group: when to ask the worker, what its answer becomes, and the hooks that call it), `chrome` (pills, toasts, the rail), `mini_player` (what plays on while you browse, in the corner of the page), `title_bar` (the bar Perch draws across the top of the window — the rail button, back and forward, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`) |
 | `target.rs` | what a typed or pasted thing means: a login, or a twitch.tv link to a channel or a recording; `link`, its inverse and the one place a twitch.tv URL is written, and `moment`, the second a link to a recording starts at (pure, tested) |
 | `browse.rs` | the picker page: following, popular, categories, search; which of them is on screen (`Discovery::place`) and which lists are still being waited on |
 | `channel_page.rs` | one channel's past broadcasts, and when each was; the recording card both pages use, and a stopped pane too; a recording's poster, and `archive_of`, which finds the recording of a broadcast that just ended (tested) |
 | `history_page.rs` | the history tab, and the one translation between a video and a history entry |
 | `watch.rs` | the grid of panes; `Slot` lives here, made by `Slot::new`, and `PaneAction`, everything a pane asks of the root; the band a header rides over the picture on, and when it is up (`Slot::point`, `band_wanted`, tested) |
 | `watch/header.rs` | a pane's header — name, numbers, what is on, `muted`/`paused`, the × that names its key — and `Placement`, the one rule for where it goes: the chat panel, or over the picture with no chat on screen (tested) |
-| `watch/status.rs` | a pane with no picture: `Showing`, the one reading of its state that the pane's sentence and the mini player's word both come from, and the screen drawn from it under the player — a starting pane's poster, a stopped one's next steps and what room it has for them (`next_up_room`) (tested) |
-| `layout.rs` | derives grid shape from window aspect; the page's `Body`, the title bar's height and drag edge, and the mini player's tiles, how far in it floats clear of the scrollbar, and the `Room` a browse list leaves for it (pure, tested) |
-| `video_view.rs` | the player element: its sound, its hover, the picture; drawn full or as a compact mini-player tile |
-| `video_view/bar.rs` | the control bar over a playing picture: the seek row on a recording, the icons and their key-naming tooltips, what fits at the pane's width (`fit`, tested), the one anchor menus open from |
+| `watch/status.rs` | a pane with no picture: `Showing`, the one reading of its state that the pane's sentence and the mini player's word both come from, and the screen drawn from it under the player — a starting pane's poster, a stopped one's next steps and what room it has for them (`next_up_room`), and `Elsewhere`, a pane whose picture is in a window of its own, with `Bring back` (tested) |
+| `layout.rs` | derives grid shape from window aspect; the page's `Body`, the title bar's height and drag edge, and the mini player's tiles, how far in it floats clear of the scrollbar, and the `Room` a browse list leaves for it; where a pop-out opens, stacked clear of where the open ones really are (`pop_out_bounds`) (pure, tested) |
+| `video_view.rs` | the player element: its sound, its hover, the picture; drawn as a pane, a mini-player tile or in a pop-out (`stage::Place`), moved between them only by `set_place`, and belonging to no window |
+| `video_view/bar.rs` | the control bar over a playing picture: the seek row on a recording, the icons and their key-naming tooltips, what fits at the pane's width (`fit`, tested), the one anchor menus open from; a pop-out's own right-hand end, Bring back and Close |
 | `video_view/menu.rs` | the bar's menus, the quality and More: which is open (`Menu`, one at a time), the box, rows that act on the press (tested), and `run_guard`, which swallows the rest of a double-click a row took (tested) |
 | `loudness.rs` | one pane's level and the Mute all hush over it: what mpv hears, and the only level ever reported to be remembered (pure, tested) |
 | `seek_bar.rs` | the bar on a recording, and the arithmetic behind it |
@@ -99,7 +101,7 @@ App modules:
 | `sidebar.rs` | the follows rail down the left, beside both pages: Pinned, Live, Recommended, then Offline folded under a count (`groups`, pure, tested) |
 | `recommended.rs` | the rail's Recommended group worked out: the seeds (`seeds`), when to ask (`Recommended::next_ask`), and what the answers come to (`suggestions`, `reason`) (pure, tested) |
 | `palette.rs` | the command palette, and what it can run |
-| `controls.rs` | the one button, the variants it comes in, the icon button, the heading that folds (`fold`) and the plain one it sits among (`group_heading`), the window's caption buttons, and the two tooltip builders (`tip`, `full_text`) |
+| `controls.rs` | the one button, the variants it comes in, the icon button, the heading that folds (`fold`) and the plain one it sits among (`group_heading`), the window's caption buttons, the picture a pop-out is dragged by (`drag_layer`), and the two tooltip builders (`tip`, `full_text`) |
 | `widget_theme.rs` | hands `theme.rs` to `gpui-component`'s own palette |
 | `assets.rs` | the icons: the ones `gpui-component` asks the host for, and Perch's own, typed as `assets::Icon` |
 | `motion.rs` | the four animation shapes, and the state one of them needs |
@@ -169,9 +171,14 @@ changed size (a pane resize), having removed the key on the way out, so the
 `Window::drop_image` is the only thing that calls `sprite_atlas.remove`, so the
 one tile a `VideoView` owns stays resident for the life of the window unless the
 view hands it back — and the view dies on every ordinary action, including each
-quality change. `Drop` cannot do it; it has no `Window`. `cx.on_release_in` can,
-and the `Subscription` it returns has to be kept in a field or the hook is
-dropped immediately. `ChatView` does the same for its emote cache.
+quality change. `Drop` cannot do it; it has no `App`. `cx.on_release` can, and
+the `Subscription` it returns has to be kept in a field or the hook is dropped
+immediately. The player's hook calls `App::drop_image(frame, None)`, which
+visits every window, because the player may be drawn in a pop-out by then and
+each window has an atlas of its own; a release runs as effects flush, after
+whatever window was being updated is back in place (app.rs:759-776), so none
+is skipped as leased. `ChatView` keeps `on_release_in` for its emote cache:
+chat is only ever drawn in the main window.
 
 **And it leaks a third time inside GPUI itself, where `drop_image` cannot
 reach.** This is the expensive one: 43.7 GB of committed memory in five hours,
@@ -281,9 +288,14 @@ a resize to settle rather than running per event. The mini player is not one
 of the sizes it chooses for: `pane_height` measures the watch grid whichever
 page is up, so a tile never feeds it, the rendition playing in the corner is
 the one you go back to, and going back to watching never restarts a stream.
-A player that does restart while you browse — the re-pick after a resize, a
-quality change from the settings — is born compact, as the tile it replaces
-(`video_view::Start`).
+A player that does restart off the watch page — the re-pick after a resize, a
+quality change from the settings — is born where its pane is drawn
+(`video_view::Start::place`, from `RootView::place_of`): a tile, as the one it
+replaces, or in its pane's pop-out, with that window's focus
+(`RootView::focus_of`). A pane in a window of its own is left out of the
+re-pick (`sync_quality`), since the grid's cell is not what it is drawn in,
+until its quality follows its own window (P3-06); the settings sheet's
+restarts still reach it.
 
 **Animated GIFs need an `ElementId`.** From gpui's `img.rs`:
 
@@ -831,6 +843,62 @@ fails silently, and each was read out of gpui 0.2.2's source:
   unconditional: adding one inside `.when(cfg!(..))` changes the element's
   type halfway through the chain and does not compile.
 
+**A pop-out is a second window, and a player may be drawn by only one window
+at a time.** A pane popped out (`root/pop_out.rs`) is the same `VideoView` in
+another gpui window, and gpui gives every window its own sprite atlas, its own
+focus and dispatch tree, and its own frame-to-frame element state. Every one
+of these was read out of gpui 0.2.2's source; the spike that puts them to the
+test together, and what its live checks find once they are run, is recorded
+in `OVERHAUL-DECISIONS.md`:
+
+- **One window per `VideoView`.** `render` skips `update_image` for a frame
+  it already holds, so a second window drawing the view would freeze on its
+  first tile, and two probes would fight over the render size. The main window
+  reaches a player only through `RootView::video_in_main`, which is none while
+  the pane is popped, and the pop-out only through `pop_out_video`, which is
+  some only then; both ask the same `Stage`. A debug build asserts it in
+  `VideoView::render` (`drawn_in`). Reading a player while drawing counts
+  too: a window that reads an entity in a frame is redrawn whenever it
+  notifies (app.rs:2034-2056), so the main window must not so much as ask a
+  popped player whether it is paused, or it redraws at the video's rate.
+- **`VideoView::set_place` is the only move.** It frees the tile in every
+  window, deferred to the same flush, and notifies, which dirties every window
+  that drew the view last frame — so none re-presents a scene naming a freed
+  tile (a dedicated texture panics, directx_atlas.rs:299-305), and the window
+  the view returns to uploads the current frame rather than painting its own
+  stale tile. `RootView::restage` is its only caller.
+- **A player belongs to no window.** Its frame pump is `cx.spawn`, not
+  `spawn_in(window)`, and its release is `on_release` with an all-window
+  `drop_image`, not `on_release_in`.
+- **Pop-outs open and close only through `cx.defer`.** `open_window` draws
+  before it returns (app.rs:943-978), and the pop-out's render reads the root,
+  which is leased inside a root update; and a window cannot update itself
+  re-entrantly (app.rs:1361-1386). Nothing in a pop-out calls a root method
+  directly: `pop_out::to_root` defers, then goes through the main window, so
+  root methods always get the main window's `Window` — quality is measured
+  against the main window's body, and a restart's pump binds to it.
+- **The pop-out is dragged by its picture**, `controls::drag_layer`: an
+  occluding layer from `layout::drag_top` down, with no press listener, under
+  the bar, which occludes only while it is up. The same rules as the title
+  bar's strip, above, for the same reasons. Its one listener is an `on_hover`
+  that wakes a repaint: under it, nothing else hears the pointer arrive, and a
+  paused picture sends no frames. A move on the caption is a non-client move,
+  which gpui still hears as hover (events.rs:925-927).
+- **Neither `WindowKind::PopUp` nor `Floating` is topmost on Windows**
+  (windows/window.rs:402-404). The pop-out is `Normal`, and
+  `os_window::keep_on_top` sets `HWND_TOPMOST` and clears the
+  `WS_MAXIMIZEBOX` gpui gives every resizable window, so a double-click on the
+  picture-caption cannot fill the screen. Windows ignores `WindowOptions.focus`,
+  so a pop-out takes activation when it opens. On macOS `PopUp` is a panel that
+  hides whenever the app is inactive, so the pop-out is not offered there
+  (`pop_out::offered`).
+- **Closing the main window closes every pop-out** (`main`'s should-close,
+  `close_pop_outs`). `WindowsWindow::drop` queues `DestroyWindow`
+  (windows/window.rs:509-523), so the main window goes first, and the process
+  exits when the last pop-out's `WM_DESTROY` empties the window list
+  (windows/platform.rs:718-745). A pop-out's own close brings its pane back
+  instead, by returning false from its should-close.
+
 **Neither `group_hover` nor `on_hover` means "the pointer is over this."** Both
 resolve through the same expression:
 
@@ -1028,13 +1096,14 @@ element missing for a frame comes back as a stranger, so a `Fade` that is
 not drawn for a while replays its last flip from the start when it is drawn
 again. That is a bar long since hidden fading out all over again, over the
 picture. Keep a faded wrapper mounted on every frame, or start its fade over
-with `Fade::hidden()` when its element goes away, as `VideoView::set_compact`
-does for the bar, which a mini-player tile never draws. A pane's band, the
-header over its picture with chat hidden, does both: `watch::pane` mounts it
-on every frame, empty when the header is in the panel, under an id keyed by
-`pane_id` so a pane closing beside it never hands it another pane's fade; and
-`RootView::set_compact(true)` resets every slot's `header` to hidden on the
-way to the browse page, which never draws it.
+with `Fade::hidden()` when its element goes away, as `VideoView::set_place`
+does for the bar on every change of place (`let_go`): a mini-player tile never
+draws it, and a pop-out is another window, whose animations start from
+nothing. A pane's band, the header over its picture with chat hidden, does
+both: `watch::pane` mounts it on every frame, empty when the header is in the
+panel, under an id keyed by `pane_id` so a pane closing beside it never hands
+it another pane's fade; and `RootView::restage` resets every slot's `header`
+to hidden while the browse page is up, which never draws it.
 
 **Element ids are namespaced by every ancestor that has one**, plus an implicit
 `ElementId::View(entity_id)` per entity. So `"controls"` is unique inside a
@@ -1374,11 +1443,20 @@ header rests over it. The split:
   every pane as already pointed at for the first frame. A `×` revealed on the
   picture under the pointer closes that one pane through `close_slot`, looked
   up by key at the click, so the per-stream close the docked bar had is not
-  lost. The players in it are compact (`VideoView::set_compact`): no control
-  bar, no hover, no double-click fullscreen. Going compact also closes a
-  pane's open menu and starts its bar's fade over from hidden, and
-  `RootView::set_compact` does the same for each pane's band, so coming back
-  never replays a fade (see Motion). So a double-click on a picture is
+  lost. The players in it are tiles (`stage::Place::Tile`, through
+  `VideoView::set_place`): no control bar, no hover, no double-click
+  fullscreen. Becoming a tile also closes a pane's open menu and starts its
+  bar's fade over from hidden, and `RootView::restage` does the same for each
+  pane's band, so coming back never replays a fade (see Motion). A pane in a
+  window of its own is not in the mini player at all (`mini_slots`): it is on
+  screen already. With the mini player off, leaving the watch page stops
+  every pane but those, and so does turning it off while browsing — one rule
+  for both, `RootView::retire_homeless`, since nothing draws a pane at home
+  there. A pane that comes home from its window while browsing so is stopped
+  by the same rule (`restage`), as it would have been had it been home when
+  the page was left, or it would play its sound with nothing drawing it;
+  Bring back is the exception, and brings the watch page up with it
+  (`pop_in`). So a double-click on a picture is
   two separate things: the first click puts the watch page under the second,
   which lands on whatever the page has in that corner — chat, in most
   layouts, so nothing more happens. Only a pane with no chat beside it puts
@@ -2070,6 +2148,19 @@ what happens when the settings sheet closes and takes its buttons with it. That
 listener fires only when the path empties, not when focus moves, so it cannot
 loop. Without either half, every binding is dead and nothing says so.
 
+**A pop-out has a focus of its own, and keys of its own.** Every gpui window
+has its own focus and dispatch tree, and a handle no element of a window
+tracks reaches only that window's outermost node (window.rs:4016-4024), where
+nothing is bound. So each pop-out's view (`root::pop_out::PopOut`) tracks a
+handle of its own, takes it back the way the root does, and reports
+`keys::CONTEXT_POPOUT`: `Space`, `M`, the arrows, `P` to bring the pane back
+and `Ctrl+W` to close it, and nothing of the watch page's — `Esc` least of
+all, since a stray press would move video between windows. Its player hands
+the keys back to that handle, not the root's (`VideoView::set_place`). The
+three chords scoped to the app alone match in there too and do nothing, since
+nothing in the pop-out handles them. `P` on the watch page pops the active
+pane out, or brings it back.
+
 **The title bar's search box outlives a change of page.** While the box was
 in the browse header, leaving that page took it off screen and
 `on_focus_lost` handed the keys back to the root. In the bar it is on both
@@ -2385,6 +2476,13 @@ directories: settings come from `APPDATA` (`settings::default_path`), the image
 cache from `LOCALAPPDATA` (`root::image_cache_dir`), and the one-perch pipe is
 named for a hash of the settings directory (`instance/windows.rs`, `key`), so
 the two share no files and nothing is handed over.
+
+**With a pop-out open, the process has two top-level windows.** Find them
+with `EnumWindows` filtered by the process id, not `MainWindowHandle`, which
+may pick the pop-out: the main window is titled `perch` and a pop-out
+`<channel> · perch`. A pop-out is topmost (`GWL_EXSTYLE & WS_EX_TOPMOST`), so
+a test that leaves one open leaves it over everything: demote it
+(`SetWindowPos(HWND_NOTOPMOST)`) or close it at the end of a run.
 
 **Check the title bar's hit tests with `WM_NCHITTEST`, after a posted
 `WM_MOUSEMOVE` and a short wait.** gpui answers from the last mouse event it

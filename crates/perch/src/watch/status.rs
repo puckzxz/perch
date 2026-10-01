@@ -54,12 +54,23 @@ pub enum Showing<'a> {
     Finished,
     /// Something went wrong, and this is what.
     Failed(&'a SharedString),
+    /// The picture is in a window of its own (`crate::stage`): the pane
+    /// keeps its place, its header and its chat here, and says where its
+    /// picture went, with the way to bring it back.
+    Elsewhere,
 }
 
 /// How `slot` reads; see [`Showing`]. `covered` is whether its player's
-/// picture has faded in over the whole pane (`Slot::covered`), which until
-/// it has leaves a pane with a player still starting.
-pub fn showing(slot: &Slot, covered: bool) -> Showing<'_> {
+/// picture has faded in over the whole pane (`VideoView::covers`), which
+/// until it has leaves a pane with a player still starting; `popped` is
+/// whether that picture is in a window of its own, which outranks
+/// everything else the pane could say. A popped pane that stops playing
+/// comes home (`RootView::restage`), so `Elsewhere` only ever covers a pane
+/// that is starting or playing.
+pub fn showing(slot: &Slot, covered: bool, popped: bool) -> Showing<'_> {
+    if popped {
+        return Showing::Elsewhere;
+    }
     let recording = !slot.is_live();
     let starting = Showing::Starting {
         recording,
@@ -107,6 +118,10 @@ impl Showing<'_> {
             Showing::Ended => Some("Ended"),
             Showing::Finished => Some("Finished"),
             Showing::Failed(_) => Some("Failed"),
+            // No tile reads it: the mini player draws only the panes the
+            // main window has (`RootView::mini_slots`). A word all the same,
+            // so a tile that ever did would not go blank.
+            Showing::Elsewhere => Some("Elsewhere"),
         }
     }
 
@@ -139,6 +154,7 @@ impl Showing<'_> {
             Showing::Ended => format!("{name} ended the stream").into(),
             Showing::Finished => "Finished".into(),
             Showing::Failed(reason) => (*reason).clone(),
+            Showing::Elsewhere => "Playing in its own window".into(),
         })
     }
 
@@ -150,7 +166,8 @@ impl Showing<'_> {
     /// state. A recording that has finished offers to start over.
     fn next_step(&self) -> Option<&'static str> {
         match self {
-            Showing::Picture | Showing::Starting { .. } => None,
+            // Bringing it back is its own control; see `screen`.
+            Showing::Picture | Showing::Starting { .. } | Showing::Elsewhere => None,
             Showing::Finished => Some("Watch again"),
             Showing::Offline | Showing::Unavailable | Showing::Ended | Showing::Failed(_) => {
                 Some("Try again")
@@ -370,6 +387,17 @@ pub(super) fn screen<V: 'static>(
                 )
                 .children(switch)
         }
+        // The way back, as the main button: the one thing to do about a
+        // picture that is somewhere else.
+        Showing::Elsewhere => words.child(label).child(act(
+            slot,
+            "pop-in",
+            "Bring back",
+            Variant::Primary,
+            PaneAction::PopIn,
+            &on_pane,
+            cx,
+        )),
         _ => words.child(label).children(again),
     };
     layer.child(body).into_any_element()
@@ -503,19 +531,19 @@ mod tests {
 
         channel.set_state(StreamState::Offline);
         video.set_state(StreamState::Offline);
-        assert_eq!(showing(&channel, false), Showing::Offline);
-        assert_eq!(showing(&video, false), Showing::Unavailable);
+        assert_eq!(showing(&channel, false, false), Showing::Offline);
+        assert_eq!(showing(&video, false, false), Showing::Unavailable);
 
         channel.set_state(StreamState::Ended);
         video.set_state(StreamState::Ended);
-        assert_eq!(showing(&channel, false), Showing::Ended);
-        assert_eq!(showing(&video, false), Showing::Finished);
+        assert_eq!(showing(&channel, false, false), Showing::Ended);
+        assert_eq!(showing(&video, false, false), Showing::Finished);
 
         let reason = SharedString::from("streamlink is not installed");
         channel.set_state(StreamState::Failed(reason.clone()));
-        assert_eq!(showing(&channel, false), Showing::Failed(&reason));
+        assert_eq!(showing(&channel, false, false), Showing::Failed(&reason));
         assert_eq!(
-            showing(&channel, false).sentence("Forsen"),
+            showing(&channel, false, false).sentence("Forsen"),
             Some(reason),
             "a failure is said in its own words"
         );
@@ -527,25 +555,25 @@ mod tests {
     #[test]
     fn a_recording_says_where_it_opens() {
         assert_eq!(
-            showing(&recording(3723.0), false),
+            showing(&recording(3723.0), false, false),
             Showing::Starting {
                 recording: true,
                 at: Some(3723.0),
             }
         );
         assert_eq!(
-            showing(&recording(3723.0), false).sentence("Forsen"),
+            showing(&recording(3723.0), false, false).sentence("Forsen"),
             Some("Opening at 1:02:03…".into())
         );
         assert_eq!(
-            showing(&recording(0.5), false),
+            showing(&recording(0.5), false, false),
             Showing::Starting {
                 recording: true,
                 at: None,
             }
         );
         assert_eq!(
-            showing(&live(), false),
+            showing(&live(), false, false),
             Showing::Starting {
                 recording: false,
                 at: None,
@@ -560,7 +588,7 @@ mod tests {
     #[test]
     fn a_player_without_its_first_frame_still_reads_as_starting() {
         for pane in [live(), recording(3723.0)] {
-            let starting = showing(&pane, false);
+            let starting = showing(&pane, false, false);
             assert_eq!(player(false, starting), starting);
             assert_eq!(player(false, starting).word(), Some("Starting…"));
         }
@@ -571,7 +599,7 @@ mod tests {
     #[test]
     fn a_covered_player_is_the_picture() {
         for pane in [live(), recording(3723.0)] {
-            let covered = player(true, showing(&pane, false));
+            let covered = player(true, showing(&pane, false, false));
             assert_eq!(covered, Showing::Picture);
             assert_eq!(covered.word(), None);
             assert_eq!(covered.sentence("Forsen"), None);
@@ -597,6 +625,7 @@ mod tests {
             Showing::Ended,
             Showing::Finished,
             Showing::Failed(&reason),
+            Showing::Elsewhere,
         ];
         for state in stopped {
             assert!(state.word().is_some(), "{state:?} has no tile word");
@@ -604,6 +633,24 @@ mod tests {
         }
         assert_eq!(Showing::Picture.word(), None);
         assert_eq!(Showing::Picture.sentence("Forsen"), None);
+    }
+
+    /// A pane whose picture is in a window of its own says so, whatever its
+    /// player is doing — starting, or playing and covering the pane — and
+    /// offers the way back rather than asking again.
+    #[test]
+    fn a_popped_pane_reads_as_elsewhere() {
+        for pane in [live(), recording(3723.0)] {
+            for covered in [false, true] {
+                let popped = showing(&pane, covered, true);
+                assert_eq!(popped, Showing::Elsewhere, "covered {covered}");
+                assert_eq!(
+                    popped.sentence("Forsen"),
+                    Some("Playing in its own window".into())
+                );
+                assert_eq!(popped.next_step(), None, "nothing to ask for again");
+            }
+        }
     }
 
     /// A pane the size of a window has room for the whole card, as wide as

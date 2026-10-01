@@ -147,8 +147,9 @@ pub(super) fn pane_header<V: 'static>(
     // here — in a panel always; over the picture, with the rest of the
     // header, while it is up. The quality does not: it is on the control bar,
     // and the header has no room for a fourth thing.
-    let (muted, paused) = slot
-        .video()
+    let (muted, paused) = pane
+        .player
+        .as_ref()
         .map(|view| {
             let player = view.read(cx);
             (player.is_muted(), player.is_paused())

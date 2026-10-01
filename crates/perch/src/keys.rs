@@ -93,6 +93,10 @@ actions!(
         NavigateBack,
         /// Forward again along the trail, after going back.
         NavigateForward,
+        /// Move the active pane into a window of its own, on top of every
+        /// other app, or bring it back from one. Windows only for now; see
+        /// `root::pop_out`.
+        TogglePopOut,
     ]
 );
 
@@ -133,6 +137,7 @@ const WATCH: &str = "Watch";
 const BROWSE: &str = "Browse";
 const MODAL: &str = "Modal";
 const SHEET: &str = "Sheet";
+const POPOUT: &str = "PopOut";
 
 /// What `RootView` reports while watching, browsing, with the palette open,
 /// and with the settings sheet open.
@@ -146,6 +151,19 @@ pub const CONTEXT_WATCH: &str = "Perch Watch";
 pub const CONTEXT_BROWSE: &str = "Perch Browse";
 pub const CONTEXT_MODAL: &str = "Perch Modal";
 pub const CONTEXT_SHEET: &str = "Perch Modal Sheet";
+
+/// What a pane popped into a window of its own reports, from that window:
+/// every window has its own focus and its own dispatch path, so the pop-out
+/// keeps a context of its own rather than borrowing the watch page's (see
+/// `root::pop_out::PopOut`). Its keys are the player's, the pop-out's own
+/// `P`, and `Ctrl+W`; nothing that changes the page, the pane or the main
+/// window.
+///
+/// The three `anywhere` chords — settings, the palette and refresh — are
+/// scoped to [`APP`] alone, so they match in here too. Nothing in the
+/// pop-out handles them, and gpui drops an action nobody handles, so they
+/// do nothing there.
+pub const CONTEXT_POPOUT: &str = "Perch PopOut";
 
 /// Everything in gpui-component that claims keys for itself while it is
 /// focused. A binding guarded by this cannot swallow a keystroke meant for the
@@ -166,6 +184,9 @@ fn bindings() -> Vec<KeyBinding> {
     let watch = format!("{APP} && {WATCH} && {TYPING}");
     let browse = format!("{APP} && {BROWSE} && {TYPING}");
     let modal = format!("{APP} && {MODAL} && {TYPING}");
+    // A pop-out has no text box, but the guard costs nothing and keeps the
+    // rule the same everywhere: a bare key never reaches past one.
+    let pop_out = format!("{APP} && {POPOUT} && {TYPING}");
     // The palette, the settings and refresh stand aside for nothing. A chord
     // on the command key types no character, and gpui-component binds none
     // of these three in any widget — so standing aside only meant that after
@@ -245,6 +266,19 @@ fn bindings() -> Vec<KeyBinding> {
         // one along, or the one before.
         KeyBinding::new("tab", NextPane, Some(&watch)),
         KeyBinding::new("shift-tab", PreviousPane, Some(&watch)),
+        // Out into a window of its own, and back: the active pane here, and
+        // the pane itself in its window. Not `escape` in the pop-out, which a
+        // stray press would turn into video jumping between windows.
+        KeyBinding::new("p", TogglePopOut, Some(&watch)),
+        // The pop-out's own: the player's keys, `P` back, and `Ctrl+W`.
+        KeyBinding::new("space", TogglePlayback, Some(&pop_out)),
+        KeyBinding::new("m", ToggleMute, Some(&pop_out)),
+        KeyBinding::new("up", VolumeUp, Some(&pop_out)),
+        KeyBinding::new("down", VolumeDown, Some(&pop_out)),
+        KeyBinding::new("left", SeekBack, Some(&pop_out)),
+        KeyBinding::new("right", SeekForward, Some(&pop_out)),
+        KeyBinding::new("p", TogglePopOut, Some(&pop_out)),
+        KeyBinding::new("secondary-w", ClosePane, Some(&pop_out)),
     ];
     // Or its number. Bare digits are safe here for the reason the letters
     // are: `TYPING` stands them aside while the title bar's search box has the
@@ -336,7 +370,7 @@ macro_rules! alt {
 ///
 /// Back and forward are two rows rather than one `Alt+← / →`: the key column
 /// is sized for the longest label in it, and that one would not fit.
-pub const SHORTCUTS: [(&[&str], &str, &str); 18] = [
+pub const SHORTCUTS: [(&[&str], &str, &str); 19] = [
     (&["space"], "Space", "Pause or resume"),
     (&["m"], "M", "Mute or unmute"),
     (&["c"], "C", "Show or hide this chat"),
@@ -347,6 +381,7 @@ pub const SHORTCUTS: [(&[&str], &str, &str); 18] = [
     (&PANE_KEYS, "1 – 4", "Talk to that pane"),
     (&["tab", "shift-tab"], "Tab", "The next pane"),
     (&["secondary-w"], secondary!("W"), "Close this pane"),
+    (&["p"], "P", "Pop this pane out, or bring it back (Windows)"),
     (&["escape"], "Esc", "Back to browsing, or to watching"),
     (
         &["alt-left"],
@@ -422,6 +457,8 @@ hints! {
     Fullscreen => "f" as ToggleFullscreen,
     // A pane header's ×, as `Ctrl+W` — `⌘W` on a Mac, from the sheet's label.
     Close => "secondary-w" as ClosePane,
+    // The pop-out's Bring back, on its bar.
+    PopOut => "p" as TogglePopOut,
 }
 
 impl Hint {
@@ -455,8 +492,14 @@ mod tests {
     /// symptom is "the key does nothing", which is a poor thing to debug.
     #[test]
     fn every_binding_and_every_context_parses() {
-        assert_eq!(bindings().len(), 32);
-        for context in [CONTEXT_WATCH, CONTEXT_BROWSE, CONTEXT_MODAL, CONTEXT_SHEET] {
+        assert_eq!(bindings().len(), 41);
+        for context in [
+            CONTEXT_WATCH,
+            CONTEXT_BROWSE,
+            CONTEXT_MODAL,
+            CONTEXT_SHEET,
+            CONTEXT_POPOUT,
+        ] {
             KeyContext::parse(context)
                 .unwrap_or_else(|e| panic!("{context} is not a key context: {e}"));
         }
@@ -620,6 +663,70 @@ mod tests {
         assert_eq!(CONTEXT_BROWSE, format!("{APP} {BROWSE}"));
         assert_eq!(CONTEXT_MODAL, format!("{APP} {MODAL}"));
         assert_eq!(CONTEXT_SHEET, format!("{APP} {MODAL} {SHEET}"));
+        assert_eq!(CONTEXT_POPOUT, format!("{APP} {POPOUT}"));
+    }
+
+    /// A pop-out is its own window with its own keys: the player's, `P` to
+    /// bring it back and `Ctrl+W`. Nothing of the watch page's reaches it —
+    /// not the chat, a pane number, the rail, fullscreen or `Esc` — and none
+    /// of its own keys would reach past a text box, were one ever in it.
+    #[test]
+    fn the_pop_out_hears_only_its_own_keys() {
+        let keymap = gpui::Keymap::new(bindings());
+        let resolves_in = |context: &[&str], keystroke: &str| {
+            let context: Vec<KeyContext> = context
+                .iter()
+                .map(|context| KeyContext::parse(context).unwrap())
+                .collect();
+            let (matched, _) =
+                keymap.bindings_for_input(&[Keystroke::parse(keystroke).unwrap()], &context);
+            !matched.is_empty()
+        };
+        let own = [
+            "space",
+            "m",
+            "up",
+            "down",
+            "left",
+            "right",
+            "p",
+            "secondary-w",
+        ];
+        for keystroke in own {
+            assert!(
+                resolves_in(&[CONTEXT_POPOUT], keystroke),
+                "{keystroke} in the pop-out"
+            );
+            assert!(
+                !resolves_in(&[CONTEXT_POPOUT, "Input"], keystroke),
+                "{keystroke} past a text box in the pop-out"
+            );
+        }
+        for keystroke in ["c", "z", "1", "tab", "b", "f", "escape"] {
+            assert!(
+                !resolves_in(&[CONTEXT_POPOUT], keystroke),
+                "{keystroke} is the watch page's, not the pop-out's"
+            );
+        }
+    }
+
+    /// `P` pops out the active pane on the watch page, and the browse page
+    /// has no active pane for it to mean.
+    #[test]
+    fn p_pops_out_from_the_watch_page_only() {
+        use std::any::TypeId;
+
+        let keymap = gpui::Keymap::new(bindings());
+        let fires_in = |context: &str| {
+            let context = [KeyContext::parse(context).unwrap()];
+            let (matched, _) =
+                keymap.bindings_for_input(&[Keystroke::parse("p").unwrap()], &context);
+            matched
+                .iter()
+                .any(|binding| binding.action().as_any().type_id() == TypeId::of::<TogglePopOut>())
+        };
+        assert!(fires_in(CONTEXT_WATCH));
+        assert!(!fires_in(CONTEXT_BROWSE));
     }
 
     /// The listing is for humans, so it is not derived from the bindings — but

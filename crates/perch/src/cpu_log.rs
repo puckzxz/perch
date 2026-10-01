@@ -377,7 +377,12 @@ mod windows_impl {
         ) -> i32;
         fn IsWindowVisible(window: Handle) -> i32;
         fn IsIconic(window: Handle) -> i32;
+        fn GetWindowLongPtrW(window: Handle, index: i32) -> isize;
     }
+
+    /// `GWL_EXSTYLE` and the bit in it a pop-out sets to stay on top.
+    const GWL_EXSTYLE: i32 = -20;
+    const WS_EX_TOPMOST: isize = 0x0000_0008;
 
     /// Kernel + user seconds for a process handle.
     fn process_seconds(handle: Handle) -> Option<f64> {
@@ -500,7 +505,12 @@ mod windows_impl {
         }
     }
 
-    /// Finds the process's first visible top-level window.
+    /// Finds the process's first visible top-level window that is not kept on
+    /// top: the main window, never a pop-out.
+    ///
+    /// `EnumWindows` goes in z-order, and every topmost window is above every
+    /// other, so the first pop-out open would otherwise be "the window" these
+    /// columns describe, and a minimised main window would read as visible.
     ///
     /// SAFETY: called only by `EnumWindows` above, with an `lparam` that is the
     /// `(pid, *mut Handle)` pair it was given.
@@ -510,7 +520,8 @@ mod windows_impl {
         GetWindowThreadProcessId(window, &mut owner);
         // `IsWindowVisible` stays true for a minimised window, so it is only
         // filtering out the hidden helper windows every GUI process has.
-        if owner == search.0 && IsWindowVisible(window) != 0 {
+        let topmost = GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_TOPMOST != 0;
+        if owner == search.0 && IsWindowVisible(window) != 0 && !topmost {
             *search.1 = window;
             return 0;
         }
