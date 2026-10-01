@@ -2,11 +2,11 @@
 //!
 //! The controls you reach for while watching — pause, mute, volume, chat,
 //! fullscreen — are icons on a bar that comes up over the video under the
-//! pointer, each naming its key in its tooltip ([`Hint`]); a pane's Close
-//! sits in its header, and the rest live in the title bar or the settings
-//! sheet. That is the right place for them when you are already holding the
-//! mouse, and no place at all when you are not, which for a window left open
-//! for hours is most of the time.
+//! pointer, each naming its key in its tooltip ([`Hint`]); a pane's × sits
+//! in its header and names its key the same way, and the rest live in the
+//! title bar or the settings sheet. That is the right place for them when
+//! you are already holding the mouse, and no place at all when you are not,
+//! which for a window left open for hours is most of the time.
 //!
 //! GPUI's keyboard stack has two gates, and both are easy to get subtly wrong:
 //!
@@ -32,6 +32,13 @@
 //! telling you what you already know. The bar's glyphs follow the same state,
 //! but the bar is up only while the pointer is on the picture, so a key
 //! pressed with the mouse elsewhere still puts nothing on screen.
+//!
+//! A key that changes which pane is active is the exception: `1`–`4` and
+//! `Tab`, with more than one pane, and `C` hiding a chat. Those bring the
+//! pane's header up over its picture for a moment (`RootView::reveal_header`),
+//! when chat is hidden and the header lives there. Nothing the pane does
+//! answers "which pane are the keys talking to now?", and the pointer cannot
+//! either: pointing at a pane is what makes it the active one.
 
 use gpui::{actions, Action, App, KeyBinding};
 
@@ -413,6 +420,8 @@ hints! {
     Chat => "c" as ToggleChat,
     // The same for `f` and `f11`, as `F / F11`.
     Fullscreen => "f" as ToggleFullscreen,
+    // A pane header's ×, as `Ctrl+W` — `⌘W` on a Mac, from the sheet's label.
+    Close => "secondary-w" as ClosePane,
 }
 
 impl Hint {

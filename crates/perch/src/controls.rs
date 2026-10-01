@@ -600,6 +600,28 @@ mod tests {
         );
     }
 
+    /// A pane header's × is a `Destructive` icon: on the chat panel, which
+    /// `sits_on` measures, and with chat hidden on the band over the top of
+    /// the picture, the bar's `video_chrome`. There its resting glyph is
+    /// measured on the brightest picture, and its red under the pointer on
+    /// the same with the hover wash over it, and the press's.
+    #[test]
+    fn the_pane_header_reads_on_its_band() {
+        let band = theme::over_white(theme::video_chrome());
+        let resting = theme::contrast(Variant::Destructive.foreground(), band);
+        assert!(
+            resting >= theme::MIN_CONTRAST,
+            "a resting × reads {resting:.2}:1 on the band over a white picture"
+        );
+        for (state, fill) in [("hovered", theme::hover()), ("pressed", theme::pressed())] {
+            let ratio = theme::contrast(Variant::Destructive.hover_foreground(), band.blend(fill));
+            assert!(
+                ratio >= theme::MIN_CONTRAST,
+                "a {state} × reads {ratio:.2}:1 on the band over a white picture"
+            );
+        }
+    }
+
     /// An on-video control rests quiet and lifts to full text under the
     /// pointer, so the lifted label has to read on the bar with the hover wash
     /// on it, and with the press on it too: a press always comes with the

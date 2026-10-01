@@ -8,28 +8,30 @@
 //!
 //! A pane with no picture is `status`'s: the one reading of what it is
 //! showing ([`Showing`]), which the mini player's tiles read too, and the
-//! screen drawn from it. Whatever a pane asks of its owner — a close, a retry,
-//! a press that makes it the active one — is a [`PaneAction`], addressed by
-//! the pane's key.
+//! screen drawn from it. A pane's header is `header`'s, and where it goes —
+//! in the chat panel, or over the top of the picture when there is no chat on
+//! screen — is [`Placement`]. Whatever a pane asks of its owner — a close, a
+//! retry, a press that makes it the active one — is a [`PaneAction`],
+//! addressed by the pane's key.
 
+mod header;
 mod status;
 
 use chrono::{DateTime, Utc};
 use gpui::{
-    canvas, div, prelude::*, px, AnyElement, Context, CursorStyle, ElementId, Entity, IntoElement,
-    MouseButton, MouseDownEvent, Pixels, SharedString, Task, Window,
+    canvas, div, prelude::*, px, AnyElement, App, Context, CursorStyle, ElementId, Entity,
+    IntoElement, MouseButton, MouseDownEvent, Pixels, SharedString, Task, Window,
 };
 use streamlink::StreamSupervisor;
 
 use twitch_api::{LiveStream, Video};
 
+pub use self::header::Placement;
 pub use self::status::{showing, Showing};
 
-use crate::browse;
-use crate::channel_page;
 use crate::chat::ChatView;
-use crate::controls;
 use crate::layout;
+use crate::motion;
 use crate::target::{self, Target};
 use crate::theme;
 use crate::video::PositionHandle;
@@ -108,10 +110,27 @@ pub struct Slot {
     pub pump: Option<Task<()>>,
     /// Whether the pointer is over this pane's video, measured rather than
     /// reported — see `VideoView::hovered` for why that distinction matters.
-    /// Kept only to tell when the pointer comes into a pane: that rising edge
-    /// is what makes the pane the one the keys talk to.
+    /// Two things follow it: the rising edge makes the pane the one the keys
+    /// talk to, and while it holds, a header over the picture is up. Both
+    /// are worked out in [`point`](Self::point).
     pub hovered: bool,
-    /// Whether this pane's chat is hidden, so the video has the whole cell.
+    /// The header over the top of the picture, when there is no chat on
+    /// screen for it to sit above ([`Placement::OverPicture`]): whether it
+    /// is up, and how far through fading. Worked out by
+    /// [`point`](Self::point) every frame the pane is drawn.
+    ///
+    /// The slot's rather than the player's, so it outlives the player: a
+    /// quality change builds a new one, and a pane with no player at all —
+    /// starting, offline, ended — still has a header to show.
+    pub header: motion::Fade,
+    /// Brought up for a moment by a key, without the pointer: a pane key
+    /// made this the pane the keys talk to, or `C` hid its chat and sent its
+    /// header over the picture. Set and cleared by `RootView::reveal_header`,
+    /// one pane at a time.
+    pub revealed: bool,
+    /// Whether this pane's chat is hidden: beside the picture, the picture
+    /// takes chat's column; stacked, it keeps its box (see `chat_or_why`).
+    /// Either way the header goes over the picture ([`Placement`]).
     ///
     /// Per pane, like everything else here, and remembered per channel: a
     /// channel you watch for the game is not a statement about the next one.
@@ -156,6 +175,8 @@ impl Slot {
             supervisor: None,
             pump: None,
             hovered: false,
+            header: motion::Fade::hidden(),
+            revealed: false,
             chat_hidden,
             quiet: false,
             stalled_at: None,
@@ -166,6 +187,35 @@ impl Slot {
         match &self.state {
             StreamState::Playing(view) => Some(view),
             _ => None,
+        }
+    }
+
+    /// Whether the pane has a picture up: a player, and a frame decoded in
+    /// it. A player still waiting for its first frame draws no picture and
+    /// no bar, so for what goes over the top of the pane it is a pane with
+    /// nothing to cover, like one starting or stopped.
+    pub fn has_picture(&self, cx: &App) -> bool {
+        self.video().is_some_and(|view| view.read(cx).has_picture())
+    }
+
+    /// Where the pointer is, from the pane's probe, every frame the pane is
+    /// drawn: `inside` it or not, with the pane showing a `picture` or not,
+    /// and a `menu_open` on its bar or not. Says whether the pointer has just
+    /// come in, which is what makes a pane the one the keys talk to, and
+    /// whether anything drawn changed.
+    ///
+    /// Every frame rather than on crossings, because the header follows more
+    /// than the pointer — a picture arriving, a menu opening, a reveal — and
+    /// because a pane can be pointed at with no crossing to report:
+    /// `RootView::go_watch_pane` counts every pane as pointed at already, so
+    /// the pane under the pointer after a mini-player tile's click has none.
+    pub fn point(&mut self, inside: bool, picture: bool, menu_open: bool) -> Pointed {
+        let entered = inside && !self.hovered;
+        self.hovered = inside;
+        let wanted = band_wanted(placement(self), inside, self.revealed, picture, menu_open);
+        Pointed {
+            entered,
+            changed: self.header.set(wanted) || entered,
         }
     }
 
@@ -218,6 +268,40 @@ impl Slot {
     }
 }
 
+/// What [`Slot::point`] found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Pointed {
+    /// The pointer has just come into the pane, so it is now the one the keys
+    /// talk to.
+    pub entered: bool,
+    /// Something drawn changed — the header over the picture came or went, or
+    /// the active pane moved — so the page wants drawing again.
+    pub changed: bool,
+}
+
+/// Where `slot`'s header goes; see [`Placement::of`].
+pub fn placement(slot: &Slot) -> Placement {
+    Placement::of(slot.chat_hidden, slot.chat.is_some())
+}
+
+/// Whether a pane's header is up over its picture.
+///
+/// Only when it lives there at all. Then: while the pointer is on the pane,
+/// or a key has `revealed` it, or always when there is no `picture` to cover
+/// — a status screen is not a picture, and a stopped pane with chat hidden
+/// would otherwise have nothing on screen to say whose it is or to close it.
+/// And never over an open menu: the menu is what was asked for last, and the
+/// two would stack over the same picture.
+fn band_wanted(
+    placement: Placement,
+    inside: bool,
+    revealed: bool,
+    picture: bool,
+    menu_open: bool,
+) -> bool {
+    placement == Placement::OverPicture && (inside || revealed || !picture) && !menu_open
+}
+
 /// What the root knows about a pane beyond its slot, resolved once per frame
 /// in `RootView::watch_page` rather than per pane inside the page.
 pub struct PaneInfo<'a> {
@@ -243,13 +327,15 @@ pub struct PaneInfo<'a> {
 /// `VideoEvent::Pane`, which the root answers by the key it subscribed with.
 #[derive(Clone, Debug)]
 pub enum PaneAction {
-    /// Close the pane: its header's close.
+    /// Close the pane: its header's ×.
     Close,
     /// Ask for its stream again: the pill a stopped pane offers.
     Retry,
-    /// Make it the pane the keys talk to: a press anywhere in it.
+    /// Make it the pane the keys talk to: a press anywhere in it, the band
+    /// over its picture included.
     Activate,
-    /// Show or hide its chat, as `C` does: the chat glyph on the bar.
+    /// Show or hide its chat, as `C` does: the chat glyph on the bar, and
+    /// on the header over a pane with no picture, which has no bar.
     ToggleChat,
     /// Open what it plays on twitch.tv, at the moment it is at: More's
     /// `Open on twitch.tv` row, and the palette's.
@@ -369,229 +455,29 @@ fn divider<V: 'static>(
         .child(handle)
 }
 
-/// Everything true about a stream that is not playback: who it is, how many
-/// people are there, how long it has been going.
-///
-/// This lives above chat rather than over the video. It is static information,
-/// and static information on a moving picture is the thing you end up staring
-/// past for three hours. Chat is already a panel, so it costs nothing here.
-fn chat_header<V: 'static>(
-    slot: &Slot,
-    pane: &PaneInfo,
-    active: bool,
-    on_pane: impl Fn(&mut V, &str, PaneAction, &mut Window, &mut Context<V>) + 'static,
-    cx: &mut Context<V>,
-) -> impl IntoElement {
-    let key = slot.key.clone();
-    let recording = slot.recording();
-    let info = pane.stream;
-    let name = pane.name.clone();
-
-    // Both are absent for a channel opened by name that you do not follow:
-    // the follows poll is where these numbers come from, and it only knows
-    // about channels you follow. The same shape as the browse card's overlay,
-    // "358 · 8h 20m", and for the same reason: the live dot beside it already
-    // says what the first number counts, and a header 340px wide has no room
-    // to say it again in words once `muted` has to fit too.
-    let meta = info
-        .into_iter()
-        .flat_map(|stream| {
-            [
-                Some(browse::format_viewers(stream.viewer_count)),
-                browse::uptime(&stream.started_at),
-            ]
-        })
-        .flatten()
-        .collect::<Vec<_>>()
-        .join(" · ");
-
-    // What is actually on, which this header has never said: it knew who you
-    // were watching and how many others were, and not a word about what they
-    // were doing. The title and the game share one line, joined like `meta`
-    // above, rather than taking one each — a pane header is 340px wide, and a
-    // row of chrome here costs a row of chat in every pane on the page.
-    //
-    // A title is routinely longer than that line, so the whole of it — and the
-    // game under it — is a hover away, through the same builder the browse
-    // cards use.
-    //
-    // For a recording the second line is its title and when it was, in place
-    // of a live stream's title and game: the game is not something Helix
-    // says about a video, and the date is what tells two recordings apart.
-    let about: Vec<SharedString> = match recording {
-        Some(video) => vec![
-            video.title.clone(),
-            channel_page::describe(video, chrono::Utc::now()),
-        ],
-        None => info
-            .into_iter()
-            .flat_map(|stream| [stream.title.clone(), stream.game_name.clone()])
-            .collect(),
-    }
-    .into_iter()
-    .map(SharedString::from)
-    .filter(|text| !text.trim().is_empty())
-    .collect();
-    let about_line = about
-        .iter()
-        .map(SharedString::as_ref)
-        .collect::<Vec<_>>()
-        .join(" · ");
-
-    // Whether this pane is showing a picture, which is not the same as whether
-    // it exists: an offline or failed pane used to draw the app's only
-    // saturated red beside its name while the video underneath said the channel
-    // was not streaming. A recording never gets the dot: nothing about it is
-    // happening now.
-    let playing = matches!(slot.state, StreamState::Playing(_)) && slot.is_live();
-    // A stream that has finished takes its live numbers with it. They come
-    // from a list that will not know for up to a minute, and an uptime that
-    // goes on counting beside "ended the stream" is the same lie the frozen
-    // last frame used to tell.
-    let ended = matches!(slot.state, StreamState::Ended);
-    // What the player is doing, read off the view rather than copied onto the
-    // slot, so there is one source. These used to be visible only while the
-    // pointer was over the video: a channel saved muted opened silent with
-    // nothing on screen to say so, and a paused pane looked like a stalled
-    // stream. The header is the one static place a pane has, so they go here.
-    // The quality does not: it is on the control bar, and the header has no
-    // room for a fourth thing.
-    let (muted, paused) = slot
-        .video()
-        .map(|view| {
-            let player = view.read(cx);
-            (player.is_muted(), player.is_paused())
-        })
-        .unwrap_or((false, false));
-    // The name opens what the pane is playing: the channel, or this one
-    // recording, from its start — the name says which, never when. The
-    // moment is More's to offer, on the bar.
-    let url = slot.link(false);
-    let tooltip = match recording {
-        Some(_) => SharedString::from("Open this broadcast on twitch.tv"),
-        None => SharedString::from(format!("Open twitch.tv/{}", slot.channel)),
-    };
-
-    div()
-        .flex_none()
-        .w_full()
-        .flex()
-        // A column now, because what is on is a line of its own under who is
-        // on. It does not fit beside them: the first row is already the name,
-        // the numbers, `muted`, `paused` and the close button.
-        .flex_col()
-        .gap(px(theme::GAP_WORD))
-        .px(px(theme::ROW_PAD_X))
-        .pb(px(theme::GAP_TIGHT))
-        .border_b_1()
-        // Which pane the keyboard is talking to. `Space`, `M`, the arrows and
-        // `Ctrl+W` all act on the pane you last pointed at, and with four on
-        // screen nothing said which that was — so every press was a guess. One
-        // line under one header, and only when there is more than one pane to
-        // tell apart.
-        .border_color(if active {
-            theme::accent()
-        } else {
-            theme::border()
-        })
-        .child(
-            div()
-                .w_full()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(theme::GAP_TIGHT))
-                .when(playing, |header| {
-                    // The same dot the browse cards use, for the same reason:
-                    // it says the numbers beside it are live rather than a
-                    // playback position.
-                    header.child(controls::live_dot())
-                })
-                .child(
-                    // Chat here is read-only by design. This is the way out of that:
-                    // the one thing the app deliberately cannot do, one click from the
-                    // name of the channel you would be saying it in.
-                    div()
-                        .id(pane_id(&slot.key, "open"))
-                        .flex_none()
-                        .text_size(px(theme::TEXT_BODY))
-                        .font_weight(theme::weight_title())
-                        .text_color(theme::text())
-                        .cursor_pointer()
-                        .hover(|style| style.text_color(theme::accent()))
-                        .tooltip(controls::tip(tooltip))
-                        .on_click(cx.listener(move |_, _event, _window, cx| cx.open_url(&url)))
-                        .child(name),
-                )
-                // Said where `muted` and `paused` are said, and for the same
-                // reason: it is a fact about the pane that the picture alone
-                // does not carry.
-                // Which kind of recording, since the three play alike:
-                // `replay` for a broadcast, and a highlight or an upload by
-                // its own name.
-                .when_some(recording, |header, video| {
-                    header.child(controls::tag(channel_page::kind_tag(video.kind)))
-                })
-                .when(!ended && !meta.is_empty(), |header| {
-                    header.child(
-                        // `text_ellipsis` plus `line_clamp`, not `truncate`:
-                        // see the handoff on why the latter clips mid-glyph in
-                        // a flex row with no definite width, which is what this
-                        // row is.
-                        div()
-                            .min_w_0()
-                            .text_ellipsis()
-                            .line_clamp(1)
-                            .text_size(px(theme::TEXT_META))
-                            .text_color(theme::text_muted())
-                            .child(SharedString::from(meta)),
-                    )
-                })
-                .when(muted, |header| header.child(controls::tag("muted")))
-                .when(paused, |header| header.child(controls::tag("paused")))
-                .child(div().flex_1())
-                // On every pane, a lone one included. It used to go when only
-                // one pane was left, while `Ctrl+W` went on closing that one —
-                // a control the keyboard had and the pointer did not.
-                .child(
-                    controls::destructive(pane_id(&slot.key, "close"), "Close").on_click(
-                        cx.listener(move |view, _event, window, cx| {
-                            on_pane(view, &key, PaneAction::Close, window, cx)
-                        }),
-                    ),
-                ),
-        )
-        .when(!about.is_empty(), |header| {
-            header.child(
-                // `w_full`, not `min_w_0`: this one is a child of a flex
-                // column, where a definite width is what the measure pass
-                // needs before it will ellipsise at all.
-                div()
-                    .id(pane_id(&slot.key, "about"))
-                    .w_full()
-                    .text_ellipsis()
-                    .line_clamp(1)
-                    .text_size(px(theme::TEXT_META))
-                    .line_height(px(theme::LINE_TIGHT))
-                    .text_color(theme::text_dim())
-                    .tooltip(controls::full_text(about))
-                    .child(SharedString::from(about_line)),
-            )
-        })
-}
-
 /// What goes where chat does: the chat, or — for a stacked pane that has
 /// none to show — a word on why it is not there.
 ///
 /// Stacked, a pane with chat hidden keeps the shape a pane with chat has: the
-/// picture in the same box, its header under it. It used to put the header on
-/// top and centre the picture in the rest, which for a 16:9 stream in a tall
-/// cell bought nothing but black above and below it — the picture is as wide
-/// as the cell either way — and left its header at a different height from
-/// every neighbour's.
-fn chat_or_why(slot: &Slot, chatless: bool) -> AnyElement {
-    match (&slot.chat, chatless) {
-        (Some(chat), false) => chat.clone().into_any_element(),
+/// picture in the same box, and the space chat had under it. It does not hand
+/// the picture the whole cell, which would put it out of line with every
+/// neighbour the moment `C` was pressed. A cell stacks only when it is
+/// narrower than `PORTRAIT_ASPECT`, which is narrower than any landscape
+/// stream, so in the whole cell a landscape picture could be no wider than
+/// the cell — and with the divider where it is derived, the box already
+/// gives a 16:9 picture the cell's width, so the whole cell would buy it
+/// only black above and below. A 4:3 stream in a cell just narrow enough to
+/// stack is capped a few percent short of that, and a dragged divider keeps
+/// the box the user chose, smaller or not: the divider still works with
+/// chat hidden, and the share it sets is every pane's. The quality is chosen
+/// against the pane's height regardless of chat, so it is not given up
+/// either. A vertical stream is the exception, and is left capped.
+///
+/// No control here to bring chat back: the bar has one, over the picture,
+/// and with no picture up the header over it does.
+fn chat_or_why(slot: &Slot) -> AnyElement {
+    match (&slot.chat, placement(slot)) {
+        (Some(chat), Placement::Panel) => chat.clone().into_any_element(),
         (chat, _) => div()
             .size_full()
             .flex()
@@ -600,9 +486,9 @@ fn chat_or_why(slot: &Slot, chatless: bool) -> AnyElement {
             .text_size(px(theme::TEXT_META))
             .text_color(theme::text_dim())
             .child(if chat.is_some() {
-                "chat hidden · press C"
+                "Chat hidden · press C"
             } else {
-                "no chat replay for this video"
+                "No chat replay for this video"
             })
             .into_any_element(),
     }
@@ -610,8 +496,11 @@ fn chat_or_why(slot: &Slot, chatless: bool) -> AnyElement {
 
 /// One pane: a player, and its chat with a header.
 ///
-/// Nothing static is drawn over the video. What appears there on hover is
-/// the player's bar: playback, the pane's chat, fullscreen and More.
+/// Over the picture, on hover, go playback — the player's bar, with the
+/// pane's chat, fullscreen and More — and, with no chat on screen, the
+/// pane's header: its facts and its ×, on the band along the top. Over a
+/// pane with no picture that band stays up at rest, since there is nothing
+/// to keep clear. Nothing else is drawn on the picture.
 #[allow(clippy::too_many_arguments)]
 fn pane<V: 'static>(
     index: usize,
@@ -619,6 +508,7 @@ fn pane<V: 'static>(
     info: &PaneInfo,
     layout: PaneLayout,
     active: bool,
+    window_hovered: bool,
     on_pane: impl Fn(&mut V, &str, PaneAction, &mut Window, &mut Context<V>) + Clone + 'static,
     on_resize: impl Fn(&mut V, ResizeStart, &mut Window, &mut Context<V>) + 'static,
     on_hover: impl Fn(&mut V, usize, bool, &mut Context<V>) + 'static,
@@ -629,13 +519,23 @@ fn pane<V: 'static>(
         _ => status::screen(slot, &info.name, on_pane.clone(), cx),
     };
 
-    let header = chat_header(
+    // Built once, and drawn in one place: the panel, or the band over the
+    // picture. Never both, since its elements' ids are the pane's.
+    let placement = placement(slot);
+    let header = header::pane_header(
         slot,
         info,
+        placement,
         layout.mark_active && active,
+        slot.has_picture(cx),
+        window_hovered,
         on_pane.clone(),
         cx,
     );
+    let (in_panel, on_picture) = match placement {
+        Placement::Panel => (Some(header), None),
+        Placement::OverPicture => (None, Some(header)),
+    };
 
     // Where the pointer actually is, rather than what `on_hover` claims while
     // something in the window is being dragged. The listener below only exists
@@ -652,6 +552,50 @@ fn pane<V: 'static>(
     )
     .absolute()
     .size_full();
+
+    // The header over the top of the picture, on the bar's wash: the band.
+    // Mounted on every frame, empty when the header is in the panel, so its
+    // fade never comes back after a frame without it and replays its last
+    // flip (see `motion::Fade::apply`). It blocks the pointer only while it
+    // is up — an invisible element still takes its hit test — and a press on
+    // it does what a press anywhere in the pane does, makes it the active
+    // one, which the cell below cannot hear through it. In the capture
+    // phase, ahead of the header's own controls. Only the first press of a
+    // run, for the cell's reason.
+    //
+    // Blocking the pointer hides it from the wake-up listeners under the
+    // band too, the pane's and the player's, so while it is up the band has
+    // one of its own. Without it, a pointer crossing onto or off the band
+    // between two still panes woke nothing: the pane it came into never
+    // became the active one, and the band and the bar it left stayed up.
+    // Its own id, apart from the fade's (`band`), which wraps it.
+    let band_key = slot.key.clone();
+    let on_band = on_pane.clone();
+    let band = div()
+        .id(pane_id(&slot.key, "band-layer"))
+        .absolute()
+        .top_0()
+        .left_0()
+        .right_0()
+        .when_some(on_picture, |band, header| {
+            band.bg(theme::video_chrome())
+                .pt(px(theme::GAP_TIGHT))
+                .when(slot.header.is_visible(), |band| {
+                    band.occlude()
+                        .on_hover(cx.listener(|_, _: &bool, _window, cx| cx.notify()))
+                        .capture_any_mouse_down(cx.listener(
+                            move |view, event: &MouseDownEvent, window, cx| {
+                                if event.click_count <= 1 {
+                                    on_band(view, &band_key, PaneAction::Activate, window, cx);
+                                }
+                            },
+                        ))
+                })
+                .child(header)
+        });
+    let band = slot
+        .header
+        .apply(pane_id(&slot.key, "band"), theme::MOTION_HOVER, band);
 
     // Below the video, the box is the shape of the stream, so chat starts
     // where the picture stops. 16:9 until the first frame says otherwise.
@@ -674,14 +618,13 @@ fn pane<V: 'static>(
     // asked mpv for a frame that shape, which fixed the wrong height in
     // place: a stacked pane after a rail toggle showed its picture at four
     // fifths of the box, with black under it, until the app was restarted.
-    // A pane with no chat to show lays out the way hidden chat does.
-    let chatless = slot.chat_hidden || slot.chat.is_none();
     let video_pane = div()
         .id(pane_id(&slot.key, "video"))
         .map(|pane| {
             // Stacked, the box is the stream's shape whether or not chat is
-            // under it — see below for why hiding chat does not change that.
-            // Beside, the video takes whatever the cell leaves it.
+            // under it — see `chat_or_why` for why hiding chat does not
+            // change that. Beside, the video takes whatever the cell leaves
+            // it.
             if layout.portrait {
                 pane.flex_none().h(px(video_height)).w_full()
             } else {
@@ -696,15 +639,9 @@ fn pane<V: 'static>(
         .relative()
         .on_hover(cx.listener(|_, _: &bool, _window, cx| cx.notify()))
         .child(hover_probe)
-        .child(video);
+        .child(video)
+        .child(band);
 
-    // With chat hidden the cell is a column whatever the grid shape, because
-    // the only thing left beside the video is the header strip.
-    //
-    // That strip stays rather than going with the chat it used to sit on. It
-    // carries the channel's name and the close button, and nothing is drawn
-    // over the video on purpose — so losing it would leave a pane with no
-    // identity and no way to close it but the keyboard.
     // Pointing at the video makes a pane active, which is right while you are
     // reaching for its controls and wrong the moment you go to read its chat:
     // the pointer sitting in one pane's messages left the *keyboard* still
@@ -733,30 +670,13 @@ fn pane<V: 'static>(
         }),
     );
 
-    if chatless && !layout.portrait {
-        // Beside the video, hiding chat gives the video chat's column: the
-        // cell becomes the header strip over the picture.
-        //
-        // That strip stays rather than going with the chat it used to sit on:
-        // it carries the channel's name and the close button, and nothing is
-        // drawn over the video on purpose — so dropping it would leave a pane
-        // with no identity and no way to close it but the keyboard.
-        return cell
-            .flex_col()
-            .bg(theme::surface())
-            .child(
-                // The same vertical padding chat used to give it. Without this
-                // the header sits flush against the top of the cell and the top
-                // of the video, and the pane reads as clipped rather than as
-                // deliberately bare.
-                div()
-                    .flex_none()
-                    .w_full()
-                    .py(px(theme::GAP_TIGHT))
-                    .child(header),
-            )
-            .child(video_pane)
-            .into_any_element();
+    // Beside, a pane with no chat on screen is the picture and nothing else:
+    // the picture takes chat's column, and the header is over its top. It
+    // used to keep the header as a strip above the picture, since nothing
+    // was drawn over the video at all — which cost the picture a strip of
+    // its height, and moved it every time `C` was pressed.
+    if placement == Placement::OverPicture && !layout.portrait {
+        return cell.flex_row().child(video_pane).into_any_element();
     }
 
     let chat_pane = div()
@@ -777,8 +697,8 @@ fn pane<V: 'static>(
                     .pt(px(theme::GAP_TIGHT))
             }
         })
-        .child(header)
-        .child(div().flex_1().min_h_0().child(chat_or_why(slot, chatless)));
+        .children(in_panel)
+        .child(div().flex_1().min_h_0().child(chat_or_why(slot)));
 
     cell.map(|cell| {
         if layout.portrait {
@@ -797,7 +717,8 @@ fn pane<V: 'static>(
 /// [`layout::Body`] for why that is a type rather than the viewport.
 ///
 /// `panes` is what the app knows about each slot, in the same order — see
-/// [`PaneInfo`].
+/// [`PaneInfo`]. `window_hovered` is `window.is_window_hovered()`, which the
+/// panes' headers give their tooltips by; see `header::pane_header`.
 #[allow(clippy::too_many_arguments)]
 pub fn page<V: 'static>(
     slots: &[Slot],
@@ -806,6 +727,7 @@ pub fn page<V: 'static>(
     chat_width: f32,
     video_share: f32,
     active: Option<usize>,
+    window_hovered: bool,
     on_pane: impl Fn(&mut V, &str, PaneAction, &mut Window, &mut Context<V>) + Clone + 'static,
     on_resize: impl Fn(&mut V, ResizeStart, &mut Window, &mut Context<V>) + Clone + 'static,
     on_hover: impl Fn(&mut V, usize, bool, &mut Context<V>) + Clone + 'static,
@@ -848,6 +770,7 @@ pub fn page<V: 'static>(
                 info,
                 cell,
                 active == Some(index),
+                window_hovered,
                 on_pane.clone(),
                 on_resize.clone(),
                 on_hover.clone(),
@@ -914,7 +837,8 @@ mod tests {
             assert!(slot.supervisor.is_none() && slot.pump.is_none());
             assert!(slot.video().is_none());
             assert_eq!(slot.quality_override, None);
-            assert!(!slot.hovered && !slot.quiet);
+            assert!(!slot.hovered && !slot.quiet && !slot.revealed);
+            assert!(!slot.header.is_visible());
             assert_eq!(slot.stalled_at, None);
         }
         assert_eq!(recording(42.0).resume_at, 42.0);
@@ -984,5 +908,149 @@ mod tests {
             recording(3723.0).link(false),
             "https://www.twitch.tv/videos/2868644730"
         );
+    }
+
+    /// Every combination of what the band follows, for the rules that hold
+    /// across all of them: `(inside, revealed, picture, menu_open)`.
+    fn every_moment() -> impl Iterator<Item = (bool, bool, bool, bool)> {
+        (0..16).map(|bits| (bits & 1 != 0, bits & 2 != 0, bits & 4 != 0, bits & 8 != 0))
+    }
+
+    /// Chat on screen has a panel, and the header sits on it.
+    #[test]
+    fn with_chat_the_header_sits_in_the_panel() {
+        assert_eq!(Placement::of(false, true), Placement::Panel);
+    }
+
+    /// Hidden chat leaves no panel, in either arrangement, so the header
+    /// goes over the picture rather than taking a strip of its own.
+    #[test]
+    fn hidden_chat_puts_the_header_on_the_picture() {
+        assert_eq!(Placement::of(true, true), Placement::OverPicture);
+    }
+
+    /// A recording with no chat to replay has no panel either, whatever the
+    /// channel's chat was saved as.
+    #[test]
+    fn a_chatless_recording_places_its_header_like_hidden_chat() {
+        for hidden in [false, true] {
+            assert_eq!(Placement::of(hidden, false), Placement::OverPicture);
+        }
+        assert_eq!(placement(&recording(0.0)), Placement::OverPicture);
+    }
+
+    /// Over a picture the header is up only while the pointer is on it, and
+    /// goes with the pointer.
+    #[test]
+    fn the_band_waits_for_the_pointer_over_a_picture() {
+        let mut pane = recording(0.0);
+        pane.point(false, true, false);
+        assert!(
+            !pane.header.is_visible(),
+            "up over a picture nobody pointed at"
+        );
+        assert!(pane.point(true, true, false).changed);
+        assert!(
+            pane.header.is_visible(),
+            "the pointer came in and it stayed down"
+        );
+        assert!(pane.point(false, true, false).changed);
+        assert!(
+            !pane.header.is_visible(),
+            "it stayed up after the pointer left"
+        );
+    }
+
+    /// A pane with no picture has nothing to keep clear, and says whose it
+    /// is and offers its × with the pointer anywhere.
+    #[test]
+    fn the_band_stays_up_over_a_status_screen() {
+        let mut pane = recording(0.0);
+        pane.set_state(StreamState::Offline);
+        for inside in [false, true] {
+            pane.point(inside, false, false);
+            assert!(pane.header.is_visible(), "inside: {inside}");
+        }
+    }
+
+    /// An open menu is what was asked for last; the header gives it the
+    /// picture, pointer or no pointer.
+    #[test]
+    fn the_band_steps_aside_for_an_open_menu() {
+        let mut pane = recording(0.0);
+        pane.point(true, true, false);
+        assert!(pane.header.is_visible());
+        assert!(pane.point(true, true, true).changed);
+        assert!(!pane.header.is_visible());
+    }
+
+    /// A header in the panel is always on screen there, so nothing raises
+    /// it over the picture as well.
+    #[test]
+    fn a_panel_header_never_raises_the_band() {
+        for (inside, revealed, picture, menu_open) in every_moment() {
+            assert!(
+                !band_wanted(Placement::Panel, inside, revealed, picture, menu_open),
+                "inside {inside}, revealed {revealed}, picture {picture}, menu {menu_open}"
+            );
+        }
+    }
+
+    /// The pointer coming into a pane is said once, on the way in, and
+    /// again only after it has left. A pane already counted as pointed at —
+    /// every pane, after a mini-player tile's click — reports no entry but
+    /// still raises its header.
+    #[test]
+    fn coming_in_is_reported_once() {
+        let mut pane = recording(0.0);
+        assert!(pane.point(true, true, false).entered);
+        assert!(!pane.point(true, true, false).entered);
+        assert!(!pane.point(false, true, false).entered);
+        assert!(pane.point(true, true, false).entered);
+        assert_eq!(
+            pane.point(true, true, false),
+            Pointed {
+                entered: false,
+                changed: false,
+            },
+            "a pointer moving within the pane changes nothing"
+        );
+
+        let mut pointed_already = recording(0.0);
+        pointed_already.hovered = true;
+        let pointed = pointed_already.point(true, true, false);
+        assert!(
+            !pointed.entered,
+            "a tile's click must keep its own pane active"
+        );
+        assert!(pointed.changed && pointed_already.header.is_visible());
+    }
+
+    /// A pane key's reveal brings the header up with the pointer elsewhere,
+    /// over a picture, and it goes when the reveal ends.
+    #[test]
+    fn a_revealed_band_shows_without_the_pointer() {
+        let mut pane = recording(0.0);
+        pane.revealed = true;
+        pane.point(false, true, false);
+        assert!(pane.header.is_visible());
+        pane.revealed = false;
+        assert!(pane.point(false, true, false).changed);
+        assert!(!pane.header.is_visible());
+    }
+
+    /// Not even a reveal covers an open menu.
+    #[test]
+    fn a_reveal_never_covers_an_open_menu() {
+        for (inside, revealed, picture, _) in every_moment() {
+            assert!(
+                !band_wanted(Placement::OverPicture, inside, revealed, picture, true),
+                "inside {inside}, revealed {revealed}, picture {picture}"
+            );
+        }
+        let mut pane = recording(0.0);
+        pane.revealed = true;
+        pane.point(false, true, true);
+        assert!(!pane.header.is_visible());
     }
 }

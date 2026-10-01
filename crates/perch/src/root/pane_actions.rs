@@ -6,12 +6,17 @@
 //! Both arrive with the pane's key and are looked up here, when they land,
 //! rather than by a position read when the pane was drawn: a press can land
 //! after the panes have moved, and a player's event long after that.
+//!
+//! Also the one answer the root gives a pane on its own account: bringing
+//! its header up over the picture for a moment when a key has just made it
+//! the active pane (`reveal_header`).
 
 use gpui::{ClipboardItem, Context, Window};
 
 use super::RootView;
+use crate::theme;
 use crate::video_view::{ChatButton, VideoEvent};
-use crate::watch::PaneAction;
+use crate::watch::{placement, PaneAction, Placement};
 
 impl RootView {
     /// A pane's control, or a press on the pane, for the pane `key` names.
@@ -58,7 +63,9 @@ impl RootView {
     }
 
     /// Show or hide the chat of the pane at `index`, and remember it for that
-    /// channel: `C`, and the chat glyph on the pane's bar.
+    /// channel: `C`, the chat glyph on the pane's bar, and `Show chat` on the
+    /// header over a pane with no picture, which has no bar. Hiding it brings
+    /// the header up where it went for a moment (`reveal_header`).
     ///
     /// Per pane rather than per app: the whole watch page is built on panes
     /// being independent, and the reason to hide chat — watching one stream for
@@ -82,12 +89,66 @@ impl RootView {
                 view.set_chat(ChatButton::of(hidden, true), cx)
             });
         }
+        // Hiding chat takes the header off the panel and over the picture,
+        // where it only shows under the pointer; showing where it went says
+        // that it went somewhere, rather than away.
+        if hidden {
+            let key = self.slots[index].key.clone();
+            self.reveal_header(&key, cx);
+        }
 
         let channel = self.slots[index].channel.clone();
         if self.settings.set_chat_hidden_for(&channel, hidden) {
             self.save_settings(cx);
         }
         cx.notify();
+    }
+
+    /// Bring the header of the pane `key` names up over its picture for a
+    /// moment ([`theme::HEADER_REVEAL`]), with its underline if it is marked
+    /// as the active pane: after a key made it the pane the keys talk to, or
+    /// hid its chat.
+    ///
+    /// Only a header that lives over the picture. One above chat is always
+    /// on screen, underline and all, so it needs no reveal; that pane still
+    /// takes the reveal off any other, since one pane at a time is revealed.
+    /// Taken down by a timer — the toasts' pattern — unless a later reveal
+    /// has started since, whose own timer is the one that counts.
+    ///
+    /// For a pane key, and for chat going away. The pointer cannot ask which
+    /// pane the keys talk to — pointing at a pane is what makes it active —
+    /// and pause, mute and volume get no reveal at all; see `keys`. Hiding
+    /// chat from the bar's glyph reveals too, as `C` does: the pointer is on
+    /// the pane then, so the band is up for it anyway, and the reveal only
+    /// keeps it up for the rest of the moment if the pointer goes sooner.
+    pub(super) fn reveal_header(&mut self, key: &str, cx: &mut Context<Self>) {
+        let over_picture = self
+            .slot_index(key)
+            .is_some_and(|index| placement(&self.slots[index]) == Placement::OverPicture);
+        for slot in &mut self.slots {
+            slot.revealed = over_picture && slot.key == key;
+        }
+        cx.notify();
+        if !over_picture {
+            return;
+        }
+
+        self.reveal_epoch += 1;
+        let epoch = self.reveal_epoch;
+        let key = key.to_string();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(theme::HEADER_REVEAL).await;
+            let _ = this.update(cx, |this: &mut RootView, cx| {
+                if !reveal_is_current(this.reveal_epoch, epoch) {
+                    return;
+                }
+                if let Some(index) = this.slot_index(&key) {
+                    this.slots[index].revealed = false;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     /// What the player in the pane `owner` names asked for. Looked up by key
@@ -133,5 +194,29 @@ impl RootView {
             // palette, by the key the player was subscribed with.
             VideoEvent::Pane(action) => self.on_pane_action(owner, action.clone(), window, cx),
         }
+    }
+}
+
+/// Whether the reveal a timer was started for is still the newest, numbered
+/// by `RootView::reveal_epoch`. A pane key pressed twice inside the reveal —
+/// `2`, then `3` straight after — leaves the first timer running, and it must
+/// not take down a header the second press brought up a moment ago.
+fn reveal_is_current(latest: u64, timer: u64) -> bool {
+    latest == timer
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Two reveals inside one `HEADER_REVEAL`: the first one's timer fires
+    /// while the second is still up, and leaves it; the second one's timer
+    /// takes it down.
+    #[test]
+    fn a_later_reveal_outlives_an_earlier_timer() {
+        let (first, second) = (1, 2);
+        let latest = second;
+        assert!(!reveal_is_current(latest, first));
+        assert!(reveal_is_current(latest, second));
     }
 }

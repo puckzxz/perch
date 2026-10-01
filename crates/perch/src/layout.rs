@@ -519,6 +519,50 @@ mod tests {
         );
     }
 
+    /// Why a stacked pane with chat hidden keeps the box a pane with chat
+    /// has, rather than giving the picture the whole cell (`watch::chat_or_why`):
+    /// with the divider where it is derived, the whole cell has no room to
+    /// make a landscape picture any wider.
+    ///
+    /// A cell stacks only below `PORTRAIT_ASPECT`, and that is narrower than
+    /// any landscape stream, so in the whole cell a landscape picture would
+    /// still be as wide as the cell and no taller than it — width-limited,
+    /// with nothing gained but black above and below. A 16:9 stream gets its
+    /// whole width in the derived box already: the box's cap never reaches it
+    /// in a cell narrow enough to stack. (A 4:3 one, in a cell just narrow
+    /// enough to stack, is capped a few percent short of the cell's width,
+    /// with chat or without.) Only the derived share, zero, is checked: a
+    /// dragged divider sizes the box as it was dragged, which can be smaller,
+    /// and is the user's choice rather than this one. Raising
+    /// `PORTRAIT_ASPECT` past a stream's shape fails this, and reopens the
+    /// decision.
+    #[test]
+    fn a_stacked_cell_never_has_room_to_widen_a_landscape_picture() {
+        const CELL_WIDTH: f32 = 900.0;
+        let threshold = crate::theme::PORTRAIT_ASPECT;
+        let stacking = (1..=100).map(|step| threshold * step as f32 / 100.0 - 0.001);
+        for cell_aspect in stacking {
+            assert!(
+                cell_is_portrait(cell_aspect),
+                "{cell_aspect} does not stack"
+            );
+            let cell_height = CELL_WIDTH / cell_aspect;
+            for stream in [VIDEO_ASPECT, 4.0 / 3.0] {
+                let full_width = CELL_WIDTH / stream;
+                assert!(
+                    full_width <= cell_height,
+                    "a {stream:.2} picture in a {cell_aspect:.3} cell would be taller than \
+                     the cell at its full width, so the whole cell would widen it"
+                );
+            }
+            assert_eq!(
+                stacked_video_height(CELL_WIDTH, cell_height, VIDEO_ASPECT, 0.0),
+                CELL_WIDTH / VIDEO_ASPECT,
+                "a 16:9 picture in a {cell_aspect:.3} cell is narrower than the cell in its box"
+            );
+        }
+    }
+
     #[test]
     fn one_pane_gets_the_whole_mini_player() {
         let mini = mini_player(1);

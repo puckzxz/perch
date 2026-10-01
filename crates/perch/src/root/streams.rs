@@ -14,7 +14,7 @@ use crate::chat::{ChatView, Feed};
 use crate::video::{self, Playback, PositionHandle, Stopped, VideoStream};
 use crate::video_view::{ChatButton, Qualities, Start, VideoView};
 use crate::watch::{Slot, Source, StreamState, MAX_PANES};
-use crate::{layout, settings_view};
+use crate::{layout, motion, settings_view};
 
 /// Starting render size. Each pane measures itself on the first layout pass and
 /// its render thread follows from then on, so this only decides what the first
@@ -616,10 +616,22 @@ impl RootView {
 
     /// Draw every player as a tile, or as a pane, for moving between pages.
     /// How they look and nothing else: see `VideoView::set_compact`.
+    ///
+    /// Leaving the watch page also starts each pane's header over the
+    /// picture over, hidden, as the player does its bar: the browse page
+    /// never draws it, and a fade that came back after frames without its
+    /// element would replay its last flip on the way back (see
+    /// `motion::Fade::apply`). A reveal still running goes with it. Where
+    /// the pointer was is left alone: it decides which pane takes the keys
+    /// on the way back, and `go_watch_pane` sets it for that.
     pub(super) fn set_compact(&mut self, compact: bool, cx: &mut Context<Self>) {
-        for slot in &self.slots {
+        for slot in &mut self.slots {
             if let Some(view) = slot.video() {
                 view.update(cx, |video, cx| video.set_compact(compact, cx));
+            }
+            if compact {
+                slot.header = motion::Fade::hidden();
+                slot.revealed = false;
             }
         }
     }
@@ -683,13 +695,15 @@ impl RootView {
     ///
     /// The pointer arrives on the watch page where the tile was, which can be
     /// over another pane's video. A pane's hover is measured every frame and
-    /// its rising edge makes it active (the watch page's `on_hover`), and
-    /// `Slot::hovered` is whatever it was when the watch page was last up — so
-    /// on the first frame that other pane would take the keys from the one
-    /// just clicked, and M, the arrows and Ctrl+W would land on it. Counting
-    /// every pane as already pointed at leaves that frame only falling edges,
-    /// which change nothing: the pane under the pointer becomes active the
-    /// next time the pointer comes into it.
+    /// its rising edge makes it active (`Slot::point`, from the watch page's
+    /// probe), and `Slot::hovered` is whatever it was when the watch page was
+    /// last up — so on the first frame that other pane would take the keys
+    /// from the one just clicked, and M, the arrows and Ctrl+W would land on
+    /// it. Counting every pane as already pointed at leaves that frame only
+    /// falling edges, which change nothing: the pane under the pointer
+    /// becomes active the next time the pointer comes into it. Its header
+    /// over the picture, where it has one, still comes up, since `point`
+    /// works that out every frame and not from the edge.
     pub(super) fn go_watch_pane(&mut self, key: String, cx: &mut Context<Self>) {
         self.active = Some(key);
         for slot in &mut self.slots {

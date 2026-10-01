@@ -15,7 +15,7 @@
 //! | `browsing` | the browse page's requests: tabs, search, categories, channels |
 //! | `navigation` | back and forward: where the app is as a `Route`, recording each step on the trail (`crate::trail`), and the three ways along it |
 //! | `streams` | opening, restarting and closing panes |
-//! | `pane_actions` | what a pane asks for: its controls, and its player's requests |
+//! | `pane_actions` | what a pane asks for: its controls, and its player's requests; the header a pane key reveals |
 //! | `launches` | what the command line named, at startup and from later launches |
 //! | `history` | what has been watched: noting where each recording got to, resuming there |
 //! | `prefs` | the settings sheet, the divider drag, the rail folding and what is pinned to it |
@@ -276,6 +276,9 @@ pub(crate) struct RootView {
     save_epoch: u64,
     /// Which run of window resizes is the newest; see `on_window_resized`.
     resize_epoch: u64,
+    /// Which pane-header reveal is the newest, so only its timer takes the
+    /// header back down; see `reveal_header`.
+    reveal_epoch: u64,
     /// Keeps the resize observer alive; a dropped `Subscription` unsubscribes.
     _bounds: Subscription,
 }
@@ -428,6 +431,7 @@ impl RootView {
             _launch_pump: Self::pump_launches(launches, window, cx),
             save_epoch: 0,
             resize_epoch: 0,
+            reveal_epoch: 0,
             _bounds,
         };
 

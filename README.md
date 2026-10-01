@@ -119,12 +119,15 @@ Player keys act on the pane you last pointed at, or last clicked — clicking
 anywhere in a pane, video or chat, makes it the one the keyboard is talking to,
 and with more than one pane open its header is underlined to say so. `1` to
 `4` name a pane by its place in the grid and `Tab` steps along them, for when
-the mouse is nowhere near. The keys stand aside while the cursor is in a text
-box — all but `Ctrl+K`, `Ctrl+,` and `Ctrl+R`, which type nothing, so the
-palette is one keystroke away straight after a search. A search typed on the
-watch page leaves it for the results, the way `Esc` does. The same list is in
-the settings sheet. Double-clicking the video is
-fullscreen too. `Esc` from the watch page goes back to whichever tab, category
+the mouse is nowhere near. A pane with its chat hidden has its header over the
+picture, so its underline shows while the pointer is on it, and for a second
+and a half after `1` to `4` or `Tab` has chosen it or `C` has hidden its chat.
+Pause, mute and volume never bring a header up over the picture. The keys
+stand aside while the cursor is in a text box — all but `Ctrl+K`, `Ctrl+,` and
+`Ctrl+R`, which type nothing, so the palette is one keystroke away straight
+after a search. A search typed on the watch page leaves it for the results, the
+way `Esc` does. The same list is in the settings sheet. Double-clicking the
+video is fullscreen too. `Esc` from the watch page goes back to whichever tab, category
 or channel you left the browse page on — and first closes a pane's open menu,
 if there is one. A playing pane's quality menu is in the palette as well:
 type `quality` and some of the pane's name, and `Choose quality for …` opens
@@ -150,12 +153,14 @@ opens at the top. On Windows the side buttons do nothing over the title bar's
 empty strip or its window buttons, which belong to Windows rather than to
 the app.
 
-Every pane has a `Close` in its header, a lone one included; closing the last
-pane goes back to the browse page.
+Every pane has an × in its header, a lone one included, and like the bar's
+icons it names its key, `Ctrl+W`; closing the last pane goes back to the
+browse page.
 
-The header above each chat says `muted` or `paused` when either is true, so a
-channel that opens silent says so without the pointer having to be on the
-video.
+A pane's header says `muted` or `paused` when either is true, so a channel
+that opens silent says so without the pointer having to be on the video. With
+chat hidden the header is over the picture, so they show there while the
+pointer is on it — where the bar's speaker and play icon say the same.
 
 The window opens where it was last closed — on the same monitor, at the size
 it was — as long as that monitor is still there; the first time, it is sized to
@@ -167,13 +172,19 @@ derived.
 
 Hiding chat is remembered per channel, the way volume is — a channel you watch
 for the game stays that way without saying anything about the next one. Beside
-the video, hiding chat gives the video its column, and the header moves to a
-strip above the picture, so a pane without chat still has its name and its
-close button. Under the video, the pane keeps its shape: the picture stays in
-its box, the header under it where every neighbour's is, and the space chat
-had says `chat hidden · press C`.
+the video, hiding chat gives the video its column, all of it: there is no
+strip left above the picture. The header — the name, the numbers and the × —
+comes over the top of the picture while the pointer is on it, on the same dark
+band as the controls at the bottom, and stays up over a pane with no picture
+to cover, one starting, offline or ended, so that pane still says whose it is
+and can be closed; with no picture there is no bar either, so that header has
+the chat icon that brings chat back. Under the video, the pane keeps its shape
+when chat is hidden: the picture stays in its box, where every neighbour's is,
+and does not move when `C` brings chat back. The space chat had says
+`Chat hidden · press C`. A past broadcast with no chat to replay lays out the
+same way.
 
-Above chat, each pane says who is on, how many are watching, how long they have
+Each pane's header says who is on, how many are watching, how long they have
 been going, and what they are doing — the stream's title and its game, on a line
 of their own. Both are cut to fit; rest the pointer on them for the whole thing.
 

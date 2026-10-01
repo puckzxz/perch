@@ -95,6 +95,13 @@ impl VideoView {
         true
     }
 
+    /// Whether one of the bar's menus is open. The pane's header over the
+    /// picture steps aside for it (`watch::Slot::point`): the two would hang
+    /// over the same picture, and the menu is what was asked for last.
+    pub fn menu_open(&self) -> bool {
+        self.menu.is_some()
+    }
+
     /// The box `which` opens in, hung from the right-hand cluster's right
     /// edge and rising above the bar.
     pub(super) fn menu_box(&self, which: Menu, cx: &mut Context<Self>) -> impl IntoElement {

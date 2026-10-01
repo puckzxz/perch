@@ -206,24 +206,31 @@ impl RootView {
             self.settings.chat_width,
             self.settings.video_share,
             self.active_slot(),
+            window.is_window_hovered(),
             |this: &mut RootView, key: &str, action, window, cx| {
                 this.on_pane_action(key, action, window, cx)
             },
             |this: &mut RootView, start, window, cx| this.start_resize(start, window, cx),
-            |this: &mut RootView, index, hovered, cx| {
-                // Only a crossing matters; most moves are within the
-                // pane the pointer is already in.
-                match this.slots.get_mut(index) {
-                    Some(slot) if slot.hovered != hovered => slot.hovered = hovered,
-                    _ => return,
-                }
+            |this: &mut RootView, index, inside, cx| {
+                // What the header over the picture follows besides the
+                // pointer: whether there is a picture to keep clear, and
+                // whether a menu on the bar has the space.
+                let Some(slot) = this.slots.get(index) else {
+                    return;
+                };
+                let picture = slot.has_picture(cx);
+                let menu_open = slot.video().is_some_and(|view| view.read(cx).menu_open());
+                let pointed = this.slots[index].point(inside, picture, menu_open);
                 // Sticky, unlike `hovered`: a keyboard shortcut has to keep
                 // working once the pointer has moved into chat or off the
                 // window entirely, and the pane you last looked at is the
-                // one you meant. Coming in is the only crossing anything
-                // on screen follows, so it is the only one that repaints.
-                if hovered {
-                    this.active = this.slots.get(index).map(|slot| slot.key.clone());
+                // one you meant.
+                if pointed.entered {
+                    this.active = Some(this.slots[index].key.clone());
+                }
+                // Most frames change nothing: the pointer moving within the
+                // pane it is already in, the header already where it goes.
+                if pointed.changed {
                     cx.notify();
                 }
             },

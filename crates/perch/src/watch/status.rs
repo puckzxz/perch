@@ -9,7 +9,7 @@
 
 use gpui::{div, prelude::*, px, AnyElement, Context, SharedString, Window};
 
-use super::{pane_id, PaneAction, Slot, StreamState};
+use super::{pane_id, placement, PaneAction, Placement, Slot, StreamState};
 use crate::{controls, motion, seek_bar, theme};
 
 /// What a pane is showing, read once from its slot for everything that says
@@ -155,6 +155,12 @@ pub(super) fn screen<V: 'static>(
     let key = slot.key.clone();
     div()
         .size_full()
+        // With no chat on screen the pane's header rests over the top of
+        // this screen, which has no picture for it to keep clear of; the
+        // words are centred in what it leaves rather than under it.
+        .when(placement(slot) == Placement::OverPicture, |screen| {
+            screen.pt(px(theme::BAND_ROOM))
+        })
         .flex()
         .flex_col()
         .gap(px(theme::GAP))

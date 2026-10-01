@@ -156,8 +156,9 @@ pub fn overlay() -> Hsla {
 }
 
 /// Behind controls and pane facts drawn over a playing picture: the player's
-/// control bar, and anything else that has to carry more than one tier of text
-/// on top of video.
+/// control bar, and a pane's header when hidden chat puts it over the top of
+/// the picture (`watch::header`) — anything that has to carry more than one
+/// tier of text on top of video.
 ///
 /// Denser than [`overlay`] because it carries every tier, not just full text,
 /// and each one is measured against the worst picture there is — a white frame
@@ -183,6 +184,14 @@ pub(crate) fn over_white(wash: Hsla) -> Hsla {
 /// Structural borders between panes.
 pub fn border() -> Hsla {
     rgb(0x24242c).into()
+}
+
+/// A border kept for the pixel it takes and not drawn: the unmarked rule
+/// under a pane header over the picture, where a `border` grey would be one
+/// more line on the video. Kept rather than left off, so marking the header
+/// as the active pane never changes its height.
+pub fn border_clear() -> Hsla {
+    gpui::transparent_black()
 }
 
 /// The seek bar's rail: the part of a recording not yet played. It sits on
@@ -460,6 +469,12 @@ pub const MOTION_VIDEO: Duration = Duration::from_millis(300);
 /// One breath of a waiting indicator. Slow on purpose — a fast pulse reads as
 /// alarm, and this only ever means "still working".
 pub const PULSE_PERIOD: Duration = Duration::from_millis(1600);
+/// How long a pane's header stays up over its picture after a key that made
+/// the pane the one the keys talk to — `1`–`4`, `Tab` — or hid its chat:
+/// long enough to find which pane it was, short enough to be gone before it
+/// is something on the picture. `RootView::reveal_header` is the reader. A
+/// first guess, not a measurement.
+pub const HEADER_REVEAL: Duration = Duration::from_millis(1500);
 /// How faint a waiting indicator gets at the bottom of its breath. Never zero:
 /// something that vanishes entirely looks broken rather than busy.
 pub const PULSE_FLOOR: f32 = 0.45;
@@ -553,6 +568,14 @@ pub const VOLUME_FIGURE: f32 = 38.0;
 /// carries; a longer one, such as `audio_only`, can run a few pixels past a
 /// pane right at the edge of what fits.
 pub const QUALITY_PILL_ROOM: f32 = 72.0;
+
+/// How much of the top of a pane its header takes when it is drawn over the
+/// picture (`watch::header`, with chat hidden) and the pane has no picture to
+/// cover: the space above the header, its row of name and ×, the gap and the
+/// line under it, the space below and its one-pixel rule. A status screen
+/// starts this far down, so the header resting over it never sits on the
+/// screen's words. Built from the header's own tokens, so it follows them.
+pub const BAND_ROOM: f32 = GAP_TIGHT * 2.0 + ICON_BUTTON + GAP_WORD + LINE_TIGHT + 1.0;
 
 /// The live indicator's diameter. Small enough to read as a status mark
 /// beside a number rather than as a control.

@@ -72,12 +72,13 @@ App modules:
 | `instance/` | one perch per settings file: the claim, and a later launch handing its arguments to the running one — a named pipe on Windows, `flock` and a socket on Unix |
 | `launch.rs` | what a launch's arguments ask for, read the one way at startup and on a handover (pure, tested) |
 | `trail.rs` | back and forward: the places behind and ahead, what a step passes over, and forgetting a place that is gone (pure, tested) |
-| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams`, `pane_actions` (what a pane asks for, by its key: a press on it or one of its controls, which takes the keys back for the root first, and its player's requests), `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `prefs`, `chrome` (pills, toasts, the rail), `mini_player` (what plays on while you browse, in the corner of the page), `title_bar` (the bar Perch draws across the top of the window — the rail button, back and forward, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`) |
+| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams`, `pane_actions` (what a pane asks for, by its key: a press on it or one of its controls, which takes the keys back for the root first, and its player's requests; and the moment a pane key brings a pane's header up over its picture), `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `prefs`, `chrome` (pills, toasts, the rail), `mini_player` (what plays on while you browse, in the corner of the page), `title_bar` (the bar Perch draws across the top of the window — the rail button, back and forward, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`) |
 | `target.rs` | what a typed or pasted thing means: a login, or a twitch.tv link to a channel or a recording; `link`, its inverse and the one place a twitch.tv URL is written, and `moment`, the second a link to a recording starts at (pure, tested) |
 | `browse.rs` | the picker page: following, popular, categories, search; which of them is on screen (`Discovery::place`) and which lists are still being waited on |
 | `channel_page.rs` | one channel's past broadcasts, and when each was; the recording card both pages use |
 | `history_page.rs` | the history tab, and the one translation between a video and a history entry |
-| `watch.rs` | the grid of panes; `Slot` lives here, made by `Slot::new`, and `PaneAction`, everything a pane asks of the root |
+| `watch.rs` | the grid of panes; `Slot` lives here, made by `Slot::new`, and `PaneAction`, everything a pane asks of the root; the band a header rides over the picture on, and when it is up (`Slot::point`, `band_wanted`, tested) |
+| `watch/header.rs` | a pane's header — name, numbers, what is on, `muted`/`paused`, the × that names its key — and `Placement`, the one rule for where it goes: the chat panel, or over the picture with no chat on screen (tested) |
 | `watch/status.rs` | a pane with no picture: `Showing`, the one reading of its state that the pane's sentence and the mini player's word both come from, and the screen drawn from it (tested) |
 | `layout.rs` | derives grid shape from window aspect; the page's `Body`, the title bar's height and drag edge, and the mini player's tiles, how far in it floats clear of the scrollbar, and the `Room` a browse list leaves for it (pure, tested) |
 | `video_view.rs` | the player element: its sound, its hover, the picture; drawn full or as a compact mini-player tile |
@@ -704,9 +705,12 @@ text, and only once per element (div.rs:536-549).
 caption buttons stay lit: it checks it is still wanted against the last
 position gpui saw, which a pointer leaving never updates. Taking the builder
 away clears it in prepaint (div.rs:1660-1668), so the player's bar gives its
-tooltips only while `window.is_window_hovered()` (`bar::bar_icon`). The
-title bar and the mini player sit on the window's edge as well and do not
-gate theirs yet.
+tooltips only while `window.is_window_hovered()` (`bar::bar_icon`), and a
+pane's header does the same (`watch::header::pane_header`, handed the flag
+by `watch::page`): the right-hand pane's × sits `ROW_PAD_X` from the
+window's edge, and over the picture an invisible band is still prepainted,
+so its tooltip would outlast the band itself. The title bar and the mini
+player sit on the window's edge as well and do not gate theirs yet.
 
 **`gpui_component::init(cx)` must run before any widget**, and `Root::new` must
 wrap the window's first view or overlays have nowhere to render.
@@ -832,7 +836,9 @@ frame for render sizing, and it now also asks
 `window.is_window_hovered() && bounds.contains(&window.mouse_position())`. The
 `on_hover` listeners that remain exist only to wake a repaint — a paused stream
 sends no frames, so without them nothing would ask the probe to run again. Their
-*value* is ignored on purpose. Do not wire it back up.
+*value* is ignored on purpose. Do not wire it back up. An element that
+`.occlude()`s over a probed area hides the pointer from those listeners, so
+it needs a wake-up of its own while it blocks, as a pane's header band has.
 
 **Dependencies are plain crates.io versions** — `gpui 0.2.2`, `gpui-component 0.5.1`
 — reproducible from `Cargo.lock`. An earlier plan called for pinning a git rev;
@@ -1008,7 +1014,12 @@ not drawn for a while replays its last flip from the start when it is drawn
 again. That is a bar long since hidden fading out all over again, over the
 picture. Keep a faded wrapper mounted on every frame, or start its fade over
 with `Fade::hidden()` when its element goes away, as `VideoView::set_compact`
-does for the bar, which a mini-player tile never draws.
+does for the bar, which a mini-player tile never draws. A pane's band, the
+header over its picture with chat hidden, does both: `watch::pane` mounts it
+on every frame, empty when the header is in the panel, under an id keyed by
+`pane_id` so a pane closing beside it never hands it another pane's fade; and
+`RootView::set_compact(true)` resets every slot's `header` to hidden on the
+way to the browse page, which never draws it.
 
 **Element ids are namespaced by every ancestor that has one**, plus an implicit
 `ElementId::View(entity_id)` per entity. So `"controls"` is unique inside a
@@ -1208,18 +1219,46 @@ there, on its way to `invisible()`.
 **Nothing static is ever drawn on the video.** Static information on a moving
 picture is exactly what you end up staring past for three hours, so it lives in
 a header above chat instead — chat is already a panel, so it costs nothing
-there. The split:
+there. What does come over the picture comes because something asked for it:
+the pointer on the pane, or a key that has just chosen it. A pane with no
+picture — starting, offline, ended, a player before its first frame — is not
+a picture, and its header rests over it. The split:
 
-- **Chat header**, always visible, one per pane: a live dot *when the pane is
-  actually showing a picture*, the channel name — which opens twitch.tv, the
-  way out of a chat that is read-only by design — viewer count, uptime, and the
-  pane's close control. With more than one pane its bottom border marks the one
-  the keyboard is talking to. Under that row, what is actually on: the title and
-  the game, joined the way the numbers above them are, clamped to one line, with
-  the whole of both a hover away through `controls::full_text`. The live numbers
-  go when the stream ends — they come from a list that will not know for another
-  minute, and an uptime still counting beside "ended the stream" is the same lie
-  the frozen last frame used to tell.
+- **Pane header**, one per pane (`watch/header.rs`): a live dot *when the pane
+  is actually showing a picture*, the channel name — which opens twitch.tv,
+  the way out of a chat that is read-only by design — viewer count, uptime,
+  `muted` and `paused`, and the pane's ×, a `Destructive` icon whose tooltip
+  names `Ctrl+W` through `keys::Hint::Close`. With more than one pane its
+  bottom border marks the one the keyboard is talking to. Under that row,
+  what is actually on: the title and the game, joined the way the numbers
+  above them are, clamped to one line, with the whole of both a hover away
+  through `controls::full_text`. The live numbers go when the stream ends —
+  they come from a list that will not know for another minute, and an uptime
+  still counting beside "ended the stream" is the same lie the frozen last
+  frame used to tell. Where it goes is one rule, `watch::Placement::of`, the
+  same in both arrangements: with chat on screen it sits on the chat panel,
+  above chat beside the picture and below the picture when stacked; with
+  chat hidden, or none to show, it rides the top of the picture on a band of
+  `video_chrome`, the bar's wash, which every text tier passes on over a
+  white frame. The band is drawn by `watch::pane`, mounted every frame —
+  empty while the header is in the panel — and faded by `Slot::header`, the
+  slot's so it outlives a player rebuilt for a quality change. It is up
+  while the pointer is on the pane, during a pane key's reveal, and at rest
+  whenever there is no picture to cover (`band_wanted`); it steps aside while
+  one of the bar's menus is open. VideoView owns the bar's hover; the slot
+  owns the band's, worked out every frame in `Slot::point` from the pane's
+  probe, which also reports the rising edge that makes a pane active. While
+  up the band occludes, and a press on it makes the pane active in the
+  capture phase, since the pane's own mouse-down cannot hear through it.
+  For the same reason it carries its own `on_hover` wake-up while up
+  (`band-layer`): the pane's and the player's listeners cannot hear the
+  pointer through it either, and with every pane still, nothing else would
+  repaint for a pointer crossing onto or off the band — the pane it came
+  into would not become active, and the band and bar it left would stay up.
+  Over a pane with no picture there is no bar, so the band's header also
+  offers chat back (`Show chat`, the chat glyph crossed out), and the status
+  screen starts `theme::BAND_ROOM` down so the resting band never covers its
+  words.
 - **Over the video**, hover-revealed only: the control bar
   (`video_view/bar.rs`). At the left play or pause, the speaker — crossed out
   whenever the pane is silent, Mute all's hold included — the volume slider
@@ -1290,8 +1329,29 @@ control that brought it back, in its top-left corner, revealed with the video
 controls by the panes' hover; the first pane's header kept a reserve clear for
 them. Both left the page — the rail's for the title bar, as its button — and
 the reserve went with them. An earlier arrangement put the channel name and
-close over the video at the pane's top-right; that is gone, and with it the
-collision that let one click both close a pane and navigate away.
+close over the video at the pane's top-right; that went, and with it the
+collision that let one click both close a pane and navigate away. The name
+and the × are over the video again with chat hidden, as the whole header on
+the band along the top, and the collision cannot come back with them: nothing
+page-level floats over the panes any more, so the top edge is the pane's.
+
+A pane with chat hidden used to keep its header as a strip above the picture
+beside the video, because nothing was drawn over the video at all, and losing
+the strip would have left a pane with no name and no way to close it but the
+keyboard. The strip cost the picture its height and moved it every time `C`
+was pressed; the band costs neither. Stacked, a pane with chat hidden keeps
+the box a pane with chat has, with `Chat hidden · press C` (or `No chat replay
+for this video`) in the space below, rather than giving the picture the whole
+cell, which would put the picture out of line with its neighbours the moment
+`C` was pressed. A cell stacks only narrower than `PORTRAIT_ASPECT`, narrower
+than any landscape stream, so with the divider where it is derived the box
+already gives a 16:9 picture the cell's width, and the whole cell would add
+only letterbox. `a_stacked_cell_never_has_room_to_widen_a_landscape_picture`
+holds the two constants to that. Two cases do give up some width, and are
+left: a 4:3 stream in a cell just narrow enough to stack is capped a few
+percent short, and a dragged divider keeps the box the user chose, smaller
+or not — the divider still works with chat hidden, and its share is every
+pane's. A vertical stream would gain from the whole cell, and is left capped.
 
 Everything in the header but the name comes from a `LiveStream` — the same
 record the browse cards use — looked up by login at render time rather than
@@ -1901,12 +1961,15 @@ be saying what you already know. What there *is* now is a standing one: the
 pane header carries `muted` and `paused` tags, read off the `VideoView` at
 render time. Those used to be visible only while the pointer was over the
 video, so a channel saved muted opened silent with nothing on screen to say so.
-The quality is deliberately not there — it is on the control bar, and a 340px
-header with a name, a count, an uptime, a tag and `Close` in it has no room for
-a fifth thing; the count reads `358 · 8h 20m` beside the live dot, the card's
-shape, for the same reason. The shortcut list lives in the settings sheet and
-is read from `keys::SHORTCUTS`, beside the bindings, so a documented key is a
-bound one. The README's keyboard table is held to the same list:
+With chat hidden they are again — the header is on the band over the picture,
+which shows only while the pane is pointed at — and that is accepted under
+"nothing static on the picture": the bar's speaker and play glyphs say the
+same on the same hover. The quality is deliberately not there — it is on the
+control bar, and a 340px header with a name, a count, an uptime, a tag and the
+× in it has no room for a fifth thing; the count reads `358 · 8h 20m` beside
+the live dot, the card's shape, for the same reason. The shortcut list lives
+in the settings sheet and is read from `keys::SHORTCUTS`, beside the
+bindings, so a documented key is a bound one. The README's keyboard table is held to the same list:
 `the_readme_lists_every_shortcut` wants a row in it for each label the sheet
 shows, the label verbatim and in backticks as the row's first cell. It looks
 for the cell, `` | `Esc` | ``, rather than the label, because most labels are
@@ -1914,16 +1977,31 @@ in the README's prose too and would hide a dropped row. Off macOS only, since
 the README writes `Ctrl` and `Alt` once and says what a Mac draws instead.
 The `RUNNING` pages are shorter on purpose and are kept in step by hand.
 
+The one exception to "no transient feedback" is **which pane the keys talk
+to**. A pane with chat hidden has its underline on the band, so it shows only
+while that pane is pointed at — and pointing at a pane is what makes it
+active, so the pointer can never answer the question. So `1`–`4`, `Tab` and
+`Shift+Tab` with more than one pane, and `C` hiding a chat, bring that pane's
+band up for `theme::HEADER_REVEAL` (`RootView::reveal_header`), underline and
+all when it is marked. One pane at a time: a reveal takes it off the others.
+It sets `Slot::revealed`, which `band_wanted` reads, and a timer clears it —
+the toasts' pattern, numbered by `reveal_epoch` so an earlier reveal's timer
+cannot take down a later one (`reveal_is_current`). A header in the panel is
+always on screen and gets none. Never on `Space`, `M` or the arrows, which
+answer for themselves; `keys.rs` says the same at the top. Whether brief
+chrome after a key suits is a product call, so the reveal can be dropped as a
+unit: its callers are `reveal_active` in `shortcuts.rs` and `toggle_chat`.
+
 The controls are the fourth place a key is named. The title bar's and the
 player's bar's tooltips — `Settings (Ctrl+,)`, `Pause (Space)`, `Mute (M)`,
-`Volume (↑ / ↓)`, `Hide chat (C)`, `Fullscreen (F / F11)` — never spell a
-key: each names a keystroke as a `keys::Hint`, in the binding grammar, and
-borrows the label the sheet shows for it, and
-`every_hint_names_a_listed_and_bound_key` holds every hint to a listed key
-bound to the control's own action. `Volume` names `up` and so reads the
-row's whole `↑ / ↓`; `Fullscreen` names `f` and reads `F / F11`. A hint
-arrives with the first control that names it, since an unused one is dead
-code.
+`Volume (↑ / ↓)`, `Hide chat (C)`, `Fullscreen (F / F11)` — and a pane
+header's × (`Close (Ctrl+W)`) never spell a key: each names a keystroke as a
+`keys::Hint`, in the binding grammar, and borrows the label the sheet shows
+for it, and `every_hint_names_a_listed_and_bound_key` holds every hint to a
+listed key bound to the control's own action. `Volume` names `up` and so
+reads the row's whole `↑ / ↓`; `Fullscreen` names `f` and reads `F / F11`;
+`Close` names `secondary-w` and so reads `⌘W` on a Mac. A hint arrives with
+the first control that names it, since an unused one is dead code.
 
 **Fullscreen** is `f` on the watch page, `F11` on either, and a double-click on
 the video. The title bar goes with it, and `layout::title_bar_height` gives
@@ -2506,6 +2584,15 @@ None of these is being worked on; all of them are real.
 - Do not make a menu row act on a click. The press closes the menu, and the
   click would come from a frame with no row in it; `menu::menu_row` acts on
   the press, and `menu_rows_act_on_the_press` holds `menu.rs` to it.
+- Do not give the picture the whole cell when a stacked pane hides its chat.
+  The box stays the one a pane with chat has, so `C` never moves the picture,
+  and with the divider where it is derived a landscape picture would gain
+  only letterbox
+  (`a_stacked_cell_never_has_room_to_widen_a_landscape_picture`); a dragged
+  divider is the user's box, and keeps it. Nor bring
+  back the strip a pane with chat hidden kept above its picture beside the
+  video; the header rides the band over the picture instead (see "Where
+  controls live").
 - Do not give a control a fixed id when its tooltip's words follow a state it
   changes. The tooltip keeps the words it came up with; key the id on the
   state, as the bar's glyphs, Mute all, the rail's pin and the gear do (see

@@ -207,15 +207,17 @@ impl RootView {
         self.refresh(cx);
     }
 
-    /// Point the keyboard at pane `index`, counting from the top left.
+    /// Point the keyboard at pane `index`, counting from the top left, and
+    /// show which that is; see `reveal_header`.
     pub(super) fn on_activate_pane(
         &mut self,
         action: &keys::ActivatePane,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(slot) = self.slots.get(action.index) {
-            self.active = Some(slot.key.clone());
+        if let Some(key) = self.slots.get(action.index).map(|slot| slot.key.clone()) {
+            self.active = Some(key.clone());
+            self.reveal_active(&key, cx);
             cx.notify();
         }
     }
@@ -238,15 +240,28 @@ impl RootView {
         self.step_active(-1, cx);
     }
 
-    /// Move the active pane along the grid, wrapping at either end.
+    /// Move the active pane along the grid, wrapping at either end, and show
+    /// which it landed on.
     fn step_active(&mut self, delta: isize, cx: &mut Context<Self>) {
         let count = self.slots.len();
         let Some(current) = self.active_slot() else {
             return;
         };
         let next = (current as isize + delta).rem_euclid(count as isize) as usize;
-        self.active = Some(self.slots[next].key.clone());
+        let key = self.slots[next].key.clone();
+        self.active = Some(key.clone());
+        self.reveal_active(&key, cx);
         cx.notify();
+    }
+
+    /// Reveal the header of the pane a pane key just chose, with more than
+    /// one pane on screen. With one, which pane the keys talk to is the
+    /// answer to a question nobody asked — the reason a lone pane's header
+    /// is never underlined either.
+    fn reveal_active(&mut self, key: &str, cx: &mut Context<Self>) {
+        if self.slots.len() > 1 {
+            self.reveal_header(key, cx);
+        }
     }
 
     /// One step out on the browse page: a channel's page, a search or a
