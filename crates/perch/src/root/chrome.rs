@@ -12,7 +12,7 @@ use gpui::{canvas, div, prelude::*, px, Context, IntoElement, SharedString, Wind
 
 use super::{Page, RootView, Toast, ToastAction};
 use crate::browse::Tab;
-use crate::{controls, motion, sidebar, theme};
+use crate::{controls, layout, motion, rail_preview, sidebar, theme};
 
 /// How long a toast stays up: time to read a "went live" and reach for it,
 /// or to take back a forget. Time with the pointer on the stack does not
@@ -200,11 +200,46 @@ impl RootView {
     /// The rail, and everything it needs to know about what is already open,
     /// or nothing when it is not `shown`: folded away, or in fullscreen. See
     /// `RootView::rail_shown`.
+    ///
+    /// Its rows' preview cards (`crate::rail_preview`) only while the pointer
+    /// is in the window, no modal is over the rail (the modal rule,
+    /// [`modal_open`](Self::modal_open)), and the window has room for a
+    /// card beside the rail and under the title bar
+    /// ([`sidebar::previews_fit`]): the rows' probes see through anything
+    /// drawn over them, and a card is drawn over everything. Otherwise the
+    /// row the pointer was on is forgotten, since no probe is there to say
+    /// it was left. So is a row that is no longer drawn at all — a stream
+    /// that ended at a poll, a channel moved to another group — whose probe
+    /// went with it: held on to, it would count as a card still up, and
+    /// let the next row's card skip its wait.
     pub(super) fn follows_rail(
         &mut self,
         shown: bool,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
+        let viewport = window.viewport_size();
+        let previews = shown
+            && window.is_window_hovered()
+            && !self.modal_open()
+            && sidebar::previews_fit(
+                f32::from(viewport.width),
+                f32::from(viewport.height),
+                layout::title_bar_height(window.is_fullscreen()),
+            );
+        let gone = self.rail_preview.pointed().is_some_and(|key| {
+            !sidebar::groups(
+                &self.follows,
+                &self.offline,
+                &self.recommended.shown,
+                &self.settings.pinned,
+                self.follows_loaded,
+            )
+            .draws_live_row(key)
+        });
+        if !previews || gone {
+            self.rail_preview.clear();
+        }
         // Not drawn, the rail holds nothing still; see `hold_live`.
         if !shown {
             self.hold_live(super::follows::LiveList::Rail, false, cx);
@@ -230,10 +265,21 @@ impl RootView {
                 can_add: self.can_add(),
                 follows_loaded: self.follows_loaded,
                 offline_open: self.rail_offline_open,
+                previews,
+                preview_shown: self.rail_preview.shown(Instant::now()),
+                preview_pointed: self.rail_preview.pointed(),
             },
             &self.cache,
             &self.rail_scroll,
-            |this: &mut RootView, action, window, cx| this.on_browse_action(action, window, cx),
+            // A press on the rail puts away the card of the row it was on:
+            // the row has done what it was pressed for.
+            |this: &mut RootView, action, window, cx| {
+                if this.rail_preview.dismiss() {
+                    cx.notify();
+                }
+                this.on_browse_action(action, window, cx)
+            },
+            |this: &mut RootView, key, pointed, cx| this.point_rail_row(&key, pointed, cx),
             // For this session only; see the field.
             |this: &mut RootView, _window, cx| {
                 this.rail_offline_open = !this.rail_offline_open;
@@ -241,6 +287,48 @@ impl RootView {
             },
             cx,
         ))
+    }
+
+    /// A live rail row's probe says whether the pointer is on it: the card
+    /// comes up, goes, or starts its wait, and a timer wakes the rail when
+    /// the wait is over, if the pointer is still on that row. See
+    /// `rail_preview::Preview::point`.
+    ///
+    /// No `cx.notify()` for what changes now: this is heard in prepaint,
+    /// where a notify asks for no frame, and the probe that reported has
+    /// asked for the next one itself (`sidebar::preview_probe`). The
+    /// timer's notify comes from outside drawing, where it does.
+    fn point_rail_row(&mut self, key: &str, pointed: bool, cx: &mut Context<Self>) {
+        match self.rail_preview.point(key, pointed, Instant::now()) {
+            rail_preview::Change::None | rail_preview::Change::Now => {}
+            rail_preview::Change::After(wait) => {
+                let key = key.to_string();
+                cx.spawn(async move |this, cx| {
+                    let mut wait = wait;
+                    loop {
+                        cx.background_executor().timer(wait).await;
+                        // Asked again rather than trusted to the timer: a
+                        // wake a moment early waits out the rest instead of
+                        // leaving the card down for good.
+                        let left = this.update(cx, |this: &mut RootView, cx| {
+                            let left = this
+                                .rail_preview
+                                .wait_left(&key, Instant::now())
+                                .filter(|left| !left.is_zero());
+                            if left.is_none() {
+                                cx.notify();
+                            }
+                            left
+                        });
+                        match left {
+                            Ok(Some(left)) => wait = left,
+                            _ => break,
+                        }
+                    }
+                })
+                .detach();
+            }
+        }
     }
 
     /// One of the shell's controls, wired to a method on this view.

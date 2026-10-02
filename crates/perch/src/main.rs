@@ -41,6 +41,7 @@ mod loudness;
 mod motion;
 mod os_window;
 mod palette;
+mod rail_preview;
 mod recommended;
 mod rewind;
 mod root;

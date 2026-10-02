@@ -660,7 +660,7 @@ pub(crate) enum CardOffers {
 /// The line under a card's title: the game, and after it a note where the
 /// list has one — the guide's recommendations say which channel led to each
 /// ("Like forsen"), as the rail's rows do.
-fn card_meta(game: &str, note: Option<&str>) -> String {
+pub(crate) fn card_meta(game: &str, note: Option<&str>) -> String {
     match note.filter(|note| !note.is_empty()) {
         Some(note) if game.is_empty() => note.to_string(),
         Some(note) => format!("{game} · {note}"),

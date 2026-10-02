@@ -169,7 +169,8 @@ was opened from, Esc, or a click outside it.
 You can open up to four channels at once — click a card, or the + on a row in
 the rail down the left. The bar across the top of the window holds the button
 that folds the rail away, back and forward, the search box and Settings, on
-either page.
+either page. Rest the pointer on a live channel in the rail for a moment to
+see its picture and title beside it.
 
 
 perch is MIT licensed; see LICENSE. Not affiliated with, endorsed by, or

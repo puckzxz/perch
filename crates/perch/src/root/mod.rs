@@ -101,7 +101,7 @@ use crate::trail::Trail;
 use crate::twitch::TwitchService;
 use crate::video_view::VideoView;
 use crate::watch::{ResizeStart, Slot, StreamState, MAX_PANES};
-use crate::{cpu_log, keys, layout, motion, sidebar, theme, vod, APP_NAME};
+use crate::{cpu_log, keys, layout, motion, rail_preview, sidebar, theme, vod, APP_NAME};
 
 /// Emotes and thumbnails are reproducible, so they live in the platform's
 /// cache directory rather than roaming with settings.
@@ -265,6 +265,11 @@ pub(crate) struct RootView {
     /// list in the app, up to a thousand rows built every frame, and most
     /// evenings nobody is looking for someone who is not on.
     rail_offline_open: bool,
+    /// Which live rail row the pointer is on, and whether its preview card
+    /// is up yet: told by the rows' probes (`RootView::point_rail_row`),
+    /// put away by a press on the rail, forgotten whenever the rail is not
+    /// drawn or something is over it. See `crate::rail_preview`.
+    rail_preview: rail_preview::Preview,
     /// The rail's Recommended group: the asks out, the answers in, and the
     /// rows shown. For this session only; see `crate::recommended`.
     recommended: Recommended,
@@ -521,6 +526,7 @@ impl RootView {
             home_pointed: false,
             guide_pointed: false,
             rail_offline_open: false,
+            rail_preview: rail_preview::Preview::default(),
             recommended: Recommended::default(),
             last_live: LastLive::default(),
             source_rooms: SourceRooms::default(),
@@ -749,7 +755,7 @@ impl Render for RootView {
         // page: it does not fade out and back in with the page, and the probe
         // that holds its order still while it is pointed at has one owner.
         let rail_shown = self.rail_shown(window);
-        let rail = self.follows_rail(rail_shown, cx).map(|rail| {
+        let rail = self.follows_rail(rail_shown, window, cx).map(|rail| {
             self.holding(LiveList::Rail, true, rail, cx)
                 .flex_none()
                 .h_full()

@@ -350,11 +350,13 @@ impl RootView {
             .holding(LiveList::Guide, holds, contents, cx)
             .size_full();
 
-        let owner = cx.entity().downgrade();
+        // A move asks for the frame the probes read it in with
+        // `request_animation_frame`, not a notify, which from prepaint asks
+        // for none (HANDOFF.md, "A notify from a probe asks for no frame").
         let probe = canvas(
             move |bounds, window, cx| {
                 if veil::cover(bounds, window, cx) {
-                    owner.update(cx, |_, cx| cx.notify()).ok();
+                    window.request_animation_frame();
                 }
             },
             |_, _, _, _| {},

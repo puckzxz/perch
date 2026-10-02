@@ -35,13 +35,21 @@
 //! button at the left of the title bar, which is there whether the rail is or
 //! not, and `B`. Fullscreen hides the rail along with the bar, folded or not;
 //! see `layout::rail_shown`.
+//!
+//! A live row the pointer rests on brings up its stream's card beside the
+//! rail, over the page: see `crate::rail_preview`, which says when and what.
+//! The rows measure the pointer for it with probes of their own, as every
+//! hover here is measured, and report to the root, which keeps the state.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use emotes::ImageCache;
-use gpui::{div, img, prelude::*, px, Context, ElementId, ScrollHandle, SharedString, Window};
+use gpui::{
+    anchored, canvas, deferred, div, img, point, prelude::*, px, relative, Context, ElementId,
+    ScrollHandle, SharedString, Window,
+};
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 use settings::channel_key;
 use twitch_api::{Channel, LiveStream};
@@ -49,7 +57,9 @@ use twitch_api::{Channel, LiveStream};
 use crate::assets::Icon;
 use crate::browse::{format_viewers, Action};
 use crate::controls;
+use crate::guide;
 use crate::last_live::LastLive;
+use crate::rail_preview;
 use crate::recommended::Suggestion;
 use crate::theme;
 
@@ -75,6 +85,22 @@ const ROW_GROUP: &str = "rail-row";
 /// Between the live dot and the number it belongs to. Tighter than
 /// [`theme::GAP_TIGHT`], because they are one thing rather than two.
 const GAP_COUNT: f32 = 4.0;
+
+/// From a row's right-hand edge to a preview card's left: the list's own
+/// padding out to the rail's edge, then a gap, so the card stands clear of
+/// the rail's border rather than touching it.
+const PREVIEW_OFFSET: f32 = theme::GAP_TIGHT * 2.0;
+
+/// Whether a window `width` by `height`, under a title bar `title_bar`
+/// tall, has room for a preview card where the rail hangs it: the whole
+/// card to the right of the rail, and its tallest under the bar, a gap
+/// inside the window all round. In a smaller window the snap that keeps
+/// the card inside it would slide it left over the row's pin and `+`, or
+/// lift it over the title bar, so no card shows there at all.
+pub fn previews_fit(width: f32, height: f32, title_bar: f32) -> bool {
+    width >= WIDTH + PREVIEW_OFFSET + rail_preview::PREVIEW_WIDTH + theme::GAP
+        && height >= title_bar + rail_preview::PREVIEW_TALLEST + 2.0 * theme::GAP
+}
 
 /// Everything the rail shows, as the root holds it.
 pub struct Rail<'a> {
@@ -104,6 +130,15 @@ pub struct Rail<'a> {
     pub follows_loaded: bool,
     /// Whether the offline group is unfolded.
     pub offline_open: bool,
+    /// Whether the live rows measure the pointer for their preview cards:
+    /// only while the pointer is in the window and nothing is drawn over
+    /// the rail. See `crate::rail_preview`.
+    pub previews: bool,
+    /// The row whose preview card is up, by its key ([`row_key`]), and the
+    /// row the pointer is on, card or not: `rail_preview::Preview`'s, read
+    /// once for the frame.
+    pub preview_shown: Option<&'a str>,
+    pub preview_pointed: Option<&'a str>,
 }
 
 /// One channel, as the follows lists know it, or as Twitch suggests it.
@@ -158,7 +193,7 @@ impl Row<'_> {
     /// how many are watching; `None` for a channel that is not live. A follow
     /// says what it is playing. A recommendation says why it is offered, in
     /// the accent, which is what tells it from a follow at a glance; what it
-    /// is playing is a click away, and no rail row has a tooltip to carry it.
+    /// is playing is on its preview card (`crate::rail_preview`).
     fn live(&self) -> Option<(&str, gpui::Hsla, u64)> {
         match self {
             Row::Live(stream) => Some((&stream.game_name, theme::text_dim(), stream.viewer_count)),
@@ -205,6 +240,27 @@ pub struct Groups<'a> {
     pub live: Vec<&'a LiveStream>,
     pub recommended: Vec<&'a Suggestion>,
     pub offline: Vec<&'a Channel>,
+}
+
+impl Groups<'_> {
+    /// Whether the live row `key` names ([`row_key`]) is among these: a
+    /// live pin, a live follow or a recommendation. What the root asks of
+    /// the row its preview card follows, since only that row's probe can
+    /// say the pointer left it, and a row that went (the stream ended at a
+    /// poll, or the channel moved group) says nothing at all.
+    pub fn draws_live_row(&self, key: &str) -> bool {
+        self.pinned
+            .iter()
+            .any(|row| row.live().is_some() && row_key(Group::Pinned, row.login()) == key)
+            || self
+                .live
+                .iter()
+                .any(|stream| row_key(Group::Live, &stream.user_login) == key)
+            || self
+                .recommended
+                .iter()
+                .any(|suggestion| row_key(Group::Recommended, &suggestion.channel.login) == key)
+    }
 }
 
 /// Sort the follows, and the recommendations, into the rail's groups.
@@ -284,14 +340,21 @@ enum Group {
 
 impl Group {
     fn row_id(self, login: &str) -> ElementId {
-        let group = match self {
-            Group::Pinned => "pinned",
-            Group::Live => "live",
-            Group::Recommended => "recommended",
-            Group::Offline => "offline",
-        };
-        ElementId::Name(format!("rail-{group}-{login}").into())
+        ElementId::Name(row_key(self, login).into())
     }
+}
+
+/// A row's key: its element id's words, and what its preview card is kept
+/// by (`rail_preview::Preview`), so a channel that moves to another group
+/// starts its wait again rather than bringing a card along.
+fn row_key(group: Group, login: &str) -> String {
+    let group = match group {
+        Group::Pinned => "pinned",
+        Group::Live => "live",
+        Group::Recommended => "recommended",
+        Group::Offline => "offline",
+    };
+    format!("rail-{group}-{login}")
 }
 
 /// One row: avatar and name, and for a live channel what they are playing —
@@ -308,6 +371,11 @@ impl Group {
 /// avatar's height either way, which two lines of text exactly fill, so the
 /// line costs the rail no room. Its face is the one the worker looked up
 /// for it once this session (see `twitch::poll_follows`).
+///
+/// A live row measures the pointer for its preview card and tells
+/// `on_point` when that changes, and draws the card while the rail says it
+/// is up; see [`preview`].
+#[allow(clippy::too_many_arguments)]
 fn row<V: 'static>(
     group: Group,
     channel: Row<'_>,
@@ -315,10 +383,20 @@ fn row<V: 'static>(
     now: DateTime<Utc>,
     cache: &ImageCache,
     on_action: impl Fn(&mut V, Action, &mut Window, &mut Context<V>) + Clone + 'static,
+    on_point: impl Fn(&mut V, String, bool, &mut Context<V>) + Clone + 'static,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
     let live = channel.live();
     let login = channel.login().to_string();
+    let key = row_key(group, &login);
+    let previews = rail.previews && live.is_some();
+    let probe = previews.then(|| {
+        let pointed = rail.preview_pointed == Some(key.as_str());
+        preview_probe(key.clone(), pointed, on_point, cx)
+    });
+    let card = (previews && rail.preview_shown == Some(key.as_str()))
+        .then(|| preview(channel, cache))
+        .flatten();
     // The line under the name: a live row's game or reason, or an offline
     // follow's last time live, in the colour each says it in.
     let about: Option<(SharedString, gpui::Hsla)> = match (live, channel) {
@@ -514,6 +592,86 @@ fn row<V: 'static>(
                     )
                 }),
         )
+        .children(probe)
+        // Hung off the row's right-hand edge, level with its top, and
+        // drawn deferred so the rail's scroller does not clip it; snapped
+        // inside the window, so a row near the foot of the rail lifts its
+        // card rather than losing the end of it. The snap only ever lifts
+        // it: the root shows cards only in a window with room for one
+        // beside the rail and under the title bar ([`previews_fit`]), and
+        // a row the rail's top cuts off shows none (`preview_probe`), so
+        // the card never slides back over the row or up over the bar.
+        .when_some(card, |row, card| {
+            row.child(
+                div().absolute().top_0().left(relative(1.)).child(deferred(
+                    anchored()
+                        .offset(point(px(PREVIEW_OFFSET), px(0.)))
+                        .snap_to_window_with_margin(px(theme::GAP))
+                        .child(card),
+                )),
+            )
+        })
+}
+
+/// What a live row's card shows: a follow's stream as the follows poll has
+/// it, or a recommendation drawn as the guide draws one, with the reason it
+/// is offered after its game. Nothing for a row that is not live.
+fn preview(channel: Row<'_>, cache: &ImageCache) -> Option<gpui::AnyElement> {
+    match channel {
+        Row::Live(stream) => Some(rail_preview::card(stream, None, cache)),
+        Row::Recommended(suggestion) => Some(rail_preview::card(
+            &guide::as_stream(&suggestion.channel),
+            Some(&suggestion.reason),
+            cache,
+        )),
+        Row::Offline(_) | Row::Unknown(_) => None,
+    }
+}
+
+/// The probe a live row measures the pointer with for its preview card: a
+/// `canvas`, which inserts no hitbox, so it takes nothing from the row or
+/// its controls, reading the pointer against the part of the row the
+/// rail's scroller shows — a row half scrolled out from under the rail's
+/// top does not count the pointer above the rail as its own — while the
+/// pointer is in the window. It tells `on_point` only when the answer
+/// differs from what the root held when the rail was drawn (`pointed`), so
+/// a rail of rows nobody is pointing at says nothing at all.
+///
+/// A row the rail's top cuts off counts as not pointed at: its card hangs
+/// from the row's top, which is then up under the title bar, and the card
+/// would be drawn over the bar's arrows and search box.
+///
+/// A report asks for the next frame itself (`request_animation_frame`):
+/// it comes from prepaint, where a `cx.notify()` marks the view dirty but
+/// asks for no frame (HANDOFF.md, "A notify from a probe asks for no
+/// frame"), and this frame's card was settled in `render` from what the
+/// root held before. Without it a card stayed up over the page after the
+/// pointer left its row, until something else happened to draw.
+fn preview_probe<V: 'static>(
+    key: String,
+    pointed: bool,
+    on_point: impl Fn(&mut V, String, bool, &mut Context<V>) + 'static,
+    cx: &mut Context<V>,
+) -> impl IntoElement {
+    let owner = cx.entity().downgrade();
+    canvas(
+        move |bounds, window, cx| {
+            let clip = window.content_mask().bounds;
+            let shown = bounds.intersect(&clip);
+            let now = window.is_window_hovered()
+                && bounds.top() >= clip.top()
+                && shown.contains(&window.mouse_position());
+            if now != pointed {
+                window.request_animation_frame();
+                owner
+                    .update(cx, |view, cx| on_point(view, key, now, cx))
+                    .ok();
+            }
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .size_full()
 }
 
 /// A group's name over its rows. `first` is the top of the list, which needs
@@ -532,6 +690,7 @@ pub fn rail<V: 'static>(
     cache: &Arc<ImageCache>,
     scroll: &ScrollHandle,
     on_action: impl Fn(&mut V, Action, &mut Window, &mut Context<V>) + Clone + 'static,
+    on_point: impl Fn(&mut V, String, bool, &mut Context<V>) + Clone + 'static,
     on_fold: impl Fn(&mut V, &mut Window, &mut Context<V>) + 'static,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
@@ -568,6 +727,7 @@ pub fn rail<V: 'static>(
                 now,
                 cache,
                 on_action.clone(),
+                on_point.clone(),
                 cx,
             ));
         }
@@ -582,6 +742,7 @@ pub fn rail<V: 'static>(
             now,
             cache,
             on_action.clone(),
+            on_point.clone(),
             cx,
         ));
     }
@@ -620,6 +781,7 @@ pub fn rail<V: 'static>(
                 now,
                 cache,
                 on_action.clone(),
+                on_point.clone(),
                 cx,
             ));
         }
@@ -645,6 +807,7 @@ pub fn rail<V: 'static>(
                     now,
                     cache,
                     on_action.clone(),
+                    on_point.clone(),
                     cx,
                 ));
             }
@@ -910,5 +1073,43 @@ mod tests {
         assert_eq!(groups.offline.len(), 2);
         assert_eq!(groups.offline, [&offline[0], &offline[2]]);
         assert_eq!(groups.pinned, [Row::Offline(&offline[1])]);
+    }
+
+    /// The live rows a preview card can follow, by the key it keeps them
+    /// by: a live pin, a live follow, a recommendation. An offline pin is
+    /// not one, a row keeps its group in its key, and a stream that ended
+    /// at a poll is no longer drawn, so the root forgets the row it was.
+    #[test]
+    fn a_card_follows_only_live_rows_still_drawn() {
+        let follows = [stream("alice", 300), stream("bob", 20)];
+        let offline = [channel("carol")];
+        let recommended = [suggestion("dave", 5)];
+        let pinned = pins(&["bob", "carol"]);
+
+        let drawn = groups(&follows, &offline, &recommended, &pinned, true);
+        assert!(drawn.draws_live_row(&row_key(Group::Live, "alice")));
+        assert!(drawn.draws_live_row(&row_key(Group::Pinned, "bob")));
+        assert!(drawn.draws_live_row(&row_key(Group::Recommended, "dave")));
+        assert!(!drawn.draws_live_row(&row_key(Group::Live, "bob")));
+        assert!(!drawn.draws_live_row(&row_key(Group::Pinned, "carol")));
+        assert!(!drawn.draws_live_row(&row_key(Group::Offline, "carol")));
+
+        // Alice's stream ends at the next poll, with the pointer on her row.
+        let ended = groups(&follows[1..], &offline, &recommended, &pinned, true);
+        assert!(!ended.draws_live_row(&row_key(Group::Live, "alice")));
+    }
+
+    /// A card shows only where the snap that keeps it in the window would
+    /// not move it back over the rail or up over the title bar.
+    #[test]
+    fn previews_need_room_beside_the_rail_and_under_the_bar() {
+        let wide = WIDTH + PREVIEW_OFFSET + rail_preview::PREVIEW_WIDTH + theme::GAP;
+        let tall = theme::TITLE_BAR_HEIGHT + rail_preview::PREVIEW_TALLEST + 2.0 * theme::GAP;
+        assert!(previews_fit(1600.0, 900.0, theme::TITLE_BAR_HEIGHT));
+        assert!(previews_fit(wide, tall, theme::TITLE_BAR_HEIGHT));
+        assert!(!previews_fit(wide - 1.0, 900.0, theme::TITLE_BAR_HEIGHT));
+        assert!(!previews_fit(1600.0, tall - 1.0, theme::TITLE_BAR_HEIGHT));
+        // Fullscreen has no bar to keep clear of.
+        assert!(previews_fit(1600.0, tall - 1.0, 0.0));
     }
 }

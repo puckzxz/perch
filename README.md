@@ -568,6 +568,14 @@ playing; click anyone else for their channel's page. Offline names get their
 pictures too, asked for once each time Perch starts, and under each name the
 same "Live 3 hours ago" Home shows, where a live row says what is on.
 
+Rest the pointer on a live row for a moment and its card comes up beside the
+rail: the stream's picture with how many are watching and for how long, its
+title and what they are playing — for a recommendation, the title, the game
+and the reason, since Twitch sends no picture with those. It goes when the
+pointer leaves the row, and once one is up, the next row's comes up straight
+away as you move down the list. A window too small to hold the card beside
+the rail shows none, rather than covering the rail or the title bar.
+
 Recommendations start from the channels open in your panes and the ones you
 watched most recently, six at most. For each, Twitch says who else its viewers
 are watching — the suggestions its own website shows in its sidebar, from a
