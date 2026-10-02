@@ -12,6 +12,7 @@ use gpui_component::input::Input;
 use super::follows::LiveList;
 use super::RootView;
 use crate::browse::{Place, Tab};
+use crate::chat_display::ChatDisplay;
 use crate::watch::{NextUp, PaneInfo, Showing, Slot};
 use crate::{browse, channel_page, layout, theme, watch};
 
@@ -190,6 +191,17 @@ impl RootView {
             .map(|index| &self.slots[index])
             .collect();
         let grid = self.grid(window);
+        // A chat options menu whose pane is not drawn on a chat panel any
+        // more — closed, its chat hidden by `C`, or another pane given the
+        // page — is closed, rather than left to come back up with the panel.
+        let menu_drawn = self.chat_menu.as_deref().is_none_or(|open| {
+            slots
+                .iter()
+                .any(|slot| slot.key == open && watch::placement(slot) == watch::Placement::Panel)
+        });
+        if !menu_drawn {
+            self.chat_menu = None;
+        }
         // Resolved here, for the panes on screen only: `live_info` walks
         // every list the app holds, and doing that per pane per frame inside
         // the page would be the same walk four times over. A pane maximized
@@ -217,6 +229,8 @@ impl RootView {
                     looking: slot.archives.waiting(),
                     start_offered: slot.is_live() && self.start_offered(&slot.channel),
                     pop_out_offered: super::pop_out_offered(),
+                    chat_menu: (self.chat_menu.as_deref() == Some(slot.key.as_str()))
+                        .then(|| ChatDisplay::of(&self.settings)),
                 }
             })
             .collect();

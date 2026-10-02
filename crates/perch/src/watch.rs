@@ -15,7 +15,11 @@
 //! press that makes it the active one, a recording to play in its place, its
 //! header dropped on another pane to swap the two — is a [`PaneAction`],
 //! addressed by the pane's key.
+//!
+//! A pane with a chat panel also offers how every chat is drawn, from an icon
+//! in its header: `chat_menu`.
 
+mod chat_menu;
 mod header;
 mod status;
 
@@ -33,10 +37,12 @@ use streamlink::StreamSupervisor;
 use twitch_api::recommend::SimilarChannel;
 use twitch_api::{LiveStream, Video};
 
+pub use self::chat_menu::toggled as chat_menu_toggled;
 pub use self::header::Placement;
 pub use self::status::{showing, Showing};
 
 use crate::chat::ChatView;
+use crate::chat_display::ChatDisplay;
 use crate::layout;
 use crate::motion;
 use crate::rewind::{Moment, Origin, Rewind};
@@ -637,6 +643,10 @@ pub struct PaneInfo<'a> {
     /// (`root::pop_out_offered`): where it is not, the header offers
     /// neither to pop the pane out nor to bring it back.
     pub pop_out_offered: bool,
+    /// What every chat is drawn with, while this pane's chat options menu
+    /// is open (`RootView::chat_menu`), for the menu to mark what is chosen;
+    /// `None` while it is not. Drawn only on a pane with a chat panel.
+    pub chat_menu: Option<ChatDisplay>,
 }
 
 /// A recording a stopped pane offers, and where it was left if it has been
@@ -714,6 +724,17 @@ pub enum PaneAction {
     /// in the pane's place, cold, with its live chat; see
     /// `RootView::back_to_live`.
     BackToLive,
+    /// Open its chat options menu, or close it when it is the one open: the
+    /// icon in its header, beside pop out and close, on a pane with a chat
+    /// panel. One is open at a time, across every pane; see
+    /// `chat_menu::toggled`.
+    ToggleChatMenu,
+    /// Close the chat options menu: a press anywhere but the icon that opened
+    /// it, a row of the menu included, since rows act on the press.
+    CloseChatMenu,
+    /// Draw every chat this way, and remember it: a row of the chat options
+    /// menu. Every chat's, not the pane's: see `RootView::set_chat_display`.
+    SetChatDisplay(ChatDisplay),
 }
 
 /// How every pane in the current grid is arranged. Identical for all of them,
@@ -985,6 +1006,13 @@ fn pane<V: 'static>(
         Placement::Panel => (Some(header), None),
         Placement::OverPicture => (None, Some(header)),
     };
+    // The chat options menu, while it is open on this pane: over the top of
+    // its chat, under the header that opened it. Only with a chat panel,
+    // which is the only place the header offers it.
+    let chat_menu = info
+        .chat_menu
+        .filter(|_| placement == Placement::Panel)
+        .map(|display| chat_menu::menu(&slot.key, display, on_pane.clone(), cx));
 
     // Where the pointer actually is, rather than what `on_hover` claims while
     // something in the window is being dragged. The listener below only exists
@@ -1160,12 +1188,16 @@ fn pane<V: 'static>(
         // rendition, and stayed blank. A layer takes no part in measuring
         // the box it is in, and is laid out once, in a box already sized.
         // See HANDOFF, "A view flowed into a flex item".
+        //
+        // The chat options menu is a layer over the same box, after chat so
+        // it is drawn over it.
         .child(
             div()
                 .flex_1()
                 .min_h_0()
                 .relative()
-                .child(div().absolute().inset_0().child(chat_or_why(slot))),
+                .child(div().absolute().inset_0().child(chat_or_why(slot)))
+                .children(chat_menu),
         );
 
     cell.map(|cell| {

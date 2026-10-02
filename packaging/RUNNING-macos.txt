@@ -142,6 +142,11 @@ and ⇧Right swap the pane you are on with the one before or after it,
 counting the way 1 to 4 do. Esc lets go of a drag. The order lasts until
 Perch closes.
 
+The icon with the two Ts, in a pane's header when it sits on chat, opens
+the chat options: the text size, Small to Larger, and Time on every
+message, which puts the time at the start of every message instead of once
+a minute. They apply to every chat and are remembered.
+
 Back and forward go through the pages you have been on, the way a browser
 does. The mouse's side buttons and the arrows in the bar across the top do
 the same.

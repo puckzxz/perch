@@ -22,7 +22,7 @@ use gpui::{
 use super::RootView;
 use crate::theme;
 use crate::video_view::{self, ChatButton, VideoEvent};
-use crate::watch::{placement, PaneAction, Placement};
+use crate::watch::{self, placement, PaneAction, Placement};
 
 impl RootView {
     /// A pane's control, or a press on the pane, for the pane `key` names.
@@ -42,6 +42,17 @@ impl RootView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A press somewhere else while the chat options menu is open, heard
+        // in the capture phase by the menu's anchor: not a press on the pane,
+        // so it takes neither the keys nor anything else, and closes the menu
+        // whether or not the pane that opened it is still there. Whatever the
+        // press was on still hears it.
+        if matches!(action, PaneAction::CloseChatMenu) {
+            if self.chat_menu.take().is_some() {
+                cx.notify();
+            }
+            return;
+        }
         self.focus.focus(window);
         let Some(index) = self.slot_index(key) else {
             return;
@@ -106,6 +117,23 @@ impl RootView {
             // And back from it: the channel live again, in the recording's
             // place; see `rewind`.
             PaneAction::BackToLive => self.back_to_live(index, window, cx),
+            // The icon in its header: this pane's chat options, or closed
+            // again; one pane's at a time.
+            PaneAction::ToggleChatMenu => {
+                self.chat_menu = watch::chat_menu_toggled(self.chat_menu.as_deref(), key);
+                cx.notify();
+            }
+            // Answered above, before anything else.
+            PaneAction::CloseChatMenu => {}
+            // A row of the menu, which acts on the press and closed the menu
+            // with it. The rest of the press's run is heard by nothing: it
+            // would land on whatever the closed menu left under the pointer,
+            // a link in chat among them (`run_guard`).
+            PaneAction::SetChatDisplay(display) => {
+                self.take_rest_of_run();
+                self.chat_menu = None;
+                self.set_chat_display(display, cx);
+            }
         }
     }
 

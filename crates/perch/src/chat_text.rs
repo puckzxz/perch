@@ -172,12 +172,26 @@ pub fn classify(word: &str) -> Word<'_> {
     }
 }
 
-/// The most characters one piece of a word is drawn as; see [`pieces`].
+/// The most characters one piece of a word is drawn as at body size
+/// (`theme::TEXT_BODY`); see [`pieces`], and [`piece_chars`] for the other
+/// text sizes.
 ///
 /// Sixteen of the widest glyphs at body size come to about 190 pixels, inside
 /// the narrowest chat there is (`theme::CHAT_WIDTH_MIN`, 260, less the row's
 /// padding on both sides), so a piece always fits on a line of its own.
 pub const PIECE_CHARS: usize = 16;
+
+/// The most characters one piece of a word is drawn as when chat's text is
+/// `text_size` pixels: [`PIECE_CHARS`], scaled down as the glyphs get wider
+/// and rounded down, so a piece is never wider than the 190-odd pixels that
+/// sixteen take at body size, and still fits the narrowest chat on a line of
+/// its own. A glyph's width is in proportion to the text size, so this is
+/// the same budget in pixels at every size: 16 at body size, 14 at 14.5, 13
+/// at 16, and 17 at 12, where the glyphs are narrower. Never less than one.
+pub fn piece_chars(text_size: f32) -> usize {
+    let scaled = PIECE_CHARS as f32 * crate::theme::TEXT_BODY / text_size;
+    (scaled.floor() as usize).max(1)
+}
 
 /// `word` cut into runs of at most `max` characters, in order, which put
 /// together give the word back.
@@ -266,6 +280,23 @@ mod tests {
             .iter()
             .take(steam.len() - 1)
             .all(|piece| { piece.ends_with(['/', '.', '?', '&', '=', '-', '_', '#', ':']) }));
+    }
+
+    /// The budget is sixteen at body size, and the same width in pixels at
+    /// every other: fewer characters as the text grows, never more pixels
+    /// than sixteen take at body size.
+    #[test]
+    fn the_piece_budget_follows_the_text_size() {
+        use crate::theme::TEXT_BODY;
+        assert_eq!(piece_chars(TEXT_BODY), PIECE_CHARS);
+        assert_eq!(piece_chars(12.0), 17);
+        assert_eq!(piece_chars(14.5), 14);
+        assert_eq!(piece_chars(16.0), 13);
+        let widest = PIECE_CHARS as f32 * TEXT_BODY;
+        for size in [10.0, 12.0, 13.0, 14.5, 16.0, 20.0, 32.0] {
+            assert!(piece_chars(size) as f32 * size <= widest, "{size}");
+        }
+        assert_eq!(piece_chars(1_000.0), 1, "never no characters at all");
     }
 
     /// A run with nowhere to break is cut at the limit.

@@ -73,6 +73,56 @@ impl QualityPreference {
     }
 }
 
+/// How big chat's text is drawn, in four steps; see
+/// [`Settings::chat_text_size`]. Names, not pixels: what each step comes to
+/// is the app's to say (`perch`'s `chat_display`), so the file never holds a
+/// number a later build would have to second-guess.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChatTextSize {
+    Small,
+    /// The size chat always was.
+    #[default]
+    Default,
+    Large,
+    Larger,
+}
+
+impl ChatTextSize {
+    /// Every step, smallest first: the order the menu lists them in.
+    pub const ALL: [ChatTextSize; 4] = [
+        ChatTextSize::Small,
+        ChatTextSize::Default,
+        ChatTextSize::Large,
+        ChatTextSize::Larger,
+    ];
+}
+
+/// Read [`Settings::chat_text_size`], taking anything that is not one of the
+/// steps above as [`ChatTextSize::Default`] rather than failing the file.
+///
+/// A plain enum would refuse a name it does not know, and one bad field
+/// fails the whole file: a step a later build adds, read by this one, or a
+/// hand edit that wrote `"Larger"` with the capital the menu shows. The app
+/// would then run on defaults, and every save after would fail too, since
+/// saving reads the file first (`save_preferences`). The module promises a
+/// file from a newer build still loads, so this one field gives way instead.
+fn lenient_text_size<'de, D>(deserializer: D) -> Result<ChatTextSize, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Read {
+        Known(ChatTextSize),
+        Unknown(serde::de::IgnoredAny),
+    }
+    Ok(match Read::deserialize(deserializer)? {
+        Read::Known(size) => size,
+        Read::Unknown(_) => ChatTextSize::Default,
+    })
+}
+
 /// Twitch credentials.
 ///
 /// Two unrelated tokens, which is confusing enough to be worth spelling out:
@@ -282,6 +332,19 @@ pub struct Settings {
     /// which channels are being watched. That is the reason it is a setting
     /// rather than a constant.
     pub chat_history: usize,
+    /// How big every chat's text is drawn: the chat options menu on a pane's
+    /// header. One answer for every chat rather than one per pane or per
+    /// channel, because it is about the reader's eyes and the screen, which
+    /// are the same whichever channel is on. A file from before it existed
+    /// loads as [`ChatTextSize::Default`], which is the size chat always was,
+    /// and so does a step this build does not know ([`lenient_text_size`]).
+    #[serde(default, deserialize_with = "lenient_text_size")]
+    pub chat_text_size: ChatTextSize,
+    /// Whether every chat message carries its own time at its start, in place
+    /// of the once-a-minute breaks: the same menu's toggle. Off by default,
+    /// and for a file from before it existed, which is how chat always was.
+    #[serde(default)]
+    pub chat_message_times: bool,
     /// Whether what is playing keeps playing, in the mini player in the
     /// corner of the browse page, while you browse. The field keeps its
     /// one-word name, which is what settings files already on disk say.
@@ -337,6 +400,8 @@ impl Default for Settings {
             // opens with something, without the pane starting scrolled through
             // an hour of backlog nobody asked for.
             chat_history: 100,
+            chat_text_size: ChatTextSize::Default,
+            chat_message_times: false,
             video_share: 0.0,
             miniplayer: true,
             sidebar_collapsed: false,
@@ -941,8 +1006,47 @@ mod tests {
         assert_eq!(settings.quality, QualityPreference::Auto);
         assert_eq!(settings.chat_width, 340.0);
         assert_eq!(settings.chat_history, 100);
+        assert_eq!(settings.chat_text_size, ChatTextSize::Default);
+        assert!(!settings.chat_message_times);
         assert!(settings.channel_prefs.is_empty());
         assert!(settings.pinned.is_empty());
+    }
+
+    /// The chat options go to disk by name and come back as they were set.
+    #[test]
+    fn chat_display_options_round_trip_by_name() {
+        let path = temp_file("chat-display");
+        let _ = std::fs::remove_file(&path);
+        let settings = Settings {
+            chat_text_size: ChatTextSize::Larger,
+            chat_message_times: true,
+            ..Settings::default()
+        };
+        settings.save(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains(r#""chat_text_size": "larger""#), "got {text}");
+        let loaded = Settings::load(&path).unwrap();
+        assert_eq!(loaded.chat_text_size, ChatTextSize::Larger);
+        assert!(loaded.chat_message_times);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A text size this build does not know, from a newer build or a hand
+    /// edit, loads as Default and takes nothing else in the file down with
+    /// it.
+    #[test]
+    fn an_unknown_chat_text_size_loads_as_default() {
+        for size in [r#""largest""#, r#""Larger""#, "18", "null"] {
+            let text = format!(
+                r#"{{"volume": 55, "chat_text_size": {size}, "chat_message_times": true}}"#
+            );
+            let settings: Settings = serde_json::from_str(&text).unwrap();
+            assert_eq!(settings.chat_text_size, ChatTextSize::Default, "{size}");
+            assert_eq!(settings.volume, 55, "{size}");
+            assert!(settings.chat_message_times, "{size}");
+        }
+        let known: Settings = serde_json::from_str(r#"{"chat_text_size": "small"}"#).unwrap();
+        assert_eq!(known.chat_text_size, ChatTextSize::Small);
     }
 
     /// Pins go to disk and come back in the order they were made, which is
@@ -1202,6 +1306,8 @@ mod tests {
             maximized: false,
         });
         live.sidebar_collapsed = true;
+        live.chat_text_size = ChatTextSize::Large;
+        live.chat_message_times = true;
         live.set_volume_for("forsen", 42);
         live.credentials.oauth = Some(a_sign_in());
 
@@ -1228,6 +1334,15 @@ mod tests {
             "saving the sheet moved the window"
         );
         assert!(live.sidebar_collapsed, "saving the sheet unfolded the rail");
+        assert_eq!(
+            live.chat_text_size,
+            ChatTextSize::Large,
+            "saving the sheet reset chat's text size"
+        );
+        assert!(
+            live.chat_message_times,
+            "saving the sheet took the times off chat"
+        );
         assert_eq!(live.volume_for("forsen"), 42);
         assert_eq!(live.volume, before.volume);
         assert!(

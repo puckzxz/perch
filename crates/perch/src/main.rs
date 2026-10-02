@@ -19,6 +19,7 @@ mod assets;
 mod browse;
 mod channel_page;
 mod chat;
+mod chat_display;
 mod chat_text;
 mod clock;
 mod controls;

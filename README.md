@@ -172,7 +172,8 @@ the app.
 Every pane has an × in its header, a lone one included, and like the bar's
 icons it names its key, `Ctrl+W`; closing the last pane goes back to the
 browse page. On Windows a playing pane's header also has the icon that pops
-it out into a window of its own, and brings it back, `P` (see below).
+it out into a window of its own, and brings it back, `P` (see below). A
+header sitting on chat also has the chat options (see [Chat](#chat)).
 
 A pane's header says `muted` or `paused` when either is true, so a channel
 that opens silent says so without the pointer having to be on the video. With
@@ -359,7 +360,13 @@ it — see [Past broadcasts](#past-broadcasts).
 The time is shown once a minute, as a break between messages, rather than once
 per row — in a channel where fifteen messages share a minute, a column of
 identical timestamps is not a ruler. It is written the way your system writes a
-time, twelve-hour or twenty-four, in your language. The channel's name in the pane header opens
+time, twelve-hour or twenty-four, in your language.
+
+The icon with the two Ts in a pane's header, beside its pop-out and its ×,
+opens the chat options: the text size — **Small**, **Default**, **Large** or
+**Larger** — and **Time on every message**, which starts every message with
+its time in place of the once-a-minute breaks. They apply to every chat at
+once and are remembered. The channel's name in the pane header opens
 it on twitch.tv, which is the way out of a chat you cannot type in — and so
 do **Open on twitch.tv** under the bar's **More** and the palette's `Open …
 on twitch.tv`. On a live pane the site plays the stream as well, with its

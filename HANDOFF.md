@@ -85,7 +85,8 @@ App modules:
 | `history_page.rs` | the history tab, its entry card and its test for unfinished (both reused by Home), and the one translation between a video and a history entry |
 | `home.rs` | Home, the tab the app opens on: live follows, Continue watching (one row of the history), offline follows by when last watched, each saying when it was last live; the filter over all three, and the counts on the headings after it (`counted`) |
 | `watch.rs` | the grid of panes; `Slot` lives here, made by `Slot::new`, with `PendingStart`, a start of its stream resolving beside the picture, and `PaneAction`, everything a pane asks of the root; the band a header rides over the picture on, and when it is up (`Slot::point`, `band_wanted`, tested); the layer a dragged header is dropped on (`drop_layer`, `PaneDrag`) |
-| `watch/header.rs` | a pane's header — name, numbers, what is on, `muted`/`paused`, the pop-out icon that turns into Bring back, and the × — each icon naming its key — the handle a pane is dragged by onto another, and `Placement`, the one rule for where it goes: the chat panel, or over the picture with no chat on screen (tested) |
+| `watch/header.rs` | a pane's header — name, numbers, what is on, `muted`/`paused`, the chat options icon on a header that sits on chat, the pop-out icon that turns into Bring back, and the × — each icon naming its key — the handle a pane is dragged by onto another, and `Placement`, the one rule for where it goes: the chat panel, or over the picture with no chat on screen (tested) |
+| `watch/chat_menu.rs` | a pane's chat options menu, hung over its chat: the text sizes and `Time on every message` (with its state in words), which pane's is open (`toggled`, one at a time), rows that act on the press (tested) |
 | `watch/status.rs` | a pane with no picture: `Showing`, the one reading of its state that the pane's sentence and the mini player's word both come from, and the screen drawn from it under the player — a starting pane's poster, a stopped one's next steps and what room it has for them (`next_up_room`), and `Elsewhere`, a pane whose picture is in a window of its own, with `Bring back` (tested) |
 | `layout.rs` | derives grid shape from window aspect, as `Grid::of`, the one grid the watch page, the divider drag and each pane's quality read; `quality_height`, the height a pane asks a rendition for; the page's `Body`, the title bar's height and drag edge, and the mini player's tiles, how far in it floats clear of the scrollbar, and the `Room` a browse list leaves for it; where a pop-out opens, stacked clear of where the open ones really are (`pop_out_bounds`) (pure, tested) |
 | `video_view.rs` | the player element: its sound, its hover, the picture; drawn as a pane, a mini-player tile, in a pop-out or not at all while another pane is maximized (`stage::Place`), moved between them only by `set_place`, and belonging to no window |
@@ -97,7 +98,8 @@ App modules:
 | `rewind.rs` | rewinding a live pane, worked out: whether a timeline is offered (`span`), where a press lands (`pressed_at`, never within `EDGE_SECS` of the edge), the archive of the broadcast going on now (`archive_for`), where in it a moment is (`position_in`), the ask and the press waiting on it (`Rewind`), and whether a recording is the archive of the broadcast on now (`live_now`), weighed against what the pane knows of where it came from (`Origin`), which offers the way back to live (`back_to_live`) (pure, tested) |
 | `video.rs` | render thread; owns the mpv `Player` |
 | `vod.rs` | positions a recording by rewriting its playlist; the keeper for one still growing |
-| `chat.rs` | chat pane: rows, emotes, scrollback |
+| `chat.rs` | chat pane: rows, emotes, scrollback, drawn at the chat display options' size and with or without a time on every row (`set_display`) |
+| `chat_display.rs` | how every chat is drawn: `ChatDisplay`, the text-size steps, `Metrics::of` (line, emote, padding and piece budget from the size) and `draws_time_break` (pure, tested) |
 | `chat_text.rs` | what a word in a message is — link, mention or plain (pure, tested) |
 | `settings_view.rs` | settings sheet |
 | `twitch.rs` | the worker: sign-in, follows polling, browse requests, a stopped pane's ask for its channel's past broadcasts (which a live pane's rewind rides too), the rail's anonymous ask for channels like the ones watched (`Request::Recommend`), and the anonymous ask for when the offline follows were last live (`Request::LastLive`), both answered ahead of the session's upkeep |
@@ -1840,13 +1842,18 @@ header rests over it. The split:
 - **Pane header**, one per pane (`watch/header.rs`): a live dot *when the pane
   is actually showing a picture*, the channel name — which opens twitch.tv,
   the way out of a chat that is read-only by design — viewer count, uptime,
-  `muted` and `paused`, and at the end of a right-hand cluster two icons:
-  where the pop-out is offered (`root::pop_out_offered`), out into a window
-  of its own on a playing pane and `Bring back` on a popped one
+  `muted` and `paused`, and at the end of a right-hand cluster its icons. On a
+  header sitting on a chat panel, and nowhere else, first the chat options
+  (`Icon::ChatOptions`, a large T and a small one), which open the menu that
+  sets how every chat is drawn (see "Chat display options" under Chat); it is
+  the menu's anchor, as the bar's cluster is the bar's menus', its id follows
+  whether the menu is open, and it gives no tooltip while it is. Then, where
+  the pop-out is offered (`root::pop_out_offered`), out into a window of its
+  own on a playing pane and `Bring back` on a popped one
   (`header::PopOutButton`), both naming `P` through `keys::Hint::PopOut` and
-  each with its own id, so a tooltip never outlives the press that changed
-  it; then the pane's ×, a `Destructive` icon whose tooltip names `Ctrl+W`
-  through `keys::Hint::Close`. With more than one pane its bottom border
+  each with its own id, so a tooltip never outlives the press that changed it;
+  then the pane's ×, a `Destructive` icon whose tooltip names `Ctrl+W` through
+  `keys::Hint::Close`. With more than one pane its bottom border
   marks the one the keyboard is talking to, and the whole header is a
   handle: dragged onto another pane, the two swap places
   (`RootView::move_pane`; see the GPUI traps and Keyboard). Under that row,
@@ -2589,7 +2596,9 @@ consecutive `15:27`s standing in for a ruler — and stamping only the rows that
 say something new leaves the gutter empty for most of them, which is 11% of a
 300px pane reserved for nothing. `ChatView::time_break` draws the time and a
 rule above the first row of each minute instead, and the rows get their width
-back.
+back. `Time on every message` in the chat options puts a stamp at the start
+of every row instead, for whoever wants it, and takes the breaks away; see
+"Chat display options" below.
 
 **An event row's body is wrapped in a `flex_row`**, and that is load-bearing. A
 `message_line` is a `flex_wrap` row; dropped straight into the event's
@@ -2622,8 +2631,11 @@ words both. Punctuation is split off the ends so a trailing comma is neither
 underlined nor sent to the browser.
 
 **No word shrinks; a long one is drawn in pieces.** A word longer than
-`chat_text::PIECE_CHARS` (16) — a long URL, in practice, or a wall of one
-letter — is cut by `chat_text::pieces` into runs short enough to fit the
+the piece budget — `chat_text::PIECE_CHARS` (16) at body size, and
+`chat_text::piece_chars` at the others, which scales it down as the text
+grows so a piece is never wider in pixels than sixteen are at body size (14
+at 14.5px, 13 at 16px, 17 at 12px) — a long URL, in practice, or a wall of
+one letter — is cut by `chat_text::pieces` into runs short enough to fit the
 narrowest chat on a line of their own, drawn edge to edge, so `flex_wrap`
 breaks the line between pieces. A link is cut just after its separators (`/`,
 `.`, `?`, `&`, `=`, `-`, `_`, `#`, `:`), the way it reads, every piece opens it,
@@ -2653,7 +2665,54 @@ leaving mentions alone.
 
 **Emotes overhang their line rather than growing it,** so a row with emotes is
 no taller than one without. `ROW_PAD_Y` is what makes that work: the 4.5px of
-overhang at each end of a row has padding to sit in.
+overhang at each end of a row has padding to sit in. At a larger text size
+(below) the emote, its line and so its overhang all scale, and the padding
+scales with them (`Metrics::row_pad_y`, never below `ROW_PAD_Y`) — left at
+5px, a 16px chat's 5.5px overhang would reach into the row next door.
+
+**Chat display options are every chat's, from any pane's header.** The chat
+options icon on a header that sits on a chat panel opens `watch::chat_menu`:
+four text sizes (Small, Default, Large, Larger: 12, 13, 14.5 and 16px body
+text) and `Time on every message`. They are `Settings::chat_text_size` (a
+name on disk, `settings::ChatTextSize`, pixels only in `chat_display`) and
+`Settings::chat_message_times`, both serde-defaulted so an older file loads as
+chat always was, and the settings sheet does not own them (`SheetFields`), so
+saving it keeps them. `Default` is `theme::TEXT_BODY` exactly, and
+`chat_display::Metrics::of` derives everything a row's height is made of from
+the size in one place — the line in `LINE_BODY`'s ratio to `TEXT_BODY`, the
+emote in proportion, the padding, the piece budget — so no part of a row can
+grow without the rest. The root owns the settings and is the one writer
+(`RootView::set_chat_display`); each `ChatView` mirrors them as a
+`ChatDisplay`, handed over when it is made and through `set_display` on every
+change. That has to hand every row back to the list unmeasured, or the list
+goes on laying rows out at their old heights and they overlap: `reset` while
+following live, which also re-arms `measure_all`, and two splices either side
+of the row at the top while scrolled back, which keep the reader on that row
+where `reset` would throw them to the bottom. With the times on, each row
+starts with its stamp in the meta style (`ChatView::row_time`) — inside a
+message's wrapping line, so a wrapped message comes back to the row's edge and
+no gutter returns — and the minute breaks are not drawn. An event's stamp goes
+on its first line only, beside Twitch's sentence or first in a bare
+announcement's body, never in a column beside the whole event: that would
+leave the note under the sentence narrower than the full row the piece budget
+is sized for, and a long run in it would draw a piece wider than its line
+(`chat_display::draws_time_break`). The menu is drawn by `watch::pane` as a
+layer over the pane's chat box, after chat so it is over it, rather than
+hanging from the header like the bar's menus hang from the bar: the header is
+drawn before chat, so anything hung from it would be painted under chat. Its
+anchor is still the header's icon, its rows act on the press, and the root's
+`run_guard` takes the rest of a row's double-click, which would otherwise land
+on a link in the chat under the closed menu. One menu across all panes
+(`RootView::chat_menu`); it closes when its pane stops being drawn on a chat
+panel, on leaving the page, and when its pane leaves however it leaves
+(`retire_slots`, a close from the keys or Stop all included, and
+`replace_slot`), or it would open again by itself the next time that channel
+did. The times row says `On` or `Off` in dim words at its end as well as
+turning the accent, since one row alone has no neighbour to read its colour
+against. The box is `occlude`d over chat, which hides a press on it from the
+root's `track_focus`, so it hands the keys back by hand as the bar's menus do
+(`VideoView::return_keys`): a press anywhere on it, the heading and the rule
+included, activates its pane in the capture phase, which focuses the root.
 
 **Between two *wrapped* lines of one message there is no padding at all** — they
 sit exactly `LINE_BODY` apart — so an emote on the second line paints straight

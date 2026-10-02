@@ -49,7 +49,7 @@ macro_rules! icon {
 /// Anything not on this list is answered `None`, which is exactly what the app
 /// did for all of them until now — so an icon nobody drew degrades to the
 /// blank it already was rather than to a crash.
-const ICONS: [(&str, &[u8]); 32] = [
+const ICONS: [(&str, &[u8]); 33] = [
     icon!("arrow-left"),
     icon!("arrow-right"),
     icon!("chat"),
@@ -78,6 +78,7 @@ const ICONS: [(&str, &[u8]); 32] = [
     icon!("pop-out"),
     icon!("search"),
     icon!("settings"),
+    icon!("text-size"),
     icon!("volume"),
     icon!("volume-off"),
     icon!("window-maximize"),
@@ -146,6 +147,10 @@ perch_icons! {
     // player's way back, nor fullscreen's corners.
     PaneMaximize => "pane-maximize",
     PaneGrid => "pane-grid",
+    // A pane header's chat options: how big chat's text is drawn, and
+    // whether every message carries its time. Named for the menu it opens,
+    // drawn as the larger of its two options: a large T and a small one.
+    ChatOptions => "text-size",
 }
 
 /// What `Application::new().with_assets(..)` is handed.

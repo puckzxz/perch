@@ -140,7 +140,11 @@ impl RootView {
             .iter()
             .filter_map(|slot| slot.video().cloned())
             .collect();
-        let mut closed = false;
+        // A pane's chat options menu is one of those menus too.
+        let mut closed = self.chat_menu.take().is_some();
+        if closed {
+            cx.notify();
+        }
         for view in videos {
             closed |= view.update(cx, |view, cx| view.close_menu(cx));
         }

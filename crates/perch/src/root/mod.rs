@@ -22,7 +22,7 @@
 //! | `pane_actions` | what a pane asks for, by its key: its controls, and its player's requests; the header a pane key reveals; `run_guard`, which swallows the rest of a double-click whose first press took a player from under the pointer |
 //! | `launches` | what the command line named, at startup and from later launches |
 //! | `history` | what has been watched: noting where each recording got to, resuming there |
-//! | `prefs` | the settings sheet, the divider drag, the rail folding and what is pinned to it |
+//! | `prefs` | the settings sheet, the divider drag, how every chat is drawn, the rail folding and what is pinned to it |
 //! | `recommended` | the rail's Recommended group: when to ask the worker, and what its answer becomes |
 //! | `chrome` | pills, toasts, the rail |
 //! | `mini_player` | what plays on while you browse, in the corner of the page |
@@ -304,6 +304,13 @@ pub(crate) struct RootView {
     /// only, like the order it changes.
     pane_move: Option<String>,
 
+    /// The pane whose chat options menu is open, by key, if one is: one at a
+    /// time across every pane (`watch::chat_menu_toggled`). Opened by the icon
+    /// in a pane's header, closed by a press anywhere else, a row of it
+    /// included, or `Esc`. For the session only, like everything about a
+    /// menu.
+    chat_menu: Option<String>,
+
     /// A divider being dragged: where it started, and the sizes it started
     /// from.
     ///
@@ -490,6 +497,7 @@ impl RootView {
             _focus_lost,
             volume_override: launch.volume,
             pane_move: None,
+            chat_menu: None,
             resize: None,
             palette_input,
             palette_open: false,

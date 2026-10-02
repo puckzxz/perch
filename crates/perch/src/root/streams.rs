@@ -14,6 +14,7 @@ use twitch_api::{LiveStream, Video, VideoKind};
 use super::navigation::Route;
 use super::{Page, RootView};
 use crate::chat::{ChatView, Feed};
+use crate::chat_display::ChatDisplay;
 use crate::rewind::{Origin, Rewind};
 use crate::video::{Playback, PositionHandle, SizeHandle, StartOptions, Stopped, VideoStream};
 use crate::video_view::{self, ChatButton, Qualities, Start, VideoView, Wake};
@@ -176,6 +177,7 @@ impl RootView {
                     history: self.settings.chat_history,
                 },
                 self.cache.clone(),
+                ChatDisplay::of(&self.settings),
                 window,
                 cx,
             )
@@ -277,6 +279,7 @@ impl RootView {
                         position: position.clone(),
                     },
                     self.cache.clone(),
+                    ChatDisplay::of(&self.settings),
                     window,
                     cx,
                 )
@@ -406,6 +409,11 @@ impl RootView {
         let mut slot = make(self, window, cx);
         slot.take_over_from(&self.slots[index]);
         self.slots[index] = slot;
+        // The old pane's chat options menu does not carry over to its new
+        // key, as it does not outlive a pane that leaves (`retire_slots`).
+        if self.chat_menu.as_deref() == Some(key) {
+            self.chat_menu = None;
+        }
         self.stage.rename(key, &new_key);
         self.choose(&new_key, window, cx);
         self.start_stream(new_key, How::Cold, window, cx);
@@ -889,6 +897,9 @@ impl RootView {
     pub(super) fn go_browse(&mut self, cx: &mut Context<Self>) {
         self.record(|this| {
             this.page = Page::Browse;
+            // A pane's chat options menu does not wait on another page to
+            // come back up with it.
+            this.chat_menu = None;
             this.retire_homeless(cx);
             this.restage(cx);
         })
@@ -962,6 +973,20 @@ impl RootView {
         let recording_leaves = self.slots.iter().any(|slot| !slot.is_live() && !keep(slot));
         if recording_leaves && self.note_watching(cx) {
             self.save_history_soon(cx);
+        }
+        // A pane's chat options menu goes with its pane, whichever way it
+        // leaves (a close from the keys or the palette, Stop all), rather
+        // than waiting for a watch page that may not come back to clear it:
+        // left set, it would open again on its own the next time that
+        // channel is opened.
+        if let Some(open) = self.chat_menu.as_deref() {
+            if self
+                .slots
+                .iter()
+                .any(|slot| slot.key == open && !keep(slot))
+            {
+                self.chat_menu = None;
+            }
         }
         self.slots.retain(keep);
         if self.slots.is_empty() {

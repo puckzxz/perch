@@ -19,6 +19,7 @@ use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 
 use twitch_chat::{ChatClient, ChatEvent, ChatMessage, ChatNotice, NoticeKind, Replay};
 
+use crate::chat_display::{self, ChatDisplay, Metrics};
 use crate::chat_text::{self, Kind};
 use crate::controls;
 use crate::motion;
@@ -53,24 +54,6 @@ impl Render for EmoteTooltip {
 /// is a `ChatMessage` and a few `SharedString`s, and only the visible ones are
 /// ever laid out.
 const MAX_MESSAGES: usize = 1_000;
-
-/// Rendered emote height. Twitch's 2.0 assets are around 56px, so this halves
-/// them and keeps them crisp on a HiDPI display.
-///
-/// An emote overhangs its line rather than growing it — see the wrapper in
-/// `message_line` — so at this height it comes within about half a pixel of
-/// the hairline above and below. That is deliberate: shrinking the emote to
-/// buy clearance costs more than the crowding does.
-const EMOTE_HEIGHT: f32 = 28.0;
-
-/// How far an emote hangs past its line, top and bottom.
-///
-/// At the top and bottom of a row this is absorbed by `ROW_PAD_Y`. *Between*
-/// two wrapped lines of the same message there is no padding at all — the lines
-/// sit exactly `LINE_BODY` apart — so an emote on the second line paints over
-/// the descenders of the first, and an emote on the first is painted over in
-/// turn. This is the gap that gives the overhang somewhere to go.
-const EMOTE_OVERHANG: f32 = (EMOTE_HEIGHT - theme::LINE_BODY) / 2.0;
 
 /// Wall-clock time for a row, formatted once on arrival.
 ///
@@ -215,6 +198,11 @@ pub struct ChatView {
     /// [`sync_hold`](Self::sync_hold).
     hold: bool,
     held: Vec<(RowKind, Option<u64>)>,
+    /// How big the text is and whether every message carries its time: the
+    /// root's settings, mirrored here when the pane is made and on every
+    /// change from the chat options menu, through
+    /// [`set_display`](Self::set_display).
+    display: ChatDisplay,
     _link: Link,
     _pump: Task<()>,
     _emote_pump: Task<()>,
@@ -224,6 +212,7 @@ impl ChatView {
     pub fn new(
         feed: Feed,
         cache: Arc<ImageCache>,
+        display: ChatDisplay,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -336,6 +325,7 @@ impl ChatView {
             emote_loader,
             hold: false,
             held: Vec::new(),
+            display,
             _link: link,
             _pump: pump,
             _emote_pump: emote_pump,
@@ -542,6 +532,43 @@ impl ChatView {
         cx.notify();
     }
 
+    /// Draw this chat as `display` says from now on: the chat options menu
+    /// changed it, for every chat at once (`RootView::set_chat_display`).
+    /// Nothing for a chat already drawn that way.
+    ///
+    /// Every row the list has measured is the wrong height after this — a
+    /// text size changes every row, and the times change which rows carry a
+    /// break — and the list goes on trusting a measurement until something
+    /// tells it otherwise, so rows would overlap or leave gaps. So every row
+    /// is handed back to it unmeasured.
+    ///
+    /// Following live, by `reset`, which also runs the measuring pass again
+    /// so the scrollbar's extent is right; it costs one layout of every row,
+    /// which a press in a menu can afford, and the pane is following anyway,
+    /// so the pin `reset` clears is not there to lose. Scrolled back, `reset`
+    /// would throw the reader to the bottom, so the rows go back in two
+    /// splices either side of the row at the top: a splice keeps the scroll
+    /// position on an index outside its range and puts it at the start of
+    /// one inside it, which for the second splice is that same row. The
+    /// reader keeps their place, at the top of that row, and the thumb's
+    /// extent is short until they scroll back through — the trade
+    /// [`follow_live`](Self::follow_live) explains.
+    pub fn set_display(&mut self, display: ChatDisplay, cx: &mut Context<Self>) {
+        if self.display == display {
+            return;
+        }
+        self.display = display;
+        let count = self.rows.len();
+        if self.at_live() {
+            self.list.reset(count);
+        } else {
+            let top = self.list.logical_scroll_top().item_ix.min(count);
+            self.list.splice(0..top, top);
+            self.list.splice(top..count, count - top);
+        }
+        cx.notify();
+    }
+
     /// The frame every row shares.
     ///
     /// One column, not two. There used to be a fixed 34px timestamp gutter down
@@ -551,7 +578,10 @@ impl ChatView {
     /// which is 11% of a 300px chat pane reserved for nothing. The time moved
     /// to [`time_break`] instead, where it is said once per minute and the rows
     /// get their width back.
-    fn row_frame(row: &Row) -> gpui::Div {
+    ///
+    /// Its padding above and below follows the text size, so an emote's
+    /// overhang always has room ([`Metrics::row_pad_y`]).
+    fn row_frame(row: &Row, metrics: &Metrics) -> gpui::Div {
         let wash = row.kind.wash();
         div()
             .w_full()
@@ -559,7 +589,7 @@ impl ChatView {
             .flex_row()
             .items_start()
             .px(px(theme::ROW_PAD_X))
-            .py(px(theme::ROW_PAD_Y))
+            .py(px(metrics.row_pad_y))
             // The stripe is a reading aid for a run of like rows; an event is
             // not one of those, and two washes on one row is mud.
             //
@@ -578,6 +608,10 @@ impl ChatView {
     /// A rule rather than a column: it says the same thing the gutter did — how
     /// long ago this was — using space that is empty anyway, and it reads as a
     /// break in the conversation, which a minute passing in a chat usually is.
+    ///
+    /// Not drawn while every message carries its own time (`row_time`), which
+    /// says the same thing on every row; [`chat_display::draws_time_break`]
+    /// is the rule.
     fn time_break(stamp: SharedString) -> impl IntoElement {
         div()
             .w_full()
@@ -598,18 +632,46 @@ impl ChatView {
             .child(div().flex_1().h(px(1.)).bg(theme::divider()))
     }
 
+    /// A row's own time, at its start, while every message carries one (the
+    /// chat options menu's `Time on every message`): the time break's words
+    /// without its rule, in the same dim meta style, written by the same
+    /// clock (`clock`) so it reads `11:41 PM` or `23:41` as the breaks do.
+    /// It does not scale with the text, as the breaks and notices do not:
+    /// it is the row's supporting information, not what is read.
+    fn row_time(stamp: SharedString) -> gpui::Div {
+        div()
+            .flex_none()
+            .text_size(px(theme::TEXT_META))
+            .text_color(theme::text_dim())
+            .child(stamp)
+    }
+
     fn render_row(&self, index: usize, cx: &mut Context<Self>) -> AnyElement {
         let Some(row) = self.rows.get(index) else {
             return div().into_any_element();
         };
+        let metrics = Metrics::of(self.display.size);
+        // The row's own time, when every row carries one.
+        let time = self
+            .display
+            .times
+            .then(|| Self::row_time(row.stamp.clone()));
 
         // Only when it says something the row above did not. Read from the rows
         // rather than from the list, which only knows about the ones on screen:
         // scrolling a stamp off the top must not make the row below it grow one.
-        let stamped = index == 0 || self.rows[index - 1].stamp != row.stamp;
+        let previous = index
+            .checked_sub(1)
+            .map(|above| self.rows[above].stamp.as_ref());
+        let stamped = chat_display::draws_time_break(previous, &row.stamp, self.display.times);
 
         let body = match &row.kind {
-            RowKind::Notice(text) => Self::row_frame(row)
+            // The time beside the words rather than in them: a notice is one
+            // run of text, not a line of words to wrap with.
+            RowKind::Notice(text) => Self::row_frame(row, &metrics)
+                .when_some(time, |frame, time| {
+                    frame.gap(px(theme::GAP_WORD)).child(time)
+                })
                 .child(
                     div()
                         .flex_1()
@@ -620,11 +682,11 @@ impl ChatView {
                 )
                 .into_any_element(),
 
-            RowKind::Message(message) => Self::row_frame(row)
-                .child(self.message_line(row, message, cx))
+            RowKind::Message(message) => Self::row_frame(row, &metrics)
+                .child(self.message_line(row, message, time, &metrics, cx))
                 .into_any_element(),
 
-            RowKind::Event(notice) => self.render_event(row, notice, cx),
+            RowKind::Event(notice) => self.render_event(row, notice, time, &metrics, cx),
         };
 
         if !stamped {
@@ -647,7 +709,24 @@ impl ChatView {
     /// nothing to format and no `msg-id` to switch on. An announcement has no
     /// sentence at all and is nothing but body, which is why both halves are
     /// optional here.
-    fn render_event(&self, row: &Row, notice: &ChatNotice, cx: &mut Context<Self>) -> AnyElement {
+    ///
+    /// Its `time`, when every row carries one, starts its first line and
+    /// nothing else: beside Twitch's sentence, as a notice's sits beside its
+    /// words, or, for an announcement that is only a body, as the first item
+    /// of that body's wrapping line, as a message's is. Not in a column of
+    /// its own beside the whole event, where it would leave the note under
+    /// the sentence narrower than the full row the piece budget is sized for
+    /// (`chat_text::piece_chars`), so a long unbroken run in it could draw a
+    /// piece wider than its line at the narrowest chat. The note is the same
+    /// event, so it carries no time of its own.
+    fn render_event(
+        &self,
+        row: &Row,
+        notice: &ChatNotice,
+        mut time: Option<gpui::Div>,
+        metrics: &Metrics,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let mut column = div()
             .flex_1()
             .min_w_0()
@@ -655,12 +734,26 @@ impl ChatView {
             .flex_col()
             .gap_y(px(theme::GAP_TIGHT));
 
+        // The time goes to whichever line comes first: the sentence's, or
+        // the body's when there is no sentence.
         if !notice.system.is_empty() {
             column = column.child(
                 div()
-                    .font_weight(theme::weight_label())
-                    .text_color(theme::accent())
-                    .child(SharedString::from(notice.system.clone())),
+                    .w_full()
+                    .flex()
+                    .flex_row()
+                    .items_start()
+                    .when_some(time.take(), |line, time| {
+                        line.gap(px(theme::GAP_WORD)).child(time)
+                    })
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .font_weight(theme::weight_label())
+                            .text_color(theme::accent())
+                            .child(SharedString::from(notice.system.clone())),
+                    ),
             );
         }
         if let Some(body) = &notice.body {
@@ -677,16 +770,18 @@ impl ChatView {
             // carrying a link, came out as a vertical stack of letters. It only
             // ever showed on event rows, because they are the only place a
             // message line is not already a row's child.
-            column = column.child(
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_row()
-                    .child(self.message_line(row, body, cx)),
-            );
+            column = column.child(div().w_full().flex().flex_row().child(self.message_line(
+                row,
+                body,
+                time.take(),
+                metrics,
+                cx,
+            )));
         }
 
-        Self::row_frame(row).child(column).into_any_element()
+        Self::row_frame(row, metrics)
+            .child(column)
+            .into_any_element()
     }
 
     /// One word of message text, styled for whatever it turned out to be, as
@@ -696,9 +791,11 @@ impl ChatView {
     /// is neither underlined nor sent to the browser, and it rides with the
     /// piece it touches, so it never wraps onto a line of its own.
     ///
-    /// No piece shrinks. A word longer than [`chat_text::PIECE_CHARS`] — a long
-    /// URL, in practice, or a wall of one letter — is drawn as several pieces
-    /// edge to edge ([`chat_text::pieces`]), each short enough to fit any chat
+    /// No piece shrinks. A word longer than the piece budget (sixteen
+    /// characters at body size, [`chat_text::PIECE_CHARS`], and fewer at a
+    /// larger text size, [`chat_text::piece_chars`]) — a long URL, in
+    /// practice, or a wall of one letter — is drawn as several pieces edge to
+    /// edge ([`chat_text::pieces`]), each short enough to fit any chat
     /// on a line of its own, and `flex_wrap` breaks the line between them; a
     /// link breaks just after its separators, the way it reads, and each piece
     /// opens it. Every piece after the first takes back the line's gap between
@@ -714,12 +811,17 @@ impl ChatView {
     /// The row came out shorter than it drew, and painted over the next
     /// message, or taller, with a blank line in it. A word that always fits
     /// measures the same both ways.
+    ///
+    /// `piece_chars` is the budget at the chat's text size
+    /// ([`Metrics::piece_chars`]): fewer characters as the glyphs grow, so a
+    /// piece fits the narrowest chat at every size.
     fn render_word(
         &self,
         word: &str,
         seq: u64,
         position: usize,
         text_color: gpui::Hsla,
+        piece_chars: usize,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         let parsed = chat_text::classify(word);
@@ -745,7 +847,7 @@ impl ChatView {
                 .child(SharedString::from(text.to_string()))
         };
 
-        let pieces = chat_text::pieces(body, chat_text::PIECE_CHARS);
+        let pieces = chat_text::pieces(body, piece_chars);
         let last = pieces.len() - 1;
         pieces
             .into_iter()
@@ -815,7 +917,21 @@ impl ChatView {
     /// Twitch's own sentence: a resub note is a message like any other and has
     /// to get the same emotes, links and mention colouring as anything else
     /// that person says.
-    fn message_line(&self, row: &Row, message: &ChatMessage, cx: &mut Context<Self>) -> gpui::Div {
+    ///
+    /// `time`, when every message carries one, is the line's first child,
+    /// before the name: in the line rather than in a column beside it, so a
+    /// message that wraps comes back to the row's edge and the time costs
+    /// only its own width on the first line, which is what the gutter this
+    /// replaced could not do (see `row_frame`). Sizes come from `metrics`,
+    /// the chat's text size.
+    fn message_line(
+        &self,
+        row: &Row,
+        message: &ChatMessage,
+        time: Option<gpui::Div>,
+        metrics: &Metrics,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
         // A deleted message keeps its place and loses its colour: greyed all
         // through, name included, so it reads as struck rather than as said.
         let name_color = if row.deleted {
@@ -839,7 +955,8 @@ impl ChatView {
             .flex_row()
             .flex_wrap()
             .items_center()
-            .gap_x(px(theme::GAP_WORD));
+            .gap_x(px(theme::GAP_WORD))
+            .children(time);
 
         // An action puts the name inside the sentence, so it is not repeated.
         let name = if message.is_action {
@@ -865,7 +982,7 @@ impl ChatView {
         // needs. A wrapped wall of plain text keeps its tight leading, which is
         // most of what wraps.
         let overhangs = tokens.iter().any(|token| matches!(token, Token::Emote(_)));
-        line = line.when(overhangs, |line| line.gap_y(px(EMOTE_OVERHANG * 2.0)));
+        line = line.when(overhangs, |line| line.gap_y(px(metrics.overhang * 2.0)));
 
         let mut emote_index = 0usize;
         let mut word_index = 0usize;
@@ -873,8 +990,14 @@ impl ChatView {
             match token {
                 Token::Text(text) => {
                     for word in text.split_whitespace() {
-                        line = line
-                            .children(self.render_word(word, row.seq, word_index, text_color, cx));
+                        line = line.children(self.render_word(
+                            word,
+                            row.seq,
+                            word_index,
+                            text_color,
+                            metrics.piece_chars,
+                            cx,
+                        ));
                         word_index += 1;
                     }
                 }
@@ -905,7 +1028,7 @@ impl ChatView {
                             // single vertical rhythm to scan down.
                             div()
                                 .flex_none()
-                                .h(px(theme::LINE_BODY))
+                                .h(px(metrics.line))
                                 .px(px(theme::EMOTE_PAD_X))
                                 .child(
                                     img(path)
@@ -914,8 +1037,8 @@ impl ChatView {
                                         // `Stateful<Img>`.
                                         .image_cache(&self.emote_images)
                                         .id((SharedString::from(emote.url.clone()), emote_index))
-                                        .h(px(EMOTE_HEIGHT))
-                                        .mt(px(-EMOTE_OVERHANG))
+                                        .h(px(metrics.emote))
+                                        .mt(px(-metrics.overhang))
                                         .tooltip(move |_window, cx| {
                                             cx.new(|_| EmoteTooltip { name: name.clone() }).into()
                                         }),
@@ -950,6 +1073,7 @@ impl Render for ChatView {
         self.sync_hold(over);
         let at_live = self.at_live();
         let holding = !self.held.is_empty();
+        let metrics = Metrics::of(self.display.size);
 
         div()
             .id("chat-pane")
@@ -960,8 +1084,10 @@ impl Render for ChatView {
             .on_hover(cx.listener(|_, _: &bool, _window, cx| cx.notify()))
             .relative()
             .size_full()
-            .text_size(px(theme::TEXT_BODY))
-            .line_height(px(theme::LINE_BODY))
+            // The chat's text size, which every row inherits; see
+            // `chat_display`.
+            .text_size(px(metrics.text))
+            .line_height(px(metrics.line))
             .child(
                 list(self.list.clone(), move |index, _window, cx| {
                     this.update(cx, |this: &mut ChatView, cx| this.render_row(index, cx))

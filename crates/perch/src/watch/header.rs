@@ -1,6 +1,7 @@
 //! A pane's header: who is on, how many are watching, how long for, what
-//! they are doing, and the pane's own two icons — out into a window of its
-//! own and back, and its ×. Where it goes is [`Placement`]. It is also what
+//! they are doing, and the pane's own icons — how every chat is drawn, on a
+//! header that sits on chat (`chat_menu`), out into a window of its own and
+//! back, and its ×. Where it goes is [`Placement`]. It is also what
 //! a pane is dragged by, onto another pane, to swap the two.
 //!
 //! It is the same header in both places. Above (or below) chat it sits on
@@ -259,6 +260,55 @@ pub(super) fn pane_header<V: 'static>(
             }))
     });
 
+    // How every chat is drawn, its text size and the time on every message:
+    // the chat options menu (`chat_menu`), on a header that sits on a chat
+    // panel and nowhere else, since with no chat on screen there is nothing
+    // to see a change in. No key, like the menu's rows: the pointer is how
+    // anyone reaches it.
+    //
+    // The icon is the menu's anchor, as the bar's right-hand cluster is the
+    // anchor of the bar's menus: a press anywhere outside it closes the menu,
+    // and a press on it is not "elsewhere", so it toggles rather than closing
+    // the menu and opening it straight again. Its id follows whether the
+    // menu is open, as Pop out's follows what a press does, so a tooltip up
+    // before the press does not linger over the menu; and while the menu is
+    // open there is none, since it would come up over the rows.
+    let chat_options = (placement == Placement::Panel).then(|| {
+        let open = pane.chat_menu.is_some();
+        let on_toggle = on_pane.clone();
+        let on_close = on_pane.clone();
+        let toggle_key = key.clone();
+        let close_key = key.clone();
+        let button = controls::icon_button(
+            pane_id(
+                &slot.key,
+                if open {
+                    "chat-options-open"
+                } else {
+                    "chat-options"
+                },
+            ),
+            Icon::ChatOptions,
+            Variant::OnVideo,
+        )
+        .when(window_hovered && !open, |button| {
+            button.tooltip(controls::tip("Chat options"))
+        })
+        .on_click(cx.listener(move |view, _event, window, cx| {
+            if !cx.has_active_drag() {
+                on_toggle(view, &toggle_key, PaneAction::ToggleChatMenu, window, cx)
+            }
+        }));
+        div()
+            .flex_none()
+            .when(open, |anchor| {
+                anchor.on_mouse_down_out(cx.listener(move |view, _event, window, cx| {
+                    on_close(view, &close_key, PaneAction::CloseChatMenu, window, cx)
+                }))
+            })
+            .child(button)
+    });
+
     // On every pane, a lone one included. It used to go when only one pane
     // was left, while `Ctrl+W` went on closing that one — a control the
     // keyboard had and the pointer did not. An icon now, like every other
@@ -383,7 +433,8 @@ pub(super) fn pane_header<V: 'static>(
                 .when(paused, |header| header.child(controls::tag("paused")))
                 .child(div().flex_1())
                 // The right-hand cluster: chat back, when only this header
-                // can offer it, then out or back, then the ×.
+                // can offer it, or the chat options, when it sits on chat,
+                // then out or back, then the ×.
                 .child(
                     div()
                         .flex_none()
@@ -392,6 +443,7 @@ pub(super) fn pane_header<V: 'static>(
                         .items_center()
                         .gap(px(theme::GAP_TIGHT))
                         .children(show_chat)
+                        .children(chat_options)
                         .children(pop)
                         .child(close),
                 ),

@@ -1,7 +1,7 @@
 //! What the user has said about how the app should be: the settings sheet
 //! and what saving it changes, the divider drag that sizes video against
-//! chat, the rail folding away and what is pinned to it. All of it ends up
-//! in `settings.json`.
+//! chat, how every chat is drawn, the rail folding away and what is pinned
+//! to it. All of it ends up in `settings.json`.
 
 use std::time::Duration;
 
@@ -13,6 +13,7 @@ use settings::SheetFields;
 
 use super::{Resize, RootView};
 use crate::browse::{Discovery, SignIn};
+use crate::chat_display::ChatDisplay;
 use crate::settings_view::{SettingsEvent, SettingsPanel};
 use crate::watch::ResizeStart;
 use crate::{layout, theme};
@@ -314,6 +315,32 @@ impl RootView {
             self.save_settings(cx);
             cx.notify();
         }
+    }
+
+    /// Draw every chat as `display` says, and remember it: a row of a pane's
+    /// chat options menu (`watch::chat_menu`).
+    ///
+    /// Every chat's, whichever pane's menu it came from, since a text size is
+    /// about the reader and the screen rather than about a channel. The one
+    /// place the settings' chat options change, so the one place that tells
+    /// the chats, each of which mirrors them (`ChatView::set_display`): the
+    /// settings sheet does not own them (`SheetFields`), so saving it keeps
+    /// them, and a chat made later reads them as it is made. Written at once
+    /// rather than soon: it is one press, not a run of them like a drag.
+    pub(super) fn set_chat_display(&mut self, display: ChatDisplay, cx: &mut Context<Self>) {
+        if !display.store(&mut self.settings) {
+            return;
+        }
+        let chats: Vec<_> = self
+            .slots
+            .iter()
+            .filter_map(|slot| slot.chat.clone())
+            .collect();
+        for chat in chats {
+            chat.update(cx, |chat, cx| chat.set_display(display, cx));
+        }
+        self.save_settings(cx);
+        cx.notify();
     }
 
     /// Write the preferences down once they have stopped changing.
