@@ -466,6 +466,10 @@ pub enum Action {
     /// somebody where a button is instead of giving them the button is the sort
     /// of thing a page does when nobody has read it back.
     OpenSettings,
+    /// Start signing in: the empty state's button once the user has signed
+    /// out (`SignIn::SignedOut`), the same thing the chat composer's
+    /// `Sign in` does (`RootView::start_sign_in`).
+    SignIn,
     /// Fetch the next page of whichever list is on screen.
     LoadMore,
     /// Pin this channel to the top of the rail, or take it off. From the
@@ -494,6 +498,12 @@ impl Action {
 pub enum SignIn {
     Connecting,
     NeedsClientId,
+    /// The user signed out from the settings sheet: the tokens are gone and
+    /// no worker is running, so nothing asks Twitch for a code until they
+    /// press Sign in (`RootView::start_sign_in`). For the session only: the
+    /// next launch finds no tokens and starts the device flow, as a first
+    /// launch with a client id does.
+    SignedOut,
     AwaitingCode {
         user_code: SharedString,
         verification_uri: SharedString,
@@ -508,11 +518,40 @@ impl SignIn {
             SignIn::SignedIn(login) => format!("Signed in as {login}").into(),
             SignIn::Connecting => "Connecting…".into(),
             SignIn::NeedsClientId => "Not signed in".into(),
+            SignIn::SignedOut => "Signed out".into(),
             SignIn::AwaitingCode { user_code, .. } => {
                 format!("Enter {user_code} at twitch.tv/activate").into()
             }
             SignIn::Error(reason) => reason.clone(),
         }
+    }
+
+    /// Whether the settings sheet offers Sign out. Anything with a sign-in
+    /// to drop or a sign-in under way to stop: signed in, connecting with
+    /// stored tokens, a code on screen, or a sign-in that failed and left
+    /// tokens behind, which is the bad token nothing used to clear but
+    /// editing the file. Not once signed out, nor without a client id, when
+    /// there is nothing to sign out of.
+    pub fn can_sign_out(&self) -> bool {
+        !matches!(self, SignIn::SignedOut | SignIn::NeedsClientId)
+    }
+
+    /// Whether a `Sign in` is offered where the sign-in is said and no
+    /// worker is running to bring one: only once signed out. Anywhere else
+    /// a sign-in is on its way, or wants settings first, or has a remedy of
+    /// its own (a failed one's is `Open settings`).
+    pub fn offers_sign_in(&self) -> bool {
+        matches!(self, SignIn::SignedOut)
+    }
+
+    /// Whether a sign-in is on its way or here: not once it has failed, been
+    /// left without a client id, or signed out, when nothing will come of
+    /// waiting for one.
+    pub fn coming(&self) -> bool {
+        matches!(
+            self,
+            SignIn::Connecting | SignIn::AwaitingCode { .. } | SignIn::SignedIn(_)
+        )
     }
 }
 
@@ -1126,6 +1165,7 @@ pub(crate) fn load_more<V: 'static>(
 fn search_view<V: 'static>(
     results: &SearchResults,
     discovery: &Discovery,
+    sign_in: &SignIn,
     room: layout::Room,
     cache: &ImageCache,
     can_add: bool,
@@ -1137,6 +1177,9 @@ fn search_view<V: 'static>(
         browse_placeholder(
             discovery,
             format!("Nothing matches “{}”.", results.query).into(),
+            sign_in,
+            on_action.clone(),
+            cx,
         )
     } else {
         let shown = SEARCH_CATEGORY_LIMIT.min(results.categories.len());
@@ -1387,6 +1430,10 @@ pub(crate) fn empty_state<V: 'static>(
             "Not signed in".into(),
             "Open settings and paste a Twitch Client ID to see who you follow.".into(),
         ),
+        SignIn::SignedOut => (
+            "Signed out".into(),
+            "Sign in to see who you follow and to chat.".into(),
+        ),
         // Handled above, with a control rather than a sentence.
         SignIn::AwaitingCode { .. } => return div().into_any_element(),
         SignIn::Error(reason) => ("Sign-in problem".into(), reason.clone()),
@@ -1419,6 +1466,13 @@ pub(crate) fn empty_state<V: 'static>(
                 on_action(view, Action::OpenSettings, window, cx)
             })),
         ),
+        SignIn::SignedOut => body.child(
+            controls::pill("empty-sign-in", "Sign in", controls::Variant::Primary).on_click(
+                cx.listener(move |view, _event, window, cx| {
+                    on_action(view, Action::SignIn, window, cx)
+                }),
+            ),
+        ),
         _ => body,
     };
 
@@ -1435,12 +1489,21 @@ pub(crate) fn empty_state<V: 'static>(
 }
 
 /// What a browse list shows when it has nothing in it yet.
-pub(crate) fn browse_placeholder(discovery: &Discovery, empty: SharedString) -> AnyElement {
+pub(crate) fn browse_placeholder<V: 'static>(
+    discovery: &Discovery,
+    empty: SharedString,
+    sign_in: &SignIn,
+    on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + 'static,
+    cx: &mut Context<V>,
+) -> AnyElement {
     list_placeholder(
         "browse-loading",
         discovery.shown_error(),
         discovery.is_loading(),
         empty,
+        sign_in,
+        on_action,
+        cx,
     )
 }
 
@@ -1448,15 +1511,36 @@ pub(crate) fn browse_placeholder(discovery: &Discovery, empty: SharedString) -> 
 /// failed; that it is being asked for, breathing under the id `waiting`, if
 /// it is; and otherwise `empty`, which is the answer. The browse page's
 /// lists, and the guide's (`crate::guide`).
-pub(crate) fn list_placeholder(
+///
+/// A list that was never asked for because nobody is signed in gets a
+/// `Sign in` under the sentence once the user has signed out
+/// ([`SignIn::offers_sign_in`]), as the empty state does: nothing else on
+/// those pages starts one, and the sentence alone named a thing to do with
+/// nothing to do it with.
+pub(crate) fn list_placeholder<V: 'static>(
     waiting: &'static str,
     error: Option<&Unanswered>,
     loading: bool,
     empty: SharedString,
+    sign_in: &SignIn,
+    on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + 'static,
+    cx: &mut Context<V>,
 ) -> AnyElement {
     if let Some(unanswered) = error {
         let (title, detail, error) = unanswered.notice();
-        return notice(title, detail, error).into_any_element();
+        let body = notice(title, detail, error);
+        if *unanswered == Unanswered::SignedOut && sign_in.offers_sign_in() {
+            return body
+                .child(
+                    controls::pill("list-sign-in", "Sign in", controls::Variant::Primary).on_click(
+                        cx.listener(move |view, _event, window, cx| {
+                            on_action(view, Action::SignIn, window, cx)
+                        }),
+                    ),
+                )
+                .into_any_element();
+        }
+        return body.into_any_element();
     }
     if loading {
         // Ends as soon as the request does, which is what makes a repeating
@@ -1497,6 +1581,7 @@ pub fn page<V: 'static>(
         Place::Channel(channel) => channel_page::view(
             channel,
             discovery,
+            sign_in,
             history,
             channel_live,
             room,
@@ -1509,6 +1594,7 @@ pub fn page<V: 'static>(
         Place::Search(results) => search_view(
             results,
             discovery,
+            sign_in,
             room,
             cache,
             can_add,
@@ -1521,6 +1607,9 @@ pub fn page<V: 'static>(
                 browse_placeholder(
                     discovery,
                     format!("Nobody is streaming {} right now.", category.name).into(),
+                    sign_in,
+                    on_action.clone(),
+                    cx,
                 )
             } else {
                 stream_grid(
@@ -1574,6 +1663,9 @@ pub fn page<V: 'static>(
         Place::Tab(Tab::Popular) if discovery.popular.is_empty() => browse_placeholder(
             discovery,
             "Twitch reported nothing live, which would be a first.".into(),
+            sign_in,
+            on_action,
+            cx,
         ),
         Place::Tab(Tab::Popular) => stream_grid(
             "popular-grid",
@@ -1586,9 +1678,13 @@ pub fn page<V: 'static>(
             on_action,
             cx,
         ),
-        Place::Tab(Tab::Categories) if discovery.categories.is_empty() => {
-            browse_placeholder(discovery, "No categories came back.".into())
-        }
+        Place::Tab(Tab::Categories) if discovery.categories.is_empty() => browse_placeholder(
+            discovery,
+            "No categories came back.".into(),
+            sign_in,
+            on_action,
+            cx,
+        ),
         Place::Tab(Tab::Categories) => {
             let list = scroller("categories-grid", &scrolls.categories, room.bottom)
                 .child(category_row(
@@ -1651,6 +1747,32 @@ mod tests {
                 "when a name was last live reads {ratio:.2}:1 {state}"
             );
         }
+    }
+
+    /// Sign out is offered wherever there is a sign-in to drop or one under
+    /// way to stop, and a sign-in is waited for only while one can come.
+    #[test]
+    fn sign_out_is_offered_while_there_is_something_to_sign_out_of() {
+        let awaiting = SignIn::AwaitingCode {
+            user_code: "ABCD".into(),
+            verification_uri: "https://www.twitch.tv/activate".into(),
+        };
+        // And `Sign in` only once signed out, so the settings sheet always
+        // has one of the two, or neither while there is no client id.
+        for (sign_in, offered, coming, sign_in_offered) in [
+            (SignIn::SignedIn("me".into()), true, true, false),
+            (SignIn::Connecting, true, true, false),
+            (awaiting, true, true, false),
+            (SignIn::Error("sign-in expired".into()), true, false, false),
+            (SignIn::SignedOut, false, false, true),
+            (SignIn::NeedsClientId, false, false, false),
+        ] {
+            let summary = sign_in.summary();
+            assert_eq!(sign_in.can_sign_out(), offered, "{summary}");
+            assert_eq!(sign_in.coming(), coming, "{summary}");
+            assert_eq!(sign_in.offers_sign_in(), sign_in_offered, "{summary}");
+        }
+        assert_eq!(SignIn::SignedOut.summary(), "Signed out");
     }
 
     fn a_video(id: &str, kind: VideoKind) -> Video {

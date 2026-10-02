@@ -53,7 +53,16 @@ impl RootView {
             }
             return;
         }
-        self.focus.focus(window);
+        // Except from a text box inside the pane: a chat's composer, whose
+        // own focus listener hears the press before the pane does and marks
+        // it handled (gpui's `track_focus` calls `prevent_default`). The
+        // pane still becomes the active one, and the cursor stays in the
+        // box; taking the keys back here would have taken the cursor out of
+        // it in the same press, so the box could never be typed into.
+        let typing = matches!(action, PaneAction::Activate) && window.default_prevented();
+        if !typing {
+            self.focus.focus(window);
+        }
         let Some(index) = self.slot_index(key) else {
             return;
         };

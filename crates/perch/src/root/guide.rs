@@ -149,6 +149,7 @@ impl RootView {
             }
             // Following's empty state while signed out, as on Home.
             Action::OpenSettings => self.toggle_settings(window, cx),
+            Action::SignIn => self.start_sign_in(window, cx),
             // None of the guide's controls send these: its cards offer no
             // past broadcasts, and it has no search, shelves or history.
             Action::Search(_)

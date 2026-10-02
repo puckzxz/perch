@@ -12,6 +12,8 @@
 //! | `shortcuts` | what each key does |
 //! | `commands` | the palette: what it offers, and running a row |
 //! | `follows` | the Twitch worker's events: sign-in, who is live, replies |
+//! | `account` | the sign-in as the user drives it: Sign out from the settings sheet, Sign in, Sign in again for the chat scope, and the worker started over, as a new client id does too |
+//! | `chat_send` | sending chat: what each live chat's composer is told about the user (`sync_chat_access`), a message handed to the worker, and its answer handed back to the chat it came from |
 //! | `browsing` | the browse page's requests: tabs, search, categories, channels |
 //! | `navigation` | back and forward: where the app is as a `Route`, recording each step on the trail (`crate::trail`), and the three ways along it |
 //! | `streams` | opening, restarting and closing panes, and swapping one for a recording in place |
@@ -39,10 +41,12 @@
 //! methods are `pub(super)`: callable from the rest of the root, and nowhere
 //! else.
 
+mod account;
 mod ad_breaks;
 mod badges;
 mod broadcasts;
 mod browsing;
+mod chat_send;
 mod chrome;
 mod commands;
 mod follows;
@@ -77,7 +81,7 @@ use emotes::ImageCache;
 use futures::channel::mpsc::UnboundedReceiver;
 use gpui::{
     div, prelude::*, AnyWindowHandle, Bounds, Context, Entity, FocusHandle, Pixels, ScrollHandle,
-    SharedString, Subscription, Task, Window,
+    SharedString, Subscription, Task, WeakEntity, Window,
 };
 use gpui_component::input::{InputEvent, InputState};
 use settings::history::{Forgotten, History};
@@ -88,6 +92,7 @@ use self::follows::LiveList;
 use self::navigation::Route;
 use self::pop_out::PoppedOut;
 use crate::browse::{self, Discovery, SignIn};
+use crate::chat::ChatView;
 use crate::chat_badges::Library;
 use crate::guide::Guide;
 use crate::last_live::LastLive;
@@ -98,7 +103,7 @@ use crate::settings_view::SettingsPanel;
 use crate::shared_chat::SourceRooms;
 use crate::stage::Stage;
 use crate::trail::Trail;
-use crate::twitch::TwitchService;
+use crate::twitch::{SignInStart, TwitchService};
 use crate::video_view::VideoView;
 use crate::watch::{ResizeStart, Slot, StreamState, MAX_PANES};
 use crate::{cpu_log, keys, layout, motion, rail_preview, sidebar, theme, vod, APP_NAME};
@@ -247,6 +252,13 @@ pub(crate) struct RootView {
     /// said so: "Nobody is live — none of the channels you follow are streaming
     /// right now", on every launch, for as long as the request took.
     follows_loaded: bool,
+    /// Whether the last list of everyone followed was all of them, not cut
+    /// short at its page cap (`twitch_api::Followed::complete`). False until
+    /// that list has come back — the live list alone, which also sets
+    /// `follows_loaded`, says nothing of who is followed and offline — so a
+    /// chat's followers-only check never says "only followers" on less than
+    /// the whole list; see `composer::follows`.
+    follows_complete: bool,
     /// Who was live at the last poll, so newly-live channels can be told apart
     /// from ones that were already streaming. Without this every poll would
     /// re-announce everybody.
@@ -287,6 +299,18 @@ pub(crate) struct RootView {
     /// `crate::chat_badges`.
     badges: Library,
     sign_in: SignIn,
+    /// Whether the signed-in token may send chat, from Twitch's token
+    /// validation (`TwitchEvent::ChatScope`) or a send refused for want of
+    /// the scope; `None` until either has said, and from every restart of
+    /// the worker. What a composer closes with `Sign in again to chat` on;
+    /// see `chat_send`.
+    chat_scope: Option<bool>,
+    /// The sends handed to the worker and not yet answered, by the root's
+    /// own number for each, with the chat each came from; see
+    /// `RootView::send_chat`.
+    chat_sends: HashMap<u64, WeakEntity<ChatView>>,
+    /// The last of those numbers handed out.
+    chat_send_seq: u64,
     /// Everything the browse page shows besides your follows.
     discovery: Discovery,
     /// The guide over the watch page: whether it is up, its tab, and the
@@ -457,7 +481,8 @@ impl RootView {
             this.on_window_resized(window, cx)
         });
 
-        let (service, twitch_pump) = Self::spawn_twitch(settings_path.clone(), window, cx);
+        let (service, twitch_pump) =
+            Self::spawn_twitch(settings_path.clone(), SignInStart::Stored, window, cx);
 
         // In the title bar, over both pages; see `run_search` for what a
         // search from the watch page does.
@@ -521,6 +546,7 @@ impl RootView {
             refreshing: false,
             avatars: HashMap::new(),
             follows_loaded: false,
+            follows_complete: false,
             known_live: HashSet::new(),
             rail_pointed: false,
             home_pointed: false,
@@ -532,6 +558,9 @@ impl RootView {
             source_rooms: SourceRooms::default(),
             badges: Library::default(),
             sign_in: SignIn::Connecting,
+            chat_scope: None,
+            chat_sends: HashMap::new(),
+            chat_send_seq: 0,
             discovery: Discovery::default(),
             guide: Guide::default(),
             trail: Trail::default(),

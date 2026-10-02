@@ -55,14 +55,16 @@ crates/
   streamlink    supervises streamlink as a headless Twitch byte source,
                 hears its word that it is filtering an ad (`ads`), and
                 resolves a recording and reads its playlist
-  twitch-chat   read-only chat over anonymous IRC, the history backfill, and
+  twitch-chat   chat read over anonymous IRC, the history backfill, and
                 the replay of a recording's chat
   twitch-api    device-code sign-in, follows, top streams, categories, search,
                 and channels like the ones watched, from Twitch's unofficial
                 SideNav query (`recommend`), which also holds the anonymous
                 `users` queries: when channels were last live, and a
-                channel's name by its numeric id; and the chat badges
-                (`badges`, Helix)
+                channel's name by its numeric id; the chat badges
+                (`badges`, Helix); and sending a chat message, with the
+                scopes a token carries from Twitch's validation (`chat`,
+                Helix)
   emotes        Twitch/FFZ/BTTV/7TV resolution + disk image cache
   settings      persisted user settings, and what has been watched
   perch         the app
@@ -82,7 +84,7 @@ App modules:
 | `trail.rs` | back and forward: the places behind and ahead, what a step passes over, and forgetting a place that is gone (pure, tested) |
 | `stage.rs` | where each pane is drawn — a pane, a mini-player tile, a window of its own, or nowhere while another pane has the watch page (`Place`) — which panes are popped out and which one is maximized (`Stage`), the cells the watch grid draws (`cells`) and what a pane's maximize control offers (`MaximizeButton`): the one owner of the answer both windows ask before drawing a player; and where a pane moved one place along the order goes (`moved`) (pure, tested) |
 | `os_window.rs` | what Perch asks of a window that gpui does not: its platform handle (`hwnd`, the one place a gpui window is asked for it — `instance::bring_forward` comes forward on it rather than looking it up itself), and keeping a pop-out above every other app (`keep_on_top`, Windows only) |
-| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams` (opening, restarting, closing, and `replace_with_video` and `replace_with_channel`, a recording swapped in for a live pane in place and the channel back in a recording's, both through `replace_slot`), `renditions` (what each pane plays, and when it restarts: the quality chosen against each pane's own height, `pane_height_for`, the upward re-pick when the grid changes, `sync_quality`, a pick from the pane's own menu, and how each changes what plays, `change_rendition` — beside a picture that covers the pane, to take over in place, and cold otherwise; and the root's half of that swap: what a start resolving beside a pane does with its events, `pending_event`, and what the pane keeps once its player has taken over or been given up on, `on_swapped` and `on_swap_failed`; and `set_pending`, the only write of a pane's pending start, which tells its player what a pick is switching it to and which a test holds the root to; tested), `panes` (where each pane is drawn, applied: `restage`, the one funnel every change of a pane's state, of which panes there are, of the page, of what is popped out and of what is maximized ends in; `set_slot_state`, the only write of a pane's state, which a test holds the root to; `video_in_main`, the only way the main window reaches a player, which a test holds the mini player and the pages to; and the maximize as the root drives it, `toggle_maximize`, `show_all_panes`, and `choose`, which takes it to the pane chosen; and `move_pane`, two panes swapping places in the order, from a header dropped on a pane or `Shift+←`/`Shift+→`), `pop_out` (a pane's picture in a window of its own, on top of other apps: the `PopOut` view, opening and closing it through `cx.defer`, `to_root`, the only way back to the root from it, and `offered`, Windows only), `broadcasts` (what a stopped live pane asks about its channel's past broadcasts, and whether it may offer to start by itself), `rewind` (a live pane's timeline: when each live player's broadcast began, `sync_live_since`, a press on it carried out at once or when the ask for the archive is answered, and the archive opened in the pane's place; and the way back: whether each recording's broadcast is still on, `still_live` and `sync_back_to_live`, and `LIVE` pressed, `back_to_live`), `hearing` (which panes are heard: More's `Only this one` and `Hear all again` through Mute all's hush, and `sync_hear_only`, the one writer of every player's `HearOnly` mirror after `Start`), `ad_breaks` (a pane's ad-break notice: begun on `StreamEvent::AdBreak`, ticked once a second by a timer the slot owns, taken down when it is over), `guide` (the guide over the watch page as the root runs it: `toggle_guide` from a pane's Guide button, which opens, moves or closes it, `close_guide`, `sync_guide_buttons`, the one writer of every player's `guide_from_here` mirror after `Start`, `fill_guide` through `fetch`, a card's Watch in place of the pane the guide was opened from — `replace_with_channel` — or `+ Add` through `Action::Add`, a category opened inside it, and the panel's shell: where it sits, the press outside that closes it, its probe into the veil), `pane_actions` (what a pane asks for, by its key: a press on it or one of its controls, which takes the keys back for the root first, and its player's requests; the moment a pane key brings a pane's header up over its picture; `copy`, the one place the clipboard is written; and `run_guard`, which swallows the rest of a double-click whose first press took a player out from under the pointer — More's `Pop out`, the mini player's — where the player's own guard cannot follow), `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `prefs`, `recommended` (the rail's Recommended group: when to ask the worker, what its answer becomes, and the hooks that call it), `last_live` (when the offline follows were last live: when to ask the worker, and what its answer does), `shared_chat` (Shared Chat labels: each chat watched as it is made, live or a replay (`watch_chat`), its word about a partner it cannot name turned into one ask per id, and the names handed to every chat), `badges` (chat badges: a chat's word about its room answered with the badges known for it, the global and per-room books asked for once each, and every answer handed to the chats it is for), `chrome` (pills, toasts, the rail, and its preview cards' state and timer, `point_rail_row`), `mini_player` (what plays on while you browse, in the corner of the page), `title_bar` (the bar Perch draws across the top of the window — the rail button, back and forward, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`) |
+| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `account` (the sign-in as the user drives it: the settings sheet's Sign out, Sign in, Sign in again for the chat scope, and `restart_twitch`, the worker started over, which a new client id does too), `chat_send` (sending chat: what each live chat's composer is told about the user, `sync_chat_access`, a message handed to the worker under a number of the root's, `send_chat`, and its answer handed back to the chat it came from, `on_chat_sent`), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams` (opening, restarting, closing, and `replace_with_video` and `replace_with_channel`, a recording swapped in for a live pane in place and the channel back in a recording's, both through `replace_slot`), `renditions` (what each pane plays, and when it restarts: the quality chosen against each pane's own height, `pane_height_for`, the upward re-pick when the grid changes, `sync_quality`, a pick from the pane's own menu, and how each changes what plays, `change_rendition` — beside a picture that covers the pane, to take over in place, and cold otherwise; and the root's half of that swap: what a start resolving beside a pane does with its events, `pending_event`, and what the pane keeps once its player has taken over or been given up on, `on_swapped` and `on_swap_failed`; and `set_pending`, the only write of a pane's pending start, which tells its player what a pick is switching it to and which a test holds the root to; tested), `panes` (where each pane is drawn, applied: `restage`, the one funnel every change of a pane's state, of which panes there are, of the page, of what is popped out and of what is maximized ends in; `set_slot_state`, the only write of a pane's state, which a test holds the root to; `video_in_main`, the only way the main window reaches a player, which a test holds the mini player and the pages to; and the maximize as the root drives it, `toggle_maximize`, `show_all_panes`, and `choose`, which takes it to the pane chosen; and `move_pane`, two panes swapping places in the order, from a header dropped on a pane or `Shift+←`/`Shift+→`), `pop_out` (a pane's picture in a window of its own, on top of other apps: the `PopOut` view, opening and closing it through `cx.defer`, `to_root`, the only way back to the root from it, and `offered`, Windows only), `broadcasts` (what a stopped live pane asks about its channel's past broadcasts, and whether it may offer to start by itself), `rewind` (a live pane's timeline: when each live player's broadcast began, `sync_live_since`, a press on it carried out at once or when the ask for the archive is answered, and the archive opened in the pane's place; and the way back: whether each recording's broadcast is still on, `still_live` and `sync_back_to_live`, and `LIVE` pressed, `back_to_live`), `hearing` (which panes are heard: More's `Only this one` and `Hear all again` through Mute all's hush, and `sync_hear_only`, the one writer of every player's `HearOnly` mirror after `Start`), `ad_breaks` (a pane's ad-break notice: begun on `StreamEvent::AdBreak`, ticked once a second by a timer the slot owns, taken down when it is over), `guide` (the guide over the watch page as the root runs it: `toggle_guide` from a pane's Guide button, which opens, moves or closes it, `close_guide`, `sync_guide_buttons`, the one writer of every player's `guide_from_here` mirror after `Start`, `fill_guide` through `fetch`, a card's Watch in place of the pane the guide was opened from — `replace_with_channel` — or `+ Add` through `Action::Add`, a category opened inside it, and the panel's shell: where it sits, the press outside that closes it, its probe into the veil), `pane_actions` (what a pane asks for, by its key: a press on it or one of its controls, which takes the keys back for the root first, and its player's requests; the moment a pane key brings a pane's header up over its picture; `copy`, the one place the clipboard is written; and `run_guard`, which swallows the rest of a double-click whose first press took a player out from under the pointer — More's `Pop out`, the mini player's — where the player's own guard cannot follow), `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `prefs`, `recommended` (the rail's Recommended group: when to ask the worker, what its answer becomes, and the hooks that call it), `last_live` (when the offline follows were last live: when to ask the worker, and what its answer does), `shared_chat` (Shared Chat labels: each chat watched as it is made, live or a replay (`watch_chat`), its word about a partner it cannot name turned into one ask per id, and the names handed to every chat), `badges` (chat badges: a chat's word about its room answered with the badges known for it, the global and per-room books asked for once each, and every answer handed to the chats it is for), `chrome` (pills, toasts, the rail, and its preview cards' state and timer, `point_rail_row`), `mini_player` (what plays on while you browse, in the corner of the page), `title_bar` (the bar Perch draws across the top of the window — the rail button, back and forward, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`) |
 | `target.rs` | what a typed or pasted thing means: a login, or a twitch.tv link to a channel or a recording; `link`, its inverse and the one place a twitch.tv URL is written, and `moment`, the second a link to a recording starts at (pure, tested) |
 | `browse.rs` | the picker page: home, popular, categories, search; which of them is on screen (`Discovery::place`) and which lists are still being waited on (`is_loading`, and by key for the guide, `is_pending` and `error_for`); the stream card both the page and the guide draw (`card`, offering what `CardOffers` says) |
 | `channel_page.rs` | one channel's past broadcasts, and when each was; the recording card both pages use, and a stopped pane too; a recording's poster, and `archive_of`, which finds the recording of a broadcast that just ended (tested) |
@@ -111,13 +113,14 @@ App modules:
 | `chat/badges.rs` | the chat pane's badges: the books the root hands it (`set_badges`) and the group before a name (`badge_group`) |
 | `chat/reply.rs` | a reply's line above it (`reply_line`), and whether its first word is the `@parent` that line already says (`skips_leading_mention`, pure, tested) |
 | `chat/copy_menu.rs` | a chat row's right-click menu: what each entry copies from a row (`entries`, pure, tested), which link or emote the press was on (`press_target`), opening it at the pointer (`row_menu`), and the menu, deferred and anchored, with rows that act on the press (tested) |
+| `chat/composer.rs` | the box at the foot of a live chat that sends a message: whether it is open and why not (`state`, from `Access`, which the root mirrors in with `set_access`), what a message may be (`message`, `fit`), and the notice an answer leaves (`outcome_notice`, `failure_notice`), all pure and tested; the box itself, its `Enter`, and the line that stands in for it (`composer_bar`) |
 | `chat_display.rs` | how every chat is drawn: `ChatDisplay`, the text-size steps, `Metrics::of` (line, emote, badge, padding and piece budget from the size) and `draws_time_break` (pure, tested) |
 | `chat_badges.rs` | chat badges worked out: Helix's answers as books by set and version, a channel's own picture over the global one (`ChatBadges::art`), the tooltip (`tooltip`, `Subscriber, 14 months`), and which books to ask for (`Library`, once each a session) (pure, tested) |
 | `chat_words.rs` | what a chat says about itself in words: a timeout or ban (`ban_notice`), the line above a reply (`reply_context`), the line of modes and a mode's notice (`modes_line`, `mode_notice`) (pure, tested) |
 | `chat_tint.rs` | which wash a chat row wears: an event's, an announcement's colour, a highlighted or first message (`Wash`, `message_wash`, `event_wash`) (pure, tested) |
 | `chat_text.rs` | what a word in a message is — link, mention or plain (pure, tested) |
-| `settings_view.rs` | settings sheet |
-| `twitch.rs` | the worker: sign-in, follows polling, browse requests, a stopped pane's ask for its channel's past broadcasts (which a live pane's rewind rides too), the rail's anonymous ask for channels like the ones watched (`Request::Recommend`), the anonymous ask for when the offline follows were last live (`Request::LastLive`), and the anonymous ask for Shared Chat partners' names (`Request::ChannelNames`), all three answered ahead of the session's upkeep, and the chats' badges from Helix (`Request::Badges`) |
+| `settings_view.rs` | settings sheet, and its Sign out (`SettingsEvent::SignOut`) |
+| `twitch.rs` | the worker: sign-in, follows polling, browse requests, a stopped pane's ask for its channel's past broadcasts (which a live pane's rewind rides too), the rail's anonymous ask for channels like the ones watched (`Request::Recommend`), the anonymous ask for when the offline follows were last live (`Request::LastLive`), and the anonymous ask for Shared Chat partners' names (`Request::ChannelNames`), all three answered ahead of the session's upkeep, the chats' badges from Helix (`Request::Badges`), a chat message sent (`Request::SendChat`), and the token validated at the first poll and hourly, saying whether it may send (`TwitchEvent::ChatScope`) |
 | `keys.rs` | the keymap: actions, bindings, contexts, the listing, and the keys a tooltip may name (`Hint`) |
 | `theme.rs` | **all** colour, spacing, type and motion tokens |
 | `sidebar.rs` | the follows rail down the left, beside both pages: Pinned, Live, Recommended, then Offline folded under a count, each offline row saying when it was last live where a live row says what is on (`groups`, pure, tested); each live row's probe for its preview card, and the card hung beside the row (`preview_probe`, `preview`) |
@@ -1007,6 +1010,64 @@ sheet gains does not compile until both ends handle it: the panel builds the
 type with a struct literal, and `adopt_sheet` takes it apart with no `..`.
 The sign-in is kept apart from all of this by `save_preferences` (above).
 
+**The second scope, and signing out.** `SCOPES` asks for `user:read:follows`
+and, since sending chat, `user:write:chat`. A refresh keeps the scopes a
+sign-in was granted, so a sign-in from before the second scope never gains
+it, and nothing may assume it has. The worker asks Twitch's token validation
+(`GET id.twitch.tv/oauth2/validate`, `twitch_api::chat::token_scopes`) at its
+first poll and hourly after, which Twitch requires of every app anyway, and
+says `TwitchEvent::ChatScope`; a failed validation says nothing and is tried
+at the next poll, and `None` (not yet known) leaves the composer open, since
+a send finds out: a 401 naming the scope is `SendOutcome::MissingScope`,
+which also flips the root's `chat_scope` so every composer closes with `Sign
+in again to chat`. Everything else keeps working on the old token.
+
+Sign out is in the settings sheet's footer beside the sign-in it drops,
+offered while there is one to drop or one under way to stop
+(`SignIn::can_sign_out`). It is not a sheet field and is not saved by `Save`:
+it acts at once, and the sheet stays up saying `Signed out` with its fields
+as they were. `RootView::sign_out` drops the worker first — its `stop` flag
+is what makes `persist` decline to write a refresh it was in the middle of —
+and only then forgets the tokens through `Settings::sign_out`, which is
+`save_sign_in(None)`: the sign-in writer's own path, under the lock every
+save takes and re-reading the file, so no preference is lost and no later
+preference save can bring the tokens back (`save_preferences` keeps the
+sign-in it finds, which is now none). A worker that read `stop` just before
+it was set and wrote in the instant after could still put its tokens back;
+the window is the gap between a flag read and a lock, the same one a client
+id change has always had. What is left is `SignIn::SignedOut` and
+`TwitchService::stopped()`, a service with no thread whose every request
+reports nobody there: no code is asked for until the user presses Sign in,
+which is offered wherever the sign-in is said once signed out
+(`SignIn::offers_sign_in`): where Sign out was in the sheet's footer, which
+then follows the sign-in as it goes (`sync_settings_sign_in`, after every
+worker event), Home's and the guide's empty states, a composer, and a browse
+list that was never asked for (`list_placeholder` on
+`Unanswered::SignedOut`). Each starts the worker over (`restart_twitch`, the
+same path a new client id takes, forgetting the follows, the browse lists,
+the trail and the panes' asks). `SignedOut` is for the session: the next
+launch finds no tokens and starts the device flow, as a first launch with a
+client id does; a flag in the file to stay signed out was not worth a
+settings field.
+
+`Sign in again` is not sign out and sign in: it starts the worker with
+`SignInStart::Fresh`, which goes straight to a new device code and leaves the
+stored tokens on disk until `persist` writes the new session over them. Only
+a new device flow asks for the new scope, but the old tokens still do
+everything else, and forgetting them first meant a code the user walked away
+from (or one that expired) left them signed out of follows, browsing and
+badges for want of chat. The code failing leaves `SignIn::Error` with the old
+tokens stored, and the composer's `Sign in` (`SignInStart::Stored`) signs in
+with them again. The follows still go while the code is up, as on any
+sign-in.
+
+A send the worker never got to does not go out after a sign-out or a
+restart: a std channel hands over what was queued before its sender was
+dropped, so `run` returns on `stop` before serving anything it receives. One
+already on its way to Twitch finishes, and its answer has nowhere to go, so
+`stop_twitch` tells each waiting chat `Message may not have been sent: the
+sign-in stopped` rather than claiming it was not.
+
 **An older build drops what it does not know.** Every save writes the fields
 the running build has and nothing else: serde ignores an unknown field on load,
 so it is never written back. Run a build from before `pinned` existed after
@@ -1128,6 +1189,19 @@ and the player's menus do it with `capture_any_mouse_down`
 `Slider` thumb calls `stop_propagation` on its press
 (gpui-component-0.5.1 slider.rs:464-466), so a bubble-phase handler on the bar
 never hears a drag of the volume.
+
+**A press on a pane takes the keys, except into a text box in it.** Every
+pane action takes focus back for the root first (`RootView::on_pane_action`),
+and a press anywhere in a pane is one (`PaneAction::Activate`, from the
+cell's bubble-phase `on_mouse_down`). The chat's composer is the first text
+box inside a pane, and gpui dispatches the bubble phase innermost first, so
+the box's `track_focus` took focus and the cell's handler took it straight
+back in the same press: the cursor never stayed in the box. `track_focus`
+marks the press handled (`window.prevent_default()`, div.rs:2030-2035), so an
+`Activate` that arrives with `window.default_prevented()` set still makes the
+pane active and leaves the keys where they went. Nothing else in a pane
+prevents default today (no gpui-component button or checkbox is used); one
+that did would keep the keys from the root the same way.
 
 **A menu's rows act on the press, never on a click.** A menu dismisses itself
 with `on_mouse_down_out` on its anchor, which fires in the capture phase when
@@ -1998,7 +2072,7 @@ header rests over it. The split:
 
 - **Pane header**, one per pane (`watch/header.rs`): a live dot *when the pane
   is actually showing a picture*, the channel name — which opens twitch.tv,
-  the way out of a chat that is read-only by design — viewer count, uptime,
+  for the site's chat and whatever else the app does not do — viewer count, uptime,
   `muted` and `paused`, and at the end of a right-hand cluster its icons. On a
   header sitting on a chat panel, and nowhere else, first the chat options
   (`Icon::ChatOptions`, a large T and a small one), which open the menu that
@@ -3214,12 +3288,81 @@ line is only what moved while away. While any mode is on, a quiet line under
 the list says so (`Slow mode 30s · Sub-only`, `chat_words::modes_line`): one
 dim line over a hairline, outside the list so it never scrolls, with the
 list and its pills in a box of their own above it. `ChatView::modes` is what
-a composer will read to grey itself out with a reason. Emote sets now load
+the composer reads to close itself with a reason (see "A live chat can
+send"). Emote sets now load
 for a new room and on a full line (`ModeUpdate::is_full`, all five mode tags,
 which Twitch sends on joining and on every rejoin), not at every `ROOMSTATE`,
 since a mode change sends one naming only that mode. The full line matters:
 reloading at a reconnect is what retries a provider whose fetch failed or
 timed out, as reloading at every line used to.
+
+**A live chat can send.** The user once ruled sending out ("a viewer, not a
+chat client") and has since reversed that: it will not be used much, but its
+absence was the biggest thing missing. Reading stays anonymous IRC; sending is
+Helix's Send Chat Message (`twitch_api::chat::send_message`, `POST
+/helix/chat/messages` with `broadcaster_id`, the room id the chat's
+`ROOMSTATE` carried, `sender_id`, the signed-in user's id from the session,
+and `message`), scope `user:write:chat`, asked of the worker
+(`Request::SendChat`) like every other Helix call, so the token has one owner
+and the window never waits. Not IRC's `chat:edit`, which would mean an
+authenticated connection per pane beside the anonymous one, or reading with
+the token too. A sent message is not drawn when it is sent: it appears when
+IRC echoes it, like anybody else's, so what the pane shows is what the room
+got. Twitch can answer 200 and not send (`is_sent` false); its `drop_reason`
+sentence becomes a notice row in that chat as it stands
+(`composer::outcome_notice`), and a refusal or a send that got no answer
+becomes a short one of ours (`Message not sent: …`). With a user token in a
+Shared Chat session the message goes to every channel in it; Twitch allows
+nothing else for that token type.
+
+Each send carries a number of the root's (`chat_send_seq`), and the root
+keeps a weak handle to the chat beside it (`chat_sends`), so the answer finds
+the chat it was typed into even if the panes moved, and is dropped quietly if
+that chat has closed. A worker that stops — signing out, signing in again, a
+new client id, a terminal sign-in failure — takes its unanswered sends with
+it, and each of their chats is told (`drop_chat_sends`): after a terminal
+failure that they were not sent, and after a stop the root asked for that
+they may not have been, since one can be mid-request (see "The second scope,
+and signing out").
+
+The composer is a live chat's only (`ChatView::composer`, `None` for a
+replay): gpui-component's `Input`, as every text box in the app is, under the
+line of modes in the chat's own column, so its height comes out of the
+list's box and no row is measured differently; the list stays in its
+absolute layer (the "view flowed into a flex item" trap). The box and the
+line that stands in for it are both `theme::COMPOSER_HEIGHT`, the medium `Input`'s 32 px,
+so the list does not jump as the reason comes and goes. Whether it is open
+is `composer::state`, pure, from an `Access` the root mirrors into every live
+chat after every worker event and every sign-in change
+(`RootView::sync_chat_access`; `set_access` does nothing when nothing
+changed): signed out, `Sign in to chat` with `Sign in`; no client id, the
+same with `Open settings`; a code up, `Sign in with code …` with `Open
+Twitch`; the scope missing, `Sign in again to chat` with `Sign in again`; the
+room's id not heard yet, `Joining the chat…`. The room's modes close it only
+where the answer is known: followers-only for somebody the follows list says
+does not follow (`Only followers can chat here`; moderators and VIPs are
+exempt there and nothing here can tell, which was judged the smaller
+mistake than inviting a message Twitch will only drop). "Does not follow" is
+said only on the whole list of follows: that walk stops at ten pages, a
+thousand channels, and says so (`twitch_api::Followed::complete`), and a
+channel missing from a list cut short is not known either way
+(`composer::follows`), so the box stays open with the hint. Sub-only cannot be
+checked with any scope this app asks for, and followers-only while following
+has minutes nothing reports, so those and emote-only leave the box open and
+say the mode in its placeholder (`Send a message (sub-only chat)`); Twitch's
+drop reason says the rest. The broadcaster's own chat is held back by none.
+
+The box takes one line of at most 500 characters, and `fit` holds it there on
+every change rather than the box's own validator, because the validator turns
+a change away whole: a pasted 600 characters, or two lines from a Windows
+clipboard — the box strips `\n` from a paste but not `\r` — did nothing at
+all. `message` trims and checks again on `Enter`, which sends and empties the
+box; `Enter` on nothing does nothing. While the box has the cursor the
+keymap stands aside (`keys::TYPING`), all but `Ctrl+K`, `Ctrl+,` and
+`Ctrl+R`, which type nothing, and a press into it keeps the cursor
+there rather than handing the keys to the root (see the GPUI trap "A press on
+a pane takes the keys"). Out of scope for now: an emote picker, replying to a
+message, moderation commands and whispers.
 
 **A few messages wear a wash.** `chat_tint` picks it: `first-msg=1` gets
 `theme::first_message_wash` and a quiet `First message` tag at the end of the
@@ -3968,6 +4111,14 @@ carries, is built (see "Browsing" and "Known limits"); the palette does not
 show recommendations yet, and `recommended::Recommended::shown` is what it
 would read, as the guide does. Sound and chat stay per pane throughout.
 
+So is sending chat, which the user had ruled out and then asked for: a box
+at the foot of each live chat, sent through Helix with the new
+`user:write:chat` scope, Twitch's refusals said in the chat, and a one-press
+`Sign in again` for a sign-in from before the scope (see "A live chat can
+send" under Chat). And Sign out, in the settings sheet (see "The second
+scope, and signing out" under "The two Twitch tokens"). Left for later: an
+emote picker, replying to a message, moderation commands and whispers.
+
 Left over from phase 1, smallest first:
 
 - The passive words the casing pass left alone — tags, toasts, chat's
@@ -4046,8 +4197,7 @@ Ranked by what would be noticed, roughly:
    badges" and "A reply carries its parent" under Chat).
 5. **Rebindable keys.** `keys::bindings` is a plain `Vec<KeyBinding>` built
    from constants; the work is a UI and a settings shape, not a mechanism.
-6. **Sign-out.** There is no way to clear a bad token except editing the field.
-7. **The auth-token cookie off argv.** It is documented as a tradeoff, but a
+6. **The auth-token cookie off argv.** It is documented as a tradeoff, but a
    per-spawn `--config` file with a user-only ACL, deleted once streamlink has
    started, would take it out of the process list at the cost of one more file
    on disk. Not done here because it changes a documented decision.
@@ -4060,10 +4210,11 @@ Ranked by what would be noticed, roughly:
   IRC `NAMES` still responds but stops listing above ~1000 users, so it returns
   nothing on exactly the channels worth asking about. `viewer_count` from Get
   Streams is the only public number.
-- **Moderation, whispers, the emote picker, sending messages.** All need an
-  authenticated connection. Sending is genuinely feasible — add `chat:edit` to
-  the scopes and authenticate the IRC session — but the user has ruled it out:
-  this is a viewer, not a chat client.
+- **Moderation and whispers.** Not out of reach so much as not asked for:
+  each needs a scope of its own (`moderator:manage:*`, `user:manage:whispers`)
+  and a UI. Sending a message, once in this list because the user had ruled
+  it out, is built (see "A live chat can send" under Chat); the emote picker
+  is left for later.
 - **Text selection across a message.** Every word is its own element and GPUI
   has no cross-element text selection, so there is no contiguous run to select.
   Links being clickable is currently the only way to get a URL out of the pane.
@@ -4112,7 +4263,11 @@ None of these is being worked on; all of them are real.
    start every pane over cold, each back to its starting screen until its
    new picture arrives, and a pane that shrinks is left on the rendition it
    has.
-4. **No sign-out**, and no way to clear a bad token except editing the field.
+4. **Sign out can race a refresh.** A worker that read its `stop` flag just
+   before Sign out set it, and wrote its refreshed tokens in the instant
+   after, puts them back on disk; see "The second scope, and signing out".
+   The gap between a flag read and the settings lock is the same one a
+   client id change has always had.
 5. **Animated WebP** (7TV, some BTTV) may render as stills. Twitch's own
    animated emotes are GIF and animate correctly.
 6. **`ImageCache::new` is still on the pre-window UI thread.** It is now

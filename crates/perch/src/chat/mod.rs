@@ -11,10 +11,12 @@
 //! The view is split by what it handles, the way `root/` is: this file has
 //! the view, its rows and how a message is drawn; `room` what the room says
 //! about itself (its modes, a timeout or a ban); `badges` the chat badges;
-//! `reply` a reply's context line; and `copy_menu` what a right-click on a
-//! row offers to copy.
+//! `reply` a reply's context line; `copy_menu` what a right-click on a row
+//! offers to copy; and `composer` the box at the foot of a live chat that
+//! sends a message.
 
 mod badges;
+pub mod composer;
 mod copy_menu;
 mod reply;
 mod room;
@@ -44,6 +46,7 @@ use crate::theme;
 use crate::veil;
 use crate::video::PositionHandle;
 
+use self::composer::{Composer, Step};
 use self::copy_menu::{CopyMenu, Target};
 
 /// Emote names are worth showing on hover: half of chat is emotes, and knowing
@@ -179,6 +182,16 @@ pub enum ChatViewEvent {
     /// (`RootView::copy`), which keeps the clipboard written in one place,
     /// and takes the rest of the press's run.
     Copy { text: String, toast: &'static str },
+    /// The composer's `Enter`, with a message worth sending (`composer`):
+    /// send `message` to the room whose numeric id is `room_id`, as the
+    /// signed-in user. The root asks the worker (`RootView::send_chat`) and
+    /// hands back what became of it (`ChatView::sent`).
+    Send { room_id: String, message: String },
+    /// The button beside a closed composer's reason was pressed: sign in,
+    /// sign in again, or open the settings sheet. The root does each
+    /// (`RootView::on_composer_step`); opening the sign-in page with the
+    /// code is the chat's own.
+    Step(Step),
 }
 
 impl EventEmitter<ChatViewEvent> for ChatView {}
@@ -285,6 +298,12 @@ pub struct ChatView {
     /// How many copy menus this chat has opened: what keys each one's
     /// arrival, so one opened in place of another fades in as itself.
     menus_opened: u64,
+    /// The channel, by login, for a live chat; `None` for a replay. What
+    /// the root works out this chat's [`composer::Access`] for.
+    channel: Option<String>,
+    /// The box that sends a message, at the foot of a live chat; `None` for
+    /// a replay, which takes none. See `composer`.
+    composer: Option<Composer>,
     _link: Link,
     _pump: Task<()>,
     _emote_pump: Task<()>,
@@ -298,14 +317,20 @@ impl ChatView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let (link, mut events, waiting, replay) = match feed {
+        let (link, mut events, waiting, replay, live_channel) = match feed {
             Feed::Live { channel, history } => {
                 let (client, events) = ChatClient::connect(&channel, history);
                 // The words the row that replaces it uses, "Connected to
                 // {channel}'s chat": not IRC's `#channel`, which is a name for
                 // the room nobody reading the pane needs to know.
                 let waiting = format!("connecting to {channel}'s chat…");
-                (Link::Live { _client: client }, events, waiting, false)
+                (
+                    Link::Live { _client: client },
+                    events,
+                    waiting,
+                    false,
+                    Some(channel),
+                )
             }
             Feed::Replay {
                 video_id,
@@ -316,9 +341,16 @@ impl ChatView {
                 let (replay, events) =
                     Replay::start(video_id, channel, room_id, move || position.get());
                 let waiting = "loading chat replay…".to_string();
-                (Link::Replay { _replay: replay }, events, waiting, true)
+                (
+                    Link::Replay { _replay: replay },
+                    events,
+                    waiting,
+                    true,
+                    None,
+                )
             }
         };
+        let composer = live_channel.is_some().then(|| Composer::new(window, cx));
 
         let pump = cx.spawn_in(window, async move |this, cx| {
             use futures::StreamExt as _;
@@ -416,6 +448,8 @@ impl ChatView {
             menu: None,
             pressed: None,
             menus_opened: 0,
+            channel: live_channel,
+            composer,
             _link: link,
             _pump: pump,
             _emote_pump: emote_pump,
@@ -1443,6 +1477,7 @@ impl Render for ChatView {
             .line_height(px(metrics.line))
             .child(body)
             .when_some(modes, |pane, modes| pane.child(Self::modes_line(modes)))
+            .children(self.composer_bar(window, cx))
             .children(self.copy_menu(cx))
     }
 }

@@ -255,6 +255,7 @@ impl RootView {
             }
             Action::LoadMore => this.load_more(cx),
             Action::OpenSettings => this.toggle_settings(window, cx),
+            Action::SignIn => this.start_sign_in(window, cx),
             Action::OpenChannel {
                 login,
                 display_name,

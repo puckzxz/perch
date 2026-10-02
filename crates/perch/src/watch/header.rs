@@ -441,9 +441,9 @@ pub(super) fn pane_header<V: 'static>(
                     header.child(controls::live_dot())
                 })
                 .child(
-                    // Chat here is read-only by design. This is the way out of that:
-                    // the one thing the app deliberately cannot do, one click from the
-                    // name of the channel you would be saying it in.
+                    // The channel on twitch.tv, one click from its name: the
+                    // site's chat and everything else the app does not do.
+                    // A message can be sent from the chat's own composer.
                     div()
                         .id(pane_id(&slot.key, "open"))
                         .flex_none()

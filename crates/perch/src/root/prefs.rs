@@ -12,9 +12,9 @@ use gpui::{
 use settings::SheetFields;
 
 use super::{Resize, RootView};
-use crate::browse::{Discovery, SignIn};
 use crate::chat_display::ChatDisplay;
 use crate::settings_view::{SettingsEvent, SettingsPanel};
+use crate::twitch::SignInStart;
 use crate::watch::ResizeStart;
 use crate::{layout, theme};
 
@@ -57,12 +57,7 @@ impl RootView {
         // Only the fields it shows: whatever else the app writes while the
         // sheet is open is never the sheet's to hand back. See `SheetFields`.
         let panel = cx.new(|cx| {
-            SettingsPanel::new(
-                SheetFields::of(&self.settings),
-                self.sign_in.summary(),
-                window,
-                cx,
-            )
+            SettingsPanel::new(SheetFields::of(&self.settings), &self.sign_in, window, cx)
         });
         cx.subscribe_in(
             &panel,
@@ -70,6 +65,11 @@ impl RootView {
             |this: &mut RootView, _, event, window, cx| {
                 match event {
                     SettingsEvent::Dismissed => this.settings_panel = None,
+                    // The sheet stays up, saying `Signed out`; nothing it
+                    // holds is the sign-in's. See `RootView::sign_out`.
+                    SettingsEvent::SignOut => this.sign_out(cx),
+                    // Likewise up, following the sign-in as it goes.
+                    SettingsEvent::SignIn => this.start_sign_in(window, cx),
                     SettingsEvent::Saved(updated) => {
                         let client_id_changed =
                             this.settings.credentials.client_id != updated.client_id;
@@ -105,27 +105,10 @@ impl RootView {
 
                         // Apply immediately rather than asking for a restart,
                         // which is the entire reason this panel exists.
+                        // A new worker for the new app, with everything the
+                        // old one fed forgotten; see `RootView::restart_twitch`.
                         if client_id_changed {
-                            this.sign_in = SignIn::Connecting;
-                            this.follows.clear();
-                            this.offline.clear();
-                            this.home_offline.clear();
-                            this.known_live.clear();
-                            this.avatars.clear();
-                            this.follows_loaded = false;
-                            // Browsing was fetched with the old app's token, so
-                            // it goes with it — and so does the trail through
-                            // it, whose places were read from what just went.
-                            this.discovery = Discovery::default();
-                            this.trail.clear();
-                            let (service, pump) =
-                                Self::spawn_twitch(this.settings_path.clone(), window, cx);
-                            this.twitch = service;
-                            this._twitch_pump = pump;
-                            // And the panes' asks about past broadcasts, whose
-                            // answers die with the old worker; the new one's
-                            // sign-in asks again.
-                            this.forget_asks();
+                            this.restart_twitch(SignInStart::Stored, window, cx);
                         }
                         if stream_changed {
                             // By key, not by channel: a recording's pane is

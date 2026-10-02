@@ -4,7 +4,7 @@
 //! worked out purely in `crate::shared_chat`; this is where that meets the
 //! chats and the sign-in.
 
-use gpui::{Context, Entity};
+use gpui::{Context, Entity, Window};
 use twitch_api::Channel;
 
 use super::RootView;
@@ -18,9 +18,16 @@ impl RootView {
     /// named here from the first line. It says when it meets a partner it
     /// cannot name (only a live chat ever does) and what its room is, for
     /// its badges (`root::badges`), and asks for what a row of its copy menu
-    /// copies to go on the clipboard (`copy`). The subscription lasts as
-    /// long as the chat does.
-    pub(super) fn watch_chat(&mut self, chat: &Entity<ChatView>, cx: &mut Context<Self>) {
+    /// copies to go on the clipboard (`copy`). A live chat is told what its
+    /// composer should know about the user, and its sends and its
+    /// composer's button come here too (`chat_send`). The subscription
+    /// lasts as long as the chat does.
+    pub(super) fn watch_chat(
+        &mut self,
+        chat: &Entity<ChatView>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let known: Vec<_> = self
             .source_rooms
             .labels()
@@ -30,17 +37,26 @@ impl RootView {
         if !known.is_empty() {
             chat.update(cx, |chat, cx| chat.learn_rooms(&known, cx));
         }
-        cx.subscribe(chat, |this: &mut RootView, chat, event, cx| match event {
-            ChatViewEvent::UnknownRoom(id) => this.ask_channel_name(id),
-            ChatViewEvent::Room(room) => this.on_chat_room(chat, room, cx),
-            // A row of the menu acts on the press and has closed it; the
-            // rest of the press's run would land on whatever the closed menu
-            // left under the pointer, a link in chat among them (`run_guard`).
-            ChatViewEvent::Copy { text, toast } => {
-                this.take_rest_of_run();
-                this.copy(text.clone(), toast, cx);
-            }
-        })
+        self.tell_chat_access(chat, cx);
+        cx.subscribe_in(
+            chat,
+            window,
+            |this: &mut RootView, chat, event, window, cx| match event {
+                ChatViewEvent::UnknownRoom(id) => this.ask_channel_name(id),
+                ChatViewEvent::Room(room) => this.on_chat_room(chat.clone(), room, cx),
+                ChatViewEvent::Send { room_id, message } => {
+                    this.send_chat(chat, room_id.clone(), message.clone(), cx)
+                }
+                ChatViewEvent::Step(step) => this.on_composer_step(step, window, cx),
+                // A row of the menu acts on the press and has closed it; the
+                // rest of the press's run would land on whatever the closed menu
+                // left under the pointer, a link in chat among them (`run_guard`).
+                ChatViewEvent::Copy { text, toast } => {
+                    this.take_rest_of_run();
+                    this.copy(text.clone(), toast, cx);
+                }
+            },
+        )
         .detach();
     }
 

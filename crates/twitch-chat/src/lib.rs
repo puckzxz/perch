@@ -5,6 +5,10 @@
 //! needs no OAuth, no client id, and no user account — it is by far the cheapest
 //! real feature in the app.
 //!
+//! The crate stays read-only now that the app can send. A message goes out
+//! through Helix with the user's token (`twitch_api::chat`) and comes back
+//! through here when IRC echoes it, like anybody else's.
+//!
 //! Connection lives on a blocking thread rather than an async runtime, matching
 //! how video works and avoiding an executor seam with GPUI. Chat volume is low
 //! enough that a thread parked on a socket read costs nothing.

@@ -23,7 +23,7 @@ use gpui::{
 use settings::history::{History, Watched};
 use twitch_api::{Video, VideoKind, VIDEO_THUMBNAIL};
 
-use crate::browse::{self, Action, ChannelPage, Discovery};
+use crate::browse::{self, Action, ChannelPage, Discovery, SignIn};
 use crate::controls;
 use crate::layout;
 use crate::seek_bar;
@@ -449,6 +449,7 @@ fn byline(video: &Video, now: DateTime<Utc>) -> String {
 pub fn view<V: 'static>(
     channel: &ChannelPage,
     discovery: &Discovery,
+    sign_in: &SignIn,
     history: &History,
     live: bool,
     room: layout::Room,
@@ -491,7 +492,13 @@ pub fn view<V: 'static>(
             VideoKind::Highlight => format!("{name} has made no highlights."),
             VideoKind::Upload | VideoKind::Other => format!("{name} has uploaded no videos."),
         };
-        list.child(browse::browse_placeholder(discovery, nothing.into()))
+        list.child(browse::browse_placeholder(
+            discovery,
+            nothing.into(),
+            sign_in,
+            on_action.clone(),
+            cx,
+        ))
     } else {
         let card_width = browse::card_width(
             room.width,

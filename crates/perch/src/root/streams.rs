@@ -184,7 +184,7 @@ impl RootView {
         });
         // The names of Shared Chat partners, and its word when it meets one
         // it cannot name, and its badges; see `root::shared_chat`.
-        self.watch_chat(&chat, cx);
+        self.watch_chat(&chat, window, cx);
         let chat_hidden = self.settings.chat_hidden_for(&channel);
         Slot::new(
             channel.clone(),
@@ -291,7 +291,7 @@ impl RootView {
         // For its badges: a replay carries no Shared Chat rooms, but its
         // speakers wear badges like a live chat's; see `root::badges`.
         if let Some(chat) = &chat {
-            self.watch_chat(chat, cx);
+            self.watch_chat(chat, window, cx);
         }
         // Chat hidden is remembered against the channel, like a live
         // pane's: hiding chat is a statement about the streamer, not the

@@ -615,6 +615,9 @@ fn body<V: 'static>(
             error,
             loading,
             "Twitch reported nothing live, which would be a first.".into(),
+            lists.sign_in,
+            on_action,
+            cx,
         ),
         Shows::Popular => {
             let cards = discovery.popular.items.iter().map(|stream| (stream, None));
@@ -636,6 +639,9 @@ fn body<V: 'static>(
             error,
             loading,
             "No categories came back.".into(),
+            lists.sign_in,
+            on_action,
+            cx,
         ),
         Shows::Categories => {
             let list = browse::scroller("guide-categories", &scrolls.categories, 0.0)
@@ -661,6 +667,9 @@ fn body<V: 'static>(
                     error,
                     loading,
                     format!("Nobody is streaming {} right now.", category.name).into(),
+                    lists.sign_in,
+                    on_action.clone(),
+                    cx,
                 )
             } else {
                 let cards = guide.streams.items.iter().map(|stream| (stream, None));
@@ -738,7 +747,7 @@ fn grid<'a, V: 'static>(
 /// Perch is next started (the rail drops the group then too); that there is
 /// nothing yet, and where they come from; or that sign-in is under way.
 /// `None` where sign-in is waiting on you — a code to type, a client id, a
-/// failure — which the follows' own empty state says better, with the code
+/// failure, a press of Sign in — which the follows' own empty state says better, with the code
 /// or the way to settings (`browse::empty_state`).
 fn recommended_notice(sign_in: &SignIn, refused: bool) -> Option<(SharedString, SharedString)> {
     if refused {
@@ -757,7 +766,10 @@ fn recommended_notice(sign_in: &SignIn, refused: bool) -> Option<(SharedString, 
             "Connecting…".into(),
             "Signing in to Twitch, which recommendations need.".into(),
         )),
-        SignIn::NeedsClientId | SignIn::AwaitingCode { .. } | SignIn::Error(_) => None,
+        SignIn::NeedsClientId
+        | SignIn::SignedOut
+        | SignIn::AwaitingCode { .. }
+        | SignIn::Error(_) => None,
     }
 }
 
@@ -1037,7 +1049,12 @@ mod tests {
             user_code: "ABCD".into(),
             verification_uri: "https://www.twitch.tv/activate".into(),
         };
-        for sign_in in [awaiting, SignIn::NeedsClientId, SignIn::Error("no".into())] {
+        for sign_in in [
+            awaiting,
+            SignIn::NeedsClientId,
+            SignIn::SignedOut,
+            SignIn::Error("no".into()),
+        ] {
             assert_eq!(heading(&sign_in, false), None);
         }
     }

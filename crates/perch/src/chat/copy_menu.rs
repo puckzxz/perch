@@ -1,7 +1,7 @@
 //! A chat row's right-click menu: what can be copied from it.
 //!
-//! Chat is read, not typed into, and the one thing a reader wants out of a
-//! line is the line — a link someone posted, a name to look up, what an
+//! Chat is mostly read, and the one thing a reader wants out of a line is
+//! the line — a link someone posted, a name to look up, what an
 //! emote is called to use it elsewhere. Drag-selecting text is not offered
 //! by gpui's text, and a message here is a row of separate words and
 //! pictures anyway (see the module above), so the menu copies the pieces

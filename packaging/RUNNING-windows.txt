@@ -59,7 +59,9 @@ a minute and costs nothing:
   - Copy the Client ID, open perch, press Ctrl+, and paste it in.
 
 perch then shows a code to enter at twitch.tv/activate, and your follows list
-appears. Nothing secret is ever stored in the binary.
+appears. Nothing secret is ever stored in the binary. Sign out, at the foot
+of Settings, forgets the sign-in; Sign in, where Sign out was, on Home, or
+in any chat, starts a new one.
 
 Without it: Home says "Not signed in" and offers you Settings,
 and Popular, Categories and search say "Not signed in" too, since every
@@ -172,6 +174,14 @@ see its picture and title beside it.
 
 Right-click a chat message to copy it, its sender's name, a link in it or the
 name of the emote you clicked on.
+
+Signed in, a live chat ends in a box that says "Send a message": click it,
+type, and press Enter. Your message shows in chat when Twitch echoes it
+back; if Twitch does not post it, its reason shows in that chat instead.
+While the cursor is in the box the shortcuts stand aside, so M and Space
+type (all but Ctrl+K, Ctrl+, and Ctrl+R, which type nothing). If the box
+says "Sign in again to chat", your sign-in is from before perch could send:
+press Sign in again beside it and enter the new code at twitch.tv/activate.
 
 
 perch is MIT licensed; see LICENSE. Not affiliated with, endorsed by, or

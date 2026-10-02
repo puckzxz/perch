@@ -12,10 +12,12 @@
 //! Everything in this file is Helix, documented and asked with the app's own
 //! Client-ID and the user's token. [`recommend`] is the one exception: it asks
 //! the website's unpublished GraphQL endpoint, anonymously, and its module docs
-//! say why and what happens when that stops working. [`badges`] is Helix too,
-//! in a file of its own only for length.
+//! say why and what happens when that stops working. [`badges`] and [`chat`]
+//! (sending a chat message) are Helix too, each in a file of its own only for
+//! length.
 
 pub mod badges;
+pub mod chat;
 pub mod recommend;
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -27,9 +29,15 @@ const DEVICE_URL: &str = "https://id.twitch.tv/oauth2/device";
 const TOKEN_URL: &str = "https://id.twitch.tv/oauth2/token";
 const HELIX: &str = "https://api.twitch.tv/helix";
 
-/// Reading your follows is all this app asks for. Browsing — top streams and
-/// categories — needs no scope at all, only a valid token.
-pub const SCOPES: &str = "user:read:follows";
+/// Reading your follows, and sending a chat message ([`chat::CHAT_SCOPE`]).
+/// Browsing — top streams and categories — needs no scope at all, only a
+/// valid token, and reading chat is anonymous IRC that needs no token.
+///
+/// The second was added later. A sign-in from before it keeps working for
+/// everything but sending: the scopes a token carries are looked up
+/// ([`chat::token_scopes`]) rather than assumed from this list, and the chat
+/// composer offers to sign in again when the scope is missing.
+pub const SCOPES: &str = "user:read:follows user:write:chat";
 
 /// One request's worth of results. Twitch caps this at 100.
 const PAGE_SIZE: &str = "100";
@@ -528,14 +536,16 @@ fn parse_streams(json: &Value) -> Vec<LiveStream> {
 ///
 /// Both endpoints paginate, both take the same query, and both have a natural
 /// end - you follow a fixed number of people - so the loop is shared and only
-/// the path and the parser differ. `MAX_FOLLOW_PAGES` bounds it regardless.
+/// the path and the parser differ. `MAX_FOLLOW_PAGES` bounds it regardless,
+/// and the second of the pair says whether the walk got to the end before
+/// that bound did.
 fn walk_follow_pages<T>(
     client_id: &str,
     token: &str,
     path: &str,
     user_id: &str,
     parse: fn(&Value) -> Vec<T>,
-) -> Result<Vec<T>, Error> {
+) -> Result<(Vec<T>, bool), Error> {
     let mut all: Vec<T> = Vec::new();
     let mut cursor: Option<String> = None;
 
@@ -555,7 +565,7 @@ fn walk_follow_pages<T>(
             break;
         }
     }
-    Ok(all)
+    Ok((all, cursor.is_none()))
 }
 
 /// Live channels the signed-in user follows, most viewers first.
@@ -569,7 +579,7 @@ pub fn followed_streams(
     token: &str,
     user_id: &str,
 ) -> Result<Vec<LiveStream>, Error> {
-    let mut streams = walk_follow_pages(
+    let (mut streams, _) = walk_follow_pages(
         client_id,
         token,
         "/streams/followed",
@@ -695,24 +705,33 @@ pub fn profile_images(
     Ok(all)
 }
 
+/// Everyone the signed-in user follows, as far as [`followed_channels`]
+/// walked.
+#[derive(Debug, Clone)]
+pub struct Followed {
+    /// In name order; see [`by_name`].
+    pub channels: Vec<Channel>,
+    /// Whether that is everyone: false when the walk stopped at
+    /// [`MAX_FOLLOW_PAGES`] with more to come, so a channel missing from
+    /// `channels` may still be followed. What the chat composer's
+    /// followers-only check needs to know before it says "only followers".
+    pub complete: bool,
+}
+
 /// Every channel the signed-in user follows, in name order; see [`by_name`].
 ///
 /// Needs `user:read:follows`, the same scope the live list already uses, so
 /// this costs a request rather than another sign-in.
-pub fn followed_channels(
-    client_id: &str,
-    token: &str,
-    user_id: &str,
-) -> Result<Vec<Channel>, Error> {
-    let mut all = walk_follow_pages(
+pub fn followed_channels(client_id: &str, token: &str, user_id: &str) -> Result<Followed, Error> {
+    let (mut channels, complete) = walk_follow_pages(
         client_id,
         token,
         "/channels/followed",
         user_id,
         parse_followed_channels,
     )?;
-    by_name(&mut all);
-    Ok(all)
+    by_name(&mut channels);
+    Ok(Followed { channels, complete })
 }
 
 /// `(id, display name)` for one login, or `None` if no such channel exists.

@@ -93,21 +93,27 @@ fn home_offline_after(
     offline
 }
 use crate::browse::{SearchResults, SignIn, Unanswered};
-use crate::twitch::{ListKey, Request, TwitchEvent, TwitchService};
+use crate::twitch::{ListKey, Request, SignInStart, TwitchEvent, TwitchService};
 
 impl RootView {
     pub(super) fn spawn_twitch(
         settings_path: PathBuf,
+        start: SignInStart,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> (TwitchService, Task<()>) {
-        let (service, mut events) = TwitchService::start(settings_path);
+        let (service, mut events) = TwitchService::start(settings_path, start);
         let pump = cx.spawn_in(window, async move |this, cx| {
             use futures::StreamExt as _;
             while let Some(event) = events.next().await {
                 if this
                     .update_in(cx, |this: &mut RootView, window, cx| {
-                        this.apply_twitch_event(event, window, cx)
+                        this.apply_twitch_event(event, window, cx);
+                        // Any event can change what a composer should say:
+                        // the sign-in, the scope, the follows. And what the
+                        // settings sheet says about the sign-in, if it is up.
+                        this.sync_chat_access(cx);
+                        this.sync_settings_sign_in(cx);
                     })
                     .is_err()
                 {
@@ -152,7 +158,7 @@ impl RootView {
                 self.update_recommended();
             }
             TwitchEvent::Streams(streams) => self.on_streams(streams, window, cx),
-            TwitchEvent::FollowedChannels(channels) => {
+            TwitchEvent::FollowedChannels { channels, complete } => {
                 // Held still under the pointer like the live list, in the
                 // rail and on Home alike, each in its own order; see
                 // `hold_live`.
@@ -168,6 +174,7 @@ impl RootView {
                 self.offline = offline_after(&self.offline, channels, &self.known_live, held);
                 self.refreshing = false;
                 self.follows_loaded = true;
+                self.follows_complete = complete;
                 // A channel followed since is no recommendation.
                 self.update_recommended();
                 // And when the offline ones were last live: everyone on the
@@ -176,6 +183,8 @@ impl RootView {
                 self.ask_last_live();
                 cx.notify();
             }
+            TwitchEvent::ChatScope(may) => self.chat_scope = Some(may),
+            TwitchEvent::ChatSent { id, result } => self.on_chat_sent(id, result, cx),
             TwitchEvent::Avatars(images) => {
                 self.avatars.extend(images);
                 cx.notify();
@@ -203,6 +212,8 @@ impl RootView {
                 // would otherwise go on saying it was looking for.
                 self.refreshing = false;
                 self.sign_in = SignIn::Error(reason.into());
+                // And every message it was sending.
+                self.drop_chat_sends("Message not sent: the sign-in stopped", cx);
                 self.discovery.pending.clear();
                 self.forget_asks();
                 self.fill_shown();
@@ -474,7 +485,7 @@ impl RootView {
         start_secs: Option<u64>,
         cx: &mut Context<Self>,
     ) {
-        if matches!(self.sign_in, SignIn::NeedsClientId | SignIn::Error(_)) {
+        if !self.sign_in.coming() {
             self.toast(format!("Sign in to open recording {id} by its link"), cx);
             return;
         }

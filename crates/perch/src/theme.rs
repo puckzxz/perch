@@ -454,6 +454,11 @@ pub const CAPTION_GLYPH: f32 = 16.0;
 /// comfortable target at the bar's height without filling it edge to edge.
 pub const ICON: f32 = 16.0;
 pub const ICON_BUTTON: f32 = 28.0;
+/// A chat composer's box: gpui-component's medium `Input`, the size every
+/// text box in the app is drawn at (`h_8`, 32 px). The line that stands in
+/// for the box when it is closed is drawn at the same height, so the chat
+/// above it does not move as one gives way to the other.
+pub const COMPOSER_HEIGHT: f32 = 32.0;
 /// Where macOS puts the traffic lights, measured from the window's top-left,
 /// and how much of the bar's left end is kept clear for them. All three are
 /// unverified guesses until someone tunes them on a Mac; gpui measures the

@@ -1,8 +1,8 @@
 //! The Twitch worker: signing in, keeping the follows list fresh, and
 //! answering the browse page's requests, a stopped pane's, the rail's ask
 //! for channels like the ones watched, when the offline follows were last
-//! live, whose chat a Shared Chat line was copied from, and what the badges
-//! in a chat look like.
+//! live, whose chat a Shared Chat line was copied from, what the badges
+//! in a chat look like, and sending a chat message.
 //!
 //! One thread owns the session, and it has to. Refresh tokens are single-use,
 //! so two things refreshing at once would spend the same token twice and lock
@@ -11,7 +11,9 @@
 //! (see [`Request::Recommend`]), and goes through here anyway, so what the app
 //! asks of Helix and of the rail's query is all in one place. Chat is not:
 //! its IRC, its history and a recording's replay — a GraphQL ask too — are
-//! the chat side's, and never come through here.
+//! the chat side's, and never come through here. Sending a chat message
+//! does ([`Request::SendChat`]): it is Helix, with the token, like
+//! everything else that is.
 //!
 //! The thread alternates between a follows poll on a timer and whatever the UI
 //! asks for in between, which is what the request channel is: `recv_timeout`
@@ -27,6 +29,7 @@ use std::time::{Duration, Instant};
 use futures::channel::mpsc;
 use settings::{OAuthTokens, Settings};
 use twitch_api::badges::BadgeSet;
+use twitch_api::chat::SendOutcome;
 use twitch_api::recommend::{LastBroadcast, SimilarChannel};
 use twitch_api::{Category, Channel, LiveStream, Session, Video, VideoKind};
 
@@ -36,6 +39,12 @@ const POLL_INTERVAL: Duration = Duration::from_secs(60);
 /// How much to slow the device-code poll by each time Twitch says `slow_down`.
 /// Five seconds is what RFC 8628 §3.5 specifies, not a number we picked.
 const SLOW_DOWN_STEP: Duration = Duration::from_secs(5);
+
+/// How often the token is validated again after the first time, which is
+/// the worker's first poll. Twitch asks every app to validate at startup
+/// and hourly; for this app it is also how the chat composer learns
+/// whether the sign-in may send (`twitch_api::chat::token_scopes`).
+const VALIDATE_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 /// How many of a channel's newest past broadcasts a stopped pane asks for.
 /// The newest is what an offline pane offers, and the one that has just
@@ -130,6 +139,18 @@ pub enum Request {
     /// through [`serve`] like the browse page's asks; it fills no browse
     /// list, and its failure travels in its answer.
     Badges { channel: Option<String> },
+    /// Send `message` to the chat of the channel whose numeric id is
+    /// `broadcaster_id` (the room id its chat's `ROOMSTATE` carries), as
+    /// the signed-in user: Helix's Send Chat Message
+    /// (`twitch_api::chat::send_message`). `id` is the root's, for the
+    /// answer to find the chat it came from (`RootView::send_chat`). Helix,
+    /// with the token, so it goes through [`serve`]; it fills no browse
+    /// list, and its failure travels in its answer.
+    SendChat {
+        id: u64,
+        broadcaster_id: String,
+        message: String,
+    },
 }
 
 /// Which browse list a request fills, so its answer — or its failure — can
@@ -155,13 +176,13 @@ pub enum ListKey {
 }
 
 impl Request {
-    /// The browse list this fills, or `None` for the seven that fill none:
+    /// The browse list this fills, or `None` for the eight that fill none:
     /// the follows poll, whose lists are not the browse page's, a recording
     /// looked up for a link, whose failure is a toast, a pane's past
     /// broadcasts, which are the pane's, the rail's recommendations, which
     /// are the rail's, when the offline follows were last live, which is
     /// words on names already on screen, and the names of Shared Chat
-    /// partners and the chat badges, which are the chats'.
+    /// partners, the chat badges and a message sent, which are the chats'.
     pub fn list_key(&self) -> Option<ListKey> {
         match self {
             Request::Follows
@@ -170,7 +191,8 @@ impl Request {
             | Request::Recommend { .. }
             | Request::LastLive { .. }
             | Request::ChannelNames { .. }
-            | Request::Badges { .. } => None,
+            | Request::Badges { .. }
+            | Request::SendChat { .. } => None,
             Request::Popular { .. } => Some(ListKey::Popular),
             Request::Categories { .. } => Some(ListKey::Categories),
             Request::Category { category, .. } => Some(ListKey::Category(category.id.clone())),
@@ -222,8 +244,13 @@ pub enum TwitchEvent {
     /// Everyone the user follows, live or not. A separate list from
     /// [`Streams`](TwitchEvent::Streams) all the way to the screen — see
     /// [`Channel`] for why merging them would be wrong three times
-    /// over.
-    FollowedChannels(Vec<Channel>),
+    /// over. `complete` is false when the walk stopped at its page cap
+    /// with more to come (`twitch_api::Followed`), so somebody missing from
+    /// the list may yet be followed.
+    FollowedChannels {
+        channels: Vec<Channel>,
+        complete: bool,
+    },
     /// Avatars for whoever is live, as `(login, url)`. Arrives after the live
     /// list it belongs to and is merged into what the UI already holds, so a
     /// rail that is already on screen fills in rather than blinking.
@@ -301,6 +328,20 @@ pub enum TwitchEvent {
         channel: Option<String>,
         result: Result<Vec<BadgeSet>, String>,
     },
+    /// Whether the signed-in token may send chat, from Twitch's token
+    /// validation: at the worker's first poll and hourly after
+    /// ([`VALIDATE_INTERVAL`]). A sign-in from before the scope was asked
+    /// for says `false`, and the chat composer offers to sign in again.
+    /// Never sent when validation could not be had; the root reads that as
+    /// not known, and lets a send find out.
+    ChatScope(bool),
+    /// What a [`Request::SendChat`] came to, by its `id`: Twitch's answer,
+    /// or why there was none. Its own event with the failure inside it, for
+    /// the reason [`Broadcasts`](TwitchEvent::Broadcasts) has one.
+    ChatSent {
+        id: u64,
+        result: Result<SendOutcome, SendFailure>,
+    },
     /// Sign-in itself failed, so nothing works.
     Error(String),
     /// One browse request failed. The session is fine; only that list is empty,
@@ -335,6 +376,46 @@ pub enum RecommendError {
     Failed(String),
 }
 
+/// Why a [`Request::SendChat`] got no answer from Twitch, for the notice the
+/// chat shows (`chat::composer::failure_notice`). Not `twitch_api::Error`,
+/// which is not `Clone`; three kinds are all the notice tells apart.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SendFailure {
+    /// The request never reached Twitch, or Twitch was having a moment.
+    Network,
+    /// Twitch no longer honours the sign-in.
+    SignIn,
+    /// Anything else, in the API crate's words.
+    Other(String),
+}
+
+impl From<twitch_api::Error> for SendFailure {
+    fn from(e: twitch_api::Error) -> Self {
+        match e {
+            twitch_api::Error::Network(_) => SendFailure::Network,
+            twitch_api::Error::NotSignedIn => SendFailure::SignIn,
+            e => SendFailure::Other(e.to_string()),
+        }
+    }
+}
+
+/// Where a new worker's sign-in begins.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SignInStart {
+    /// With the stored tokens, refreshed if need be, and a device code only
+    /// when there are none or Twitch has turned them down: every launch, a
+    /// new client id, and the `Sign in` after a sign-out or a failure.
+    Stored,
+    /// With a new device code whatever is stored: a closed composer's `Sign
+    /// in again`. A refresh keeps the scopes the sign-in was made with, so
+    /// only a new one can add `user:write:chat`. The stored tokens are left
+    /// on disk, not forgotten first, until `persist` writes the new session
+    /// over them; so a code the user never enters costs nothing but the
+    /// wait, and the next `Sign in` signs in with the old tokens again,
+    /// which still do everything but chat.
+    Fresh,
+}
+
 pub struct TwitchService {
     stop: Arc<AtomicBool>,
     /// Dropped on teardown, which wakes the worker out of `recv_timeout`
@@ -344,7 +425,10 @@ pub struct TwitchService {
 }
 
 impl TwitchService {
-    pub fn start(settings_path: PathBuf) -> (Self, mpsc::UnboundedReceiver<TwitchEvent>) {
+    pub fn start(
+        settings_path: PathBuf,
+        start: SignInStart,
+    ) -> (Self, mpsc::UnboundedReceiver<TwitchEvent>) {
         let (tx, rx) = mpsc::unbounded();
         let (requests_tx, requests_rx) = std::sync::mpsc::channel();
         let stop = Arc::new(AtomicBool::new(false));
@@ -353,7 +437,7 @@ impl TwitchService {
             .name("twitch".into())
             .spawn({
                 let stop = stop.clone();
-                move || run(settings_path, tx, stop, requests_rx)
+                move || run(settings_path, start, tx, stop, requests_rx)
             })
             .expect("failed to spawn twitch service");
 
@@ -365,6 +449,18 @@ impl TwitchService {
             },
             rx,
         )
+    }
+
+    /// A service with no worker behind it: what the root holds once the
+    /// user has signed out, until they sign in again. Every
+    /// [`request`](Self::request) reports that nobody is there to answer,
+    /// as one to a worker that has returned does.
+    pub fn stopped() -> Self {
+        Self {
+            stop: Arc::new(AtomicBool::new(true)),
+            requests: None,
+            thread: None,
+        }
     }
 
     /// Ask for something, reporting whether anyone is there to answer.
@@ -453,16 +549,22 @@ fn persist(settings_path: &Path, session: &Session, stop: &AtomicBool) -> Result
 const STARTUP_REFRESH_ATTEMPTS: u32 = 3;
 const STARTUP_REFRESH_WAIT: Duration = Duration::from_secs(3);
 
-/// Get a usable session, signing in or refreshing as needed.
+/// Get a usable session, signing in or refreshing as needed; with
+/// [`SignInStart::Fresh`], straight to a new device code.
 fn establish_session(
     settings_path: &Path,
+    start: SignInStart,
     client_id: &str,
     tx: &mpsc::UnboundedSender<TwitchEvent>,
     stop: &AtomicBool,
 ) -> Option<Session> {
     let settings = Settings::load(settings_path).ok()?;
 
-    if let Some(stored) = settings.credentials.oauth.clone() {
+    let stored = match start {
+        SignInStart::Stored => settings.credentials.oauth.clone(),
+        SignInStart::Fresh => None,
+    };
+    if let Some(stored) = stored {
         let stored_session = Session {
             access_token: stored.access_token.clone(),
             refresh_token: stored.refresh_token.clone(),
@@ -688,6 +790,21 @@ fn serve(
                 .map_err(|e| e.to_string());
             Ok(TwitchEvent::Broadcasts { login, result })
         }
+        Request::SendChat {
+            id,
+            broadcaster_id,
+            message,
+        } => {
+            let result = twitch_api::chat::send_message(
+                client_id,
+                token,
+                &broadcaster_id,
+                &session.user_id,
+                &message,
+            )
+            .map_err(SendFailure::from);
+            Ok(TwitchEvent::ChatSent { id, result })
+        }
         Request::Badges { channel } => {
             let result = match &channel {
                 None => twitch_api::badges::global_chat_badges(client_id, token),
@@ -876,9 +993,9 @@ fn poll_follows(
     }
 
     match twitch_api::followed_channels(client_id, token, &session.user_id) {
-        Ok(channels) => {
+        Ok(twitch_api::Followed { channels, complete }) => {
             let missing = unpictured(&channels, pictured);
-            let _ = tx.unbounded_send(TwitchEvent::FollowedChannels(channels));
+            let _ = tx.unbounded_send(TwitchEvent::FollowedChannels { channels, complete });
 
             // After the names, for the same reason as the live pictures: the
             // rail shows the names at once and fills the faces in. Marked as
@@ -902,6 +1019,25 @@ fn poll_follows(
     }
 }
 
+/// Ask Twitch what the token may do, and say whether it may send chat.
+/// Returns when to ask again: in an hour once answered, at the next poll
+/// when not, so a launch on a network still coming up learns it a minute
+/// later rather than an hour. A token Twitch turns down says nothing here;
+/// the follows poll meets the same refusal, and a send says so in its chat.
+fn validate(session: &Session, tx: &mpsc::UnboundedSender<TwitchEvent>) -> Instant {
+    match twitch_api::chat::token_scopes(&session.access_token) {
+        Ok(scopes) => {
+            let may = twitch_api::chat::may_chat(&scopes);
+            let _ = tx.unbounded_send(TwitchEvent::ChatScope(may));
+            Instant::now() + VALIDATE_INTERVAL
+        }
+        Err(e) => {
+            eprintln!("validate: {e}");
+            Instant::now() + POLL_INTERVAL
+        }
+    }
+}
+
 /// What a failure of the unpublished GraphQL endpoint comes to for the root:
 /// a refusal, which ends the asking, or anything else, which does not.
 fn recommend_error(e: twitch_api::Error) -> RecommendError {
@@ -913,6 +1049,7 @@ fn recommend_error(e: twitch_api::Error) -> RecommendError {
 
 fn run(
     settings_path: PathBuf,
+    start: SignInStart,
     tx: mpsc::UnboundedSender<TwitchEvent>,
     stop: Arc<AtomicBool>,
     requests: Receiver<Request>,
@@ -931,7 +1068,7 @@ fn run(
         return;
     };
 
-    let Some(mut session) = establish_session(&settings_path, &client_id, &tx, &stop) else {
+    let Some(mut session) = establish_session(&settings_path, start, &client_id, &tx, &stop) else {
         return;
     };
     let _ = tx.unbounded_send(TwitchEvent::SignedIn {
@@ -939,6 +1076,9 @@ fn run(
     });
 
     let mut next_poll = Instant::now();
+    // The first validation is at the first poll, so the composer learns
+    // whether it may send as the follows arrive; see `validate`.
+    let mut next_validate = Instant::now();
     // Whose offline picture has been asked for; see `unpictured`. Per worker,
     // so a new sign-in starts it over, which is when the follows can change.
     let mut pictured = HashSet::new();
@@ -947,6 +1087,9 @@ fn run(
         if Instant::now() >= next_poll {
             if !keep_session_fresh(&mut session, &client_id, &settings_path, &tx, &stop) {
                 return;
+            }
+            if Instant::now() >= next_validate {
+                next_validate = validate(&session, &tx);
             }
             poll_follows(&client_id, &session, &tx, &stop, &mut pictured);
             next_poll = Instant::now() + POLL_INTERVAL;
@@ -985,6 +1128,13 @@ fn run(
                 }
             }
             Ok(request) => {
+                // A std channel still hands over what was queued before its
+                // sender went away. A chat message the user typed before
+                // signing out must not go out after it, as theirs, once the
+                // root has already told that chat it may not have.
+                if stop.load(Ordering::Relaxed) {
+                    return;
+                }
                 if !keep_session_fresh(&mut session, &client_id, &settings_path, &tx, &stop) {
                     return;
                 }

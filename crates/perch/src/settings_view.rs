@@ -17,6 +17,7 @@ use gpui_component::{
 };
 use settings::{QualityPreference, SheetFields};
 
+use crate::browse::SignIn;
 use crate::controls;
 use crate::keys;
 use crate::motion;
@@ -101,6 +102,14 @@ pub enum SettingsEvent {
     /// the rest of the settings to hand back.
     Saved(SheetFields),
     Dismissed,
+    /// `Sign out` was pressed. Not a field: it acts at once, through the
+    /// sign-in's own path (`RootView::sign_out`, `Settings::sign_out`),
+    /// and leaves whatever the sheet holds unsaved and in place.
+    SignOut,
+    /// `Sign in` was pressed, where `Sign out` was once signed out: the
+    /// same `RootView::start_sign_in` as the empty state's, and as with
+    /// `SignOut` the sheet's fields stay as they are.
+    SignIn,
 }
 
 pub struct SettingsPanel {
@@ -112,6 +121,10 @@ pub struct SettingsPanel {
     /// clicks and keeps no state of its own.
     miniplayer: bool,
     sign_in_status: SharedString,
+    /// Whether `Sign out` is offered beside the status (`SignIn::can_sign_out`).
+    sign_out_offered: bool,
+    /// Whether `Sign in` is offered there instead (`SignIn::offers_sign_in`).
+    sign_in_offered: bool,
     /// The fields' scroll position, shared with the scrollbar drawn over them.
     scroll: ScrollHandle,
 }
@@ -121,7 +134,7 @@ impl EventEmitter<SettingsEvent> for SettingsPanel {}
 impl SettingsPanel {
     pub fn new(
         fields: SheetFields,
-        sign_in_status: SharedString,
+        sign_in: &SignIn,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -176,9 +189,32 @@ impl SettingsPanel {
             auth_token,
             quality,
             history,
-            sign_in_status,
+            sign_in_status: sign_in.summary(),
+            sign_out_offered: sign_in.can_sign_out(),
+            sign_in_offered: sign_in.offers_sign_in(),
             scroll: ScrollHandle::new(),
         }
+    }
+
+    /// The sign-in as it stands now, while the sheet is up: after `Sign
+    /// out`, which leaves it saying `Signed out` with `Sign in` beside it,
+    /// and as a sign-in started from there goes on (`Connecting…`, the
+    /// code, `Signed in as …`). Told after every worker event; a sheet told
+    /// what it already says does nothing.
+    pub fn set_sign_in(&mut self, sign_in: &SignIn, cx: &mut Context<Self>) {
+        let status = sign_in.summary();
+        let (sign_out_offered, sign_in_offered) =
+            (sign_in.can_sign_out(), sign_in.offers_sign_in());
+        if self.sign_in_status == status
+            && self.sign_out_offered == sign_out_offered
+            && self.sign_in_offered == sign_in_offered
+        {
+            return;
+        }
+        self.sign_in_status = status;
+        self.sign_out_offered = sign_out_offered;
+        self.sign_in_offered = sign_in_offered;
+        cx.notify();
     }
 
     fn save(&self, cx: &mut Context<Self>) {
@@ -441,6 +477,33 @@ impl Render for SettingsPanel {
                                     .text_color(theme::text_muted())
                                     .child(self.sign_in_status.clone()),
                             )
+                            // Beside the sign-in it drops, and away from Save:
+                            // it acts at once, so it wears the destructive
+                            // colour under the pointer and sits apart from the
+                            // two buttons that close the sheet.
+                            .when(self.sign_out_offered, |footer| {
+                                footer.child(
+                                    controls::destructive("settings-sign-out", "Sign out")
+                                        .on_click(cx.listener(|_, _, _, cx| {
+                                            cx.emit(SettingsEvent::SignOut)
+                                        })),
+                                )
+                            })
+                            // And once signed out, the way back in, where Sign
+                            // out was: the sheet is where the user just left
+                            // it, and it acts at once too.
+                            .when(self.sign_in_offered, |footer| {
+                                footer.child(
+                                    controls::pill(
+                                        "settings-sign-in",
+                                        "Sign in",
+                                        controls::Variant::Pill,
+                                    )
+                                    .on_click(cx.listener(|_, _, _, cx| {
+                                        cx.emit(SettingsEvent::SignIn)
+                                    })),
+                                )
+                            })
                             // The app's own controls, not the widget library's
                             // buttons: this was the one place with a second
                             // idea of what a primary control looks like — a

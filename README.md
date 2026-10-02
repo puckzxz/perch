@@ -7,8 +7,9 @@ No Electron, no second window for the player unless you pop one out, and no
 third one for chat.
 
 Up to **four channels at once**, side by side in a grid derived from the shape
-of your window, each with its own chat and its own volume. Chat is read-only by
-design — this is somewhere to watch from, not another client to talk in.
+of your window, each with its own chat and its own volume. Chat is mostly for
+reading — this is somewhere to watch from — but each live chat has a box at its
+foot to say something in once you are signed in.
 Drag the panes into another order, give one the whole window while the others
 play on, or, on Windows, pop one out into a small window that stays on top of
 whatever else you are doing.
@@ -402,7 +403,7 @@ whenever another app is in front, which is the one thing a pop-out is for.
 
 ## Chat
 
-Read-only, over anonymous IRC — no account, no token. Messages carry their
+Read over anonymous IRC — no account, no token. Messages carry their
 emotes (Twitch, FFZ, BTTV and 7TV), links are clickable, `@mentions` are drawn
 in the colour of whoever is being addressed, and subs, gifts, raids and
 announcements appear as their own rows rather than being dropped. A past
@@ -419,10 +420,35 @@ opens the chat options: the text size — **Small**, **Default**, **Large** or
 **Larger** — and **Time on every message**, which starts every message with
 its time in place of the once-a-minute breaks. They apply to every chat at
 once and are remembered. The channel's name in the pane header opens
-it on twitch.tv, which is the way out of a chat you cannot type in — and so
-do **Open on twitch.tv** under the bar's **More** and the palette's `Open …
-on twitch.tv`. On a live pane the site plays the stream as well, with its
-own sound.
+it on twitch.tv — and so do **Open on twitch.tv** under the bar's **More** and
+the palette's `Open … on twitch.tv`. On a live pane the site plays the stream
+as well, with its own sound.
+
+### Sending a message
+
+A live channel's chat ends in a box that says **Send a message**. Click it,
+type, and press `Enter`: the message goes, the box empties, and the message
+shows in chat when Twitch echoes it back, the way everybody else's does. It
+takes one line of up to 500 characters (a pasted line break becomes a space,
+and the box stops at the limit). While the cursor is in it, the shortcuts
+stand aside, so `M` and `Space` type (all but `Ctrl+K`, `Ctrl+,` and `Ctrl+R`,
+which type nothing). A past broadcast's chat has no box.
+
+Sending uses Twitch's own Send Chat Message API with your sign-in; reading
+stays anonymous. If Twitch takes the message but does not post it — a
+sub-only room, a message held for the moderators — its reason appears as a
+line in that chat, and so does a short note when the message could not be
+sent at all (`Message not sent: you are sending messages too quickly`).
+
+When you cannot send, the box gives way to a line saying why, with a button
+where there is something to do: **Sign in to chat** when nobody is signed in,
+**Sign in again to chat** when the sign-in is from before Perch could send
+(press **Sign in again** and enter the new code at `twitch.tv/activate`), and
+**Only followers can chat here** in a followers-only room of a channel you do
+not follow. Sub-only, emote-only and followers-only rooms you might be allowed
+to talk in leave the box open and say so in it, as in **Send a message
+(sub-only chat)**. There is no emote picker, no replying to a message, no
+moderation commands and no whispers.
 
 A pane also opens with the last hundred messages from *before* you joined, so
 four panes do not open blank. Twitch publishes no scrollback of its own, so
@@ -726,10 +752,18 @@ plainly because the names suggest otherwise.
 
 | | What it is | What it does |
 |---|---|---|
-| **Client ID** | An application you register at [dev.twitch.tv](https://dev.twitch.tv/console) | Lists the channels you follow |
+| **Client ID** | An application you register at [dev.twitch.tv](https://dev.twitch.tv/console) | Lists the channels you follow, and sends chat messages |
 | **auth-token** | The `auth-token` **cookie** from twitch.tv | Prime/Turbo ad suppression and sub-only qualities |
 
 Neither can do the other's job.
+
+**Sign out**, at the foot of the settings sheet beside who is signed in,
+forgets the sign-in at once and leaves the app as it is with nobody signed
+in: the follows go, and the settings sheet, Home, the browse lists and every
+chat offer **Sign in**, which shows a new code to enter at
+`twitch.tv/activate`. Everything else in settings stays
+as it was. The next launch starts signing in again on its own, as a first
+launch with a Client ID does.
 
 To create the Client ID: register an application, set **OAuth Redirect URL** to
 `http://localhost` (required by the form, unused by this app) and **Client Type**
@@ -801,8 +835,9 @@ starting until its new picture arrives.
 crates/
   mpv-frames    libmpv loaded at runtime, software render to BGRA
   streamlink    supervises streamlink as a headless byte source
-  twitch-chat   read-only chat over anonymous IRC; a recording's chat replayed
-  twitch-api    device-code sign-in, follows, browsing, search and chat badges
+  twitch-chat   chat read over anonymous IRC; a recording's chat replayed
+  twitch-api    device-code sign-in, follows, browsing, search, chat badges
+                and sending a chat message
   emotes        Twitch/FFZ/BTTV/7TV resolution, disk image cache
   settings      persisted user settings, and what has been watched
   perch         the app

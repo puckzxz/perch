@@ -794,6 +794,19 @@ impl Settings {
         settings.write(path)
     }
 
+    /// Forget the stored sign-in, keeping everything else the file says:
+    /// the settings sheet's Sign out, and the first half of signing in
+    /// again for a scope the old sign-in lacks.
+    ///
+    /// [`save_sign_in`](Self::save_sign_in) with nothing, under its lock and
+    /// its re-read, so a preference saved a moment ago survives it, and
+    /// named apart so a reader finds the one way the UI clears the tokens
+    /// without changing the client id. The caller stops the sign-in worker
+    /// first: one still running would persist its next refresh over this.
+    pub fn sign_out(path: &Path) -> Result<(), Error> {
+        Self::save_sign_in(path, None)
+    }
+
     /// Write to `path` as-is, creating parent directories as needed.
     ///
     /// Everything in `self` wins, including the sign-in. That is right for a
@@ -949,6 +962,32 @@ mod tests {
             stored.credentials.client_id.as_deref(),
             Some("a-different-app")
         );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Signing out drops the tokens and nothing else: a preference saved
+    /// from a stale copy just before it, and the client id, both survive.
+    #[test]
+    fn signing_out_drops_the_tokens_and_keeps_the_rest() {
+        let path = temp_file("sign-out");
+        let _ = std::fs::remove_file(&path);
+
+        let mut settings = Settings::default();
+        settings.credentials.client_id = Some("the-app".into());
+        settings.credentials.oauth = Some(a_sign_in());
+        settings.save(&path).unwrap();
+
+        let mut ui = settings.clone();
+        ui.credentials.oauth = None;
+        ui.volume = 42;
+        ui.save_preferences(&path).unwrap();
+
+        Settings::sign_out(&path).unwrap();
+
+        let stored = Settings::load(&path).unwrap();
+        assert!(stored.credentials.oauth.is_none(), "still signed in");
+        assert_eq!(stored.volume, 42, "signing out lost a preference");
+        assert_eq!(stored.credentials.client_id.as_deref(), Some("the-app"));
         let _ = std::fs::remove_file(&path);
     }
 
