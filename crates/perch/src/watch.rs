@@ -49,6 +49,7 @@ use crate::motion;
 use crate::rewind::{Moment, Origin, Rewind};
 use crate::target::{self, Target};
 use crate::theme;
+use crate::veil;
 use crate::video::PositionHandle;
 use crate::video_view::{Switching, VideoView};
 
@@ -669,6 +670,11 @@ pub struct PaneInfo<'a> {
     /// is open (`RootView::chat_menu`), for the menu to mark what is chosen;
     /// `None` while it is not. Drawn only on a pane with a chat panel.
     pub chat_menu: Option<ChatDisplay>,
+    /// Whether the guide is up over the watch page from this pane
+    /// (`guide::Guide::up_from`), which the Guide icon on the header of a
+    /// pane with no picture keys its id and its tooltip on, as the bar's does
+    /// (`VideoView::guide_from_here`).
+    pub guide_from_here: bool,
 }
 
 /// A recording a stopped pane offers, and where it was left if it has been
@@ -761,6 +767,12 @@ pub enum PaneAction {
     /// once one pane alone is heard, every pane again: More's `Only this
     /// one` and `Hear all again`; see `RootView::hear_only`.
     HearOnly,
+    /// Raise the guide over the lower part of the watch page, from this
+    /// pane, or put it away again: the Guide button on its bar, or on its
+    /// header while it has no picture and so no bar. One guide for the
+    /// page, whichever pane's button; see `crate::guide` and
+    /// `RootView::toggle_guide`.
+    Guide,
 }
 
 /// How every pane in the current grid is arranged. Identical for all of them,
@@ -1047,7 +1059,9 @@ fn pane<V: 'static>(
     let hovered_key = slot.key.clone();
     let hover_probe = canvas(
         move |bounds, window, cx| {
-            let inside = window.is_window_hovered() && bounds.contains(&window.mouse_position());
+            // Not while the pointer is on the guide over the pane; see
+            // `crate::veil`.
+            let inside = veil::pointer_over(bounds, window, cx);
             owner
                 .update(cx, |view, cx| on_hover(view, &hovered_key, inside, cx))
                 .ok();

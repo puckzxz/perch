@@ -39,6 +39,7 @@ use crate::controls;
 use crate::motion;
 use crate::shared_chat::{self, Label};
 use crate::theme;
+use crate::veil;
 use crate::video::PositionHandle;
 
 /// Emote names are worth showing on hover: half of chat is emotes, and knowing
@@ -1258,12 +1259,11 @@ impl Render for ChatView {
 
         // Where the pointer is, against where the list was last laid out.
         // Before `at_live` is read: releasing held rows changes it.
+        // Not while the pointer is on the guide over the chat, which would
+        // otherwise hold its rows for as long as the guide was being read;
+        // see `crate::veil`.
         self.window_hovered = window.is_window_hovered();
-        let over = self.window_hovered
-            && self
-                .list
-                .viewport_bounds()
-                .contains(&window.mouse_position());
+        let over = veil::pointer_over(self.list.viewport_bounds(), window, cx);
         self.sync_hold(over);
         let at_live = self.at_live();
         let holding = !self.held.is_empty();

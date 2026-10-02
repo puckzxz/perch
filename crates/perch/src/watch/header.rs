@@ -13,7 +13,7 @@
 //! rest over a pane with no picture to cover. That band, its fade and its
 //! hold on the pointer are `watch::pane`'s; this file is only the header.
 
-use gpui::{div, prelude::*, px, Context, SharedString, Window};
+use gpui::{div, prelude::*, px, Context, MouseButton, MouseDownEvent, SharedString, Window};
 
 use super::{pane_id, PaneAction, PaneDrag, PaneInfo, Showing, Slot, StreamState};
 use crate::assets::Icon;
@@ -57,6 +57,24 @@ enum PopOutButton {
     PopOut,
     /// Bring it back from one.
     PopIn,
+}
+
+/// Whether the header of a pane `showing` this offers the guide: when the
+/// pane has stopped for good — off, ended, finished, unplayable, failed — or
+/// its picture is in a window of its own. Those panes have no bar in this
+/// window, where every other pane's Guide is, and a pane whose stream has
+/// just ended is when "what else is on" matters most. Not while one is
+/// starting: its bar is a moment away, and the icon would come and go.
+fn offers_guide(showing: &Showing) -> bool {
+    match showing {
+        Showing::Picture | Showing::Starting { .. } => false,
+        Showing::Offline
+        | Showing::Unavailable
+        | Showing::Ended
+        | Showing::Finished
+        | Showing::Failed(_)
+        | Showing::Elsewhere => true,
+    }
 }
 
 impl PopOutButton {
@@ -237,6 +255,35 @@ pub(super) fn pane_header<V: 'static>(
                 on_pane(view, &key, PaneAction::ToggleChat, window, cx)
             }
         }))
+    });
+
+    // The guide, from a pane with no bar to offer it (`offers_guide`). On
+    // the press, in the capture phase, stopped there, as the bar's Guide is
+    // and for the same reason (`video_view::bar`'s `guide_button`): the
+    // guide's own press outside, heard in the capture phase after this
+    // header, would close it and the click after open it again. Stopped
+    // there, the press begins no drag of the header either. Its id and
+    // tooltip follow whether the guide is up from this pane, as the bar's
+    // do.
+    let guide = offers_guide(&pane.showing).then(|| {
+        let on_pane = on_pane.clone();
+        let key = key.clone();
+        let (id, tip) = if pane.guide_from_here {
+            ("guide-open", "Close the guide")
+        } else {
+            ("guide", "Show what else is on")
+        };
+        controls::icon_button(pane_id(&slot.key, id), Icon::Guide, Variant::OnVideo)
+            .when(window_hovered, |button| button.tooltip(controls::tip(tip)))
+            .capture_any_mouse_down(
+                cx.listener(move |view, event: &MouseDownEvent, window, cx| {
+                    if event.button != MouseButton::Left || event.click_count > 1 {
+                        return;
+                    }
+                    cx.stop_propagation();
+                    on_pane(view, &key, PaneAction::Guide, window, cx)
+                }),
+            )
     });
 
     // Out into a window of its own, or back from it: what `P` does for the
@@ -452,9 +499,9 @@ pub(super) fn pane_header<V: 'static>(
                         .line_clamp(1)
                 }))
                 .child(div().flex_1())
-                // The right-hand cluster: chat back, when only this header
-                // can offer it, or the chat options, when it sits on chat,
-                // then out or back, then the ×.
+                // The right-hand cluster: the guide and chat back, when only
+                // this header can offer them, or the chat options, when it
+                // sits on chat, then out or back, then the ×.
                 .child(
                     div()
                         .flex_none()
@@ -462,6 +509,7 @@ pub(super) fn pane_header<V: 'static>(
                         .flex_row()
                         .items_center()
                         .gap(px(theme::GAP_TIGHT))
+                        .children(guide)
                         .children(show_chat)
                         .children(chat_options)
                         .children(pop)
@@ -492,6 +540,29 @@ pub(super) fn pane_header<V: 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The header offers the guide on a pane with no bar in this window —
+    /// stopped, or its picture elsewhere — and not on one playing or
+    /// starting, whose bar has it or soon will.
+    #[test]
+    fn the_header_offers_the_guide_only_where_no_bar_does() {
+        let failure = SharedString::from("no");
+        for showing in [
+            Showing::Offline,
+            Showing::Unavailable,
+            Showing::Ended,
+            Showing::Finished,
+            Showing::Failed(&failure),
+            Showing::Elsewhere,
+        ] {
+            assert!(offers_guide(&showing), "{showing:?}");
+        }
+        assert!(!offers_guide(&Showing::Picture));
+        assert!(!offers_guide(&Showing::Starting {
+            recording: false,
+            at: None
+        }));
+    }
 
     /// A pane out offers to come back, whatever it is doing out there; one
     /// at home offers to go only with a player to move; and where the

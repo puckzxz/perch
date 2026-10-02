@@ -163,6 +163,7 @@ impl RootView {
             .id(match list {
                 LiveList::Rail => "rail-hold",
                 LiveList::Home => "home-hold",
+                LiveList::Guide => "guide-hold",
             })
             .relative()
             .on_hover(cx.listener(|_, _: &bool, _window, cx| cx.notify()))
@@ -179,6 +180,9 @@ impl RootView {
         // painted here, and would otherwise leave its last word — the pointer
         // was on the card that opened this page — standing for good.
         self.hold_live(LiveList::Home, false, cx);
+        // Over the foot of the page while it is up, drawn after the panes so
+        // it covers them; see `guide_panel`.
+        let guide = self.guide_panel(window, cx);
 
         // The panes the page draws, in the order it draws them, and the grid
         // it draws them in: every slot in a cell of its own, or the
@@ -231,6 +235,7 @@ impl RootView {
                     pop_out_offered: super::pop_out_offered(),
                     chat_menu: (self.chat_menu.as_deref() == Some(slot.key.as_str()))
                         .then(|| ChatDisplay::of(&self.settings)),
+                    guide_from_here: self.guide.up_from(&slot.key),
                 }
             })
             .collect();
@@ -243,7 +248,7 @@ impl RootView {
         let active = self
             .active_slot()
             .map(|index| self.slots[index].key.as_str());
-        div().size_full().relative().child(watch::page(
+        let stage = div().size_full().relative().child(watch::page(
             &slots,
             &panes,
             grid,
@@ -291,7 +296,8 @@ impl RootView {
                 }
             },
             cx,
-        ))
+        ));
+        stage.children(guide)
     }
 
     /// The picture a starting pane is waiting for: the channel's live

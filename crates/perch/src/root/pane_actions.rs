@@ -136,7 +136,29 @@ impl RootView {
                 self.chat_menu = None;
                 self.set_chat_display(display, cx);
             }
+            // The Guide button on its bar; see `guide`.
+            PaneAction::Guide => self.toggle_guide(key, cx),
         }
+    }
+
+    /// Close every menu open over a pane: a pane's chat options menu and
+    /// whichever menu is open on a player's bar. Returns whether any was.
+    /// For `Esc`, and for the guide coming up or going, whose button stops
+    /// the press that a menu's own dismiss would otherwise have heard.
+    pub(super) fn close_menus(&mut self, cx: &mut Context<Self>) -> bool {
+        let videos: Vec<_> = self
+            .slots
+            .iter()
+            .filter_map(|slot| slot.video().cloned())
+            .collect();
+        let mut closed = self.chat_menu.take().is_some();
+        if closed {
+            cx.notify();
+        }
+        for view in videos {
+            closed |= view.update(cx, |view, cx| view.close_menu(cx));
+        }
+        closed
     }
 
     /// Show or hide the chat of the pane at `index`, and remember it for that

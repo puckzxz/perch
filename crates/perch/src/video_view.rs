@@ -69,6 +69,7 @@ use crate::rewind;
 use crate::seek_bar;
 use crate::stage::{MaximizeButton, Place};
 use crate::theme;
+use crate::veil;
 use crate::video::{SizeHandle, Stopped, VideoStream};
 use crate::watch::PaneAction;
 use crate::wheel::Wheel;
@@ -268,6 +269,18 @@ pub struct VideoView {
     /// the maximize, of which panes there are or of what is popped out
     /// cannot leave the control offering the opposite of what a press does.
     maximize: MaximizeButton,
+    /// Whether the guide is up over the watch page from this pane, which the
+    /// bar's Guide button keys its id and its tooltip on: a press then puts
+    /// it away, and otherwise raises it from here or moves it here
+    /// (`bar::guide_button`, `guide::press`).
+    ///
+    /// A mirror, on [`ChatButton`]'s pattern: the guide is the root's
+    /// (`crate::guide`). Written in exactly two places —
+    /// [`Start::guide_from_here`] when the player is made, and
+    /// [`set_guide_from_here`](Self::set_guide_from_here), which only
+    /// `RootView::sync_guide_buttons` calls, every time the guide comes up,
+    /// moves or goes.
+    guide_from_here: bool,
     /// The quality change somebody picked, while it is under way: the pill
     /// names it and breathes, the menu marks its row, and the bar stays up
     /// (`sync_controls`). See [`Switching`] for why it is a mirror, and why
@@ -397,6 +410,9 @@ pub struct Start {
     /// What More offers about hearing one pane alone at the start; see
     /// `VideoView::hear_only`.
     pub hear_only: HearOnly,
+    /// Whether the guide is up from this pane as the player is made; see
+    /// `VideoView::guide_from_here`.
+    pub guide_from_here: bool,
 }
 
 impl VideoView {
@@ -477,6 +493,7 @@ impl VideoView {
             root_focus: start.focus,
             chat: start.chat,
             maximize: start.maximize,
+            guide_from_here: start.guide_from_here,
             switching: start.switching,
             linger: None,
             // Until the probe has measured the pane: the bar is hidden on
@@ -949,6 +966,16 @@ impl VideoView {
         }
     }
 
+    /// Whether the guide is up from this pane now, from
+    /// `RootView::sync_guide_buttons`; see `VideoView::guide_from_here` for
+    /// why nothing else calls this. Repaints only on a change.
+    pub fn set_guide_from_here(&mut self, here: bool, cx: &mut Context<Self>) {
+        if self.guide_from_here != here {
+            self.guide_from_here = here;
+            cx.notify();
+        }
+    }
+
     /// What the pane's maximize control offers now, from
     /// `RootView::restage`; see `VideoView::maximize` for why nothing else
     /// calls this.
@@ -1186,7 +1213,10 @@ impl Render for VideoView {
                 stream_size.request(width, height);
 
                 let pointer = window.mouse_position();
-                let inside = window.is_window_hovered() && bounds.contains(&pointer);
+                // Not while the pointer is on the guide over the picture: its
+                // bar would come up behind the guide, and its seek label
+                // follow a pointer working in it; see `crate::veil`.
+                let inside = veil::pointer_over(bounds, window, cx);
                 // In logical pixels, the bar's own: the bar spans the pane.
                 let fit = bar::fit(f32::from(bounds.size.width), cluster);
                 let timeline_fits = bar::timeline_fits(f32::from(bounds.size.width));

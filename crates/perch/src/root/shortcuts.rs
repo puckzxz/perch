@@ -120,8 +120,9 @@ impl RootView {
     /// first, let go where it was with nothing moved — the button is still
     /// down, and the release then lands on nothing. Then a menu open over a
     /// pane — leaving the page with the menu still up was two steps taken
-    /// for one press — then a pane given the whole page shows every pane
-    /// again (`show_all_panes`), and only then is the page left.
+    /// for one press — then the guide, then a pane given the whole page
+    /// shows every pane again (`show_all_panes`), and only then is the page
+    /// left.
     pub(super) fn on_go_browse(
         &mut self,
         _: &keys::GoBrowse,
@@ -135,20 +136,8 @@ impl RootView {
             cx.notify();
             return;
         }
-        let videos: Vec<_> = self
-            .slots
-            .iter()
-            .filter_map(|slot| slot.video().cloned())
-            .collect();
         // A pane's chat options menu is one of those menus too.
-        let mut closed = self.chat_menu.take().is_some();
-        if closed {
-            cx.notify();
-        }
-        for view in videos {
-            closed |= view.update(cx, |view, cx| view.close_menu(cx));
-        }
-        if closed || self.show_all_panes(window, cx) {
+        if self.close_menus(cx) || self.close_guide(cx) || self.show_all_panes(window, cx) {
             return;
         }
         self.go_browse(cx);

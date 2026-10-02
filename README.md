@@ -88,9 +88,9 @@ build is several times slower at it.
 
 The player's controls are on a bar that comes up over the video while the
 pointer is on it, and those a key also works name the key in their tooltips;
-the quality and More have no key. The rest — the rail button, back and
-forward, search and settings — sit in the bar across the top of the window.
-Neither is any use when you are not holding the mouse.
+the quality, the guide and More have no key. The rest — the rail button,
+back and forward, search and settings — sit in the bar across the top of the
+window. Neither is any use when you are not holding the mouse.
 
 | | |
 |---|---|
@@ -146,23 +146,23 @@ video cannot change it — and a middle click on a picture mutes or unmutes it,
 as `M` does. Both work in a pop-out too. `Esc` from the watch page goes back to
 whichever tab, category or channel you left the browse page on — and first lets
 go of a pane being dragged, then closes a pane's open menu, if there is one,
-and then shows every pane again, if one has the window. A
-playing pane's quality menu is in the palette as well:
+then the guide, if it is up, and then shows every pane again, if one has the
+window. A playing pane's quality menu is in the palette as well:
 type `quality` and some of the pane's name, and `Choose quality for …` opens
 it. So are the two things under the bar's **More**, as `Copy link to …` and
 `Open … on twitch.tv`, and the maximize, as `Maximize …` and `Show all
 panes`.
 
-The bar over a playing pane has play, the speaker — crossed out whenever
-the pane is silent, Mute all included — and the volume at the left, and at
-the right the quality, with two panes or more the maximize, then chat,
-fullscreen and **More**, which has **Only this one** with two panes or more,
-**Pop out** on Windows, **Open on twitch.tv** and **Copy link**. **Only this
-one** silences every other pane the way Mute all does, without touching
-anyone's volume; until you change a silenced pane's volume, every pane's
-More then says **Hear all again**, which brings them all back. A narrow pane
-drops the volume's figure first, then its slider, then folds the quality
-into More, and the maximize after it. A past broadcast with no chat to
+The bar over a playing pane has play, the speaker — crossed out whenever the
+pane is silent, Mute all included — and the volume at the left, and at the
+right the quality, with two panes or more the maximize, then chat, the guide
+(see below), fullscreen and **More**, which has **Only this one** with two
+panes or more, **Pop out** on Windows, **Open on twitch.tv** and **Copy
+link**. **Only this one** silences every other pane the way Mute all does,
+without touching anyone's volume; until you change a silenced pane's volume,
+every pane's More then says **Hear all again**, which brings them all back. A
+narrow pane drops the volume's figure first, then its slider, then folds the
+quality into More, and the maximize after it. A past broadcast with no chat to
 replay shows the chat icon crossed out, with nothing to press.
 
 Back and forward work the way they do in a browser. `Alt+←` and `Alt+→`, the
@@ -234,6 +234,43 @@ the top in the same pane once Twitch lists it, **Try again** and **Close**. The
 last broadcast and the recording need a sign-in to be found. Chat stays
 connected either way, which is where the goodnights are, until a recording
 takes the pane's place and brings its own chat replay.
+
+### The guide: more to watch, without leaving
+
+The icon beside chat on a pane's bar — a frame with a panel across its lower
+half — raises the guide over the lower part of the watch page, while every
+pane goes on playing above and behind it, with its sound. A pane with no
+picture, one whose stream is off or has ended, has no bar, so its header
+offers the same icon instead. It is never more
+than half the page tall, and on a tall window only as tall as two rows of
+cards. Across its top are four tabs: **Following**, who you follow that is
+live; **Recommended**, the rail's Recommended group as cards, each saying
+which channel led to it; **Popular**; and **Categories**, where picking one
+shows its streams inside the guide, with **← Categories** to go back. Popular
+and Categories are the same lists as the browse page's tabs, with the same
+**Load more**, so whatever either has fetched the other already has. A
+recommended channel shows a picture only once one of those lists has it.
+
+Rest the pointer on a card for its two offers. **Watch**, or a click anywhere
+on the card, plays that channel in place of the pane you opened the guide
+from, keeping its place in the grid, however the pointer crosses the other
+panes on its way to the card; a channel already open in another pane is
+chosen there instead. Another pane's guide icon, pressed while the guide is
+up, makes that pane the one Watch replaces. **+ Add** opens it beside the
+others, and at four panes says `Already watching 4 streams` and leaves the
+guide up. Otherwise the guide goes away once something plays; so does the ×
+at its top-right, the guide icon of the pane it was opened from, `Esc`, a
+click anywhere outside it, or leaving the watch page. It opens again on the
+tab, and inside the category, you left it on; pressing **Categories** again
+goes back from a category to the list. A narrow window that cannot fit every
+tab scrolls them sideways under the mouse wheel.
+
+While it is up the guide takes the pointer over its own area and nowhere
+else: the panes above it are pointed at and clicked as ever, and the ones
+under it stay as if the pointer were not there — their bars stay down, their
+chat keeps moving, and passing over them does not make them the pane the
+keys talk to. Opening it closes any menu open on a pane. Recommended fills in
+with the rail folded away too, while that tab is showing.
 
 ### Going back in a live stream
 
@@ -539,7 +576,8 @@ sign-in. Anyone you follow or are already watching is left out, though one you
 have just opened from the list keeps its place, marked as watching, until the
 pointer leaves the rail. They are asked
 for when you open a channel they have not been asked about yet, and otherwise
-every five minutes at most, only while you are signed in and the rail is open.
+every five minutes at most, only while you are signed in and the rail is open
+or the guide is showing them.
 If Twitch refuses that query — most likely because it has changed it — the
 group goes away until Perch is next started; if a request fails any other way,
 the last list stays and is asked for again at the next five-minute refresh.

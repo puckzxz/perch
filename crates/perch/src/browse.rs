@@ -284,13 +284,25 @@ impl Discovery {
     /// Whether the list on screen is waiting for an answer.
     pub fn is_loading(&self) -> bool {
         self.shown_key()
-            .is_some_and(|shown| self.pending.contains(&shown))
+            .is_some_and(|shown| self.is_pending(&shown))
     }
 
     /// Why the list on screen could not be had, if it was the one that failed.
     pub fn shown_error(&self) -> Option<&Unanswered> {
+        self.error_for(&self.shown_key()?)
+    }
+
+    /// Whether `key`'s list is waiting for an answer, whichever list is on
+    /// screen: what the guide asks of the lists it shares with this page
+    /// (`crate::guide`), which are often not the one the page shows.
+    pub fn is_pending(&self, key: &ListKey) -> bool {
+        self.pending.contains(key)
+    }
+
+    /// Why `key`'s list could not be had, if it was the last one that failed.
+    pub fn error_for(&self, key: &ListKey) -> Option<&Unanswered> {
         let (failed, reason) = self.error.as_ref()?;
-        (self.shown_key().as_ref() == Some(failed)).then_some(reason)
+        (failed == key).then_some(reason)
     }
 }
 
@@ -616,8 +628,44 @@ fn preview_url(stream: &LiveStream) -> String {
 /// the picture the card was showing, with nothing more to fetch. Refreshed on
 /// Twitch's cadence ([`THUMBNAIL_MAX_AGE`]); a refresh retires the old file,
 /// which is why [`release_retired_previews`] runs before anything calls this.
+///
+/// Nothing for a stream with no template to fill — one the guide drew from
+/// the rail's recommendations, whose answers carry no preview
+/// (`guide::as_stream`) — rather than a request for an empty address.
 pub(crate) fn stream_preview(cache: &ImageCache, stream: &LiveStream) -> Option<PathBuf> {
+    if stream.thumbnail_url.is_empty() {
+        return None;
+    }
     cache.get_or_request_fresh(&preview_url(stream), THUMBNAIL_MAX_AGE)
+}
+
+/// What a stream card offers besides a press on it, which watches it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CardOffers {
+    /// The browse page's: its past broadcasts at the top-left, and at the
+    /// top-right `+ Add` while there is something to add it beside
+    /// (`RootView::can_add`).
+    Page { can_add: bool },
+    /// The guide's, over the watch page (`crate::guide`): `Watch` at the
+    /// top-left, which a press anywhere on the card does too, and `+ Add` at
+    /// the top-right, always — at four panes it says so in a toast, as the
+    /// rail's `+` does. No past broadcasts: they are a page, and the guide is
+    /// for staying on this one. Both pills' tooltips only while the window
+    /// is `window_hovered`, since the guide reaches within a few pixels of
+    /// the window's edges (see `HANDOFF.md`, "A tooltip outlives a pointer
+    /// that leaves the window").
+    Guide { window_hovered: bool },
+}
+
+/// The line under a card's title: the game, and after it a note where the
+/// list has one — the guide's recommendations say which channel led to each
+/// ("Like forsen"), as the rail's rows do.
+fn card_meta(game: &str, note: Option<&str>) -> String {
+    match note.filter(|note| !note.is_empty()) {
+        Some(note) if game.is_empty() => note.to_string(),
+        Some(note) => format!("{game} · {note}"),
+        None => game.to_string(),
+    }
 }
 
 /// One live channel.
@@ -625,25 +673,54 @@ pub(crate) fn stream_preview(cache: &ImageCache, stream: &LiveStream) -> Option<
 /// Clicking the card watches it alone; the small "+" adds it beside whatever is
 /// already playing. Two separate affordances because replacing what you are
 /// watching and adding to it are different intentions, and guessing between
-/// them from a single click gets it wrong half the time.
-fn card<V: 'static>(
+/// them from a single click gets it wrong half the time. What else it offers
+/// is `offers`'s, and `note` goes after the game ([`card_meta`]).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn card<V: 'static>(
     index: usize,
     stream: &LiveStream,
+    note: Option<&str>,
     width: f32,
     cache: &ImageCache,
-    can_add: bool,
+    offers: CardOffers,
     on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + Clone + 'static,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
     let on_click = on_action.clone();
     let on_add = on_action.clone();
-    let on_videos = on_action;
+    let on_corner = on_action;
     let login = stream.user_login.clone();
     let add_login = stream.user_login.clone();
-    let channel = Action::OpenChannel {
-        login: stream.user_login.clone(),
-        display_name: stream.display_name.clone(),
-        user_id: Some(stream.user_id.clone()).filter(|id| !id.is_empty()),
+    // The top-left corner's pill: the channel's past broadcasts on the
+    // browse page, and in the guide the card's own press, said in words.
+    // Tooltips everywhere on the browse page, which has the window's own
+    // margin around it; in the guide, only while the pointer is in the
+    // window.
+    let tips = match offers {
+        CardOffers::Page { .. } => true,
+        CardOffers::Guide { window_hovered } => window_hovered,
+    };
+    let (corner_id, corner_words, corner_tip, corner) = match offers {
+        CardOffers::Page { .. } => (
+            "card-videos",
+            "Past broadcasts",
+            None,
+            Action::OpenChannel {
+                login: stream.user_login.clone(),
+                display_name: stream.display_name.clone(),
+                user_id: Some(stream.user_id.clone()).filter(|id| !id.is_empty()),
+            },
+        ),
+        CardOffers::Guide { .. } => (
+            "card-watch",
+            "Watch",
+            Some("Play in place of the pane you opened the guide from"),
+            Action::Watch(stream.user_login.clone()),
+        ),
+    };
+    let can_add = match offers {
+        CardOffers::Page { can_add } => can_add,
+        CardOffers::Guide { .. } => true,
     };
     let thumbnail = stream_preview(cache, stream);
 
@@ -711,20 +788,19 @@ fn card<V: 'static>(
                 // hover before it — a touchscreen's — landed on one nobody
                 // could see.
                 .child(
-                    controls::pill(
-                        ("card-videos", index),
-                        "Past broadcasts",
-                        controls::Variant::Pill,
-                    )
-                    .absolute()
-                    .top(px(theme::GAP_TIGHT))
-                    .left(px(theme::GAP_TIGHT))
-                    .invisible()
-                    .group_hover("card", |style| style.visible())
-                    .on_click(cx.listener(move |view, _event, window, cx| {
-                        cx.stop_propagation();
-                        on_videos(view, channel.clone(), window, cx)
-                    })),
+                    controls::pill((corner_id, index), corner_words, controls::Variant::Pill)
+                        .absolute()
+                        .top(px(theme::GAP_TIGHT))
+                        .left(px(theme::GAP_TIGHT))
+                        .invisible()
+                        .group_hover("card", |style| style.visible())
+                        .when_some(corner_tip.filter(|_| tips), |pill, tip| {
+                            pill.tooltip(controls::tip(tip))
+                        })
+                        .on_click(cx.listener(move |view, _event, window, cx| {
+                            cx.stop_propagation();
+                            on_corner(view, corner.clone(), window, cx)
+                        })),
                 )
                 .when(can_add, |thumb| {
                     thumb.child(
@@ -734,7 +810,9 @@ fn card<V: 'static>(
                             .right(px(theme::GAP_TIGHT))
                             .invisible()
                             .group_hover("card", |style| style.visible())
-                            .tooltip(controls::tip("Open beside what is playing"))
+                            .when(tips, |pill| {
+                                pill.tooltip(controls::tip("Open beside what is playing"))
+                            })
                             .on_click(cx.listener(move |view, _event, window, cx| {
                                 // Without this the card underneath also fires
                                 // and replaces every open pane.
@@ -763,7 +841,7 @@ fn card<V: 'static>(
                         .text_color(theme::text_muted()),
                 )
                 .child(
-                    one_line(("card-game", index), stream.game_name.clone())
+                    one_line(("card-game", index), card_meta(&stream.game_name, note))
                         .text_size(px(theme::TEXT_META))
                         .line_height(px(theme::LINE_TIGHT))
                         .text_color(theme::text_dim()),
@@ -941,9 +1019,10 @@ pub(crate) fn stream_row<V: 'static>(
         row = row.child(card(
             index,
             stream,
+            None,
             card_width,
             cache,
-            can_add,
+            CardOffers::Page { can_add },
             on_action.clone(),
             cx,
         ));
@@ -951,7 +1030,7 @@ pub(crate) fn stream_row<V: 'static>(
     row
 }
 
-fn category_row<V: 'static>(
+pub(crate) fn category_row<V: 'static>(
     categories: &[Category],
     width: f32,
     cache: &ImageCache,
@@ -1357,15 +1436,33 @@ pub(crate) fn empty_state<V: 'static>(
 
 /// What a browse list shows when it has nothing in it yet.
 pub(crate) fn browse_placeholder(discovery: &Discovery, empty: SharedString) -> AnyElement {
-    if let Some(unanswered) = discovery.shown_error() {
+    list_placeholder(
+        "browse-loading",
+        discovery.shown_error(),
+        discovery.is_loading(),
+        empty,
+    )
+}
+
+/// What a list with nothing in it shows: why it could not be had, if it
+/// failed; that it is being asked for, breathing under the id `waiting`, if
+/// it is; and otherwise `empty`, which is the answer. The browse page's
+/// lists, and the guide's (`crate::guide`).
+pub(crate) fn list_placeholder(
+    waiting: &'static str,
+    error: Option<&Unanswered>,
+    loading: bool,
+    empty: SharedString,
+) -> AnyElement {
+    if let Some(unanswered) = error {
         let (title, detail, error) = unanswered.notice();
         return notice(title, detail, error).into_any_element();
     }
-    if discovery.is_loading() {
+    if loading {
         // Ends as soon as the request does, which is what makes a repeating
         // animation safe here.
         return motion::waiting(
-            "browse-loading",
+            waiting,
             notice("Loading…".into(), "Asking Twitch what is on.".into(), false),
         )
         .into_any_element();
@@ -1923,6 +2020,19 @@ mod tests {
             last = columns;
             width += 7.0;
         }
+    }
+
+    /// The line under a card's title is the game, with a note after it
+    /// where the list gives one, and the note alone with no game to say.
+    #[test]
+    fn a_cards_note_follows_its_game() {
+        assert_eq!(card_meta("Chess", None), "Chess");
+        assert_eq!(
+            card_meta("Chess", Some("Like forsen")),
+            "Chess · Like forsen"
+        );
+        assert_eq!(card_meta("", Some("Like forsen")), "Like forsen");
+        assert_eq!(card_meta("Chess", Some("")), "Chess");
     }
 
     #[test]

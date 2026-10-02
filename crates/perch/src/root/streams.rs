@@ -639,6 +639,9 @@ impl RootView {
                     // What More offers about hearing one pane alone; kept
                     // up by `sync_hear_only`.
                     hear_only: self.hear_only_now(),
+                    // Whether the guide is up from this pane, for the bar's
+                    // Guide button; kept up by `sync_guide_buttons`.
+                    guide_from_here: self.guide.up_from(key),
                 };
                 // The pane's one player: its own size until the pane is
                 // measured, playing, and its position heard by the pane —
@@ -733,6 +736,7 @@ impl RootView {
             self.follows.as_slice(),
             self.discovery.popular.items.as_slice(),
             self.discovery.streams.items.as_slice(),
+            self.guide.streams.items.as_slice(),
             search,
         ]
         .into_iter()

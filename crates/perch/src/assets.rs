@@ -49,7 +49,7 @@ macro_rules! icon {
 /// Anything not on this list is answered `None`, which is exactly what the app
 /// did for all of them until now — so an icon nobody drew degrades to the
 /// blank it already was rather than to a crash.
-const ICONS: [(&str, &[u8]); 33] = [
+const ICONS: [(&str, &[u8]); 34] = [
     icon!("arrow-left"),
     icon!("arrow-right"),
     icon!("chat"),
@@ -64,6 +64,7 @@ const ICONS: [(&str, &[u8]); 33] = [
     icon!("eye"),
     icon!("fullscreen"),
     icon!("fullscreen-exit"),
+    icon!("guide"),
     icon!("inbox"),
     icon!("minus"),
     icon!("more"),
@@ -151,6 +152,10 @@ perch_icons! {
     // whether every message carries its time. Named for the menu it opens,
     // drawn as the larger of its two options: a large T and a small one.
     ChatOptions => "text-size",
+    // The bar's Guide: what else is on, raised over the lower part of the
+    // watch page. Drawn as what a press does to the page — a frame with a
+    // panel across its lower half and two cards in it.
+    Guide => "guide",
 }
 
 /// What `Application::new().with_assets(..)` is handed.

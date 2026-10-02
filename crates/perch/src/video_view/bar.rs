@@ -12,10 +12,11 @@
 //! hidden — with a tooltip that says what a press does, and names the key
 //! that does the same where there is one (`keys::Hint`), so the bar teaches
 //! the keys rather than standing in for them. More has no key, so its
-//! tooltip is its name, and the still chat glyph of a recording with no
-//! chat replay says why there is nothing to press. The quality pill is
-//! words, saying what plays, with no tooltip and no key; the palette's
-//! `Choose quality for …` is its keyboard path. While a quality somebody
+//! tooltip is its name; Guide has none either, and says what a press does.
+//! The still chat glyph of a recording with no chat replay says why there
+//! is nothing to press. The quality pill is words, saying what plays, with
+//! no tooltip and no key; the palette's `Choose quality for …` is its
+//! keyboard path. While a quality somebody
 //! picked is under way it names that one instead and breathes, and only
 //! then has a tooltip, `Switching to 480p30` ([`pill_face`]); the bar stays
 //! up meanwhile and a moment after (`VideoView::sync_controls`). Three rules
@@ -62,6 +63,14 @@
 //! is Twitch saying the archive is finished, whatever a list kept since
 //! says.
 //!
+//! Guide raises the guide over the lower part of the watch page, or puts it
+//! away (`crate::guide`). It acts on the press, not the click, unlike its
+//! neighbours: the guide closes on a press anywhere outside it, heard in the
+//! capture phase, and a click on Guide that came after would open it again
+//! at once. So Guide hears the press in the capture phase too — ahead of the
+//! guide, which is drawn after every pane — and stops it there
+//! ([`guide_button`]).
+//!
 //! The maximize control gives the pane the whole watch page, chat and all,
 //! and on the pane that has it shows every pane again (`stage`'s
 //! `MaximizeButton`, mirrored as `VideoView::maximize`). It stands just
@@ -78,7 +87,8 @@
 
 use chrono::Utc;
 use gpui::{
-    div, prelude::*, px, AnyElement, Context, Div, MouseButton, SharedString, Stateful, Window,
+    div, prelude::*, px, AnyElement, Context, Div, MouseButton, MouseDownEvent, SharedString,
+    Stateful, Window,
 };
 use gpui_component::slider::Slider;
 
@@ -93,12 +103,12 @@ use crate::stage::{MaximizeButton, Place};
 use crate::theme;
 use crate::watch::PaneAction;
 
-/// The icon buttons in a pane's right-hand cluster: chat, fullscreen and
-/// More. `button_row` lays them out as an array this long, so a control
+/// The icon buttons in a pane's right-hand cluster: chat, Guide, fullscreen
+/// and More. `button_row` lays them out as an array this long, so a control
 /// cannot join the cluster without this count changing with it, and with it
 /// what [`fit`] leaves room for. The quality pill is not one of them: it is
 /// words, and it folds. Nor is the maximize control, which folds after it.
-pub(super) const RIGHT_BUTTONS: usize = 3;
+pub(super) const RIGHT_BUTTONS: usize = 4;
 
 /// The same for a pop-out's cluster: Bring back and Close.
 pub(super) const POP_OUT_BUTTONS: usize = 2;
@@ -114,7 +124,7 @@ pub(super) struct Cluster {
 }
 
 /// A pane's, with nothing to maximize it over: the quality pill, then chat,
-/// fullscreen and More.
+/// Guide, fullscreen and More.
 const PANE: Cluster = Cluster {
     buttons: RIGHT_BUTTONS,
     pill: true,
@@ -465,7 +475,8 @@ impl VideoView {
     }
 
     /// A pane's right-hand cluster: the quality pill, the maximize control,
-    /// chat, fullscreen and More, and the one anchor every menu opens from.
+    /// chat, Guide, fullscreen and More, and the one anchor every menu opens
+    /// from.
     fn pane_cluster(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let window_hovered = window.is_window_hovered();
 
@@ -601,8 +612,10 @@ impl VideoView {
 
         let buttons: [AnyElement; RIGHT_BUTTONS] = [
             chat,
-            // phase 4: guide. Pop out is not here: it is the header's and
-            // More's, and this cluster never drops a button.
+            // Beside chat, the other thing about what is on beside the
+            // picture. Pop out is not here: it is the header's and More's,
+            // and this cluster never drops a button.
+            guide_button(self.guide_from_here, window, cx).into_any_element(),
             fullscreen.into_any_element(),
             more,
         ];
@@ -656,6 +669,41 @@ fn back_to_live(window: &Window, cx: &mut Context<VideoView>) -> impl IntoElemen
             this.close_menu(cx);
             cx.emit(VideoEvent::Pane(PaneAction::BackToLive));
         }))
+}
+
+/// Guide: raises the guide over the lower part of the watch page, or puts
+/// it away (`PaneAction::Guide`), from whichever pane's bar. On the press,
+/// in the capture phase, and the press stops here; see the module for why.
+/// So nothing after it hears the press: not the guide's own press outside,
+/// nor a bar's menu anchored in a later pane, which is why the root closes
+/// every menu itself when the guide comes or goes. Only the first press of a
+/// run: the root takes the rest of it (`RootView::take_rest_of_run`), since
+/// the guide comes up over where the pointer is and a second press would
+/// land on a card. It has no key, and its tooltip says what a press does,
+/// with `open` the guide up from this pane or not
+/// (`VideoView::guide_from_here`): put it away, or show it here. Its id
+/// follows that too, as the chat options icon's follows its menu: the press is
+/// stopped before gpui's own tooltip listener hears it, which is registered
+/// after the element's (div.rs, `paint_mouse_listeners`), so a tooltip up
+/// over the button would otherwise stay drawn over the guide as it rises
+/// there — a tooltip's bounds check ignores what covers it — until the
+/// pointer left; a new id drops it (`controls::tip`).
+fn guide_button(open: bool, window: &Window, cx: &mut Context<VideoView>) -> Stateful<Div> {
+    let (id, tip) = if open {
+        ("bar-guide-open", "Close the guide")
+    } else {
+        ("bar-guide", "Show what else is on")
+    };
+    bar_icon(id, Icon::Guide, Variant::OnVideo, tip.to_string(), window).capture_any_mouse_down(
+        cx.listener(|this, event: &MouseDownEvent, _window, cx| {
+            if event.button != MouseButton::Left || event.click_count > 1 {
+                return;
+            }
+            cx.stop_propagation();
+            this.close_menu(cx);
+            cx.emit(VideoEvent::Pane(PaneAction::Guide));
+        }),
+    )
 }
 
 /// A pop-out's right-hand cluster: the way back, then the way out. Both go
@@ -1073,9 +1121,9 @@ mod tests {
         ..PANE
     };
 
-    /// A control added to the right-hand cluster — the guide — takes its
-    /// room from what folds: at any width the bar gives up at least as much
-    /// as it did, and somewhere strictly more.
+    /// A control added to the right-hand cluster, as the guide was, takes
+    /// its room from what folds: at any width the bar gives up at least as
+    /// much as it did, and somewhere strictly more.
     #[test]
     fn more_on_the_right_narrows_sooner() {
         for width in widths() {

@@ -258,6 +258,13 @@ impl Recommended {
         self.tried.clear();
     }
 
+    /// Whether Twitch refused the query, which ends the recommendations for
+    /// the session: the guide's Recommended tab says so, rather than that
+    /// they are on their way.
+    pub fn refused(&self) -> bool {
+        self.refused
+    }
+
     /// What the answers last said about `login`, in any case, whether or not
     /// the group shows it now: its name as it writes it, its title, game and
     /// viewers. `None` for a channel no answer has named this session.
@@ -485,6 +492,7 @@ mod tests {
             "PersistedQueryNotFound".into(),
         )));
         assert!(refused.is_some_and(|line| line.contains("PersistedQueryNotFound")));
+        assert!(state.refused());
         assert!(state.shown.is_empty());
         assert!(state.suggestions(&more, [""; 0], no_names).is_empty());
         assert_eq!(

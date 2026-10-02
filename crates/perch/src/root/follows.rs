@@ -17,6 +17,8 @@ use super::{LinkedVideo, RootView, ToastAction};
 pub(super) enum LiveList {
     Rail,
     Home,
+    /// The guide's Following and Recommended, over the watch page.
+    Guide,
 }
 
 /// A list of follows as it stands on screen, brought up to date by a fresh
@@ -138,6 +140,7 @@ impl RootView {
                 // Whatever the user opened while signed out can be fetched now,
                 // and whatever a stopped pane would offer next asked for.
                 self.fill_shown();
+                self.fill_guide();
                 self.request_linked_videos();
                 self.ask_missing();
                 // And the names of the Shared Chat partners those panes met,
@@ -203,6 +206,7 @@ impl RootView {
                 self.discovery.pending.clear();
                 self.forget_asks();
                 self.fill_shown();
+                self.fill_guide();
             }
 
             // Each answer ends the wait for its own list and no other: a
@@ -228,6 +232,15 @@ impl RootView {
                     .open
                     .as_ref()
                     .is_some_and(|open| open.id == category.id);
+                // The guide's own copy, if it has the same category open; see
+                // `RootView::open_guide_category` for why one answer fills
+                // both.
+                self.guide.absorb(
+                    &category,
+                    &streams.items,
+                    streams.next.clone(),
+                    streams.append,
+                );
                 if still_open {
                     self.discovery
                         .streams
@@ -407,12 +420,14 @@ impl RootView {
         cx.notify();
     }
 
-    /// Whether the pointer is over a list of follows: the rail, or Home.
-    /// Each shows the offline follows as well as who is live,
-    /// so either holds both. The rail's recommendations hold with them, by
-    /// the same rule rather than a second one for the rail alone.
+    /// Whether the pointer is over a list of follows: the rail, Home, or
+    /// the guide's Following or Recommended. The first two show the offline
+    /// follows as well as who is live, so either holds both, and the guide
+    /// holds them with the rest rather than by a rule of its own. The rail's
+    /// recommendations hold with them, by the same rule rather than a second
+    /// one for the rail alone.
     pub(super) fn live_held(&self) -> bool {
-        self.rail_pointed || self.home_pointed
+        self.rail_pointed || self.home_pointed || self.guide_pointed
     }
 
     /// Note whether the pointer is over one of the lists of follows, from
@@ -431,6 +446,7 @@ impl RootView {
         match list {
             LiveList::Rail => self.rail_pointed = pointed,
             LiveList::Home => self.home_pointed = pointed,
+            LiveList::Guide => self.guide_pointed = pointed,
         }
         if was && !self.live_held() {
             twitch_api::by_viewers(&mut self.follows);

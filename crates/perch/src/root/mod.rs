@@ -21,6 +21,7 @@
 //! | `hearing` | which panes are heard: More's `Only this one` and `Hear all again`, through Mute all's hush, and the mirror of it every player's menu keeps (`sync_hear_only`) |
 //! | `ad_breaks` | a pane's ad-break notice: begun when streamlink says it is filtering an ad, counted down once a second, taken down when it is over |
 //! | `broadcasts` | what a stopped live pane asks about its channel's past broadcasts, and whether it can start by itself |
+//! | `guide` | the guide over the watch page: opening and closing it, what its tabs ask the worker for, a card's Watch in place of the pane it was opened from or `+ Add` beside, and the panel's shell — where it sits, the press outside that closes it, and the veil over the panes under it (`crate::veil`) |
 //! | `pane_actions` | what a pane asks for, by its key: its controls, and its player's requests; the header a pane key reveals; `run_guard`, which swallows the rest of a double-click whose first press took a player from under the pointer |
 //! | `launches` | what the command line named, at startup and from later launches |
 //! | `history` | what has been watched: noting where each recording got to, resuming there |
@@ -45,6 +46,7 @@ mod browsing;
 mod chrome;
 mod commands;
 mod follows;
+mod guide;
 mod hearing;
 mod history;
 mod last_live;
@@ -87,6 +89,7 @@ use self::navigation::Route;
 use self::pop_out::PoppedOut;
 use crate::browse::{self, Discovery, SignIn};
 use crate::chat_badges::Library;
+use crate::guide::Guide;
 use crate::last_live::LastLive;
 use crate::launch::Launch;
 use crate::layout::Body;
@@ -254,6 +257,9 @@ pub(crate) struct RootView {
     /// see `RootView::hold_live`.
     rail_pointed: bool,
     home_pointed: bool,
+    /// The same for the guide's Following and Recommended, which hold by
+    /// the same rule while it is up over the watch page.
+    guide_pointed: bool,
     /// Whether the rail's offline follows are unfolded. For this session
     /// only, and folded at the start of each: unfolded, it is the longest
     /// list in the app, up to a thousand rows built every frame, and most
@@ -278,6 +284,10 @@ pub(crate) struct RootView {
     sign_in: SignIn,
     /// Everything the browse page shows besides your follows.
     discovery: Discovery,
+    /// The guide over the watch page: whether it is up, its tab, and the
+    /// category open in it with that category's streams. For the session
+    /// only; see `crate::guide` and `guide`.
+    guide: Guide,
     /// Where the app has been, for back and forward. History only: where it
     /// is now is always read from `page` and `discovery`; see `navigation`.
     trail: Trail<Route>,
@@ -509,6 +519,7 @@ impl RootView {
             known_live: HashSet::new(),
             rail_pointed: false,
             home_pointed: false,
+            guide_pointed: false,
             rail_offline_open: false,
             recommended: Recommended::default(),
             last_live: LastLive::default(),
@@ -516,6 +527,7 @@ impl RootView {
             badges: Library::default(),
             sign_in: SignIn::Connecting,
             discovery: Discovery::default(),
+            guide: Guide::default(),
             trail: Trail::default(),
             recording: false,
             search,
@@ -718,6 +730,16 @@ impl Render for RootView {
         // wave of retirements sits undrained with its images resident until the
         // user happens to navigate back. See `browse::release_retired_previews`.
         browse::release_retired_previews(&self.cache, window, cx);
+
+        // The guide is the watch page's, and goes down with it whichever way
+        // the page was left, rather than coming back up with it later; off
+        // that page it leaves no veil and no hold behind (`guide_not_drawn`).
+        // Before anything is drawn, so no pane's probe this frame reads a
+        // veil from the last one.
+        if self.page != Page::Watch {
+            self.shut_guide(cx);
+            self.guide_not_drawn(cx);
+        }
 
         let page = match self.page {
             Page::Browse => self.browse_page(window, cx).into_any_element(),
