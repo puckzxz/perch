@@ -16,7 +16,8 @@
 //! open, and how their rows take a press.
 //!
 //! What the bar offers that is not the player's to do — the pane's chat,
-//! opening it on twitch.tv, copying its link — it asks the root for, as
+//! opening it on twitch.tv, copying its link, popping it out or bringing it
+//! back, giving it the watch page — it asks the root for, as
 //! [`VideoEvent::Pane`], the same way it asks for a new quality.
 //!
 //! A player draws nothing at all until its picture arrives, not even a
@@ -77,8 +78,9 @@ pub enum VideoEvent {
     /// and say so in the pane - is all outside the player.
     Stopped(Stopped),
     /// Something on the bar or in More that is the pane's rather than the
-    /// player's: its chat, its link. Answered by `RootView::on_pane_action`,
-    /// as the pane's own controls are, for the pane this player belongs to.
+    /// player's: its chat, its link, its window, the maximize. Answered by
+    /// `RootView::on_pane_action`, as the pane's own controls are, for the
+    /// pane this player belongs to.
     Pane(PaneAction),
     /// The player started beside this one for the pane's start `generation`
     /// has taken over (`swap`), and the stream it replaced has been stopped.

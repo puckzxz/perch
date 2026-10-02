@@ -19,7 +19,7 @@
 //! | `panes` | where each pane is drawn, applied: `restage`, the one funnel every change of state, membership, page, pop-out or maximize ends in; `set_slot_state`, the only write of a pane's state; `video_in_main`, the only way the main window reaches a player; `retire_homeless`, the one rule for which panes stop when nothing in the main window would draw them; a pane given the watch page and every pane shown again (`toggle_maximize`, `show_all_panes`), and `choose`, which takes the maximize to the pane chosen; two panes swapping places in the order (`move_pane`), from a header dropped on a pane or `Shift+←`/`Shift+→` |
 //! | `pop_out` | a pane in a window of its own, on top of other apps: moving its picture there and back, the window, and `to_root`, the only way back from it |
 //! | `broadcasts` | what a stopped live pane asks about its channel's past broadcasts, and whether it can start by itself |
-//! | `pane_actions` | what a pane asks for: its controls, and its player's requests; the header a pane key reveals |
+//! | `pane_actions` | what a pane asks for, by its key: its controls, and its player's requests; the header a pane key reveals; `run_guard`, which swallows the rest of a double-click whose first press took a player from under the pointer |
 //! | `launches` | what the command line named, at startup and from later launches |
 //! | `history` | what has been watched: noting where each recording got to, resuming there |
 //! | `prefs` | the settings sheet, the divider drag, the rail folding and what is pinned to it |

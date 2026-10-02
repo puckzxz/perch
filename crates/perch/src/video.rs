@@ -399,7 +399,7 @@ impl VideoStream {
     /// missed notification just means the UI coalesces two frames into one.
     /// The same channel carries the news that the stream has stopped, or
     /// never started: a player mpv could not open is reported as
-    /// [`Stopped::Failed`], so its pane offers to try again rather than
+    /// [`Stopped::Failed`], so its pane offers `Try again` rather than
     /// saying it is starting for good.
     pub fn start(
         options: StartOptions,

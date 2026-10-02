@@ -2,11 +2,12 @@
 //!
 //! The controls you reach for while watching — pause, mute, volume, chat,
 //! fullscreen — are icons on a bar that comes up over the video under the
-//! pointer, each naming its key in its tooltip ([`Hint`]); a pane's × sits
-//! in its header and names its key the same way, and the rest live in the
-//! title bar or the settings sheet. That is the right place for them when
-//! you are already holding the mouse, and no place at all when you are not,
-//! which for a window left open for hours is most of the time.
+//! pointer, each naming its key in its tooltip ([`Hint`]); a pane's × and
+//! its pop-out icon sit in its header and name their keys the same way, and
+//! the rest live in the title bar or the settings sheet. That is the right
+//! place for them when you are already holding the mouse, and no place at
+//! all when you are not, which for a window left open for hours is most of
+//! the time.
 //!
 //! GPUI's keyboard stack has two gates, and both are easy to get subtly wrong:
 //!
@@ -45,6 +46,15 @@
 //! leaves the page. `Shift+←` and `Shift+→` move the active pane one place
 //! along the order those count, and bring its header up the same way, since
 //! the pane they moved is now somewhere else.
+//!
+//! A pane popped out into a window of its own (`root::pop_out`) is in
+//! another gpui window, with a focus and a dispatch tree of its own, so its
+//! keys are [`CONTEXT_POPOUT`]'s: `Space`, `M`, the arrows, `P` to bring it
+//! back and `Ctrl+W` to close it, and nothing of the watch page's — `Esc`
+//! least of all, since a stray press there would move video between
+//! windows. `P` on the watch page pops the active pane out or brings it
+//! back; on the browse page, which has no active pane, it is the mini
+//! player's, every pane it shows out or every popped pane back.
 
 use gpui::{actions, Action, App, KeyBinding};
 

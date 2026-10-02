@@ -3,11 +3,15 @@
 [![CI](https://github.com/puckzxz/perch/actions/workflows/ci.yml/badge.svg)](https://github.com/puckzxz/perch/actions/workflows/ci.yml)
 
 Twitch in one native window: the stream, its chat, and the channels you follow.
-No Electron, no second window for the player, no third one for chat.
+No Electron, no second window for the player unless you pop one out, and no
+third one for chat.
 
 Up to **four channels at once**, side by side in a grid derived from the shape
 of your window, each with its own chat and its own volume. Chat is read-only by
 design — this is somewhere to watch from, not another client to talk in.
+Drag the panes into another order, give one the whole window while the others
+play on, or, on Windows, pop one out into a small window that stays on top of
+whatever else you are doing.
 
 Built on [GPUI](https://github.com/zed-industries/zed) (Zed's UI framework) with
 [streamlink](https://streamlink.github.io/) as the Twitch byte source and
@@ -388,7 +392,8 @@ fit. Resting the pointer on one shows the whole of it.
 
 Whatever is playing while you browse keeps playing, with its sound, in a small
 player in the bottom-right corner of the page, clear of the list's scrollbar:
-one picture, or up to four two to a row.
+one picture, or up to four two to a row. A stream popped out into a window of
+its own stays there instead, since it is on screen already.
 Click a picture to go back to watching it; the `×` that appears on a picture
 under the pointer closes just that stream, and on Windows the pop-out icon
 beside it moves that stream into a window of its own (see "A pane in a window
@@ -398,9 +403,10 @@ that for every stream there, Back to watching and Stop all. Mute all silences th
 anyone's volume: it is never saved, it lasts until you change a stream's volume
 yourself, and Unmute all leaves a stream you had muted muted. Every list leaves
 room at its foot, so nothing is stuck under the player. Settings can turn it
-off, in which case leaving the watch page stops the streams instead, which is
-the cheaper answer if you go to the follows page to pick the next thing rather
-than to glance at the list.
+off, in which case leaving the watch page stops the streams instead — all but
+those popped out, which play on in their own windows — which is the cheaper
+answer if you go to the follows page to pick the next thing rather than to
+glance at the list.
 
 ### The rail
 
@@ -600,10 +606,11 @@ clamped to the source resolution — mpv never scales up, the GPU stretches the
 last bit instead, which is effectively free.
 
 The choice is made again whenever a pane changes size — another pane opening
-or closing, the rail folding, the window resizing or going fullscreen, a
-popped-out pane's own window resizing, or the pane coming back from it — and
-only ever upwards: a pane that has grown moves to a sharper rendition, and a
-pane that has shrunk keeps what it has. A quality picked from a pane's own
+or closing, the rail folding, the window resizing or going fullscreen, a pane
+given the whole window or every pane shown again, a popped-out pane's own
+window resizing, or the pane coming back from it — and only ever upwards: a
+pane that has grown moves to a sharper rendition, and a pane that has shrunk
+keeps what it has. A quality picked from a pane's own
 menu is left alone; that choice was about the pane, whatever its size. The
 menu's first row is the settings' own choice, in the settings' words for it —
 `Auto (matches the video pane)`, `Best available`, or whatever quality the

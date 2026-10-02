@@ -109,13 +109,13 @@ is in a text box the keys stand aside for it, all but Ctrl+K, Ctrl+, and
 Ctrl+R, which type nothing.
 
 Point at a picture and its controls come up along the bottom of it: pause,
-the speaker and the volume, then the quality, chat, fullscreen and More,
-which pops the pane out, opens what it is playing on twitch.tv or copies a
-link to it (a recording's link is at the moment it has reached). Those a
-key also works name the key in their tooltips; the quality and More have
-none. A channel that is off offers its last broadcast, and starts by itself
-when it comes back on if you follow it; a stream that ends offers its
-recording from the start.
+the speaker and the volume, then the quality, with two panes or more the
+maximize, then chat, fullscreen and More, which pops the pane out, opens
+what it is playing on twitch.tv or copies a link to it (a recording's link
+is at the moment it has reached). Those a key also works name the key in
+their tooltips; the quality and More have none. A channel that is off
+offers its last broadcast, and starts by itself when it comes back on if
+you follow it; a stream that ends offers its recording from the start.
 
 P, or the icon beside a pane's ×, moves its picture into a small window of
 its own that stays on top of other apps; its chat stays put. P again, or
@@ -123,9 +123,10 @@ Bring back, returns it. On the browse page P, or Pop out on the mini
 player, does it for every pane there, each in its own window. Alt+F4 on the
 small window brings the pane back; its Close closes the pane.
 
-With more than one pane open, Z gives the one you are on the whole window,
-chat and all; the others keep playing, with their sound, out of sight, and
-1 to 4 or Tab hands the window to another. Z or Esc shows them all again.
+With more than one pane open, Z, or the maximize on its bar, gives the one
+you are on the whole window, chat and all; the others keep playing, with
+their sound, out of sight, and 1 to 4 or Tab hands the window to another.
+Z or Esc shows them all again.
 
 Drag a pane by its header onto another and the two swap places; Shift+Left
 and Shift+Right swap the pane you are on with the one before or after it,

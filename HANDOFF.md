@@ -4,7 +4,7 @@ For whoever picks this up next. `README.md` covers *using* it; this covers
 *working on* it — the architecture, the traps, and the things that cost real
 time to discover and would cost the same again.
 
-Roughly 37,000 lines across seven crates. `cargo test --workspace`,
+Roughly 45,000 lines across seven crates. `cargo test --workspace`,
 `cargo clippy --workspace --all-targets` and `cargo fmt --all --check` are all
 expected to pass; if one does not, that is the change you are looking at, not
 the baseline.
@@ -13,9 +13,11 @@ the baseline.
 
 ## What it is
 
-A native Twitch client in one window: browse everyone you follow — live or
-not — plus what is popular and what is on; search for a channel; and watch up to
-four at once, each with its own chat. Rust + [GPUI](https://github.com/zed-industries/zed)
+A native Twitch client, one window by default: browse everyone you follow —
+live or not — plus what is popular and what is on; search for a channel; and
+watch up to four at once, each with its own chat — rearranged by dragging, one
+of them given the whole window, or, on Windows, any of them popped out into a
+small window of its own on top of other apps. Rust + [GPUI](https://github.com/zed-industries/zed)
 (Zed's UI framework), with streamlink as the byte source and libmpv doing decode
 and A/V sync.
 
@@ -75,7 +77,7 @@ App modules:
 | `launch.rs` | what a launch's arguments ask for, read the one way at startup and on a handover (pure, tested) |
 | `trail.rs` | back and forward: the places behind and ahead, what a step passes over, and forgetting a place that is gone (pure, tested) |
 | `stage.rs` | where each pane is drawn — a pane, a mini-player tile, a window of its own, or nowhere while another pane has the watch page (`Place`) — which panes are popped out and which one is maximized (`Stage`), the cells the watch grid draws (`cells`) and what a pane's maximize control offers (`MaximizeButton`): the one owner of the answer both windows ask before drawing a player; and where a pane moved one place along the order goes (`moved`) (pure, tested) |
-| `os_window.rs` | what Perch asks of a window that gpui does not: its platform handle, and keeping a pop-out above every other app (`keep_on_top`, Windows only) |
+| `os_window.rs` | what Perch asks of a window that gpui does not: its platform handle (`hwnd`, the one place a gpui window is asked for it — `instance::bring_forward` comes forward on it rather than looking it up itself), and keeping a pop-out above every other app (`keep_on_top`, Windows only) |
 | `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams` (opening, restarting, closing, and `replace_with_video`, a recording swapped in for a live pane in place), `renditions` (what each pane plays, and when it restarts: the quality chosen against each pane's own height, `pane_height_for`, the upward re-pick when the grid changes, `sync_quality`, a pick from the pane's own menu, and how each changes what plays, `change_rendition` — beside a picture that covers the pane, to take over in place, and cold otherwise; and the root's half of that swap: what a start resolving beside a pane does with its events, `pending_event`, and what the pane keeps once its player has taken over or been given up on, `on_swapped` and `on_swap_failed`; tested), `panes` (where each pane is drawn, applied: `restage`, the one funnel every change of a pane's state, of which panes there are, of the page, of what is popped out and of what is maximized ends in; `set_slot_state`, the only write of a pane's state, which a test holds the root to; `video_in_main`, the only way the main window reaches a player, which a test holds the mini player and the pages to; and the maximize as the root drives it, `toggle_maximize`, `show_all_panes`, and `choose`, which takes it to the pane chosen; and `move_pane`, two panes swapping places in the order, from a header dropped on a pane or `Shift+←`/`Shift+→`), `pop_out` (a pane's picture in a window of its own, on top of other apps: the `PopOut` view, opening and closing it through `cx.defer`, `to_root`, the only way back to the root from it, and `offered`, Windows only), `broadcasts` (what a stopped live pane asks about its channel's past broadcasts, and whether it may offer to start by itself), `pane_actions` (what a pane asks for, by its key: a press on it or one of its controls, which takes the keys back for the root first, and its player's requests; the moment a pane key brings a pane's header up over its picture; and `run_guard`, which swallows the rest of a double-click whose first press took a player out from under the pointer — More's `Pop out`, the mini player's — where the player's own guard cannot follow), `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `prefs`, `recommended` (the rail's Recommended group: when to ask the worker, what its answer becomes, and the hooks that call it), `chrome` (pills, toasts, the rail), `mini_player` (what plays on while you browse, in the corner of the page), `title_bar` (the bar Perch draws across the top of the window — the rail button, back and forward, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`) |
 | `target.rs` | what a typed or pasted thing means: a login, or a twitch.tv link to a channel or a recording; `link`, its inverse and the one place a twitch.tv URL is written, and `moment`, the second a link to a recording starts at (pure, tested) |
 | `browse.rs` | the picker page: following, popular, categories, search; which of them is on screen (`Discovery::place`) and which lists are still being waited on |
@@ -1034,9 +1036,9 @@ fails silently, and each was read out of gpui 0.2.2's source:
 at a time.** A pane popped out (`root/pop_out.rs`) is the same `VideoView` in
 another gpui window, and gpui gives every window its own sprite atlas, its own
 focus and dispatch tree, and its own frame-to-frame element state. Every one
-of these was read out of gpui 0.2.2's source; the spike that puts them to the
-test together, and what its live checks find once they are run, is recorded
-in `OVERHAUL-DECISIONS.md`:
+of these was read out of gpui 0.2.2's source; the spike that put them to the
+test together, what its live checks found and what is still to be checked,
+is recorded in `OVERHAUL-DECISIONS.md`:
 
 - **One window per `VideoView`.** `render` skips `update_image` for a frame
   it already holds, so a second window drawing the view would freeze on its
@@ -1073,7 +1075,16 @@ in `OVERHAUL-DECISIONS.md`:
   bar's strip, above, for the same reasons. Its one listener is an `on_hover`
   that wakes a repaint: under it, nothing else hears the pointer arrive, and a
   paused picture sends no frames. A move on the caption is a non-client move,
-  which gpui still hears as hover (events.rs:925-927).
+  which gpui still hears as hover (events.rs:925-927). Crossing between the
+  picture and the bar, either way, is the one place that may show: the
+  picture is caption and the bar is client, and Windows sends a leave
+  whenever the pointer crosses from one to the other — `WM_NCMOUSELEAVE`
+  leaving the caption, `WM_MOUSELEAVE` leaving the client area. Both clear
+  the window's hovered flag (events.rs:58, 318-327) before the next move
+  sets it again, and the bar follows `is_window_hovered` (`VideoView`'s
+  probe), so it could blink for a frame. Read from source, not yet seen; if
+  it is, hold the bar up for `MOTION_HOVER` after the pointer was last
+  inside the player, in the pop-out alone.
 - **Neither `WindowKind::PopUp` nor `Floating` is topmost on Windows**
   (windows/window.rs:402-404). The pop-out is `Normal`, and
   `os_window::keep_on_top` sets `HWND_TOPMOST` and clears the
@@ -1184,7 +1195,15 @@ sampler and a file in AppData for people who will never read it. With it off,
 every hook it has in `render` and the video thread is one relaxed atomic access.
 Everything Win32 in it is behind `cfg(windows)`, constants and helpers
 included: the macOS leg runs clippy with `-D warnings`, and a constant only the
-Windows sampler reads is dead code there.
+Windows sampler reads is dead code there. With a pane popped out, `visible`
+and `renders_per_s` still describe the main window alone: `visible` looks at
+the process's first visible top-level window that is not topmost, which a
+pop-out always is, and the count is the root's renders, not a pop-out's.
+`focused` does not: it asks whether the foreground window is any of perch's
+(`is_focused`), a pop-out included, and a pop-out takes the keyboard when it
+opens (see "Known limits"), so it reads 1 then with the main window behind.
+Making it main-only would mean comparing the foreground window with the one
+`top_level_of` finds.
 
 Three columns do most of the work. `by_thread` attributes the time by *thread
 name*, which Windows keeps for anything Rust or libmpv named — so `main` is the
@@ -2788,7 +2807,9 @@ which Windows lets take the foreground, because the user just started it —
 passes that right to the running copy before it says anything
 (`AllowSetForegroundWindow`, on the pid `GetNamedPipeServerProcessId` names),
 and the running copy restores itself if minimised and calls
-`SetForegroundWindow` on its own handle (`instance::bring_forward`). It is what
+`SetForegroundWindow` on its own handle (`instance::bring_forward`, on the
+handle `os_window::hwnd` reads through `raw-window-handle`, which a pop-out
+is kept on top through too). It is what
 Chromium's process singleton does. The launch opens the pipe with
 `SECURITY_IDENTIFICATION`, so whoever might have made a pipe of that name first
 learns who called and cannot act as them.
@@ -2859,6 +2880,27 @@ may pick the pop-out: the main window is titled `perch` and a pop-out
 `<channel> · perch`. A pop-out is topmost (`GWL_EXSTYLE & WS_EX_TOPMOST`), so
 a test that leaves one open leaves it over everything: demote it
 (`SetWindowPos(HWND_NOTOPMOST)`) or close it at the end of a run.
+
+**A tile left behind shows up as video memory that does not come back.**
+Each window has an atlas of its own, so a move between windows or a restart
+that failed to free its frame leaves a tile resident, and the place to see it
+is the process's dedicated video memory: `Get-Counter
+'\GPU Process Memory(pid_<pid>*)\Dedicated Usage'`, read before and after
+ten cold restarts (the settings sheet's quality) with a pane popped out,
+should come back to where it was within noise.
+
+**A swap says what it did in the log**, under the pane's key: `starting …
+beside …`; then, only for a recording not yet lined up with the pane,
+`holding` or `reseeking` (and `unaligned after 3 reseeks; taking over
+anyway` if it gives up lining up); then `swapped A->B after N ms; position
+a->b`, or `couldn't swap to …` and why, or `called off the swap to …` when
+the root moved on from it (see the swap trap under Video). A live pane, and
+a recording that opens close enough, go straight from `starting` to
+`swapped`. The log is `perch.log` in a release build and the console in a
+debug one. A pane that went back to `Starting…` for a quality change was
+started cold, not swapped: its picture did not cover it yet
+(`restart_how`), or the change came from the settings sheet, which always
+restarts cold (`restart_stream`).
 
 **Check the title bar's hit tests with `WM_NCHITTEST`, after a posted
 `WM_MOUSEMOVE` and a short wait.** gpui answers from the last mouse event it
@@ -3022,21 +3064,37 @@ two bugs phase 1 left for it are fixed: Mute all's tooltip kept its old
 words after a press, and a list asked for while signed out said it could not
 reach Twitch.
 
-**The overhaul's later phases are agreed in outline**, and the first two left a
-seam for each part still to come. An omnibox takes the place of the title bar's search box, which
-is one element in `title_bar_leading` so it can be swapped whole. A guide; the
-bar's right-hand cluster keeps a commented slot for its button. The Recommended
-group in the rail, read from Twitch's unofficial `SideNav` query with the
-unpublished-query risk the chat replay already carries, is built (see
-"Browsing" and "Known limits"); the palette and the guide do not show
-recommendations yet, and `recommended::Recommended::shown` is what they would
-read. A pop-out player that stays on top is built, on Windows only (see "A
-pane's pop-out" under "Where controls live"), and so is a pane maximised
-within the window (see "A pane given the window" there), whose control
-stands before the bar's cluster and folds into More after the quality pill
-rather than joining it — the pop-out went in the pane header and More — and
-`bar::RIGHT_BUTTONS` counts the cluster, so a button added there narrows the
-bar sooner. Sound and chat stay per pane throughout.
+So is the third, multiview and pop-out. On Windows a pane's picture goes
+into a small window of its own that stays on top of other apps — from its
+header, More, `P`, the palette or its mini-player tile, or every pane the
+mini player shows at once, each in its own window and placed clear of the
+others — while its place, its number and its chat stay in the main window,
+whose cell offers it back; its quality follows that window's size (see "A
+pane's pop-out" under "Where controls live", and the pop-out trap). With two
+panes or more, `Z`, the bar's maximize control or the palette gives one pane
+the whole watch page while the others play on unseen ("A pane given the
+window"), and dragging a pane's header onto another, or `Shift+←`/`Shift+→`,
+swaps the two for the session. A rendition change on a pane with a picture
+no longer goes black: the new stream plays beside the old one inside the
+same player and takes over in place (the swap trap under Video). Along the
+way a player mpv cannot open says so and offers `Try again`, a paused
+picture redraws at its new size, and the watch grid is cut in one place,
+`layout::Grid::of`.
+
+**What is left of the overhaul is agreed in outline**, and each phase so
+far left a seam for the parts still to come. An omnibox takes the place of
+the title bar's search box, which is one element in `title_bar_leading` so
+it can be swapped whole. A guide (phase 4); the bar's right-hand cluster
+keeps a commented slot for its button, and `bar::RIGHT_BUTTONS` counts the
+cluster, so a button added there narrows the bar sooner — which is why
+phase 3's maximize control stands before the cluster and folds into More
+after the quality pill rather than joining it, and why the pop-out went in
+the pane header and More. The Recommended group in the rail, read from
+Twitch's unofficial `SideNav` query with the unpublished-query risk the chat
+replay already carries, is built (see "Browsing" and "Known limits"); the
+palette and the guide do not show recommendations yet, and
+`recommended::Recommended::shown` is what they would read. Sound and chat
+stay per pane throughout.
 
 Left over from phase 1, smallest first:
 
@@ -3070,6 +3128,28 @@ Left over from phase 2, smallest first:
   for now.
 - `Start when they go live` lasts for the session and is per pane. Keeping
   it per channel would be a setting.
+
+Left over from phase 3, smallest first:
+
+- The swap's three estimates, `SWAP_LEAD` (4 s), `SWAP_CEILING` (45 s) and
+  `MAX_RESEEKS` (3), are to be tuned from its log lines (see "Working on
+  it"). If Twitch turns out not to serve two live sessions on one token,
+  live panes go back to cold restarts, and the way to keep them from going
+  black is to copy the old view's last frame into an image of its own and
+  draw it as a still under the starting screen until the new picture
+  covers.
+- The pop-out on macOS and Linux. It is compiled and not offered
+  (`pop_out::offered`): on macOS gpui's `PopUp` is a panel that hides
+  whenever the app is not in front, and hover on it follows the window
+  being active (window.rs:1727-1737). A Mac has to show what it takes —
+  most likely a `PERCH PATCH` clearing `hidesOnDeactivate`, with
+  `scripts/verify-vendor.sh` told about the file — before it is offered.
+- The pop-out as a tool window, with no taskbar entry, and saving where
+  pop-outs open, the pane order and the maximize across sessions: all left
+  out on purpose (see "Known limits").
+- Shared Chat's source tags, saying which channel's room a line came from
+  in a shared chat. The proposal's multiview paragraph has them; phase 3's
+  scope did not, and they are `twitch-chat`'s first.
 
 Ranked by what would be noticed, roughly:
 
@@ -3297,6 +3377,26 @@ None of these is being worked on; all of them are real.
     space; a 4:3 stream in a cell just narrow enough to stack, and a box the
     divider was dragged smaller, give up a little width too. See "Where
     controls live".
+30. **The pop-out is Windows-only.** It is compiled everywhere and offered
+    only on Windows (`pop_out::offered`): on macOS the window gpui would
+    keep up is a panel that hides whenever another app is in front, which
+    is the one thing a pop-out is for, and nobody has run it on Linux. See
+    "What to build next".
+31. **A pop-out takes the keyboard when it opens, and has a taskbar
+    entry.** Windows ignores `WindowOptions.focus`, so the new window is
+    activated and the keys go with it; and it is an ordinary window, with a
+    taskbar and `Alt+Tab` entry, because that is how the keyboard gets back
+    to it. Making it a tool window would take both away.
+32. **Panes maximized away still decode**, at the size they were last drawn
+    at and with their sound, so a maximize saves no CPU: the quality rule
+    puts the picture you come back to first. They redraw no window while
+    the palette is closed; while it is open the main window redraws at
+    their frame rate, since it reads every player to know which can offer
+    `Choose quality for …`. See "A pane given the window".
+33. **The pane order, the maximize and where pop-outs open last for the
+    session.** Nothing of them goes into `settings.json`: a new session
+    opens what it is told in the order it is told, every pane in the main
+    window, and the first pop-out in the corner again.
 
 ## Things not to redo
 
@@ -3500,3 +3600,24 @@ None of these is being worked on; all of them are real.
   Whoever holds the player says what is happening under it, and the first
   frame fades in over that; a player of its own black hid the poster the
   moment it existed, seconds before there was a picture.
+- Do not let two windows draw one `VideoView`, let the main window read one
+  that is popped out while drawing (anything its render reaches), or move
+  one by anything but `VideoView::set_place`. The second window would freeze
+  on its first tile, the two probes would fight over the render size, and a
+  window that reads a player while drawing is redrawn at its frame rate.
+  What the main window draws reaches a player through
+  `RootView::video_in_main` and a pop-out through `pop_out_video`, both
+  answered by the one `Stage`; see the pop-out trap. Root code outside a
+  draw still reads a popped player through `Slot::video` — `sync_quality`
+  does, and that is how a pop-out's quality follows its own window — so do
+  not swap those reads for `video_in_main`.
+- Do not open or close a window inside a root update, or call a root method
+  from a pop-out, except through `cx.defer` and `pop_out::to_root`.
+  `open_window` draws before it returns, a pop-out's render reads the root,
+  and a root method handed a pop-out's `Window` measures the wrong body and
+  binds a stream's pump to a window about to close.
+- Do not kill a pane's supervisor while its player is live — not to start
+  a new rendition, not to tidy up a swap. The old mpv is reading that
+  relay, hits end of file without it, and `stream_stopped` ends the pane and
+  drops the new start with it. The old supervisor goes in `on_swapped`,
+  once its player has stopped; see the swap trap under Video.
