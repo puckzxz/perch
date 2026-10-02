@@ -69,6 +69,8 @@ impl RootView {
                 }
             }
             PaneAction::ToggleChat => self.toggle_chat(index, cx),
+            // More's `Only this one`, or `Hear all again`; see `hearing`.
+            PaneAction::HearOnly => self.hear_only(key, cx),
             // The moment the pane is at, on a recording: More is where a
             // moment is offered, and the palette's row is More by name.
             PaneAction::OpenOnTwitch => cx.open_url(&self.slots[index].link(true)),
@@ -190,9 +192,10 @@ impl RootView {
     /// Taken down by a detached timer unless a later reveal has started
     /// since, whose own timer is the one that counts.
     ///
-    /// For a pane key, for chat going away, and for a pane moved to another
+    /// For a pane key, for chat going away, for a pane moved to another
     /// place in the grid (`move_pane`), which is somewhere you were not
-    /// looking. The pointer cannot ask which pane the keys talk to — pointing
+    /// looking, and for an ad break's notice beginning (`ad_break_began`),
+    /// which says why a picture stands still. The pointer cannot ask which pane the keys talk to — pointing
     /// at a pane is what makes it active — and pause, mute and volume get no
     /// reveal at all; see `keys`. Hiding chat from the bar's glyph reveals
     /// too, as `C` does: the pointer is on the pane then, so the band is up
@@ -251,7 +254,9 @@ impl RootView {
                 // pane: the player has already let its hush go.
                 let index = self.slot_index(owner);
                 if let Some(index) = index {
-                    self.slots[index].quiet = false;
+                    if std::mem::replace(&mut self.slots[index].quiet, false) {
+                        self.sync_hear_only(cx);
+                    }
                 }
                 let channel = index.map(|index| self.slots[index].channel.clone());
                 if let Some(channel) = channel {

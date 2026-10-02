@@ -369,6 +369,10 @@ impl RootView {
             StreamEvent::Resolving => return,
             StreamEvent::Offline => return self.drop_pending(index, "the channel is off", cx),
             StreamEvent::Failed { reason } => return self.drop_pending(index, &reason, cx),
+            // An ad on the stream getting ready says nothing about the
+            // picture on screen, which plays on; the start is not taken
+            // over until it has frames of its own anyway.
+            StreamEvent::AdBreak { .. } => return,
             StreamEvent::Ready {
                 url,
                 quality,
@@ -457,6 +461,9 @@ impl RootView {
             slot.supervisor = Some(pending.supervisor);
             slot.pump = Some(pending.pump);
             slot.generation = generation;
+            // An ad the old streamlink said is not this one's: the new
+            // player took over with a picture, so it is not in one.
+            slot.end_ad_break();
             // Whether the menu marks the settings' row or the rendition, by
             // the override as it is now: the player lined up was told it as
             // it was when streamlink answered, and the other row's press for

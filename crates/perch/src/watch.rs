@@ -41,6 +41,7 @@ pub use self::chat_menu::toggled as chat_menu_toggled;
 pub use self::header::Placement;
 pub use self::status::{showing, Showing};
 
+use crate::ad_break::AdBreak;
 use crate::chat::ChatView;
 use crate::chat_display::ChatDisplay;
 use crate::layout;
@@ -279,6 +280,16 @@ pub struct Slot {
     /// before the pane played again to an ask made since. Back to none when
     /// the worker that owed them is gone (`RootView::forget_asks`).
     pub stray_answers: usize,
+    /// The ad break streamlink says it is filtering out of this pane's live
+    /// stream, while its notice is up in the header; see `crate::ad_break`.
+    /// Dropped by every change of the pane's state ([`set_state`](Self::set_state)),
+    /// and when its player swaps in a new rendition, whose streamlink is not
+    /// the one that said it.
+    pub ad_break: Option<AdBreak>,
+    /// The timer that counts `ad_break` down once a second and takes it down
+    /// when it is over (`RootView::ad_break_began`). Dropped with it, which
+    /// calls it off; a new break replaces it.
+    pub ad_tick: Option<Task<()>>,
 }
 
 /// Where a pane's ask about its channel's past broadcasts has got to.
@@ -397,6 +408,8 @@ impl Slot {
             rewind: Rewind::default(),
             origin: Origin::Unknown,
             stray_answers: 0,
+            ad_break: None,
+            ad_tick: None,
         }
     }
 
@@ -445,11 +458,20 @@ impl Slot {
     /// see [`stalled_at`](Self::stalled_at). Every change of state goes
     /// through here, so the note cannot be forgotten by one of them.
     pub fn set_state(&mut self, state: StreamState) {
+        // Whatever comes next is no longer the stream that said it: a new
+        // player's pre-roll is said after its picture is asked for.
+        self.end_ad_break();
         self.stalled_at = match state {
             StreamState::Offline | StreamState::Ended | StreamState::Failed(_) => Some(Utc::now()),
             StreamState::Starting | StreamState::Playing(_) => None,
         };
         self.state = state;
+    }
+
+    /// Take the ad-break notice down, and the timer counting it.
+    pub fn end_ad_break(&mut self) {
+        self.ad_break = None;
+        self.ad_tick = None;
     }
 
     /// Whether a poll that lists this pane's channel as broadcasting since
@@ -735,6 +757,10 @@ pub enum PaneAction {
     /// Draw every chat this way, and remember it: a row of the chat options
     /// menu. Every chat's, not the pane's: see `RootView::set_chat_display`.
     SetChatDisplay(ChatDisplay),
+    /// Hear this pane alone, every other held silent by Mute all's hush, or,
+    /// once one pane alone is heard, every pane again: More's `Only this
+    /// one` and `Hear all again`; see `RootView::hear_only`.
+    HearOnly,
 }
 
 /// How every pane in the current grid is arranged. Identical for all of them,
@@ -1058,8 +1084,12 @@ fn pane<V: 'static>(
         .when_some(on_picture, |band, header| {
             band.bg(theme::video_chrome())
                 .pt(px(theme::GAP_TIGHT))
+                // Everything but the wheel, which goes on to the player
+                // under it: `Alt` and the wheel change the level over the
+                // header as over the rest of the picture
+                // (`VideoView::on_wheel`).
                 .when(slot.header.is_visible(), |band| {
-                    band.occlude()
+                    band.block_mouse_except_scroll()
                         .on_hover(cx.listener(|_, _: &bool, _window, cx| cx.notify()))
                         .capture_any_mouse_down(cx.listener(
                             move |view, event: &MouseDownEvent, window, cx| {

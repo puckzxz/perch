@@ -484,6 +484,11 @@ pub const HEADER_REVEAL: Duration = Duration::from_millis(1500);
 /// first guess, like `HEADER_REVEAL`, and the same length for the same kind
 /// of glance.
 pub const SWITCH_LINGER: Duration = Duration::from_millis(1500);
+/// How long a player's control bar stays up after `Alt` and the wheel last
+/// changed its level, with the pointer gone: long enough to read the figure
+/// it came to. `VideoView::on_wheel` is the reader. The same glance as
+/// `SWITCH_LINGER`, so the same length.
+pub const VOLUME_LINGER: Duration = Duration::from_millis(1500);
 /// How faint a waiting indicator gets at the bottom of its breath. Never zero:
 /// something that vanishes entirely looks broken rather than busy.
 pub const PULSE_FLOOR: f32 = 0.45;

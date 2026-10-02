@@ -114,12 +114,17 @@ type nothing.
 
 Point at a picture and its controls come up along the bottom of it: pause,
 the speaker and the volume, then the quality, with two panes or more the
-maximize, then chat, fullscreen and More, which opens what the pane is
-playing on twitch.tv or copies a link to it (a recording's link is at the
-moment it has reached). Those a key also works name the key in their
-tooltips; the quality and More have none. A channel that is off offers its
-last broadcast, and starts by itself when it comes back on if you follow
-it; a stream that ends offers its recording from the start.
+maximize, then chat, fullscreen and More, which with two panes or more can
+silence every other pane (Only this one, then Hear all again), opens what
+the pane is playing on twitch.tv or copies a link to it (a recording's
+link is at the moment it has reached). Those a key also works name the key
+in their tooltips; the quality and More have none. ⌥ and the mouse wheel
+or a two-finger swipe over a picture change its volume (the wheel alone
+does not), and a middle click mutes or unmutes it. While Twitch plays an
+ad the picture holds still, and the pane's header says "ad break" until it
+is over. A channel that is off offers its last broadcast, and starts by
+itself when it comes back on if you follow it; a stream that ends offers
+its recording from the start.
 
 On a live stream a timeline runs above those controls, from the start
 of the broadcast to now. Click or drag back along it and let go to watch

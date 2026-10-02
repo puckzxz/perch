@@ -24,6 +24,7 @@
 //! for each — and the player opens that playlist itself. Nothing is left
 //! running once it has answered.
 
+mod ads;
 mod job;
 pub mod playlist;
 pub mod quality;
@@ -55,6 +56,15 @@ pub enum StreamEvent {
         available: Vec<String>,
         /// The video's playlist; `None` for a live stream.
         playlist: Option<Playlist>,
+    },
+    /// Twitch is playing an ad, which streamlink is filtering out, so the
+    /// relay sends nothing and the picture holds still until it ends. `secs`
+    /// is its length when streamlink said one, and `None` for the pre-roll's
+    /// wait, which it does not. Only from a live stream's serving run, after
+    /// `Ready`, and only when streamlink logs it; nothing says when it ends.
+    /// See [`ads`].
+    AdBreak {
+        secs: Option<u32>,
     },
     /// The channel is not broadcasting.
     Offline,
@@ -580,7 +590,8 @@ fn run(
 
     // streamlink announces the server on stdout, so watch for that rather than
     // probing the port: a probe connection would be a real client, and this
-    // also tells us when the channel turns out to be offline.
+    // also tells us when the channel turns out to be offline. The same lines
+    // carry the twitch plugin's word that it is filtering an ad (`ads`).
     let url = format!("http://127.0.0.1:{port}/");
     if let Some(stdout) = stdout {
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
@@ -595,6 +606,13 @@ fn run(
                     available: playable.clone(),
                     playlist: None,
                 });
+            } else if let Some(secs) = ads::ad_break(&line) {
+                // The same log, read line by line as it comes, so an ad is
+                // heard as streamlink says it, never after it. Streamlink is
+                // run at its default log level, info, which these are at; a
+                // configuration that raises it means no notice, and nothing
+                // else changes.
+                let _ = tx.unbounded_send(StreamEvent::AdBreak { secs });
             }
         }
     }

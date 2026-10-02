@@ -8,8 +8,9 @@
 //!
 //! This file is the player: what it starts with, its sound, its hover, where
 //! it is drawn — a pane, a mini-player tile, a window of its own, or nowhere
-//! while another pane has the watch page, its [`Place`] — and the picture.
-//! What is drawn over the
+//! while another pane has the watch page, its [`Place`] — and the picture,
+//! with the two gestures it answers, `Alt` and the wheel for the level and a
+//! middle press for mute (`picture_gestures`). What is drawn over the
 //! picture lives beside it, in child modules that see the player's private
 //! fields: `bar`, the control bar along the bottom — its icons, and what fits
 //! at the pane's width — and `menu`, the menus that bar opens, which one is
@@ -53,14 +54,16 @@ use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 use gpui::{
-    canvas, div, img, prelude::*, Animation, AnimationExt, Bounds, ClickEvent, Context, ElementId,
-    Entity, EventEmitter, FocusHandle, MouseDownEvent, Pixels, Point, RenderImage, SharedString,
-    Subscription, Task, Window,
+    canvas, div, img, prelude::*, Animation, AnimationExt, Bounds, ClickEvent, Context, Div,
+    ElementId, Entity, EventEmitter, FocusHandle, MouseButton, MouseDownEvent, Pixels, Point,
+    RenderImage, ScrollWheelEvent, SharedString, Stateful, Subscription, Task, Window,
 };
 use gpui_component::slider::{SliderEvent, SliderState};
 
+use crate::ad_break;
 use crate::controls;
-use crate::loudness::Loudness;
+use crate::keys;
+use crate::loudness::{HearOnly, Loudness};
 use crate::motion;
 use crate::rewind;
 use crate::seek_bar;
@@ -68,6 +71,7 @@ use crate::stage::{MaximizeButton, Place};
 use crate::theme;
 use crate::video::{SizeHandle, Stopped, VideoStream};
 use crate::watch::PaneAction;
+use crate::wheel::Wheel;
 
 pub enum VideoEvent {
     /// The user changed volume; worth persisting to settings.
@@ -210,6 +214,32 @@ pub struct VideoView {
     /// else; see `loudness`.
     loudness: Loudness,
     volume_slider: Entity<SliderState>,
+    /// What a gliding wheel has gathered towards its next step of volume,
+    /// under `Alt`; see `crate::wheel`.
+    wheel: Wheel,
+    /// The bar held up for a moment after the wheel last changed the level,
+    /// so the slider and the figure are seen moving even once the pointer
+    /// has left: the one-shot timer that lets it go
+    /// ([`theme::VOLUME_LINGER`]), while it runs. Each step of the wheel
+    /// replaces it, which drops — calls off — the one before.
+    volume_linger: Option<Task<()>>,
+    /// What More's row for hearing one pane alone offers; see
+    /// [`HearOnly`]. A mirror, on [`ChatButton`]'s pattern, of the panes'
+    /// hushes, which are the root's: written in exactly two places —
+    /// [`Start::hear_only`] when the player is made, and
+    /// [`set_hear_only`](Self::set_hear_only), which only
+    /// `RootView::sync_hear_only` calls, after every change of a pane's hush
+    /// and from `restage`, which every change of which panes there are ends
+    /// in.
+    hear_only: HearOnly,
+    /// When the stream on screen last sent a frame: what the next one is
+    /// measured against to say whether the picture has moved again after
+    /// standing still (`ad_break::frames_resumed`).
+    last_frame: Option<Instant>,
+    /// When the picture last moved again after standing still, its first
+    /// frame included: what ends a pane's ad-break notice
+    /// (`ad_break::AdBreak::over`), read by the root as it ticks.
+    resumed_at: Option<Instant>,
     qualities: Qualities,
     /// The menu open over the control bar, if any: one at a time, so opening
     /// one is closing whichever was open (`menu::toggled`).
@@ -364,6 +394,9 @@ pub struct Start {
     /// Whether a recording's broadcast is still going on, for its way back
     /// to live; see `VideoView::back_to_live`.
     pub back_to_live: bool,
+    /// What More offers about hearing one pane alone at the start; see
+    /// `VideoView::hear_only`.
+    pub hear_only: HearOnly,
 }
 
 impl VideoView {
@@ -433,6 +466,11 @@ impl VideoView {
             first_frame: None,
             loudness,
             volume_slider,
+            wheel: Wheel::default(),
+            volume_linger: None,
+            hear_only: start.hear_only,
+            last_frame: None,
+            resumed_at: None,
             qualities,
             menu: None,
             row_run: false,
@@ -599,6 +637,62 @@ impl VideoView {
         self.set_volume(self.loudness.toggled(), window, cx);
     }
 
+    /// The wheel over the picture: with `Alt` held, the level a step at a
+    /// time, through `nudge_volume` as a volume key goes, so the slider
+    /// follows and the channel remembers it; without, nothing, and the wheel
+    /// goes on to whatever is under the player. See `crate::wheel`.
+    ///
+    /// Each step holds the bar up for a moment ([`theme::VOLUME_LINGER`]),
+    /// so the slider and the figure are seen to move even if the pointer
+    /// leaves the picture between two turns.
+    fn on_wheel(&mut self, event: &ScrollWheelEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if !event.modifiers.alt {
+            self.wheel.reset();
+            return;
+        }
+        cx.stop_propagation();
+        let steps = self.wheel.steps(&event.delta);
+        if steps == 0 {
+            return;
+        }
+        self.nudge_volume(steps * keys::VOLUME_STEP, window, cx);
+        self.volume_linger = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(theme::VOLUME_LINGER).await;
+            let _ = this.update(cx, |this, cx| {
+                this.volume_linger = None;
+                if this.sync_controls() {
+                    cx.notify();
+                }
+            });
+        }));
+        if self.sync_controls() {
+            cx.notify();
+        }
+    }
+
+    /// The gestures a picture answers that a tile's does not: `Alt` and the
+    /// wheel for the level ([`on_wheel`](Self::on_wheel)), and a middle
+    /// press for mute, the same as `M` and the speaker. On the press, every
+    /// press of it: a second one is a second toggle, as a second press of
+    /// the speaker would be.
+    ///
+    /// Hung on the element under the pointer that hears it: the picture in
+    /// a pane, and in a pop-out the layer it is dragged by too, which blocks
+    /// the pointer from the picture under it. The control bar, which blocks
+    /// the pointer as well, hangs the wheel on itself (`control_bar`), and a
+    /// middle press on it does nothing. Neither gesture is a drag: a
+    /// wheel moves no window, and a middle press is not the left press
+    /// Windows takes a caption drag from, so hearing it there leaves the
+    /// drag alone (`controls::drag_layer`).
+    fn picture_gestures(&self, element: Stateful<Div>, cx: &mut Context<Self>) -> Stateful<Div> {
+        element
+            .on_scroll_wheel(cx.listener(Self::on_wheel))
+            .on_mouse_down(
+                MouseButton::Middle,
+                cx.listener(|this, _: &MouseDownEvent, window, cx| this.toggle_mute(window, cx)),
+            )
+    }
+
     /// Move the player to `place`, drawn in the window whose focus is
     /// `focus`: between the watch page, a tile in the mini player, a window
     /// of its own, and offstage while another pane has the watch page. The
@@ -659,6 +753,8 @@ impl VideoView {
         self.pointing = None;
         self.scrub = None;
         self.track = None;
+        self.wheel.reset();
+        self.volume_linger = None;
         self.controls = motion::Fade::hidden();
     }
 
@@ -689,6 +785,7 @@ impl VideoView {
                 menu: self.menu.is_some(),
                 scrub: self.scrub.is_some(),
                 switch: self.switching.is_some() || self.linger.is_some(),
+                volume: self.volume_linger.is_some(),
             },
         );
         self.controls.set(visible)
@@ -804,6 +901,33 @@ impl VideoView {
         }
     }
 
+    /// What More offers about hearing one pane alone now, from
+    /// `RootView::sync_hear_only`; see `VideoView::hear_only` for why
+    /// nothing else calls this. Repaints only on a change.
+    pub fn set_hear_only(&mut self, hear_only: HearOnly, cx: &mut Context<Self>) {
+        if self.hear_only != hear_only {
+            self.hear_only = hear_only;
+            cx.notify();
+        }
+    }
+
+    /// A frame from the stream on screen has arrived, from the pump: noted
+    /// for whether the picture has moved again after standing still. A
+    /// clock read and a comparison, at the stream's frame rate.
+    fn note_frame(&mut self) {
+        let now = Instant::now();
+        if ad_break::frames_resumed(self.last_frame, now) {
+            self.resumed_at = Some(now);
+        }
+        self.last_frame = Some(now);
+    }
+
+    /// When the picture last moved again after standing still, its first
+    /// frame included; see `VideoView::resumed_at`.
+    pub fn resumed_at(&self) -> Option<Instant> {
+        self.resumed_at
+    }
+
     /// When the live broadcast on screen began, from
     /// `RootView::sync_live_since`; see `VideoView::live_since` for why
     /// nothing else calls this. Repaints only on a change.
@@ -910,6 +1034,9 @@ struct BarHolds {
     /// A pick is switching its quality, or one ended a moment ago
     /// ([`theme::SWITCH_LINGER`]).
     switch: bool,
+    /// The wheel changed the level a moment ago
+    /// ([`theme::VOLUME_LINGER`]).
+    volume: bool,
 }
 
 /// Whether the control bar of a player in `place` is up, given what is
@@ -927,9 +1054,14 @@ struct BarHolds {
 /// with the pointer gone hid the only sign the pick was being carried out.
 /// Not in a pop-out, whose bar has no pill and no More, so nothing on it
 /// would say why it stayed up.
+///
+/// And for a moment after `Alt` and the wheel changed the level, in a pane
+/// and a pop-out alike, so the slider and the figure are seen to move: the
+/// pointer is usually on the picture already, but a turn as it leaves
+/// should not change the level with nothing on screen saying so.
 fn bar_wanted(place: Place, holds: BarHolds) -> bool {
     let switch = holds.switch && place == Place::Pane;
-    draws_bar(place) && (holds.hovered || holds.menu || holds.scrub || switch)
+    draws_bar(place) && (holds.hovered || holds.menu || holds.scrub || holds.volume || switch)
 }
 
 /// Whether a change of what a pick is switching to, from `old` to `new`,
@@ -1086,12 +1218,19 @@ impl Render for VideoView {
         // pane, a mini-player tile — paint the player's black themselves, so
         // the letterbox is black once the picture covers the pane; until it
         // does, it is the poster under the fading first frame.
-        div()
+        let pane = div()
             .relative()
             .size_full()
             .flex()
             .flex_col()
-            .id("video-pane")
+            .id("video-pane");
+        // Not on a tile, whose picture is only a way back to the watch page.
+        let pane = if draws_bar(self.place) {
+            self.picture_gestures(pane, cx)
+        } else {
+            pane
+        };
+        pane
             // Only here to wake a repaint. Its *value* is wrong during a drag,
             // so the probe above decides; but a paused stream sends no frames,
             // and without this nothing would ask the probe to run again.
@@ -1121,7 +1260,8 @@ impl Render for VideoView {
             // which blocks the pointer only while it is up, so a button on
             // screen is never under the drag.
             .when(self.place == Place::PopOut, |pane| {
-                pane.child(controls::drag_layer("video-drag", window, cx))
+                let layer = controls::drag_layer("video-drag", window, cx);
+                pane.child(self.picture_gestures(layer, cx))
             })
             .when(draws_bar(self.place), |pane| {
                 // Hidden until the pointer is over the video, so nothing covers
@@ -1199,6 +1339,10 @@ mod tests {
             },
             BarHolds {
                 scrub: true,
+                ..BarHolds::default()
+            },
+            BarHolds {
+                volume: true,
                 ..BarHolds::default()
             },
         ];

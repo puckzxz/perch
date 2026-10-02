@@ -285,6 +285,7 @@ impl VideoView {
                 if let Some(reason) = self.stream.take_stopped() {
                     cx.emit(VideoEvent::Stopped(reason));
                 } else {
+                    self.note_frame();
                     self.pending_tick(cx);
                 }
                 cx.notify();

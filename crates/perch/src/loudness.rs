@@ -11,6 +11,10 @@
 //! level only from [`Loudness::set`], so Mute all, and the compact player it
 //! is offered from, cannot save a 0.
 //!
+//! The hush has a second way in: `Only this one`, from a pane's More menu,
+//! which holds every other pane silent through the same hush and so saves
+//! nothing either ([`HearOnly`]).
+//!
 //! Pure and tested, because this is the one place that decides what mpv
 //! hears and what the channel remembers.
 
@@ -110,6 +114,61 @@ pub fn unmute_all_offered(quiet: impl IntoIterator<Item = bool>) -> bool {
     any
 }
 
+/// What a pane's More menu offers about hearing one pane alone: nothing,
+/// `Only this one`, or `Hear all again`.
+///
+/// `Only this one` hushes every other pane through Mute all's hush (never
+/// saved, levels untouched) and lets the pane it was chosen on be heard;
+/// `Hear all again` lets every hush go. The same row in every pane, since
+/// what it says is about all of them: once one pane alone is heard, every
+/// pane's menu offers the way back, the hushed ones' included.
+///
+/// Worked out from the panes' hushes alone ([`hear_only`]), never kept as a
+/// fact of its own, so nothing can leave it saying the opposite of what is
+/// heard: a hushed pane somebody sets the level of is heard again, and the
+/// row goes back to `Only this one` with nobody telling it to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HearOnly {
+    /// Fewer than two panes: there is no other pane to hush.
+    Hidden,
+    /// `Only this one`.
+    Offered,
+    /// One pane alone is free of the hush and every other is held:
+    /// `Hear all again`.
+    Held,
+}
+
+impl HearOnly {
+    /// The row, when there is one: its id and its words. The id follows the
+    /// words, as every control whose words follow a state does, so the row
+    /// that says the other thing is a new element rather than the old one
+    /// relabelled under the pointer.
+    pub fn row(self) -> Option<(&'static str, &'static str)> {
+        match self {
+            HearOnly::Hidden => None,
+            HearOnly::Offered => Some(("more-hear-only", "Only this one")),
+            HearOnly::Held => Some(("more-hear-all", "Hear all again")),
+        }
+    }
+}
+
+/// What every pane's More menu offers, given each pane's hush, in any order.
+/// Held when there are two panes or more and exactly one is not hushed —
+/// whether `Only this one` or Mute all and then a level set on one pane got
+/// it there, since `Hear all again` means the same in both.
+pub fn hear_only(quiet: impl IntoIterator<Item = bool>) -> HearOnly {
+    let (mut panes, mut heard) = (0usize, 0usize);
+    for hushed in quiet {
+        panes += 1;
+        heard += usize::from(!hushed);
+    }
+    match (panes, heard) {
+        (0 | 1, _) => HearOnly::Hidden,
+        (_, 1) => HearOnly::Held,
+        _ => HearOnly::Offered,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,6 +257,47 @@ mod tests {
         assert!(unmute_all_offered([true, true, true]));
         assert!(!unmute_all_offered([true, false]));
         assert!(!unmute_all_offered([false]));
+    }
+
+    /// A lone pane has nobody to hush; two or more offer it until one
+    /// alone is heard, and then every pane offers the way back.
+    #[test]
+    fn only_this_one_until_one_alone_is_heard() {
+        assert_eq!(hear_only(Vec::<bool>::new()), HearOnly::Hidden);
+        assert_eq!(hear_only([false]), HearOnly::Hidden);
+        assert_eq!(hear_only([true]), HearOnly::Hidden);
+        assert_eq!(hear_only([false, false]), HearOnly::Offered);
+        assert_eq!(hear_only([false, true]), HearOnly::Held);
+        assert_eq!(hear_only([true, true, false]), HearOnly::Held);
+        assert_eq!(hear_only([false, false, true]), HearOnly::Offered);
+        assert_eq!(
+            hear_only([true, true]),
+            HearOnly::Offered,
+            "Mute all: one pane can still be chosen"
+        );
+        assert_eq!(
+            HearOnly::Offered.row(),
+            Some(("more-hear-only", "Only this one"))
+        );
+        assert_eq!(
+            HearOnly::Held.row(),
+            Some(("more-hear-all", "Hear all again"))
+        );
+        assert_eq!(HearOnly::Hidden.row(), None);
+    }
+
+    /// Hearing one alone is Mute all's hush on the others: their levels
+    /// stay what was chosen, so `Hear all again` brings each back to it.
+    #[test]
+    fn hearing_one_alone_leaves_the_others_levels() {
+        let mut chosen = Loudness::new(40, false);
+        let mut other = Loudness::new(70, false);
+        chosen.unhush();
+        other.hush();
+        assert_eq!((chosen.audible(), other.audible()), (40, 0));
+        assert_eq!(other.level(), 70);
+        other.unhush();
+        assert_eq!(other.audible(), 70);
     }
 
     #[test]

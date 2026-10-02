@@ -1,8 +1,9 @@
 //! A pane's header: who is on, how many are watching, how long for, what
-//! they are doing, and the pane's own icons — how every chat is drawn, on a
-//! header that sits on chat (`chat_menu`), out into a window of its own and
-//! back, and its ×. Where it goes is [`Placement`]. It is also what
-//! a pane is dragged by, onto another pane, to swap the two.
+//! they are doing, whether it is muted, paused or in an ad break, and the
+//! pane's own icons — how every chat is drawn, on a header that sits on chat
+//! (`chat_menu`), out into a window of its own and back, and its ×. Where it
+//! goes is [`Placement`]. It is also what a pane is dragged by, onto another
+//! pane, to swap the two.
 //!
 //! It is the same header in both places. Above (or below) chat it sits on
 //! the chat panel, where it costs nothing: chat is already a panel. With
@@ -199,6 +200,13 @@ pub(super) fn pane_header<V: 'static>(
             (player.is_muted(), player.is_paused())
         })
         .unwrap_or((false, false));
+    // An ad streamlink is filtering out, which holds the picture still with
+    // nothing on it to say why: said here, off the picture, beside `muted`
+    // and `paused`, counting down when streamlink gave a length
+    // (`crate::ad_break`). The root repaints once a second while it is up.
+    let ad_break = slot
+        .ad_break
+        .map(|ad| SharedString::from(ad.tag(std::time::Instant::now())));
     // The name opens what the pane is playing: the channel, or this one
     // recording, from its start — the name says which, never when. The
     // moment is More's to offer, on the bar.
@@ -431,6 +439,18 @@ pub(super) fn pane_header<V: 'static>(
                 })
                 .when(muted, |header| header.child(controls::tag("muted")))
                 .when(paused, |header| header.child(controls::tag("paused")))
+                // The one tag that gives way, with `meta`, when the row runs
+                // out: a narrow header on chat that is muted or paused as
+                // well has no room for it beside the icons, and flex_none it
+                // pushed the pop-out icon and the × past the edge. The
+                // meta's pattern, which cuts the line rather than wrapping it.
+                .children(ad_break.map(|words| {
+                    controls::tag(words)
+                        .flex_shrink()
+                        .min_w_0()
+                        .text_ellipsis()
+                        .line_clamp(1)
+                }))
                 .child(div().flex_1())
                 // The right-hand cluster: chat back, when only this header
                 // can offer it, or the chat options, when it sits on chat,

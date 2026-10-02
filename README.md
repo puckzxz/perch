@@ -139,10 +139,14 @@ stand aside while the cursor is in a text box — all but `Ctrl+K`, `Ctrl+,` and
 `Ctrl+R`, which type nothing, so the palette is one keystroke away straight
 after a search. A search typed on the watch page leaves it for the results, the
 way `Esc` does. The same list is in the settings sheet. Double-clicking the
-video is fullscreen too. `Esc` from the watch page goes back to whichever tab, category
-or channel you left the browse page on — and first lets go of a pane being
-dragged, then closes a pane's open menu, if there is one, and then shows
-every pane again, if one has the window. A
+video is fullscreen too. Holding `Alt` while turning the mouse wheel over a
+picture changes that stream's volume, a step of 5% per click of the wheel, as
+`↑` and `↓` do — the wheel alone never touches the sound, so scrolling past a
+video cannot change it — and a middle click on a picture mutes or unmutes it,
+as `M` does. Both work in a pop-out too. `Esc` from the watch page goes back to
+whichever tab, category or channel you left the browse page on — and first lets
+go of a pane being dragged, then closes a pane's open menu, if there is one,
+and then shows every pane again, if one has the window. A
 playing pane's quality menu is in the palette as well:
 type `quality` and some of the pane's name, and `Choose quality for …` opens
 it. So are the two things under the bar's **More**, as `Copy link to …` and
@@ -152,11 +156,14 @@ panes`.
 The bar over a playing pane has play, the speaker — crossed out whenever
 the pane is silent, Mute all included — and the volume at the left, and at
 the right the quality, with two panes or more the maximize, then chat,
-fullscreen and **More**, which has **Pop out** on Windows, **Open on
-twitch.tv** and **Copy link**. A narrow pane drops the volume's figure
-first, then its slider, then folds the quality into More, and the maximize
-after it. A past broadcast with no chat to replay shows the chat icon
-crossed out, with nothing to press.
+fullscreen and **More**, which has **Only this one** with two panes or more,
+**Pop out** on Windows, **Open on twitch.tv** and **Copy link**. **Only this
+one** silences every other pane the way Mute all does, without touching
+anyone's volume; until you change a silenced pane's volume, every pane's
+More then says **Hear all again**, which brings them all back. A narrow pane
+drops the volume's figure first, then its slider, then folds the quality
+into More, and the maximize after it. A past broadcast with no chat to
+replay shows the chat icon crossed out, with nothing to press.
 
 Back and forward work the way they do in a browser. `Alt+←` and `Alt+→`, the
 arrows in the title bar or the mouse's side buttons walk back through the
@@ -179,6 +186,14 @@ A pane's header says `muted` or `paused` when either is true, so a channel
 that opens silent says so without the pointer having to be on the video. With
 chat hidden the header is over the picture, so they show there while the
 pointer is on it — where the bar's speaker and play icon say the same.
+
+While Twitch plays an ad, streamlink leaves it out and the picture holds
+still until the stream comes back. The header says `ad break · 0:25`
+meanwhile, counting down when streamlink says how long it is, or just `ad
+break` when it does not, until the picture moves again. With chat hidden,
+the header over the picture comes up for a moment when the break begins, and
+after that shows while the pointer is on the pane. If streamlink says
+nothing, nothing is shown.
 
 The window opens where it was last closed — on the same monitor, at the size
 it was — as long as that monitor is still there; the first time, it is sized to

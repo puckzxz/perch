@@ -15,6 +15,7 @@
 // `diagnostics` for where the output goes instead.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod ad_break;
 mod assets;
 mod browse;
 mod channel_page;
@@ -52,6 +53,7 @@ mod video;
 mod video_view;
 mod vod;
 mod watch;
+mod wheel;
 mod widget_theme;
 
 use gpui::{

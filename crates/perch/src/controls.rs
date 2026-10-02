@@ -443,10 +443,14 @@ pub fn caption_button(
 ///   mouse-down marks every press it hears as handled; gpui reports a
 ///   handled press on a caption to Windows as done, which swallows the move.
 ///   Blocked, the root never hears it.
-/// - **It listens for no press.** A listener that took the press would do
-///   the same. The one listener it has hears moves, and only wakes a repaint
-///   as the pointer comes or goes — under it, nothing else can hear the
-///   pointer arrive, and a paused picture sends no frames to repaint for.
+/// - **It listens for no left press.** A listener that took the press would
+///   do the same. The one listener it has here hears moves, and only wakes a
+///   repaint as the pointer comes or goes — under it, nothing else can hear
+///   the pointer arrive, and a paused picture sends no frames to repaint for.
+///   The pop-out's player hangs its picture's gestures on it too — a middle
+///   press for mute, `Alt` and the wheel for the level
+///   (`VideoView::picture_gestures`) — which leave the drag alone: Windows
+///   drags a caption by the left button only, and a wheel moves nothing.
 /// - **It starts below the top edge**, which is the platform's to resize by:
 ///   gpui asks for a window control before it asks Windows about the frame.
 ///

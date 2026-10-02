@@ -32,9 +32,9 @@ use crate::watch::PaneAction;
 pub enum Menu {
     /// The renditions this stream offers, under the settings' choice.
     Quality,
-    /// The rest: pop the pane out, open it on twitch.tv, copy its link —
-    /// and the quality and the maximize control, while the bar has no room
-    /// for them.
+    /// The rest: hear this pane alone or every pane again, pop the pane
+    /// out, open it on twitch.tv, copy its link — and the quality and the
+    /// maximize control, while the bar has no room for them.
     More,
 }
 
@@ -187,7 +187,8 @@ impl VideoView {
 
     /// More: what the bar has folded away first — the quality while its
     /// pill has, then the maximize control once it has too — ruled off from
-    /// the rest; then `Pop out`, then the pane's way out to twitch.tv and its
+    /// the rest; then, with two panes or more, `Only this one` or `Hear all
+    /// again`; then `Pop out`, then the pane's way out to twitch.tv and its
     /// link. All but the quality are the root's to do — it knows the panes,
     /// its windows, and the clipboard and the browser are the app's — so they
     /// go up as `VideoEvent::Pane`.
@@ -230,6 +231,21 @@ impl VideoView {
                 })
             })
             .collect();
+        // Hearing this pane alone, and back: `Only this one` hushes every
+        // other pane the way Mute all does, and once one pane alone is heard
+        // every pane's row says `Hear all again` instead (`HearOnly`, a
+        // mirror the root keeps). Nothing with one pane. The root works out
+        // which a press means from the panes as they are, so a row drawn a
+        // frame stale cannot do the opposite of what is heard.
+        if let Some((id, words)) = self.hear_only.row() {
+            rows.push(menu_row(
+                id,
+                words.into(),
+                false,
+                |_this, _window, cx| cx.emit(VideoEvent::Pane(PaneAction::HearOnly)),
+                cx,
+            ));
+        }
         // The pane's picture into a window of its own, where the pop-out is
         // offered. Only ever on a pane: no other place draws this menu
         // (`open_menu`), and a popped pane's bar has Bring back instead. The

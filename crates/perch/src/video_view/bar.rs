@@ -345,7 +345,19 @@ impl VideoView {
             // real pointer over the picture always has the bar up, so what
             // this keeps honest is synthetic input, and a press in the fade's
             // last moments.
+            //
+            // The wheel too, so the bar hears it itself: `Alt` and the wheel
+            // over the bar — on the slider, most of all — change the level as
+            // they do over the rest of the picture (`VideoView::on_wheel`).
+            // An occluder's own hitbox still counts as under the pointer for
+            // the wheel; only what is beneath it does not. Not
+            // `block_mouse_except_scroll`, which would let the wheel through
+            // to the picture's listener: it lets the window-control hit test
+            // through as well, and in a pop-out the drag layer under the bar
+            // would make every button on it a caption, a press on which moves
+            // the window instead of pressing the button.
             .when(self.controls.is_visible(), |bar| bar.occlude())
+            .on_scroll_wheel(cx.listener(Self::on_wheel))
             // Whatever is pressed on the bar, the keys go back to the root;
             // see `return_keys`. In the capture phase, which runs before any
             // control's own handler: the volume slider's thumb stops its

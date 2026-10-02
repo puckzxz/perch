@@ -272,6 +272,9 @@ impl RootView {
                 }
             }
         }
+        // Which panes there are decides whether More offers hearing one
+        // alone at all.
+        self.sync_hear_only(cx);
     }
 
     /// Give the pane `key` names the whole watch page, chat and all, or, on

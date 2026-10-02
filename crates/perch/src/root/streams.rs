@@ -632,6 +632,9 @@ impl RootView {
                     // Whether a recording's broadcast is still on, for its
                     // way back to live; kept up by `sync_back_to_live`.
                     back_to_live,
+                    // What More offers about hearing one pane alone; kept
+                    // up by `sync_hear_only`.
+                    hear_only: self.hear_only_now(),
                 };
                 // The pane's one player: its own size until the pane is
                 // measured, playing, and its position heard by the pane —
@@ -676,6 +679,9 @@ impl RootView {
             StreamEvent::Failed { reason } => {
                 self.set_slot_state(index, StreamState::Failed(reason.into()), cx)
             }
+            // Twitch is playing an ad that streamlink is filtering out; the
+            // header says so (`ad_breaks`).
+            StreamEvent::AdBreak { secs } => self.ad_break_began(index, secs, cx),
         }
         cx.notify();
     }
@@ -872,6 +878,8 @@ impl RootView {
     /// level ends it for that pane; and nothing of it reaches the settings —
     /// Mute all is not somebody deciding a channel should open silent. Letting
     /// go never un-mutes a pane that was muted by hand before it.
+    ///
+    /// More's `Hear all again` is the letting go (`hearing`).
     pub(super) fn set_quiet_all(&mut self, quiet: bool, cx: &mut Context<Self>) {
         for slot in &mut self.slots {
             slot.quiet = quiet;
@@ -879,6 +887,7 @@ impl RootView {
                 view.update(cx, |video, cx| video.set_hushed(quiet, cx));
             }
         }
+        self.sync_hear_only(cx);
         cx.notify();
     }
 
