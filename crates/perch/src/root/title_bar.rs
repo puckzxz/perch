@@ -52,7 +52,7 @@ use gpui_component::input::Input;
 
 use super::RootView;
 use crate::assets::Icon;
-use crate::browse::SignIn;
+use crate::browse::{SignIn, Tab};
 use crate::controls::{self, Variant};
 use crate::keys::Hint;
 use crate::{layout, theme};
@@ -298,8 +298,8 @@ impl RootView {
         Some(bar.into_any_element())
     }
 
-    /// The rail button, back and forward, and the search box: the page-level
-    /// controls, at the left of the bar, before the drag strip.
+    /// The rail button, back, forward and Home, and the search box: the
+    /// page-level controls, at the left of the bar, before the drag strip.
     ///
     /// One group, so one veil covers them all while a modal is up: the sheet
     /// and the palette cover the page under the bar, and nothing in the bar
@@ -349,6 +349,19 @@ impl RootView {
             controls::icon_waiting(Icon::Forward).into_any_element()
         };
 
+        // Home from anywhere, in one press: the watch page included, which
+        // it leaves the way `Esc` does, so whatever plays carries on in the
+        // mini player or stops with that turned off. One step on the trail,
+        // so back returns. Always live, unlike the arrows: on Home already,
+        // a press changes nothing and records nothing.
+        let home = controls::icon_button("title-home", Icon::Home, Variant::Chrome)
+            .tooltip(controls::tip("Home"))
+            .on_click(cx.listener(|this, _event, window, cx| {
+                // See the gear's handler.
+                this.focus.focus(window);
+                this.go_to_tab(Tab::Home, window, cx);
+            }));
+
         // Its own width while the bar has room. In a narrow window it gives
         // some of that up, down to `SEARCH_MIN_WIDTH`, rather than the drag
         // strip giving up all of its own: the strip is a flex-grown spacer
@@ -387,6 +400,7 @@ impl RootView {
             .child(rail)
             .child(back)
             .child(forward)
+            .child(home)
             .child(search)
             // Last, so it is over them all. It takes the pointer without
             // doing anything with it; the modal is what to answer.
