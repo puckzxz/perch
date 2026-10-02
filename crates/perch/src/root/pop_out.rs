@@ -649,7 +649,7 @@ impl RootView {
                 Err(e) => {
                     let _ = root.update(cx, |this, cx| {
                         this.come_home(&key, cx);
-                        this.toast(format!("couldn't open a window: {e}"), cx);
+                        this.toast(format!("Couldn't open a window: {e}"), cx);
                     });
                 }
             }

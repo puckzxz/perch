@@ -1699,10 +1699,11 @@ unconsidered.
   line a pane words itself while it starts or after it stops is a sentence
   too (`Starting…`, `Forsen is offline`, `Finished`), since it sits over a
   sentence-case pill and beside the mini player's words for the same
-  states. Not swept yet, so do not take them for the rule: the passive words
+  states. So is a toast (`Link copied`, `Couldn't switch to 480p30`, `Sign in
+  to rewind`), a notice like any other. Not swept yet, so do not take them for the rule: the passive words
   that state a fact — a pane header's `muted`, `paused` and `replay` tags,
-  chat's `deleted`, toasts and chat's notices, the palette's kind column —
-  are still lowercase, and so is a failed pane's line, which is the failure
+  chat's `deleted`, chat's notices, the palette's kind column — are still
+  lowercase, and so is a failed pane's line, which is the failure
   in the words of whatever failed (streamlink, mpv, the streamlink crate or
   the player), passed through as is by `Showing::sentence`.
   `channel_page::kind_tag` is also read mid-sentence, in a palette row's

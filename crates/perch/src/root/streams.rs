@@ -118,7 +118,7 @@ impl RootView {
             if solo {
                 this.retire_slots(|_| false, cx);
             } else if this.slots.len() >= MAX_PANES {
-                this.toast(format!("already watching {MAX_PANES} streams"), cx);
+                this.toast(format!("Already watching {MAX_PANES} streams"), cx);
                 return;
             }
             this.show_watch_page(window, cx);
@@ -220,7 +220,7 @@ impl RootView {
             if solo {
                 this.retire_slots(|_| false, cx);
             } else if this.slots.len() >= MAX_PANES {
-                this.toast(format!("already watching {MAX_PANES} streams"), cx);
+                this.toast(format!("Already watching {MAX_PANES} streams"), cx);
                 return;
             }
             this.show_watch_page(window, cx);

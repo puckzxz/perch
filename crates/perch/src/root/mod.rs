@@ -532,7 +532,7 @@ impl RootView {
     fn save_settings(&mut self, cx: &mut Context<Self>) {
         if let Err(e) = self.settings.save_preferences(&self.settings_path) {
             eprintln!("settings: could not save: {e}");
-            self.toast(format!("could not save settings: {e}"), cx);
+            self.toast(format!("Could not save settings: {e}"), cx);
         }
     }
 

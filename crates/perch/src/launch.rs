@@ -45,7 +45,7 @@ impl Launch {
                 flag if flag.starts_with('-') => {
                     launch
                         .warnings
-                        .push(format!("unknown option {flag}; ignored"));
+                        .push(format!("Unknown option {flag}; ignored"));
                 }
                 // A login, or a twitch.tv link to a channel or a recording,
                 // read the one way the app reads either — see `target`.
@@ -111,7 +111,7 @@ mod tests {
         assert_eq!(
             launch.warnings,
             [
-                "unknown option --loud; ignored",
+                "Unknown option --loud; ignored",
                 "\"twitch.tv/directory\" is not a Twitch channel or recording; skipped",
             ]
         );

@@ -90,7 +90,7 @@ impl RootView {
                         };
                         if let Err(e) = saved {
                             eprintln!("settings: could not save: {e}");
-                            this.toast(format!("could not save settings: {e}"), cx);
+                            this.toast(format!("Could not save settings: {e}"), cx);
                         }
                         this.settings_panel = None;
 

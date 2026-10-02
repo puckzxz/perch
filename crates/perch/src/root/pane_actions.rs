@@ -63,7 +63,7 @@ impl RootView {
             PaneAction::OpenOnTwitch => cx.open_url(&self.slots[index].link(true)),
             PaneAction::CopyLink => {
                 cx.write_to_clipboard(ClipboardItem::new_string(self.slots[index].link(true)));
-                self.toast("link copied", cx);
+                self.toast("Link copied", cx);
             }
             // Out into a window of its own, and back. This arrives with the
             // main window whoever asked — the pop-out's bar through the
@@ -126,7 +126,7 @@ impl RootView {
         // a pane that would come up empty. Its glyph is drawn still, so only
         // the key ever asks.
         if self.slots[index].chat.is_none() {
-            self.toast("no chat replay for this video", cx);
+            self.toast("No chat replay for this video", cx);
             return;
         }
         let hidden = !self.slots[index].chat_hidden;

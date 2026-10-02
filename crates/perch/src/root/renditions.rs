@@ -438,7 +438,7 @@ impl RootView {
             if picked { "pick" } else { "re-pick" }
         );
         if picked {
-            self.pick_failed(index, "couldn't switch quality".to_string(), cx);
+            self.pick_failed(index, "Couldn't switch quality".to_string(), cx);
         }
     }
 
@@ -500,7 +500,7 @@ impl RootView {
             .set_pending(index, None, cx)
             .is_some_and(|pending| pending.reason.is_pick());
         if picked {
-            self.pick_failed(index, format!("couldn't switch to {quality}"), cx);
+            self.pick_failed(index, format!("Couldn't switch to {quality}"), cx);
         }
     }
 

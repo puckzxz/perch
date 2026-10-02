@@ -178,7 +178,7 @@ impl RootView {
                 // minute, and an outage that lasts an hour should not be sixty
                 // toasts about a list that is still on screen.
                 if self.refreshing {
-                    self.toast(format!("could not refresh: {reason}"), cx);
+                    self.toast(format!("Could not refresh: {reason}"), cx);
                 } else {
                     eprintln!("follows: {reason}");
                 }
@@ -451,7 +451,7 @@ impl RootView {
         cx: &mut Context<Self>,
     ) {
         if matches!(self.sign_in, SignIn::NeedsClientId | SignIn::Error(_)) {
-            self.toast(format!("sign in to open recording {id} by its link"), cx);
+            self.toast(format!("Sign in to open recording {id} by its link"), cx);
             return;
         }
         if self.linked_videos.iter().any(|linked| linked.id == id) {
@@ -509,7 +509,7 @@ impl RootView {
                     .unwrap_or_else(|| self.resume_point(&video.id));
                 self.open_video_at(video, solo, start_at, window, cx);
             }
-            Err(reason) => self.toast(format!("could not open recording {id}: {reason}"), cx),
+            Err(reason) => self.toast(format!("Could not open recording {id}: {reason}"), cx),
         }
     }
 }
