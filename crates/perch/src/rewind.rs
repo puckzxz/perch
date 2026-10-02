@@ -24,9 +24,18 @@
 //! looked up only when somebody presses: nothing polls for it. Once found it
 //! is kept for the broadcast ([`Rewind`]); not finding it is not kept, since
 //! Twitch may simply not have listed it yet, and the next press asks again.
+//!
+//! And the way back: a pane playing that archive while its broadcast is
+//! still going offers `LIVE` on its bar, which replaces it with the channel
+//! again. Whether it is that archive is [`live_now`], by the same rule that
+//! rules out the broadcast before a restart, against the live lists the app
+//! already keeps; nothing polls for that either. Those lists are not all
+//! fresh, so [`back_to_live`] weighs them against what the pane knows by
+//! itself ([`Origin`]): the follows poll's word over a list fetched once, the
+//! broadcast a pane saw end, and the one a pane rewound from.
 
 use chrono::{DateTime, Utc};
-use twitch_api::Video;
+use twitch_api::{Video, VideoKind};
 
 use crate::channel_page;
 
@@ -126,10 +135,9 @@ pub fn archive_for(
     since: DateTime<Utc>,
     now: DateTime<Utc>,
 ) -> Option<Video> {
-    let begun_by = since - chrono::Duration::seconds(BEGUN_SLACK_SECS);
     let current: Vec<Video> = archives
         .iter()
-        .filter(|video| listed_end(video).is_some_and(|end| end >= begun_by))
+        .filter(|video| going_at(video, since))
         .cloned()
         .collect();
     if let Some(found) = channel_page::archive_of(&current, broadcast, now) {
@@ -150,6 +158,120 @@ pub fn archive_for(
         })
         .or_else(|| being_made.into_iter().max_by_key(|video| started(video)))
         .cloned()
+}
+
+/// Whether `archive` is the recording of the broadcast going on now, which
+/// the live lists say began at `since` with the id `broadcast`: what offers a
+/// pane playing it the way back to the live edge (`LIVE` on its bar).
+///
+/// The rule [`archive_for`] rules the broadcast before a restart out by: an
+/// archive that had finished before `since` ([`BEGUN_SLACK_SECS`]) is an
+/// earlier broadcast's, and so is anything but an archive. Its listed length
+/// can be as stale as it likes — the pane's copy is the one it was opened
+/// with, maybe hours ago — since a length only ever grows, so a listed end
+/// at or after the start is a real one. A start more than [`LONGEST_SECS`]
+/// back is a snapshot of an older broadcast, which no archive is the
+/// recording of now. And the two ids, where both are known, must agree:
+/// unlike the pane's own `Slot::broadcast` in [`archive_for`], this one comes
+/// from the same list entry as `since`, so it is as fresh as the start is,
+/// and it is what tells a snapshot of a broadcast that has since ended from
+/// the one on now.
+pub fn live_now(
+    archive: &Video,
+    broadcast: Option<&str>,
+    since: DateTime<Utc>,
+    now: DateTime<Utc>,
+) -> bool {
+    let believable = now.signed_duration_since(since).num_seconds() as f64 <= LONGEST_SECS;
+    let ids_agree = match (
+        archive.stream_id.as_deref().filter(|id| !id.is_empty()),
+        broadcast.filter(|id| !id.is_empty()),
+    ) {
+        (Some(archive), Some(broadcast)) => archive == broadcast,
+        _ => true,
+    };
+    archive.kind == VideoKind::Archive
+        && believable
+        && started(archive).is_some_and(|started| started <= now)
+        && going_at(archive, since)
+        && ids_agree
+}
+
+/// What a recording pane knows by itself of the live broadcast it came out
+/// of: carried onto the recording's slot when it takes a live pane's place
+/// (`RootView::replace_with_video`), and asked by [`back_to_live`] next to
+/// what the live lists say. Kept on the slot for as long as the recording
+/// plays; a recording opened from a card, a link or the history knows
+/// nothing.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum Origin {
+    /// Nothing of a broadcast: the recording did not take a live pane's
+    /// place.
+    #[default]
+    Unknown,
+    /// Rewound into from a live pane's timeline, drawn from a broadcast
+    /// that began at `since`. Stands in for the live lists once none of
+    /// them carries the channel — the category or the search it was opened
+    /// from has been replaced since — so a pane that got here by rewinding
+    /// still has its way back. No id: the archive was chosen for this
+    /// broadcast, so its own id is the broadcast's.
+    Rewound { since: DateTime<Utc> },
+    /// Opened from a live pane that had seen its broadcast end, or found the
+    /// channel off (`Watch from the start`, `Watch here`): the broadcast with
+    /// the id `broadcast` is over, whatever a list that lags behind says.
+    Ended { broadcast: Option<String> },
+}
+
+/// What the live lists the app keeps say about a recording's channel, for
+/// [`back_to_live`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Listed<'a> {
+    /// A list carries it, broadcasting since `since`, with the id
+    /// `broadcast` where the list gives one.
+    On {
+        since: DateTime<Utc>,
+        broadcast: Option<&'a str>,
+    },
+    /// You follow it and the follows poll, the one list kept fresh, has it
+    /// off: whatever a list fetched once and kept says, it is off.
+    Off,
+    /// No list carries it, or none says when its broadcast began.
+    Unknown,
+}
+
+/// Whether a pane playing `archive` is offered the way back to the live
+/// edge (`LIVE` on its bar), from what the lists say of its channel
+/// (`listed`) and what the pane knows by itself (`origin`).
+///
+/// The follows poll having the channel off is the last word: Popular, a
+/// category and a search are fetched once and kept, and still list a
+/// broadcast that ended hours ago. A list that does carry it is asked by
+/// [`live_now`], except about the very broadcast the pane saw end, which a
+/// list a poll behind may still name. And with no list carrying it at all,
+/// a pane that rewound into the archive goes by the broadcast it rewound
+/// from. The bar also wants the archive still growing, which is the
+/// player's to know (`video_view::bar`).
+pub fn back_to_live(
+    archive: &Video,
+    listed: Listed<'_>,
+    origin: &Origin,
+    now: DateTime<Utc>,
+) -> bool {
+    match (listed, origin) {
+        (Listed::Off, _) => false,
+        (
+            Listed::On {
+                broadcast: Some(id),
+                ..
+            },
+            Origin::Ended {
+                broadcast: Some(ended),
+            },
+        ) if !id.is_empty() && id == ended => false,
+        (Listed::On { since, broadcast }, _) => live_now(archive, broadcast, since, now),
+        (Listed::Unknown, Origin::Rewound { since }) => live_now(archive, None, *since, now),
+        (Listed::Unknown, _) => false,
+    }
 }
 
 /// Where in `archive` the moment `at` is, in seconds, as of `now`: from the
@@ -186,6 +308,15 @@ fn started(video: &Video) -> Option<DateTime<Utc>> {
 /// Where `video` ends as listed: its start plus its listed length.
 fn listed_end(video: &Video) -> Option<DateTime<Utc>> {
     Some(started(video)? + chrono::Duration::seconds(video.length_secs as i64))
+}
+
+/// Whether `video` had not finished, as listed, by the time a broadcast
+/// began at `since`, give or take [`BEGUN_SLACK_SECS`]: the one test both
+/// [`archive_for`] and [`live_now`] put an archive to before anything else,
+/// which the broadcast before a restart fails.
+fn going_at(video: &Video, since: DateTime<Utc>) -> bool {
+    let begun_by = since - chrono::Duration::seconds(BEGUN_SLACK_SECS);
+    listed_end(video).is_some_and(|end| end >= begun_by)
 }
 
 /// A live pane's rewind: the broadcast's archive once found, an ask out for
@@ -295,7 +426,6 @@ impl Rewind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use twitch_api::VideoKind;
 
     fn at(rfc3339: &str) -> DateTime<Utc> {
         parse_start(rfc3339).unwrap()
@@ -524,6 +654,156 @@ mod tests {
             false,
         )];
         assert_eq!(chosen(&finished, Some("stream-today"), since, now), None);
+    }
+
+    /// A pane playing today's archive while the live list still carries
+    /// today's broadcast is offered the way back, however long ago its copy
+    /// of the archive was listed; yesterday's never is.
+    #[test]
+    fn the_way_back_is_offered_on_the_archive_of_the_broadcast_on_now() {
+        let since = today_since();
+        let now = at("2026-10-02T23:00:00Z");
+        let [today, yesterday] = <[Video; 2]>::try_from(listed()).unwrap();
+        assert!(live_now(&today, Some("stream-today"), since, now));
+        assert!(
+            live_now(&today, None, since, now),
+            "a list with no id goes by the start alone"
+        );
+        let mut opened_early = today.clone();
+        opened_early.length_secs = 30;
+        assert!(
+            live_now(&opened_early, Some("stream-today"), since, now),
+            "listed thirty seconds in, five hours ago"
+        );
+        assert!(!live_now(&yesterday, Some("stream-today"), since, now));
+        assert!(!live_now(&yesterday, None, since, now));
+    }
+
+    /// The broadcast before a restart, opened from its channel's page while
+    /// it was still listed as going on: a new broadcast on now is no way
+    /// back to it, whatever its picture says.
+    #[test]
+    fn the_archive_before_a_restart_offers_no_way_back() {
+        let since = at("2026-10-02T18:03:00Z");
+        let now = at("2026-10-02T18:06:00Z");
+        for placeholder in [false, true] {
+            let earlier = before_restart(placeholder);
+            assert!(!live_now(&earlier, Some("stream-new"), since, now));
+            assert!(!live_now(&earlier, None, since, now));
+        }
+    }
+
+    /// The live list's id is as fresh as its start, so one that names
+    /// another broadcast is a snapshot of that one, not the archive's.
+    #[test]
+    fn a_list_naming_another_broadcast_offers_no_way_back() {
+        let since = today_since();
+        let now = at("2026-10-02T20:00:00Z");
+        let today = &listed()[0];
+        assert!(!live_now(today, Some("stream-tomorrow"), since, now));
+        assert!(
+            live_now(today, Some(""), since, now),
+            "an empty id says nothing"
+        );
+    }
+
+    /// Only a broadcast's archive, and only against a start that can be
+    /// the broadcast going on now.
+    #[test]
+    fn the_way_back_needs_an_archive_and_a_believable_start() {
+        let since = today_since();
+        let now = at("2026-10-02T20:00:00Z");
+        for kind in [VideoKind::Highlight, VideoKind::Upload, VideoKind::Other] {
+            let mut cut = listed().remove(0);
+            cut.kind = kind;
+            assert!(!live_now(&cut, Some("stream-today"), since, now));
+        }
+        let today = &listed()[0];
+        assert!(
+            !live_now(today, None, since, at("2026-10-05T20:00:00Z")),
+            "a start three days back is an older broadcast's"
+        );
+        assert!(
+            !live_now(today, None, since, at("2026-10-02T18:00:01Z")),
+            "an archive that has not begun yet"
+        );
+    }
+
+    /// The follows poll is fresher than any list fetched once and kept: a
+    /// followed channel it has off offers no way back, whatever Popular, a
+    /// category or a search still carries.
+    #[test]
+    fn a_followed_channel_the_poll_has_off_offers_no_way_back() {
+        let since = today_since();
+        let now = at("2026-10-02T20:00:00Z");
+        let today = &listed()[0];
+        let rewound = Origin::Rewound { since };
+        assert!(!back_to_live(today, Listed::Off, &rewound, now));
+        assert!(!back_to_live(today, Listed::Off, &Origin::Unknown, now));
+        let on = Listed::On {
+            since,
+            broadcast: Some("stream-today"),
+        };
+        assert!(back_to_live(today, on, &Origin::Unknown, now));
+    }
+
+    /// A recording opened from a pane that saw its broadcast end is not
+    /// offered the way back on a list a poll behind that still names that
+    /// broadcast; a new broadcast on the same channel is not the archive's
+    /// either, which `live_now` already says.
+    #[test]
+    fn a_broadcast_seen_ending_offers_no_way_back() {
+        let since = today_since();
+        let now = at("2026-10-02T20:00:00Z");
+        let today = &listed()[0];
+        let lagging = Listed::On {
+            since,
+            broadcast: Some("stream-today"),
+        };
+        let ended = Origin::Ended {
+            broadcast: Some("stream-today".into()),
+        };
+        assert!(!back_to_live(today, lagging, &ended, now));
+        let unknown_end = Origin::Ended { broadcast: None };
+        assert!(
+            back_to_live(today, lagging, &unknown_end, now),
+            "with no id seen, the list decides"
+        );
+        let no_id = Listed::On {
+            since,
+            broadcast: Some(""),
+        };
+        assert!(back_to_live(today, no_id, &ended, now));
+    }
+
+    /// No list carrying the channel: a pane that rewound into the archive
+    /// goes by the broadcast it rewound from, and anything else has no way
+    /// back.
+    #[test]
+    fn a_rewound_pane_keeps_its_way_back_when_no_list_carries_the_channel() {
+        let since = today_since();
+        let now = at("2026-10-02T20:00:00Z");
+        let [today, yesterday] = <[Video; 2]>::try_from(listed()).unwrap();
+        let rewound = Origin::Rewound { since };
+        assert!(back_to_live(&today, Listed::Unknown, &rewound, now));
+        assert!(!back_to_live(&yesterday, Listed::Unknown, &rewound, now));
+        assert!(!back_to_live(
+            &today,
+            Listed::Unknown,
+            &Origin::Unknown,
+            now
+        ));
+        let ended = Origin::Ended { broadcast: None };
+        assert!(!back_to_live(&today, Listed::Unknown, &ended, now));
+        assert!(
+            !back_to_live(
+                &today,
+                Listed::Unknown,
+                &rewound,
+                at("2026-10-05T20:00:00Z")
+            ),
+            "not past the longest a broadcast can be"
+        );
     }
 
     #[test]

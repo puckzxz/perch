@@ -301,8 +301,10 @@ impl RootView {
             TwitchEvent::BrowseError { list: None, reason } => eprintln!("browse: {reason}"),
         }
         // Any answer may have brought a list that says when a live pane's
-        // broadcast began, which its timeline runs from; see `rewind`.
+        // broadcast began, which its timeline runs from, or that a rewound
+        // recording's broadcast is still on, or no longer; see `rewind`.
         self.sync_live_since(cx);
+        self.sync_back_to_live(cx);
         cx.notify();
     }
 

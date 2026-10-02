@@ -88,17 +88,24 @@ impl RootView {
             }
             // An offline channel's last broadcast plays where it was left, as
             // a recording does from anywhere; the one that just ended plays
-            // from its start, which is what the control says.
+            // from its start, which is what the control says. Either way the
+            // recording knows the pane saw that broadcast over, so a list a
+            // poll behind cannot offer it `LIVE`; see `rewind`.
             PaneAction::WatchHere(video) => {
                 let start_at = self.resume_point(&video.id);
-                self.replace_with_video(key, *video, start_at, window, cx);
+                let origin = self.slots[index].seen_ended();
+                self.replace_with_video(key, *video, start_at, origin, window, cx);
             }
             PaneAction::WatchFromStart(video) => {
-                self.replace_with_video(key, *video, 0.0, window, cx)
+                let origin = self.slots[index].seen_ended();
+                self.replace_with_video(key, *video, 0.0, origin, window, cx)
             }
             // Back along a live pane's timeline: the broadcast's recording,
             // still being made, from that moment; see `rewind`.
             PaneAction::Rewind(moment) => self.rewind(index, moment, window, cx),
+            // And back from it: the channel live again, in the recording's
+            // place; see `rewind`.
+            PaneAction::BackToLive => self.back_to_live(index, window, cx),
         }
     }
 

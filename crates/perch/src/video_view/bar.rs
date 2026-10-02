@@ -49,6 +49,19 @@
 //! on the buttons', so [`fit`] gives nothing up for it; a pane too narrow
 //! for a track worth aiming along ([`timeline_fits`]) leaves it off.
 //!
+//! The way back is on the recording a rewind opened, or that archive opened
+//! any other way, while its broadcast is still going on: a `LIVE` pill at
+//! the right-hand end of its seek row, where the live timeline says `LIVE`,
+//! that opens the channel again in the pane's place
+//! (`PaneAction::BackToLive`). The words are the badge word, in its
+//! conventional capitals; its tooltip says what a press does, and it has no
+//! key. It takes room from the seek track rather than from the buttons'
+//! row, so [`fit`] gives nothing up for it either. It goes at the next list
+//! that no longer carries the broadcast (`VideoView::back_to_live`), and
+//! once the recording stops growing (`seek_bar::Timeline::growing`), which
+//! is Twitch saying the archive is finished, whatever a list kept since
+//! says.
+//!
 //! The maximize control gives the pane the whole watch page, chat and all,
 //! and on the pane that has it shows every pane again (`stage`'s
 //! `MaximizeButton`, mirrored as `VideoView::maximize`). It stands just
@@ -209,9 +222,10 @@ pub(super) fn timeline_fits(width: f32) -> bool {
 }
 
 impl VideoView {
-    /// The seek row: a recording's seek bar, or a live stream's timeline
-    /// ([`live_row`](Self::live_row)).
-    fn seek_row(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    /// The seek row: a recording's seek bar, with the way back to live
+    /// after it while its broadcast goes on ([`back_to_live`]), or a live
+    /// stream's timeline ([`live_row`](Self::live_row)).
+    fn seek_row(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let Some(timeline) = self.stream.timeline() else {
             return self.live_row(cx);
         };
@@ -239,15 +253,31 @@ impl VideoView {
             position: seek_bar::timecode(shown).into(),
             extent: seek_bar::timecode(extent).into(),
         };
+        let seek = seek_bar::element(
+            state,
+            |this: &mut Self, fraction, _window, cx| this.begin_scrub(fraction, cx),
+            |this: &mut Self, _window, cx| this.end_scrub(cx),
+            |this: &mut Self, bounds| this.track = Some(bounds),
+            cx,
+        );
+        // Only while the archive is still being made: the keeper re-reads
+        // its playlist, and Twitch ends it once the broadcast is over, which
+        // takes the pill away whichever list still carries the channel.
+        if !(self.back_to_live && timeline.growing) {
+            return Some(seek.into_any_element());
+        }
+        // The seek bar shrinks for the pill; the track it reports is the one
+        // laid out, so a scrub still lands where the pointer is.
         Some(
-            seek_bar::element(
-                state,
-                |this: &mut Self, fraction, _window, cx| this.begin_scrub(fraction, cx),
-                |this: &mut Self, _window, cx| this.end_scrub(cx),
-                |this: &mut Self, bounds| this.track = Some(bounds),
-                cx,
-            )
-            .into_any_element(),
+            div()
+                .w_full()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(theme::GAP_TIGHT))
+                .child(div().flex_1().min_w_0().child(seek))
+                .child(back_to_live(window, cx))
+                .into_any_element(),
         )
     }
 
@@ -334,7 +364,7 @@ impl VideoView {
             // and the volume figure are `text_muted`, which only passes over
             // a white frame on this one.
             .bg(theme::video_chrome())
-            .children(self.seek_row(cx))
+            .children(self.seek_row(window, cx))
             .child(self.button_row(window, cx))
     }
 
@@ -596,6 +626,24 @@ impl VideoView {
                 anchor.child(self.menu_box(which, cx))
             })
     }
+}
+
+/// `LIVE` at the end of a recording's seek row, on the archive of a broadcast
+/// still going on: a press opens the channel again in the pane's place, at
+/// the live edge (`PaneAction::BackToLive`). Words, as the quality pill is,
+/// in the badge word's conventional capitals and the bar's on-video dress,
+/// with a tooltip that says what a press does while the pointer is in the
+/// window. Its id names the one thing it ever offers, so it needs no keying
+/// on a state. It closes any menu open first, as [`act_button`] does.
+fn back_to_live(window: &Window, cx: &mut Context<VideoView>) -> impl IntoElement {
+    controls::pill("bar-back-to-live", "LIVE", Variant::OnVideo)
+        .when(window.is_window_hovered(), |pill| {
+            pill.tooltip(controls::tip("Back to live"))
+        })
+        .on_click(cx.listener(|this, _event, _window, cx| {
+            this.close_menu(cx);
+            cx.emit(VideoEvent::Pane(PaneAction::BackToLive));
+        }))
 }
 
 /// A pop-out's right-hand cluster: the way back, then the way out. Both go

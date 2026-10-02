@@ -14,7 +14,7 @@ use twitch_api::{LiveStream, Video, VideoKind};
 use super::navigation::Route;
 use super::{Page, RootView};
 use crate::chat::{ChatView, Feed};
-use crate::rewind::Rewind;
+use crate::rewind::{Origin, Rewind};
 use crate::video::{Playback, PositionHandle, SizeHandle, StartOptions, Stopped, VideoStream};
 use crate::video_view::{self, ChatButton, Qualities, Start, VideoView, Wake};
 use crate::watch::{LiveInfo, Lookup, PendingStart, Restart, Slot, Source, StreamState, MAX_PANES};
@@ -124,25 +124,8 @@ impl RootView {
             this.show_watch_page(window, cx);
             this.stage.unmaximize();
 
-            let chat = cx.new(|cx| {
-                ChatView::new(
-                    Feed::Live {
-                        channel: channel.clone(),
-                        history: this.settings.chat_history,
-                    },
-                    this.cache.clone(),
-                    window,
-                    cx,
-                )
-            });
-            this.slots.push(Slot::new(
-                channel.clone(),
-                channel.clone(),
-                Source::Live,
-                Some(chat),
-                0.0,
-                this.settings.chat_hidden_for(&channel),
-            ));
+            let slot = this.live_slot(channel.clone(), window, cx);
+            this.slots.push(slot);
 
             // Remembered for the palette, which leads with it next time.
             if this.settings.note_watched(&channel) {
@@ -180,6 +163,32 @@ impl RootView {
     ) {
         let start_at = self.resume_point(&video.id);
         self.open_video_at(video, solo, start_at, window, cx);
+    }
+
+    /// A pane on `channel` as it broadcasts, with its live chat: what opening
+    /// a channel makes, and what `LIVE` on a rewound recording puts back in
+    /// its place ([`replace_with_channel`](Self::replace_with_channel)).
+    fn live_slot(&mut self, channel: String, window: &mut Window, cx: &mut Context<Self>) -> Slot {
+        let chat = cx.new(|cx| {
+            ChatView::new(
+                Feed::Live {
+                    channel: channel.clone(),
+                    history: self.settings.chat_history,
+                },
+                self.cache.clone(),
+                window,
+                cx,
+            )
+        });
+        let chat_hidden = self.settings.chat_hidden_for(&channel);
+        Slot::new(
+            channel.clone(),
+            channel,
+            Source::Live,
+            Some(chat),
+            0.0,
+            chat_hidden,
+        )
     }
 
     /// [`open_video`](Self::open_video), from `start_at` seconds in: where a
@@ -291,52 +300,115 @@ impl RootView {
     }
 
     /// Play `video` from `start_at` in the pane `key` names, in its place:
-    /// what a stopped live pane's last broadcast and `Watch from the start`
-    /// ask for.
-    ///
-    /// A swap, not an opening. The pane keeps its place in the grid and the
-    /// keys, so nothing moves; there is no count to refuse at, since it is
-    /// one pane for one; and the trail takes no step, since the page is the
-    /// watch page before and after. The live slot is dropped, which stops
-    /// its streamlink and its chat — the channel's live chat goes with the
-    /// pane, and so does its `Start when they go live` — and a live slot has
-    /// no place in the history to write first. Mute all's hold stays: it is
-    /// the pane's, and a press on a card is no change of level
-    /// (`Slot::take_over_from`). A new slot rather than a new key on the old
-    /// one, which everything keyed on the pane — element ids, the player's
-    /// subscription, the active pane — would then misname.
-    ///
-    /// If that recording is already open in another pane, that pane is
-    /// chosen instead (`choose`), and this one is left as it is.
-    ///
-    /// A pane in a window of its own comes home first. Its pop-out finds its
-    /// player by the pane's key, which the new slot does not carry. A
-    /// maximized pane stays maximized, under its new key (`Stage::rename`).
+    /// what a stopped live pane's last broadcast, `Watch from the start` and
+    /// a rewind ask for. See [`replace_slot`](Self::replace_slot) for what a
+    /// swap keeps and drops; the live slot it drops takes the channel's live
+    /// chat with it, and its `Start when they go live`. What the live pane
+    /// knew of its broadcast goes onto the recording as `origin`, for its way
+    /// back to live (`rewind::back_to_live`).
     pub(super) fn replace_with_video(
         &mut self,
         key: &str,
         video: Video,
         start_at: f64,
+        origin: Origin,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let video_key = Slot::video_key(&video.id);
-        if self.slot_index(&video_key).is_some() {
-            self.choose(&video_key, window, cx);
+        self.replace_slot(
+            key,
+            video_key,
+            move |this, window, cx| {
+                let mut slot = this.video_slot(video, start_at, window, cx);
+                slot.origin = origin;
+                slot
+            },
+            window,
+            cx,
+        );
+    }
+
+    /// Play `channel` live in the pane `key` names, in its place: `LIVE` on
+    /// a recording of the broadcast still going on, which goes back to the
+    /// live edge as the rewind left it. Cold, as opening the channel is, with
+    /// its live chat. See [`replace_slot`](Self::replace_slot); the
+    /// recording's place goes into the history first.
+    pub(super) fn replace_with_channel(
+        &mut self,
+        key: &str,
+        channel: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.replace_slot(
+            key,
+            channel.clone(),
+            move |this, window, cx| this.live_slot(channel, window, cx),
+            window,
+            cx,
+        );
+    }
+
+    /// Put the slot `make` makes, keyed `new_key`, in the pane `key` names,
+    /// in its place: [`replace_with_video`](Self::replace_with_video) and
+    /// [`replace_with_channel`](Self::replace_with_channel).
+    ///
+    /// A swap, not an opening. The pane keeps its place in the grid and the
+    /// keys, so nothing moves; there is no count to refuse at, since it is
+    /// one pane for one; and the trail takes no step, since the page is the
+    /// watch page before and after. The old slot is dropped, which stops its
+    /// streamlink and its chat; a recording's place is written down first,
+    /// as closing its pane does (`retire_slots`), while a live slot has no
+    /// place in the history to write. Mute all's hold stays: it is the
+    /// pane's, and a press on a card is no change of level
+    /// (`Slot::take_over_from`). A new slot rather than a new key on the old
+    /// one, which everything keyed on the pane — element ids, the player's
+    /// subscription, the active pane — would then misname.
+    ///
+    /// If what `new_key` names is already open in another pane, that pane is
+    /// chosen instead (`choose`), and this one is left as it is.
+    ///
+    /// A pane in a window of its own comes home first, as Bring back brings
+    /// it (`pop_in`): its pop-out finds its player by the pane's key, which
+    /// the new slot does not carry. So `LIVE` or a rewind pressed in a
+    /// pop-out closes that window and plays on in the main window, which
+    /// comes up on the watch page if it was off it with the mini player off
+    /// — there the pane would come home to nothing drawing it, and
+    /// `restage` would stop it along with the new slot. A maximized pane
+    /// stays maximized, under its new key (`Stage::rename`), and the new pane
+    /// is chosen (`choose`), so while another pane has the watch page, this
+    /// one takes it rather than playing where nobody can see it.
+    fn replace_slot(
+        &mut self,
+        key: &str,
+        new_key: String,
+        make: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) -> Slot,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.slot_index(&new_key).is_some() {
+            self.choose(&new_key, window, cx);
             return;
         }
         if self.stage.is_popped(key) {
+            if !self.draws_home_panes() {
+                self.go_watch(cx);
+            }
             self.come_home(key, cx);
         }
         let Some(index) = self.slot_index(key) else {
             return;
         };
-        let mut slot = self.video_slot(video, start_at, window, cx);
+        if !self.slots[index].is_live() && self.note_watching(cx) {
+            self.save_history_soon(cx);
+        }
+        let mut slot = make(self, window, cx);
         slot.take_over_from(&self.slots[index]);
         self.slots[index] = slot;
-        self.stage.rename(key, &video_key);
-        self.active = Some(video_key.clone());
-        self.start_stream(video_key, How::Cold, window, cx);
+        self.stage.rename(key, &new_key);
+        self.choose(&new_key, window, cx);
+        self.start_stream(new_key, How::Cold, window, cx);
         self.restage(cx);
         self.sync_quality(window, cx);
         cx.notify();
@@ -498,6 +570,7 @@ impl RootView {
                     .map(|stream| stream.id.clone())
                     .filter(|id| !id.is_empty());
                 let live_since = self.live_since(&self.slots[index]);
+                let back_to_live = self.still_live(&self.slots[index]);
                 let slot = &mut self.slots[index];
                 // An ask still out is forgotten here, and its answer is
                 // let go by when it comes; see `Slot::stray_answers`.
@@ -544,6 +617,9 @@ impl RootView {
                     // says; one that says later reaches the player through
                     // `sync_live_since`.
                     live_since,
+                    // Whether a recording's broadcast is still on, for its
+                    // way back to live; kept up by `sync_back_to_live`.
+                    back_to_live,
                 };
                 // The pane's one player: its own size until the pane is
                 // measured, playing, and its position heard by the pane —

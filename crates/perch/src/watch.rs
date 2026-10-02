@@ -39,7 +39,7 @@ pub use self::status::{showing, Showing};
 use crate::chat::ChatView;
 use crate::layout;
 use crate::motion;
-use crate::rewind::{Moment, Rewind};
+use crate::rewind::{Moment, Origin, Rewind};
 use crate::target::{self, Target};
 use crate::theme;
 use crate::video::PositionHandle;
@@ -259,6 +259,12 @@ pub struct Slot {
     /// `archives` is forgotten then, so it is always about the broadcast on
     /// screen. Untouched on a recording.
     pub rewind: Rewind,
+    /// On a recording that took a live pane's place, what that pane knew of
+    /// its broadcast: the one it rewound from, or the one it saw end
+    /// ([`seen_ended`](Self::seen_ended)). Asked, with the live lists, for
+    /// whether the bar offers the way back to live (`rewind::back_to_live`).
+    /// `Origin::Unknown` on any other recording, and on a live pane.
+    pub origin: Origin,
     /// How many answers about the channel's past broadcasts are still on
     /// their way for asks the pane has forgotten: `archives` waiting, or
     /// `rewind` asking, when it began to play again. The worker answers in
@@ -383,12 +389,14 @@ impl Slot {
             archives: Lookup::NotAsked,
             broadcast: None,
             rewind: Rewind::default(),
+            origin: Origin::Unknown,
             stray_answers: 0,
         }
     }
 
     /// Take `old`'s place in its pane, as a recording swapped in for a live
-    /// pane does (`RootView::replace_with_video`). What is the pane's rather
+    /// pane does, or the channel back in a recording's
+    /// (`RootView::replace_slot`). What is the pane's rather
     /// than the channel's or the player's comes along: Mute all's hold, which
     /// a press on a card is no deliberate change of level to end. Everything
     /// else is this slot's own, from [`new`](Self::new).
@@ -473,6 +481,20 @@ impl Slot {
 
     pub fn is_live(&self) -> bool {
         matches!(self.source, Source::Live)
+    }
+
+    /// What a recording taking this pane's place learns from it
+    /// (`rewind::Origin`): that its broadcast is over, from a live pane that
+    /// saw it end or found the channel off — the panes `Watch from the start`
+    /// and `Watch here` are offered on — and nothing from any other.
+    pub fn seen_ended(&self) -> Origin {
+        if self.is_live() && matches!(self.state, StreamState::Ended | StreamState::Offline) {
+            Origin::Ended {
+                broadcast: self.broadcast.clone(),
+            }
+        } else {
+            Origin::Unknown
+        }
     }
 
     pub fn recording(&self) -> Option<&Video> {
@@ -687,6 +709,11 @@ pub enum PaneAction {
     /// broadcast's recording, still being made, from there in the pane's
     /// place; see `RootView::rewind`.
     Rewind(Moment),
+    /// Go back to the live edge: `LIVE` on the bar of a recording that is
+    /// the archive of a broadcast still going on. Opens the channel again
+    /// in the pane's place, cold, with its live chat; see
+    /// `RootView::back_to_live`.
+    BackToLive,
 }
 
 /// How every pane in the current grid is arranged. Identical for all of them,

@@ -231,6 +231,19 @@ of its own and the chat replayed beside it, the way **Watch from the start**
 plays a stream that has ended. A press within half a minute of the edge does
 nothing, and the stream plays on.
 
+To come back, press `LIVE` at the right-hand end of the recording's seek
+bar: the pane opens the channel again at the live edge, with its live chat,
+and the history keeps where you were in the recording. Pressed in a pane's
+own window, it brings the pane back into the main window first, as
+**Bring back** does. `LIVE` is there on any recording of a broadcast that
+is still going on, however you opened it — from a rewind, a channel's page
+or the history — while Perch has the channel live and Twitch is still
+adding to the recording. Once the stream ends it goes at the next refresh
+of your follows for a channel you follow, and otherwise once Twitch marks
+the recording finished. Watching the recording right up to the end of what
+Twitch has written so far simply waits there for more: `LIVE` is the way
+back.
+
 Rewinding needs a sign-in, and a channel that keeps its past broadcasts:
 one that does not, or whose recording Twitch has not listed yet, says
 `No past broadcast to rewind into` and stays live. The timeline is there

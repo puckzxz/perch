@@ -18,8 +18,9 @@
 //! What the bar offers that is not the player's to do — the pane's chat,
 //! opening it on twitch.tv, copying its link, popping it out or bringing it
 //! back, giving it the watch page, going back along a live broadcast's
-//! timeline into its recording — it asks the root for, as
-//! [`VideoEvent::Pane`], the same way it asks for a new quality.
+//! timeline into its recording and from there back to live — it asks the
+//! root for, as [`VideoEvent::Pane`], the same way it asks for a new
+//! quality.
 //!
 //! A player draws nothing at all until its picture arrives, not even a
 //! backdrop: whoever holds it says what is happening meanwhile — the pane's
@@ -265,6 +266,19 @@ pub struct VideoView {
     /// is made, and [`set_live_since`](Self::set_live_since), which only
     /// `RootView::sync_live_since` calls, after every answer from the worker.
     live_since: Option<DateTime<Utc>>,
+    /// Whether the recording on screen is the archive of a broadcast still
+    /// going on, which the bar then offers the way back to the live edge
+    /// from (`LIVE`, `PaneAction::BackToLive`); always false on a live
+    /// stream.
+    ///
+    /// A mirror on the same pattern, of the same lists: written in exactly
+    /// two places — [`Start::back_to_live`] when the player is made, and
+    /// [`set_back_to_live`](Self::set_back_to_live), which only
+    /// `RootView::sync_back_to_live` calls, after every answer from the
+    /// worker. A channel that goes off takes it away at the next answer
+    /// that says so; and the bar draws it only while the archive is still
+    /// growing, the player's own word that the broadcast goes on.
+    back_to_live: bool,
     /// Whether the pointer is over this player, measured from the pane's own
     /// bounds rather than taken from GPUI's `on_hover`.
     ///
@@ -347,6 +361,9 @@ pub struct Start {
     /// When a live broadcast began, for its timeline; see
     /// `VideoView::live_since`.
     pub live_since: Option<DateTime<Utc>>,
+    /// Whether a recording's broadcast is still going on, for its way back
+    /// to live; see `VideoView::back_to_live`.
+    pub back_to_live: bool,
 }
 
 impl VideoView {
@@ -429,6 +446,7 @@ impl VideoView {
             fit: bar::Fit::EVERYTHING,
             timeline_fits: true,
             live_since: start.live_since,
+            back_to_live: start.back_to_live,
             hovered: false,
             controls: motion::Fade::hidden(),
             place: start.place,
@@ -792,6 +810,17 @@ impl VideoView {
     pub fn set_live_since(&mut self, live_since: Option<DateTime<Utc>>, cx: &mut Context<Self>) {
         if self.live_since != live_since {
             self.live_since = live_since;
+            cx.notify();
+        }
+    }
+
+    /// Whether the recording on screen is its broadcast's archive while the
+    /// broadcast still goes on, from `RootView::sync_back_to_live`; see
+    /// `VideoView::back_to_live` for why nothing else calls this. Repaints
+    /// only on a change.
+    pub fn set_back_to_live(&mut self, back_to_live: bool, cx: &mut Context<Self>) {
+        if self.back_to_live != back_to_live {
+            self.back_to_live = back_to_live;
             cx.notify();
         }
     }
