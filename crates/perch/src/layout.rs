@@ -925,10 +925,28 @@ mod tests {
         );
     }
 
-    /// Two panes side by side in a body 1981 px wide and 900 tall, within
-    /// a few pixels of where chat moves under the picture.
+    /// Two panes side by side in a body 900 px tall and one pixel wider than
+    /// where their chat moves under the picture: each share a hair over
+    /// `PORTRAIT_ASPECT`, and the seam between them makes each cell as cut a
+    /// hair under it.
     fn two_beside_at_the_threshold() -> Body {
-        Body::of(gpui::size(px(1981.0), px(900.0)), 0.0, 0.0)
+        let width = 900.0 * 2.0 * crate::theme::PORTRAIT_ASPECT + 1.0;
+        Body::of(gpui::size(px(width), px(900.0)), 0.0, 0.0)
+    }
+
+    /// Two streams on a vertical monitor stack, one over the other, and each
+    /// keeps its chat under its picture: the shape `grid_shape` stacks them
+    /// for is the shape for chat underneath. It used to put each chat beside
+    /// a picture squeezed into what was left of a 1080-wide cell.
+    #[test]
+    fn two_streams_on_a_vertical_monitor_keep_chat_under_each() {
+        // A maximised 1080 by 1920 screen, less the taskbar and title bar.
+        let body = Body::of(gpui::size(px(1080.0), px(1824.0)), 0.0, 0.0);
+        let grid = Grid::of(body, 2);
+        assert_eq!((grid.rows, grid.cols), (2, 1));
+        assert!(grid.portrait, "each stacked cell keeps its chat under");
+        let one = Grid::of(body, 1);
+        assert!(one.portrait);
     }
 
     /// Whether a cell stacks its chat is judged on the cell's share of the
@@ -959,10 +977,11 @@ mod tests {
     }
 
     /// At the threshold the share decides, not the cell as cut. Each of two
-    /// panes beside each other in 1981 x 900 has a share a hair wider than
-    /// `PORTRAIT_ASPECT`, and the seam between them makes the cell as cut a
-    /// hair narrower. Their chat stays beside, as it did before there was a
-    /// `Grid`: the switch to stacking stays at the window width it was.
+    /// panes beside each other in `two_beside_at_the_threshold` has a share a
+    /// hair wider than `PORTRAIT_ASPECT`, and the seam between them makes the
+    /// cell as cut a hair narrower. Their chat stays beside, as it did before
+    /// there was a `Grid`: the switch to stacking stays at the window width it
+    /// was.
     #[test]
     fn a_seam_does_not_tip_a_cell_into_stacking() {
         let grid = Grid::of(two_beside_at_the_threshold(), 2);

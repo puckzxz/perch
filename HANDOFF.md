@@ -4279,8 +4279,14 @@ None of these is being worked on; all of them are real.
 7. **Orphaned streamlink on a hard crash, on macOS.** Windows ties every
    child to a job object (`streamlink::job`) that the kernel closes with the
    process, however it died; nothing equivalent is wired up on macOS.
-8. **Never tested on a vertical monitor.** The layout derives portrait grids and
-   stacks chat below video, the logic is unit-tested, but nobody has seen it.
+8. **Little seen on a vertical monitor.** The layout derives portrait grids and
+   stacks chat below video, and the logic is unit-tested. The user runs perch
+   on a vertical monitor as well as horizontal ones, which is how two streams
+   there turned out to stack with each chat *beside* a squeezed picture:
+   `PORTRAIT_ASPECT` was 1.1, under the 1.18 cell `grid_shape` stacks them in.
+   It is 1.3 now (`two_streams_on_a_vertical_monitor_keep_chat_under_each`).
+   Three and four streams there stack in one column with chat beside, which
+   suits their wide cells; nobody has looked at them on the screen yet.
 9. **The offline follows list has no cap.** Someone following several hundred
     channels gets several hundred names. There is a filter now, on the tab and
     in the palette, so they can be found; the wall is still a wall. The rail

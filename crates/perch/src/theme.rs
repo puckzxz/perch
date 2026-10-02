@@ -685,9 +685,18 @@ pub const VIDEO_CARD_TEXT: f32 =
 /// beside a number rather than as a control.
 pub const LIVE_DOT: f32 = 6.0;
 
-/// Below this window aspect ratio the window is treated as portrait and chat
-/// moves under the video instead of beside it.
-pub const PORTRAIT_ASPECT: f32 = 1.1;
+/// Below this aspect a cell is treated as portrait and its chat moves under
+/// the video instead of beside it (`layout::Grid::portrait`).
+///
+/// It was 1.1, and two streams on a vertical monitor fell between the two
+/// rules: `layout::grid_shape` stacks them, because each cell (about 1.18 on
+/// a maximised 1080 by 1920 screen) is almost exactly the shape it scores
+/// best for chat underneath, and then 1.1 put each chat beside its picture,
+/// squeezing a 1080-wide cell's picture to about 740 by 416 over a band of
+/// black. 1.3 sits past that shape with room to spare and is still narrower
+/// than any landscape stream, 4:3 (1.33) included, which is what the stacked
+/// box's sizing rests on (`a_stacked_cell_never_has_room_to_widen_a_landscape_picture`).
+pub const PORTRAIT_ASPECT: f32 = 1.3;
 
 #[cfg(test)]
 mod tests {
