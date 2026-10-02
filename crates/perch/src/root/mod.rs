@@ -26,6 +26,8 @@
 //! | `history` | what has been watched: noting where each recording got to, resuming there |
 //! | `prefs` | the settings sheet, the divider drag, how every chat is drawn, the rail folding and what is pinned to it |
 //! | `recommended` | the rail's Recommended group: when to ask the worker, and what its answer becomes |
+//! | `shared_chat` | the chats' Shared Chat labels: hearing an unnamed partner, asking its name, handing it to every chat; and `watch_chat`, which listens to every chat made |
+//! | `badges` | the chats' badges: hearing a chat's room, asking the worker for the global and the room's badge books, handing each to the chats it is for |
 //! | `chrome` | pills, toasts, the rail |
 //! | `mini_player` | what plays on while you browse, in the corner of the page |
 //! | `title_bar` | the bar Perch draws across the top of the window: the rail button, back and forward, search, settings, and on Windows the caption buttons |
@@ -37,6 +39,7 @@
 //! else.
 
 mod ad_breaks;
+mod badges;
 mod broadcasts;
 mod browsing;
 mod chrome;
@@ -83,6 +86,7 @@ use self::follows::LiveList;
 use self::navigation::Route;
 use self::pop_out::PoppedOut;
 use crate::browse::{self, Discovery, SignIn};
+use crate::chat_badges::Library;
 use crate::last_live::LastLive;
 use crate::launch::Launch;
 use crate::layout::Body;
@@ -266,6 +270,11 @@ pub(crate) struct RootView {
     /// their numeric ids, and the asks for them: every chat's labels, which
     /// each chat mirrors. For this session only; see `crate::shared_chat`.
     source_rooms: SourceRooms,
+    /// The chat badges Helix has answered with, the global book and each
+    /// room's, and the asks for them: what every chat draws its badges with,
+    /// which each chat mirrors. For this session only; see
+    /// `crate::chat_badges`.
+    badges: Library,
     sign_in: SignIn,
     /// Everything the browse page shows besides your follows.
     discovery: Discovery,
@@ -504,6 +513,7 @@ impl RootView {
             recommended: Recommended::default(),
             last_live: LastLive::default(),
             source_rooms: SourceRooms::default(),
+            badges: Library::default(),
             sign_in: SignIn::Connecting,
             discovery: Discovery::default(),
             trail: Trail::default(),

@@ -12,8 +12,10 @@
 //! Everything in this file is Helix, documented and asked with the app's own
 //! Client-ID and the user's token. [`recommend`] is the one exception: it asks
 //! the website's unpublished GraphQL endpoint, anonymously, and its module docs
-//! say why and what happens when that stops working.
+//! say why and what happens when that stops working. [`badges`] is Helix too,
+//! in a file of its own only for length.
 
+pub mod badges;
 pub mod recommend;
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};

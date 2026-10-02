@@ -18,6 +18,7 @@
 pub mod history;
 pub mod message;
 pub mod replay;
+pub mod room;
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
@@ -27,8 +28,9 @@ use std::time::{Duration, SystemTime};
 
 use futures::channel::mpsc;
 pub use history::is_login;
-pub use message::{ChatMessage, ChatNotice, IrcMessage, NoticeKind};
+pub use message::{Badge, ChatMessage, ChatNotice, IrcMessage, NoticeKind, Reply};
 pub use replay::Replay;
+pub use room::{ModeChange, ModeUpdate, RoomModes};
 
 const HOST: &str = "irc.chat.twitch.tv";
 const PORT: u16 = 6697;
@@ -66,17 +68,25 @@ pub enum ChatEvent {
         channel: String,
     },
     /// The channel's numeric Twitch id, which third-party emote providers key
-    /// their per-channel sets on. Arrives once, just after joining.
+    /// their per-channel sets on and Helix its chat badges, and the room's
+    /// modes as this `ROOMSTATE` line speaks of them. Arrives just after
+    /// joining with every mode in it, and again, live, whenever a moderator
+    /// changes one, carrying only that one: see [`room`]. A replay sends it
+    /// once, with no modes at all.
     RoomState {
         room_id: String,
+        modes: ModeUpdate,
     },
     Message(Box<ChatMessage>),
     /// A sub, a gift, a raid, an announcement — the things a streamer reacts
     /// to on camera.
     Notice(Box<ChatNotice>),
-    /// A moderator cleared chat, or a user was banned/timed out.
+    /// A moderator cleared the whole chat (`login` is `None`), or banned or
+    /// timed out one person: for `ban_seconds`, from `CLEARCHAT`'s
+    /// `ban-duration`, when it was a timeout, and `None` when it was a ban.
     Cleared {
         login: Option<String>,
+        ban_seconds: Option<u64>,
     },
     /// A moderator deleted one message, named by its `id` tag. It stays in
     /// the pane, greyed, rather than vanishing: the conversation around it
@@ -250,6 +260,7 @@ fn event_for(irc: &IrcMessage) -> Option<ChatEvent> {
         "USERNOTICE" => ChatNotice::from_irc(irc).map(|n| ChatEvent::Notice(Box::new(n))),
         "CLEARCHAT" => Some(ChatEvent::Cleared {
             login: irc.param(1).map(str::to_string),
+            ban_seconds: irc.tag("ban-duration").and_then(|secs| secs.parse().ok()),
         }),
         "CLEARMSG" => irc
             .tag("target-msg-id")
@@ -421,6 +432,7 @@ fn session(
                 if let Some(room_id) = irc.tag("room-id") {
                     let _ = tx.unbounded_send(ChatEvent::RoomState {
                         room_id: room_id.to_string(),
+                        modes: ModeUpdate::from_irc(&irc),
                     });
                 }
             }
@@ -454,5 +466,27 @@ mod tests {
 
         let bare = message::parse_line(":tmi.twitch.tv CLEARMSG #bar :x").unwrap();
         assert!(event_for(&bare).is_none());
+    }
+
+    /// A timeout carries its length, a ban none, and a whole chat cleared
+    /// names nobody. Lines in the shape Twitch's IRC guide gives.
+    #[test]
+    fn a_clearchat_says_who_and_for_how_long() {
+        let cleared = |line: &str| match event_for(&message::parse_line(line).unwrap()) {
+            Some(ChatEvent::Cleared { login, ban_seconds }) => (login, ban_seconds),
+            other => panic!("not a clear: {other:?}"),
+        };
+        assert_eq!(
+            cleared("@ban-duration=350;room-id=12345678;target-user-id=87654321;tmi-sent-ts=1642719320727 :tmi.twitch.tv CLEARCHAT #dallas :ronni"),
+            (Some("ronni".to_string()), Some(350))
+        );
+        assert_eq!(
+            cleared("@room-id=12345678;target-user-id=87654321;tmi-sent-ts=1642715756806 :tmi.twitch.tv CLEARCHAT #dallas :ronni"),
+            (Some("ronni".to_string()), None)
+        );
+        assert_eq!(
+            cleared("@room-id=12345678;tmi-sent-ts=1642715695392 :tmi.twitch.tv CLEARCHAT #dallas"),
+            (None, None)
+        );
     }
 }

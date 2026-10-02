@@ -13,9 +13,12 @@ use crate::chat::{ChatView, ChatViewEvent};
 use crate::twitch::{RecommendError, Request};
 
 impl RootView {
-    /// Listen to a live chat made for a pane, and hand it every name already
-    /// known, so a partner met in another pane is named here from the first
-    /// line. The subscription lasts as long as the chat does.
+    /// Listen to a chat made for a pane, live or a replay, and hand it every
+    /// Shared Chat name already known, so a partner met in another pane is
+    /// named here from the first line. It says when it meets a partner it
+    /// cannot name (only a live chat ever does) and what its room is, for
+    /// its badges (`root::badges`). The subscription lasts as long as the
+    /// chat does.
     pub(super) fn watch_chat(&mut self, chat: &Entity<ChatView>, cx: &mut Context<Self>) {
         let known: Vec<_> = self
             .source_rooms
@@ -26,8 +29,9 @@ impl RootView {
         if !known.is_empty() {
             chat.update(cx, |chat, cx| chat.learn_rooms(&known, cx));
         }
-        cx.subscribe(chat, |this: &mut RootView, _, event, _cx| match event {
+        cx.subscribe(chat, |this: &mut RootView, chat, event, cx| match event {
             ChatViewEvent::UnknownRoom(id) => this.ask_channel_name(id),
+            ChatViewEvent::Room(room) => this.on_chat_room(chat, room, cx),
         })
         .detach();
     }

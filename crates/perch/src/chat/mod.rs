@@ -7,6 +7,15 @@
 //! message cannot be one wrapped paragraph with pictures in it. Instead each
 //! message is tokenised into words and emotes and laid out in a `flex_wrap`
 //! row: wrapping then happens at token boundaries, which is where you want it.
+//!
+//! The view is split by what it handles, the way `root/` is: this file has
+//! the view, its rows and how a message is drawn; `room` what the room says
+//! about itself (its modes, a timeout or a ban); `badges` the chat badges;
+//! and `reply` a reply's context line.
+
+mod badges;
+mod reply;
+mod room;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -19,10 +28,13 @@ use gpui::{
 };
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 
-use twitch_chat::{ChatClient, ChatEvent, ChatMessage, ChatNotice, NoticeKind, Replay};
+use twitch_chat::{ChatClient, ChatEvent, ChatMessage, ChatNotice, Replay, RoomModes};
 
+use crate::chat_badges::ChatBadges;
 use crate::chat_display::{self, ChatDisplay, Metrics};
 use crate::chat_text::{self, Kind};
+use crate::chat_tint;
+use crate::chat_words;
 use crate::controls;
 use crate::motion;
 use crate::shared_chat::{self, Label};
@@ -84,19 +96,21 @@ enum RowKind {
 }
 
 impl RowKind {
-    /// The wash behind this row, if it needs one.
+    /// The wash behind this row, if it needs one: see `chat_tint`.
     ///
     /// Events are washed rather than outlined or barred, because the row has to
     /// keep its place in the ruler of timestamps down the side. Two intensities
-    /// and no more: enumerating Twitch's `msg-id` values is a losing game, and
-    /// the sentence in the row already says which event it was.
+    /// and no more, besides the colour an announcement's sender picked:
+    /// enumerating Twitch's `msg-id` values is a losing game, and the sentence
+    /// in the row already says which event it was. A message is washed only
+    /// when Twitch marks it, as highlighted or as someone's first.
     fn wash(&self) -> Option<gpui::Hsla> {
         match self {
-            RowKind::Event(notice) => Some(match notice.kind {
-                NoticeKind::Raid | NoticeKind::Announcement => theme::event_wash_loud(),
-                _ => theme::event_wash(),
-            }),
-            _ => None,
+            RowKind::Event(notice) => Some(chat_tint::event_wash(notice).color()),
+            RowKind::Message(message) => {
+                chat_tint::message_wash(message).map(chat_tint::Wash::color)
+            }
+            RowKind::Notice(_) => None,
         }
     }
 }
@@ -149,6 +163,12 @@ pub enum ChatViewEvent {
     /// is worth asking about (`RootView::ask_channel_name`), which keeps the
     /// one-ask-per-id rule in one place for every chat.
     UnknownRoom(String),
+    /// The chat's room, by its numeric id: from each `ROOMSTATE` live (on
+    /// joining, and again whenever a mode changes) and once from a replay.
+    /// The root answers with the badges for it (`RootView::on_chat_room`),
+    /// asking the worker for any it has not got; it is told every time, and
+    /// `chat_badges::Library::wants` keeps that to one ask per room.
+    Room(String),
 }
 
 impl EventEmitter<ChatViewEvent> for ChatView {}
@@ -230,6 +250,21 @@ pub struct ChatView {
     /// a tooltip outlives a pointer that leaves the window (HANDOFF, GPUI
     /// traps), and the left-hand pane's chat runs to the window's edge.
     window_hovered: bool,
+    /// The chat badges this chat can draw, the global set and its own
+    /// channel's: the root's (`chat_badges::Library`), mirrored here as its
+    /// room becomes known and as each answer arrives, through
+    /// [`set_badges`](Self::set_badges). Empty signed out, when no badge is
+    /// drawn and none leaves a gap.
+    badges: ChatBadges,
+    /// The room's numeric id, once the source has said it
+    /// ([`ChatEvent::RoomState`]): what the root keys this chat's badges on.
+    room_id: Option<String>,
+    /// The room's modes as last heard, merged from every `ROOMSTATE`
+    /// (`RoomModes::merged`); `None` until the first, and for a replay,
+    /// which has none. Drawn as the quiet line at the foot of the pane
+    /// (`chat_words::modes_line`), and what a composer, when there is one,
+    /// reads to say why it cannot send.
+    modes: Option<RoomModes>,
     _link: Link,
     _pump: Task<()>,
     _emote_pump: Task<()>,
@@ -246,7 +281,7 @@ impl ChatView {
         let (link, mut events, waiting, replay) = match feed {
             Feed::Live { channel, history } => {
                 let (client, events) = ChatClient::connect(&channel, history);
-                // The words the row that replaces it uses, "connected to
+                // The words the row that replaces it uses, "Connected to
                 // {channel}'s chat": not IRC's `#channel`, which is a name for
                 // the room nobody reading the pane needs to know.
                 let waiting = format!("connecting to {channel}'s chat…");
@@ -355,6 +390,9 @@ impl ChatView {
             display,
             rooms: HashMap::new(),
             window_hovered: false,
+            badges: ChatBadges::default(),
+            room_id: None,
+            modes: None,
             _link: link,
             _pump: pump,
             _emote_pump: emote_pump,
@@ -375,12 +413,12 @@ impl ChatView {
                 self.loaded = true;
                 if !self.replay {
                     self.append(
-                        RowKind::Notice(format!("connected to {channel}'s chat").into()),
+                        RowKind::Notice(format!("Connected to {channel}'s chat").into()),
                         None,
                     );
                 }
             }
-            ChatEvent::RoomState { room_id } => self.emote_loader.load_channel(room_id),
+            ChatEvent::RoomState { room_id, modes } => self.room_state(room_id, modes, cx),
             ChatEvent::Message(message) => {
                 let sent_at = message.sent_at;
                 self.colors.insert(message.login.clone(), message.color);
@@ -399,18 +437,19 @@ impl ChatView {
                 self.name_source(notice.source_room.as_deref(), cx);
                 self.append(RowKind::Event(notice), sent_at)
             }
-            ChatEvent::Cleared { login } => {
-                let text = match login {
-                    Some(who) => format!("{who} was timed out or banned"),
-                    None => "chat was cleared".to_string(),
-                };
-                self.append(RowKind::Notice(text.into()), None);
+            ChatEvent::Cleared {
+                login: Some(login),
+                ban_seconds,
+            } => self.clear_person(&login, ban_seconds),
+            // The whole chat: said, and nothing greyed, as it always was.
+            ChatEvent::Cleared { login: None, .. } => {
+                self.append(RowKind::Notice("Chat was cleared".into()), None);
             }
             ChatEvent::Disconnected { reason } => {
                 let text = if self.replay {
-                    format!("chat replay interrupted: {reason} — retrying")
+                    format!("Chat replay interrupted: {reason} — retrying")
                 } else {
-                    format!("disconnected: {reason} — retrying")
+                    format!("Disconnected: {reason} — retrying")
                 };
                 self.append(RowKind::Notice(text.into()), None);
             }
@@ -767,9 +806,28 @@ impl ChatView {
 
             RowKind::Message(message) => {
                 let source = shared_chat::label(message.source_room.as_deref(), &self.rooms);
-                Self::row_frame(row, &metrics)
-                    .child(self.message_line(row, message, time, source, &metrics, cx))
-                    .into_any_element()
+                let line = self.message_line(row, message, time, source, &metrics, cx);
+                let frame = Self::row_frame(row, &metrics);
+                match &message.reply {
+                    None => frame.child(line),
+                    // The line it answers above it, and the message in a
+                    // row of its own beneath, as an event's note is: a
+                    // wrapping line straight in a column is the trap
+                    // `render_event` describes. The gap is an emote's
+                    // overhang, so one on the message's first line does not
+                    // paint over the line above.
+                    Some(reply) => frame.child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap_y(px(metrics.overhang))
+                            .child(Self::reply_line(reply))
+                            .child(div().w_full().flex().flex_row().child(line)),
+                    ),
+                }
+                .into_any_element()
             }
 
             RowKind::Event(notice) => self.render_event(row, notice, time, &metrics, cx),
@@ -1040,6 +1098,14 @@ impl ChatView {
     /// drawn after the time and before the name as a tag
     /// ([`source_tag`](Self::source_tag)). The caller decides, because an
     /// event's note leaves it to the event's first line (`render_event`).
+    ///
+    /// The speaker's badges come next, before the name
+    /// ([`badge_group`](Self::badge_group)). A reply's text starts with the
+    /// `@parent` Twitch puts there, which the line above it already says, so
+    /// that first word is not drawn (`reply::skips_leading_mention`); it is dropped here
+    /// rather than from the text, because the `emotes` tag counts from the
+    /// text's start. Someone's first message in the channel ends with a
+    /// quiet `First message` tag, which says why the row is tinted.
     fn message_line(
         &self,
         row: &Row,
@@ -1074,7 +1140,8 @@ impl ChatView {
             .items_center()
             .gap_x(px(theme::GAP_WORD))
             .children(time)
-            .children(source.map(|label| self.source_tag(row, label)));
+            .children(source.map(|label| self.source_tag(row, label)))
+            .children(self.badge_group(row, message, metrics));
 
         // An action puts the name inside the sentence, so it is not repeated.
         let name = if message.is_action {
@@ -1104,10 +1171,15 @@ impl ChatView {
 
         let mut emote_index = 0usize;
         let mut word_index = 0usize;
+        // Whether the first word is the `@parent` the reply line says.
+        let mut skip_first = reply::skips_leading_mention(message.reply.as_ref(), &tokens);
         for token in tokens {
             match token {
                 Token::Text(text) => {
                     for word in text.split_whitespace() {
+                        if std::mem::take(&mut skip_first) {
+                            continue;
+                        }
                         line = line.children(self.render_word(
                             word,
                             row.seq,
@@ -1169,6 +1241,9 @@ impl ChatView {
             }
         }
 
+        if message.first {
+            line = line.child(controls::quiet_tag("First message"));
+        }
         if row.deleted {
             line = line.child(controls::tag("deleted"));
         }
@@ -1193,20 +1268,16 @@ impl Render for ChatView {
         let at_live = self.at_live();
         let holding = !self.held.is_empty();
         let metrics = Metrics::of(self.display.size);
+        let modes = self.modes.as_ref().and_then(chat_words::modes_line);
 
-        div()
-            .id("chat-pane")
-            // Only to wake a repaint when the pointer arrives or leaves; the
-            // value is not trusted, for the reasons `VideoView::hovered`
-            // gives. Without it a quiet channel would not notice the pointer
-            // going until the next message did.
-            .on_hover(cx.listener(|_, _: &bool, _window, cx| cx.notify()))
+        // The list and everything laid over it. In a box of its own above the
+        // line of modes, so the pills at its foot sit over the messages and
+        // never over that line.
+        let body = div()
             .relative()
-            .size_full()
-            // The chat's text size, which every row inherits; see
-            // `chat_display`.
-            .text_size(px(metrics.text))
-            .line_height(px(metrics.line))
+            .flex_1()
+            .min_h_0()
+            .w_full()
             .child(
                 list(self.list.clone(), move |index, _window, cx| {
                     this.update(cx, |this: &mut ChatView, cx| this.render_row(index, cx))
@@ -1303,7 +1374,24 @@ impl Render for ChatView {
                             ),
                         ),
                 )
-            })
+            });
+
+        div()
+            .id("chat-pane")
+            // Only to wake a repaint when the pointer arrives or leaves; the
+            // value is not trusted, for the reasons `VideoView::hovered`
+            // gives. Without it a quiet channel would not notice the pointer
+            // going until the next message did.
+            .on_hover(cx.listener(|_, _: &bool, _window, cx| cx.notify()))
+            .size_full()
+            .flex()
+            .flex_col()
+            // The chat's text size, which every row inherits; see
+            // `chat_display`.
+            .text_size(px(metrics.text))
+            .line_height(px(metrics.line))
+            .child(body)
+            .when_some(modes, |pane, modes| pane.child(Self::modes_line(modes)))
     }
 }
 

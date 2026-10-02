@@ -78,6 +78,13 @@ pub fn text_size(size: ChatTextSize) -> f32 {
 /// emote to buy clearance costs more than the crowding does.
 const EMOTE_HEIGHT: f32 = 28.0;
 
+/// Drawn badge size at body size: Twitch's own, 18 pixels square, which is
+/// what its 1x picture is. Scaled with the text like the emotes. It is under
+/// the line it sits on at every step (`a_badge_never_grows_its_line`), so
+/// unlike an emote it needs no overhang: a row with badges is the height of
+/// one without.
+const BADGE_SIZE: f32 = 18.0;
+
 /// Everything a chat row's height is made of, at one text size.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Metrics {
@@ -89,6 +96,8 @@ pub struct Metrics {
     pub line: f32,
     /// How tall an emote is drawn: [`EMOTE_HEIGHT`] in proportion.
     pub emote: f32,
+    /// How big a chat badge is drawn, square: [`BADGE_SIZE`] in proportion.
+    pub badge: f32,
     /// How far an emote hangs past its line, top and bottom.
     ///
     /// At the top and bottom of a row this is absorbed by `row_pad_y`.
@@ -124,6 +133,7 @@ impl Metrics {
             text,
             line,
             emote,
+            badge: BADGE_SIZE * scale,
             overhang: (emote - line) / 2.0,
             row_pad_y: theme::ROW_PAD_Y * scale.max(1.0),
             piece_chars: chat_text::piece_chars(text),
@@ -190,6 +200,17 @@ mod tests {
                 metrics.row_pad_y - metrics.overhang >= 0.5 - 1e-4,
                 "{size:?}: {metrics:?}"
             );
+        }
+    }
+
+    /// A badge fits inside its line at every text size, so it never makes a
+    /// row taller than a row without one.
+    #[test]
+    fn a_badge_never_grows_its_line() {
+        assert_eq!(Metrics::of(ChatTextSize::Default).badge, 18.0);
+        for size in ChatTextSize::ALL {
+            let metrics = Metrics::of(size);
+            assert!(metrics.badge <= metrics.line, "{size:?}: {metrics:?}");
         }
     }
 

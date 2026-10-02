@@ -177,7 +177,10 @@ fn run(
 ) {
     // False once nobody is listening, which is the other way this ends.
     let send = |event: ChatEvent| tx.unbounded_send(event).is_ok();
-    if !send(ChatEvent::RoomState { room_id }) {
+    if !send(ChatEvent::RoomState {
+        room_id,
+        modes: crate::ModeUpdate::default(),
+    }) {
         return;
     }
 
@@ -554,10 +557,39 @@ fn comment(node: &Value) -> Option<Comment> {
             id: Some(id.clone()),
             // A recording's comments say nothing of Shared Chat.
             source_room: None,
+            badges: badges(message),
+            // Nor of the thread a line answered, nor of first messages or
+            // highlights.
+            reply: None,
+            first: false,
+            highlighted: false,
         },
         id,
         offset,
     })
+}
+
+/// The badges a comment's speaker wore, from `userBadges`, in the order
+/// Twitch lists them: `setID` and `version` are the set and version the IRC
+/// tag would have named. Twitch pads the list with an empty one (`setID: ""`,
+/// seen first on most comments), which is skipped. No months: the query has
+/// no `badge-info`, so a subscriber badge's tooltip says only its title.
+fn badges(message: &Value) -> Vec<message::Badge> {
+    message
+        .get("userBadges")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|badge| {
+            let set = badge.get("setID")?.as_str()?;
+            let version = badge.get("version")?.as_str()?;
+            (!set.is_empty() && !version.is_empty()).then(|| message::Badge {
+                set: set.to_string(),
+                version: version.to_string(),
+                months: None,
+            })
+        })
+        .collect()
 }
 
 /// The text of a comment and its `emotes` tag, in the IRC form the chat view
@@ -788,6 +820,20 @@ mod tests {
         assert_eq!(line.message.emotes.as_deref(), Some("25:2-6/1902:10-14"));
     }
 
+    /// A comment's badges are read in Twitch's order, past the empty one
+    /// Twitch pads most lists with; a comment wearing none has none.
+    #[test]
+    fn badges_come_from_user_badges() {
+        let page = fixture();
+        let first = &page.comments[0].message.badges;
+        assert_eq!(first.len(), 1, "the empty padding badge is skipped");
+        assert_eq!(first[0].set, "subtember-2025");
+        assert_eq!(first[0].version, "1");
+        assert_eq!(first[0].months, None);
+        assert!(page.comments[1].message.badges.is_empty());
+        assert_eq!(page.comments[2].message.badges[0].set, "hornet");
+    }
+
     #[test]
     fn a_deleted_commenter_is_skipped() {
         let node = json!({
@@ -858,6 +904,10 @@ mod tests {
                 sent_at: Some(sent_at),
                 id: None,
                 source_room: None,
+                badges: Vec::new(),
+                reply: None,
+                first: false,
+                highlighted: false,
             },
         }
     }

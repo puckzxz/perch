@@ -173,7 +173,8 @@ impl RootView {
     /// offline follows were last live, for the same reason; see
     /// `LastLive::forget`. And the asks for Shared Chat partners' names,
     /// which would otherwise never be asked again; see
-    /// `SourceRooms::forget`.
+    /// `SourceRooms::forget`. And the asks for chat badges, likewise; see
+    /// `chat_badges::Library::forget`.
     pub(super) fn forget_asks(&mut self) {
         for slot in &mut self.slots {
             slot.archives.forget();
@@ -183,6 +184,7 @@ impl RootView {
         self.recommended.forget();
         self.last_live.forget();
         self.source_rooms.forget();
+        self.badges.forget();
     }
 
     /// Whether a pane on `channel` offers `Start when they go live`: only

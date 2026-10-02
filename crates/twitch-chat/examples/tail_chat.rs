@@ -58,13 +58,13 @@ fn main() {
                             println!("        <{}> {}", body.display_name, body.text);
                         }
                     }
-                    ChatEvent::RoomState { room_id } => {
+                    ChatEvent::RoomState { room_id, modes } => {
                         others += 1;
-                        println!("[room] id={room_id}");
+                        println!("[room] id={room_id} {modes:?}");
                     }
-                    ChatEvent::Cleared { login } => {
+                    ChatEvent::Cleared { login, ban_seconds } => {
                         others += 1;
-                        println!("[cleared] {login:?}");
+                        println!("[cleared] {login:?} for {ban_seconds:?}s");
                     }
                     ChatEvent::Deleted { id } => {
                         others += 1;

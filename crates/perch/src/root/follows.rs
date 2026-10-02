@@ -140,8 +140,10 @@ impl RootView {
                 self.fill_shown();
                 self.request_linked_videos();
                 self.ask_missing();
-                // And the names of the Shared Chat partners those panes met.
+                // And the names of the Shared Chat partners those panes met,
+                // and the badges for their chats.
                 self.ask_met_channel_names();
+                self.ask_met_badges();
                 // And the rail's recommendations, which the worker can now
                 // take.
                 self.update_recommended();
@@ -292,6 +294,7 @@ impl RootView {
             // Labels on the chats' Shared Chat lines, and no list's either;
             // see `root::shared_chat`.
             TwitchEvent::ChannelNames { ids, result } => self.on_channel_names(ids, result, cx),
+            TwitchEvent::Badges { channel, result } => self.on_badges(channel, result, cx),
             // Said on the list that failed, which may not be the one on
             // screen by now; see `Discovery::shown_error`.
             TwitchEvent::BrowseError {

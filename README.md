@@ -399,7 +399,25 @@ for it is not much of a link, so while a pane is pointed at and following live
 its new messages wait — it says `Chat paused` — and land the moment the pointer
 leaves. A pane you have scrolled back in is left alone; its position is already
 yours. A message a moderator deletes stays where it was, greyed and marked
-`deleted`, rather than vanishing from under your eye.
+`deleted`, rather than vanishing from under your eye. When someone is timed
+out or banned, chat says so — `ronni was timed out for 10 minutes`, `ronni was
+banned` — and every message of theirs on screen, a resub's note included, is
+greyed the same way.
+
+While you are signed in, names wear their Twitch badges in front of them —
+broadcaster, moderator, VIP, the channel's own subscriber and bits badges —
+in Twitch's order, and the pointer on one says what it is: `Subscriber, 14
+months`. A past broadcast's chat replay wears them too. Signed out there are
+no badges and no gap where they would be.
+
+A reply has a dim line above it, `Replying to @name: what they said`, cut
+short to one line, and its own text no longer starts with the `@name`.
+Someone's first message in the channel has a faint blue tint and a
+`First message` tag; a message sent with Highlight My Message has a warm wash;
+an announcement is washed in the colour its sender picked. When the channel
+has slow mode, followers-only, sub-only, emote-only or unique chat on, a quiet
+line at the foot of the chat says so (`Slow mode 30s · Sub-only`), and a
+moderator switching one after you joined is a notice in the chat.
 
 When channels share their chat — Twitch's **Shared Chat**, during a
 collaboration — what is said in a partner's chat is copied into this one, and
@@ -616,12 +634,13 @@ and back. One that stops moving for twenty seconds while playing is reopened the
 same way.
 
 The chat plays back beside it: what was being said at the moment on screen,
-from Twitch's own copy of it, with the same emotes, links and colours as a live
-pane and the time breaks reading the broadcast's own clock. Jump somewhere else
-and the pane swaps to the conversation around the new moment, starting a little
-before it, so you land mid-chat rather than in a blank. `C` hides it, and that
-is remembered per channel the way it is for a live pane. A broadcast still being
-recorded has its replay too, running about thirty seconds behind live.
+from Twitch's own copy of it, with the same emotes, links, colours and badges
+as a live pane and the time breaks reading the broadcast's own clock. Jump
+somewhere else and the pane swaps to the conversation around the new moment,
+starting a little before it, so you land mid-chat rather than in a blank. `C`
+hides it, and that is remembered per channel the way it is for a live pane. A
+broadcast still being recorded has its replay too, running about thirty seconds
+behind live.
 
 Twitch's picture for a recording comes at one small size, so it is soft on a
 wide card. And without the auth-token cookie Twitch caps recordings at 1080p,
@@ -730,7 +749,7 @@ crates/
   mpv-frames    libmpv loaded at runtime, software render to BGRA
   streamlink    supervises streamlink as a headless byte source
   twitch-chat   read-only chat over anonymous IRC; a recording's chat replayed
-  twitch-api    device-code sign-in, follows, browsing and search
+  twitch-api    device-code sign-in, follows, browsing, search and chat badges
   emotes        Twitch/FFZ/BTTV/7TV resolution, disk image cache
   settings      persisted user settings, and what has been watched
   perch         the app

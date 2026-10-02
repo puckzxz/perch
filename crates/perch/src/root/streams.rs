@@ -183,8 +183,7 @@ impl RootView {
             )
         });
         // The names of Shared Chat partners, and its word when it meets one
-        // it cannot name; see `root::shared_chat`. A replay's chat carries
-        // no source rooms, so only a live one is watched.
+        // it cannot name, and its badges; see `root::shared_chat`.
         self.watch_chat(&chat, cx);
         let chat_hidden = self.settings.chat_hidden_for(&channel);
         Slot::new(
@@ -289,6 +288,11 @@ impl RootView {
                 )
             })
         });
+        // For its badges: a replay carries no Shared Chat rooms, but its
+        // speakers wear badges like a live chat's; see `root::badges`.
+        if let Some(chat) = &chat {
+            self.watch_chat(chat, cx);
+        }
         // Chat hidden is remembered against the channel, like a live
         // pane's: hiding chat is a statement about the streamer, not the
         // broadcast.

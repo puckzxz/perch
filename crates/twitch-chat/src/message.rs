@@ -145,6 +145,116 @@ pub struct ChatMessage {
     /// note copied in from a partner carries it too. A replay never does:
     /// its comments come from a query that has no such field.
     pub source_room: Option<String>,
+    /// The badges the speaker wears, in the order Twitch lists them, which
+    /// is the order its own chat draws them in: from the `badges` tag live,
+    /// from the comment's `userBadges` in a replay. Empty for nobody in
+    /// particular. Only names: the pictures and titles are Helix's, and the
+    /// chat view looks them up (`perch::chat_badges`).
+    pub badges: Vec<Badge>,
+    /// The message this one answers, when it was sent as a reply: from the
+    /// `reply-parent-*` tags. Live only; a replay's comments carry nothing
+    /// of the thread.
+    pub reply: Option<Reply>,
+    /// The speaker's first message in this channel ever (`first-msg=1`).
+    pub first: bool,
+    /// Sent with Highlight My Message, the channel-points reward
+    /// (`msg-id=highlighted-message`).
+    pub highlighted: bool,
+}
+
+/// One chat badge, by name: its set (`subscriber`, `moderator`, `bits`) and
+/// the version within it (`12`, `1`, `1000`), as the `badges` tag writes
+/// them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Badge {
+    pub set: String,
+    pub version: String,
+    /// How many months, when `badge-info` says so for this set: the exact
+    /// count behind a subscriber or founder badge, whose version is only the
+    /// tier of months its picture stands for. `None` for every other badge,
+    /// and for a `badge-info` value that is not a number (a prediction's
+    /// `blue-1`).
+    pub months: Option<u32>,
+}
+
+/// Read the `badges` and `badge-info` tags into badges, in Twitch's order.
+///
+/// `badges` is `set/version,set/version`; `badge-info` the same shape, for
+/// the few sets with more to say than their version. A pair with no `/` or
+/// an empty side is skipped rather than guessed at.
+pub fn parse_badges(badges: Option<&str>, info: Option<&str>) -> Vec<Badge> {
+    let pairs = |raw: Option<&str>| -> Vec<(String, String)> {
+        raw.unwrap_or_default()
+            .split(',')
+            .filter_map(|pair| pair.split_once('/'))
+            .filter(|(set, version)| !set.is_empty() && !version.is_empty())
+            .map(|(set, version)| (set.to_string(), version.to_string()))
+            .collect()
+    };
+    let info = pairs(info);
+    pairs(badges)
+        .into_iter()
+        .map(|(set, version)| {
+            let months = info
+                .iter()
+                .find(|(info_set, _)| *info_set == set)
+                .and_then(|(_, value)| value.parse().ok());
+            Badge {
+                set,
+                version,
+                months,
+            }
+        })
+        .collect()
+}
+
+/// The message a reply answers: who said it and what they said, as Twitch
+/// sends them beside the reply.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reply {
+    /// `reply-parent-user-login`, for telling the `@` Twitch puts in front
+    /// of the reply's own text ([`is_mention`](Self::is_mention)).
+    pub login: String,
+    /// `reply-parent-display-name`, falling back to the login when it is
+    /// missing or empty.
+    pub display_name: String,
+    /// `reply-parent-msg-body`: the whole parent message, unescaped.
+    pub body: String,
+}
+
+impl Reply {
+    /// The parent, read off a line's tags, or `None` when the line is not a
+    /// reply: one with neither a display name nor a login to show is taken
+    /// as not being one.
+    fn from_irc(message: &IrcMessage) -> Option<Self> {
+        let login = message.tag("reply-parent-user-login").unwrap_or_default();
+        // An empty display name, one never set, reads as missing (`tag`
+        // drops empty values), so the login stands in for both.
+        let display_name = message.tag("reply-parent-display-name").unwrap_or(login);
+        if display_name.is_empty() {
+            return None;
+        }
+        Some(Self {
+            login: login.to_string(),
+            display_name: display_name.to_string(),
+            body: message
+                .tag("reply-parent-msg-body")
+                .unwrap_or_default()
+                .to_string(),
+        })
+    }
+
+    /// Whether `word` is the `@parent` Twitch puts at the start of every
+    /// reply's own text, which the line drawn above the reply already says:
+    /// `@` and the parent's login or display name, in any case, and nothing
+    /// after it.
+    pub fn is_mention(&self, word: &str) -> bool {
+        let Some(name) = word.strip_prefix('@') else {
+            return false;
+        };
+        (!self.login.is_empty() && name.eq_ignore_ascii_case(&self.login))
+            || name.eq_ignore_ascii_case(&self.display_name)
+    }
 }
 
 /// Twitch's default colour set, used when a user has not chosen one.
@@ -233,6 +343,10 @@ impl ChatMessage {
             sent_at: message.tag("tmi-sent-ts").and_then(|ts| ts.parse().ok()),
             id: message.tag("id").map(str::to_string),
             source_room: source_room(message),
+            badges: parse_badges(message.tag("badges"), message.tag("badge-info")),
+            reply: Reply::from_irc(message),
+            first: message.tag("first-msg") == Some("1"),
+            highlighted: message.tag("msg-id") == Some("highlighted-message"),
         }
     }
 }
@@ -311,6 +425,10 @@ pub struct ChatNotice {
     /// subs or a raid on a partner arrive as Twitch's sentence alone, and
     /// that sentence is what would read as if it happened here.
     pub source_room: Option<String>,
+    /// An announcement's colour, from `msg-param-color` as Twitch writes it
+    /// (`PRIMARY`, `BLUE`, `GREEN`, `ORANGE`, `PURPLE`), for the wash behind
+    /// it. `None` on anything that is not an announcement.
+    pub announcement_color: Option<String>,
 }
 
 impl ChatNotice {
@@ -332,12 +450,17 @@ impl ChatNotice {
             Some("sharedchatnotice") => message.tag("source-msg-id"),
             other => other,
         };
+        let kind = NoticeKind::from_msg_id(id.unwrap_or_default());
         Some(Self {
-            kind: NoticeKind::from_msg_id(id.unwrap_or_default()),
+            kind,
             system,
             body,
             sent_at: message.tag("tmi-sent-ts").and_then(|ts| ts.parse().ok()),
             source_room: source_room(message),
+            announcement_color: message
+                .tag("msg-param-color")
+                .filter(|_| kind == NoticeKind::Announcement)
+                .map(str::to_string),
         })
     }
 }
@@ -560,6 +683,111 @@ mod tests {
         let own = r"@msg-id=subgift;login=giver;room-id=12826;source-room-id=12826;system-msg=Giver\sgifted\sa\ssub :tmi.twitch.tv USERNOTICE #twitch";
         let notice = ChatNotice::from_irc(&parse_line(own).unwrap()).unwrap();
         assert_eq!(notice.source_room, None);
+    }
+
+    /// Badges come in Twitch's order, and `badge-info`'s months land on the
+    /// badge of the same set and no other.
+    #[test]
+    fn badges_keep_their_order_and_take_their_months() {
+        let line = r"@badge-info=subscriber/14;badges=broadcaster/1,subscriber/3012,glhf-pledge/1 :a!a@a PRIVMSG #a :hi";
+        let chat = ChatMessage::from_irc(&parse_line(line).unwrap()).unwrap();
+        let shown: Vec<(&str, &str, Option<u32>)> = chat
+            .badges
+            .iter()
+            .map(|b| (b.set.as_str(), b.version.as_str(), b.months))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                ("broadcaster", "1", None),
+                ("subscriber", "3012", Some(14)),
+                ("glhf-pledge", "1", None),
+            ]
+        );
+    }
+
+    /// A founder's months ride the same tag; a prediction's value is not a
+    /// number and gives none; a malformed pair is skipped; no tag, no badges.
+    #[test]
+    fn badge_info_that_is_not_months_gives_none() {
+        let badges = parse_badges(
+            Some("founder/0,predictions/blue-1,broken,/1,vip/"),
+            Some("founder/3,predictions/blue-1"),
+        );
+        assert_eq!(badges.len(), 2);
+        assert_eq!(badges[0].months, Some(3));
+        assert_eq!(badges[1].set, "predictions");
+        assert_eq!(badges[1].months, None);
+
+        assert!(parse_badges(None, Some("subscriber/2")).is_empty());
+        let bare = parse_line(":a!a@a PRIVMSG #a :hi").unwrap();
+        assert!(ChatMessage::from_irc(&bare).unwrap().badges.is_empty());
+    }
+
+    /// A reply names its parent and what they said; its own text still
+    /// starts with Twitch's `@parent`, which `is_mention` knows in any case,
+    /// by login or by display name, and only as a whole word.
+    #[test]
+    fn a_reply_carries_its_parent() {
+        let line = r"@reply-parent-display-name=Some_One;reply-parent-msg-body=is\sthis\sthe\sboss?;reply-parent-msg-id=b34ccfc7;reply-parent-user-id=1;reply-parent-user-login=someone :fan!fan@fan.tmi.twitch.tv PRIVMSG #bar :@someone yes it is";
+        let chat = ChatMessage::from_irc(&parse_line(line).unwrap()).unwrap();
+        // The text is left whole: the `emotes` tag counts from its start.
+        assert_eq!(chat.text, "@someone yes it is");
+        let reply = chat.reply.unwrap();
+        assert_eq!(reply.display_name, "Some_One");
+        assert_eq!(reply.body, "is this the boss?");
+        assert!(reply.is_mention("@someone"));
+        assert!(reply.is_mention("@SOMEONE"));
+        assert!(reply.is_mention("@some_one"));
+        assert!(!reply.is_mention("someone"));
+        assert!(!reply.is_mention("@someone,"));
+        assert!(!reply.is_mention("@someoneelse"));
+
+        // No display name: the login stands in.
+        let bare = "@reply-parent-user-login=quiet :a!a@a PRIVMSG #a :@quiet hi";
+        let reply = ChatMessage::from_irc(&parse_line(bare).unwrap())
+            .unwrap()
+            .reply
+            .unwrap();
+        assert_eq!(reply.display_name, "quiet");
+        assert_eq!(reply.body, "");
+
+        // An empty display name, one never set: the login stands in too.
+        let unset = "@reply-parent-display-name=;reply-parent-user-login=quiet :a!a@a PRIVMSG #a :@quiet hi";
+        let reply = ChatMessage::from_irc(&parse_line(unset).unwrap())
+            .unwrap()
+            .reply
+            .unwrap();
+        assert_eq!(reply.display_name, "quiet");
+
+        let plain = parse_line(":a!a@a PRIVMSG #a :@someone hi").unwrap();
+        assert_eq!(ChatMessage::from_irc(&plain).unwrap().reply, None);
+    }
+
+    /// A first message and a highlighted one say so; nothing else does.
+    #[test]
+    fn first_and_highlighted_messages_are_marked() {
+        let first = parse_line("@first-msg=1 :a!a@a PRIVMSG #a :hello").unwrap();
+        let first = ChatMessage::from_irc(&first).unwrap();
+        assert!(first.first && !first.highlighted);
+
+        let lit =
+            parse_line("@first-msg=0;msg-id=highlighted-message :a!a@a PRIVMSG #a :look").unwrap();
+        let lit = ChatMessage::from_irc(&lit).unwrap();
+        assert!(!lit.first && lit.highlighted);
+    }
+
+    /// An announcement keeps its colour; any other notice has none, even
+    /// one that carries the tag.
+    #[test]
+    fn an_announcement_keeps_its_colour() {
+        let line = r"@msg-id=announcement;login=mod;msg-param-color=BLUE :tmi.twitch.tv USERNOTICE #bar :hi";
+        let notice = ChatNotice::from_irc(&parse_line(line).unwrap()).unwrap();
+        assert_eq!(notice.announcement_color.as_deref(), Some("BLUE"));
+
+        let odd = r"@msg-id=resub;login=a;msg-param-color=BLUE;system-msg=hi :tmi.twitch.tv USERNOTICE #bar";
+        let notice = ChatNotice::from_irc(&parse_line(odd).unwrap()).unwrap();
+        assert_eq!(notice.announcement_color, None);
     }
 
     #[test]

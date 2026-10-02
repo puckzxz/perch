@@ -682,6 +682,12 @@ mod tests {
             Some(theme::stripe()),
             Some(theme::event_wash()),
             Some(theme::event_wash_loud()),
+            Some(theme::first_message_wash()),
+            Some(theme::highlight_wash()),
+            Some(theme::announcement_wash_blue()),
+            Some(theme::announcement_wash_green()),
+            Some(theme::announcement_wash_orange()),
+            Some(theme::announcement_wash_purple()),
         ];
         for surface in [theme::surface(), theme::surface_raised()] {
             for row in rows {

@@ -136,6 +136,48 @@ pub fn event_wash_loud() -> Hsla {
     rgba((ACCENT << 8) | 0x33).into()
 }
 
+/// Behind someone's first message in a channel ever (`first-msg`): a cool
+/// blue, under the quiet event wash's strength, so a newcomer is noticed
+/// without the row reading as an event. It carries a `First message` tag
+/// too, which is what says why.
+pub fn first_message_wash() -> Hsla {
+    rgba(0x5b8def10).into()
+}
+
+/// Behind a message sent with Highlight My Message, the channel-points
+/// reward: paid for to be seen, so warmer and stronger than the first
+/// message's, and a hue no event uses. As strong as a wash can be with a
+/// link and a time still legible on it; see
+/// `every_chat_wash_keeps_its_text_legible`.
+pub fn highlight_wash() -> Hsla {
+    rgba(0xd9a62e18).into()
+}
+
+/// Behind an announcement whose colour is `BLUE`, `GREEN`, `ORANGE` or
+/// `PURPLE` (`msg-param-color`). Each as strong as its hue can be with the
+/// row's links and time still legible on it, which is under the loud wash:
+/// that one predates the measurement and fails it for those two tiers.
+/// `PRIMARY`, the channel's own colour, which chat is not told, keeps
+/// [`event_wash_loud`], as every announcement did before.
+pub fn announcement_wash_blue() -> Hsla {
+    rgba(0x4a86e81e).into()
+}
+
+/// See [`announcement_wash_blue`].
+pub fn announcement_wash_green() -> Hsla {
+    rgba(0x3fae5a1a).into()
+}
+
+/// See [`announcement_wash_blue`].
+pub fn announcement_wash_orange() -> Hsla {
+    rgba(0xe0843a1a).into()
+}
+
+/// See [`announcement_wash_blue`].
+pub fn announcement_wash_purple() -> Hsla {
+    rgba(0x9b6fe01e).into()
+}
+
 /// Scrim behind a modal.
 pub fn scrim() -> Hsla {
     rgba(0x00000099).into()
@@ -450,6 +492,9 @@ pub const ROW_PAD_Y: f32 = 5.0;
 /// Breathing room either side of an emote. Emotes need more air than words
 /// do, and `GAP_WORD` alone crowds them.
 pub const EMOTE_PAD_X: f32 = 2.0;
+/// Between two chat badges in a row of them, as Twitch spaces its own:
+/// tighter than `GAP_WORD`, so a speaker's badges read as one group.
+pub const CHAT_BADGE_GAP: f32 = 3.0;
 
 // ── Motion ────────────────────────────────────────────────────────────
 //
@@ -792,6 +837,46 @@ mod tests {
             Some(r#"version = "0.5.1""#),
             "gpui-component has moved; read SCROLLBAR_WIDTH from it again"
         );
+    }
+
+    /// Every wash a chat row can wear, and the text drawn on it: a message's
+    /// words (`text`), its links and an event's sentence (`accent`), and the
+    /// quiet parts, a row's time, a reply's line, a deleted message, the
+    /// modes and notices (`text_dim`). Measured on the chat panel, which is
+    /// the only thing a chat row is drawn on, so a new wash too strong for
+    /// the quietest tier fails here rather than on screen.
+    ///
+    /// `event_wash_loud` is not here: it predates this and measures about
+    /// 4.4:1 for the accent and 4.0:1 for `text_dim`, under the bar, behind a
+    /// raid and a `PRIMARY` announcement. Its words, Twitch's sentence aside,
+    /// are full-strength text, which reads.
+    #[test]
+    fn every_chat_wash_keeps_its_text_legible() {
+        let washes: [(&str, Hsla); 8] = [
+            ("stripe", stripe()),
+            ("event_wash", event_wash()),
+            ("first_message_wash", first_message_wash()),
+            ("highlight_wash", highlight_wash()),
+            ("announcement_wash_blue", announcement_wash_blue()),
+            ("announcement_wash_green", announcement_wash_green()),
+            ("announcement_wash_orange", announcement_wash_orange()),
+            ("announcement_wash_purple", announcement_wash_purple()),
+        ];
+        let tiers: [(&str, Hsla); 3] = [
+            ("text", text()),
+            ("accent", accent()),
+            ("text_dim", text_dim()),
+        ];
+        for (wash_name, wash) in washes {
+            let under = surface().blend(wash);
+            for (tier, color) in tiers {
+                let ratio = contrast(color, under);
+                assert!(
+                    ratio >= MIN_CONTRAST,
+                    "{tier} reads {ratio:.2}:1 on {wash_name}"
+                );
+            }
+        }
     }
 
     /// Everything tinted with the accent has to come from the same value, or a

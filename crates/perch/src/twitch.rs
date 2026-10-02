@@ -1,7 +1,8 @@
 //! The Twitch worker: signing in, keeping the follows list fresh, and
 //! answering the browse page's requests, a stopped pane's, the rail's ask
 //! for channels like the ones watched, when the offline follows were last
-//! live, and whose chat a Shared Chat line was copied from.
+//! live, whose chat a Shared Chat line was copied from, and what the badges
+//! in a chat look like.
 //!
 //! One thread owns the session, and it has to. Refresh tokens are single-use,
 //! so two things refreshing at once would spend the same token twice and lock
@@ -25,6 +26,7 @@ use std::time::{Duration, Instant};
 
 use futures::channel::mpsc;
 use settings::{OAuthTokens, Settings};
+use twitch_api::badges::BadgeSet;
 use twitch_api::recommend::{LastBroadcast, SimilarChannel};
 use twitch_api::{Category, Channel, LiveStream, Session, Video, VideoKind};
 
@@ -120,6 +122,14 @@ pub enum Request {
     /// the reasons [`Recommend`](Request::Recommend) is. It fills no browse
     /// list, and its failure travels in its answer.
     ChannelNames { ids: Vec<String> },
+    /// The chat badges every channel shares (`channel: None`), or one
+    /// channel's own by its numeric id: Helix's Get Global Chat Badges and
+    /// Get Channel Chat Badges (`twitch_api::badges`). The root asks for the
+    /// global ones once a session and each channel's once, as chats meet
+    /// them; see `crate::chat_badges`. Helix, with the token, so it goes
+    /// through [`serve`] like the browse page's asks; it fills no browse
+    /// list, and its failure travels in its answer.
+    Badges { channel: Option<String> },
 }
 
 /// Which browse list a request fills, so its answer — or its failure — can
@@ -145,13 +155,13 @@ pub enum ListKey {
 }
 
 impl Request {
-    /// The browse list this fills, or `None` for the six that fill none:
+    /// The browse list this fills, or `None` for the seven that fill none:
     /// the follows poll, whose lists are not the browse page's, a recording
     /// looked up for a link, whose failure is a toast, a pane's past
     /// broadcasts, which are the pane's, the rail's recommendations, which
     /// are the rail's, when the offline follows were last live, which is
     /// words on names already on screen, and the names of Shared Chat
-    /// partners, which are the chats'.
+    /// partners and the chat badges, which are the chats'.
     pub fn list_key(&self) -> Option<ListKey> {
         match self {
             Request::Follows
@@ -159,7 +169,8 @@ impl Request {
             | Request::Broadcasts { .. }
             | Request::Recommend { .. }
             | Request::LastLive { .. }
-            | Request::ChannelNames { .. } => None,
+            | Request::ChannelNames { .. }
+            | Request::Badges { .. } => None,
             Request::Popular { .. } => Some(ListKey::Popular),
             Request::Categories { .. } => Some(ListKey::Categories),
             Request::Category { category, .. } => Some(ListKey::Category(category.id.clone())),
@@ -281,6 +292,14 @@ pub enum TwitchEvent {
     ChannelNames {
         ids: Vec<String>,
         result: Result<Vec<Channel>, RecommendError>,
+    },
+    /// The badge sets a [`Request::Badges`] asked for, the global ones
+    /// (`channel: None`) or one channel's, or why not. Its own event with the
+    /// failure inside it, for the reason [`Broadcasts`](TwitchEvent::Broadcasts)
+    /// has one.
+    Badges {
+        channel: Option<String>,
+        result: Result<Vec<BadgeSet>, String>,
     },
     /// Sign-in itself failed, so nothing works.
     Error(String),
@@ -669,6 +688,14 @@ fn serve(
                 .map_err(|e| e.to_string());
             Ok(TwitchEvent::Broadcasts { login, result })
         }
+        Request::Badges { channel } => {
+            let result = match &channel {
+                None => twitch_api::badges::global_chat_badges(client_id, token),
+                Some(id) => twitch_api::badges::channel_chat_badges(client_id, token, id),
+            }
+            .map_err(|e| e.to_string());
+            Ok(TwitchEvent::Badges { channel, result })
+        }
     };
 
     let _ = tx.unbounded_send(result.unwrap_or_else(|e| TwitchEvent::BrowseError {
@@ -1011,7 +1038,7 @@ mod tests {
     }
 
     /// Every request the browse page makes names the list it fills, and the
-    /// six that fill none say so. A request with no key would leave its list
+    /// seven that fill none say so. A request with no key would leave its list
     /// with nothing to wait on, and its failure with nowhere to be said; a
     /// pane's or the rail's request with one would end a browse list's wait.
     #[test]
@@ -1046,6 +1073,13 @@ mod tests {
             (
                 Request::ChannelNames {
                     ids: vec!["12826".into()],
+                },
+                None,
+            ),
+            (Request::Badges { channel: None }, None),
+            (
+                Request::Badges {
+                    channel: Some("12826".into()),
                 },
                 None,
             ),
