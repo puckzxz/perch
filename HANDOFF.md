@@ -1161,6 +1161,33 @@ sends no frames, so without them nothing would ask the probe to run again. Their
 `.occlude()`s over a probed area hides the pointer from those listeners, so
 it needs a wake-up of its own while it blocks, as a pane's header band has.
 
+**A view flowed into a flex item can be laid out at nothing, and stay that
+way.** A pane's chat used to be an in-flow block, `size_full`, inside the
+`flex_1` box under its header (`watch::pane`). With two panes side by side
+(each stacked: picture over chat) in a 2400 by 1100 window, both chats went
+blank, no rows and no "connecting", as soon as both pictures were 16:9
+renditions, which put each video box at 603.28 px. They stayed blank, through
+new messages and wheel scrolls, until the layout changed. A pane whose
+rendition was 852x480 (aspect 1.775, a box a pixel taller) did not do it.
+Logging `ListState::viewport_bounds` and a `canvas` in chat's root showed
+the root laid out at 0 by 6 px every frame while the box around it measured
+1073 by 407. It looked like a reorder or quality-swap bug, because a swap to
+1080p or a resize is what usually brings the sizes about.
+
+The fix is placement rather than flow: the box is `relative`, and chat sits in
+an `absolute().inset_0()` layer inside it. An absolute child takes no part in
+measuring its parent, and is laid out once, against a box already sized.
+Measured on the same launch-then-widen sequence: blank 3 runs out of 3 before,
+0 out of 3 after, alternating builds. The cause inside taffy was not traced to
+a line. The likely candidate is that taffy 0.9.0's layout cache is keyed
+without the parent's size, so a size measured under one constraint can be
+returned under another. taffy 0.12.0's changelog adds the parent size to the
+key and calls it "necessary for correctness". gpui 0.2.2 pins taffy 0.9.0. Any
+other view that fills a flex item by flowing a percentage-sized block into it is
+exposed in the same way. If one shows up empty with a healthy parent, place it
+the same way. The video box sidesteps a related problem by making the player a
+flex item (see the comment on `video_pane` in `watch::pane`).
+
 **Dependencies are plain crates.io versions** — `gpui 0.2.2`, `gpui-component 0.5.1`
 — reproducible from `Cargo.lock`. An earlier plan called for pinning a git rev;
 that turned out to be unnecessary.

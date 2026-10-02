@@ -1071,7 +1071,22 @@ fn pane<V: 'static>(
             }
         })
         .children(in_panel)
-        .child(div().flex_1().min_h_0().child(chat_or_why(slot)));
+        // Chat is placed in the room under its header, not flowed into it: a
+        // layer over that room, which chat's own `size_full` is sized
+        // against. Flowed - chat a block inside this `flex_1` box - taffy
+        // laid chat out at 0 by 6 pixels and kept it there frame after frame
+        // while the box around it measured 1073 by 407: two panes side by
+        // side went blank under their pictures as soon as both played a 16:9
+        // rendition, and stayed blank. A layer takes no part in measuring
+        // the box it is in, and is laid out once, in a box already sized.
+        // See HANDOFF, "A view flowed into a flex item".
+        .child(
+            div()
+                .flex_1()
+                .min_h_0()
+                .relative()
+                .child(div().absolute().inset_0().child(chat_or_why(slot))),
+        );
 
     cell.map(|cell| {
         if layout.portrait {
