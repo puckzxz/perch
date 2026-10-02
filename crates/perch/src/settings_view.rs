@@ -69,6 +69,19 @@ pub fn quality_label(preference: &QualityPreference) -> SharedString {
         )
 }
 
+/// `preference` in one word, short enough for a pane's quality pill, whose
+/// room is kept for a rendition's name (`theme::QUALITY_PILL_ROOM`): the word
+/// the file stores, in sentence case — `Auto`, `Best`, `1080p`. What the
+/// pill says while it switches to the settings' choice and they name no
+/// rendition the stream has (`RootView::request_quality`); the menu's row
+/// keeps the sheet's words ([`quality_label`]).
+pub fn quality_word(preference: &QualityPreference) -> SharedString {
+    let mut chars = preference.name().chars();
+    chars.next().map_or_else(SharedString::default, |first| {
+        SharedString::from(first.to_uppercase().chain(chars).collect::<String>())
+    })
+}
+
 /// How much of a channel's chat a new pane opens with.
 ///
 /// Off is on the list rather than being a value nobody can reach, because this
@@ -469,6 +482,21 @@ mod tests {
                 !label.starts_with(char::is_lowercase),
                 "{label} is not sentence case"
             );
+        }
+    }
+
+    /// The settings' choice in a word for the pill: what the file stores, in
+    /// sentence case, and never longer than a rendition's name the pill's
+    /// room is kept for.
+    #[test]
+    fn the_settings_choice_fits_the_pill_in_a_word() {
+        let word = |preference: QualityPreference| quality_word(&preference).to_string();
+        assert_eq!(word(QualityPreference::Auto), "Auto");
+        assert_eq!(word(QualityPreference::Fixed("best".into())), "Best");
+        assert_eq!(word(QualityPreference::Fixed("1080p".into())), "1080p");
+        for (_, stored) in QUALITY_OPTIONS {
+            let word = word(QualityPreference::Fixed(stored.into()));
+            assert!(word.len() <= "1080p60".len(), "{word} overruns the pill");
         }
     }
 }

@@ -14,6 +14,7 @@
 //! Durations and easings are in [`crate::theme`] with the rest of the design
 //! tokens. Nothing here invents its own timing.
 
+use std::cell::Cell;
 use std::time::Duration;
 
 use gpui::{
@@ -39,6 +40,11 @@ pub struct Fade {
     /// animation element at all. Without that, everything currently hidden
     /// would play its fade-out once on launch.
     flips: u32,
+    /// The state the last frame drew, `visible` and `flips`, once one has:
+    /// what [`set`](Self::set) goes back to when a flip is undone before any
+    /// frame drew it. A cell because [`apply`](Self::apply) reads the fade
+    /// from a render.
+    drawn: Cell<Option<(bool, u32)>>,
 }
 
 impl Fade {
@@ -55,18 +61,29 @@ impl Fade {
         Self {
             visible: true,
             flips: 1,
+            drawn: Cell::new(None),
         }
     }
 
     /// Returns whether this actually changed anything, so callers can skip a
     /// repaint on the mouse-move events that do not cross a boundary — which
     /// is most of them.
+    ///
+    /// A flip undone before any frame drew it is no flip: the fade goes back
+    /// to the id the last frame drew under, so whatever was showing goes on
+    /// as it was. Otherwise a hide and a show in one event — a pick from a
+    /// pane's quality menu closes the menu, which may let the bar go, and the
+    /// switch it starts holds the bar up again — minted a fresh id, and the
+    /// bar that never went blinked out and faded back in.
     pub fn set(&mut self, visible: bool) -> bool {
         if self.visible == visible {
             return false;
         }
         self.visible = visible;
-        self.flips += 1;
+        self.flips = match self.drawn.get() {
+            Some((drawn, flips)) if drawn == visible => flips,
+            _ => self.flips + 1,
+        };
         true
     }
 
@@ -107,6 +124,7 @@ impl Fade {
         // 1809). So something under here that blocks the pointer goes on
         // blocking it while hidden, with nothing drawn: `.occlude()` only
         // while `is_visible`.
+        self.drawn.set(Some((self.visible, self.flips)));
         if self.flips == 0 {
             return if self.visible {
                 element.into_any_element()
@@ -232,6 +250,26 @@ mod tests {
         assert!(fade.set(false));
         assert!(fade.set(true));
         assert_eq!(fade.flips, 3);
+    }
+
+    /// A flip undone before a frame drew it goes back to the id that frame
+    /// drew under, so a bar hidden and shown again in one event goes on as
+    /// it was rather than fading in from nothing; a flip a frame did draw is
+    /// a change like any other.
+    #[test]
+    fn a_flip_undone_before_a_frame_is_no_flip() {
+        let mut fade = Fade::hidden();
+        fade.set(true);
+        fade.drawn.set(Some((fade.visible, fade.flips)));
+        let shown = fade.animation_id("controls");
+        assert!(fade.set(false), "it did change, for now");
+        assert!(fade.set(true));
+        assert_eq!(fade.animation_id("controls"), shown);
+
+        fade.set(false);
+        fade.drawn.set(Some((fade.visible, fade.flips)));
+        fade.set(true);
+        assert_ne!(fade.animation_id("controls"), shown);
     }
 
     /// The whole mechanism rests on this: GPUI keys animation state on the

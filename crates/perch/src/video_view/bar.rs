@@ -14,9 +14,13 @@
 //! tooltip is its name, and the still chat glyph of a recording with no
 //! chat replay says why there is nothing to press. The quality pill is
 //! words, saying what plays, with no tooltip and no key; the palette's
-//! `Choose quality for …` is its keyboard path. Three rules hold for every
-//! icon, through the builders here ([`bar_icon`], [`act_button`],
-//! [`menu_button`]):
+//! `Choose quality for …` is its keyboard path. While a quality somebody
+//! picked is under way it names that one instead and breathes, and only
+//! then has a tooltip, `Switching to 480p30` ([`pill_face`]); the bar stays
+//! up meanwhile and a moment after (`VideoView::sync_controls`). Three rules
+//! hold for every icon, through the builders here ([`bar_icon`],
+//! [`act_button`], [`menu_button`]), and the first two for the pill's
+//! tooltip too:
 //!
 //! - **A tooltip only while the pointer is in the window.** gpui hears the
 //!   pointer leave as a flag, never a move, so a tooltip up at the time would
@@ -52,10 +56,11 @@ use gpui::{
 };
 use gpui_component::slider::Slider;
 
-use super::{ChatButton, Menu, VideoEvent, VideoView};
+use super::{ChatButton, Menu, Switching, VideoEvent, VideoView};
 use crate::assets::Icon;
 use crate::controls::{self, Variant};
 use crate::keys::Hint;
+use crate::motion;
 use crate::seek_bar;
 use crate::stage::{MaximizeButton, Place};
 use crate::theme;
@@ -110,6 +115,40 @@ pub(super) fn cluster(place: Place, maximize: MaximizeButton) -> Cluster {
         },
         Place::PopOut => POP_OUT,
     }
+}
+
+/// What the quality pill shows, with `playing` on screen and a pick
+/// `switching` the pane, if one is under way: what plays, plainly, with no
+/// tooltip — the pill is words, and says it already — or what the pick asked
+/// for, breathing (`motion::waiting`, a state that always ends), with a
+/// tooltip that says what is going on. Its id is keyed on the words the
+/// tooltip follows, so one already up says no stale rendition after a second
+/// pick or once the switch has ended (`controls::tip`).
+pub(super) fn pill_face(playing: &SharedString, switching: Option<&Switching>) -> PillFace {
+    match switching {
+        None => PillFace {
+            id: SharedString::from("quality"),
+            label: playing.clone(),
+            waiting: false,
+            tip: None,
+        },
+        Some(switching) => PillFace {
+            id: SharedString::from(format!("quality-switching-{}", switching.to)),
+            label: switching.to.clone(),
+            waiting: true,
+            tip: Some(format!("Switching to {}", switching.to)),
+        },
+    }
+}
+
+/// The quality pill as it is drawn; see [`pill_face`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct PillFace {
+    pub(super) id: SharedString,
+    pub(super) label: SharedString,
+    /// Whether it breathes.
+    pub(super) waiting: bool,
+    pub(super) tip: Option<String>,
 }
 
 /// What the maximize control is while it offers `button`: its ids on the
@@ -316,10 +355,27 @@ impl VideoView {
         // The pill says what is playing, and opens the menu to change it.
         // Words rather than an icon, so it is the first thing to go when
         // the bar runs out of room: More then carries it as its first row.
+        // While a pick is under way it names that instead, and breathes
+        // (`pill_face`), in the same room (`theme::QUALITY_PILL_ROOM`).
         let quality = self.fit.quality.then(|| {
-            controls::pill("quality", self.qualities.playing.clone(), Variant::OnVideo).on_click(
-                cx.listener(|this, _event, _window, cx| this.toggle_menu(Menu::Quality, cx)),
-            )
+            let face = pill_face(&self.qualities.playing, self.switching.as_ref());
+            let pill = controls::pill(face.id, face.label, Variant::OnVideo)
+                // Breathing, in the lifted words a pointer would give it:
+                // the resting ones only just read over a white frame, and at
+                // the bottom of a breath would not
+                // (`controls::a_breathing_on_video_label_still_reads`).
+                .when(face.waiting, |pill| pill.text_color(theme::text()))
+                .when_some(face.tip.filter(|_| window_hovered), |pill, tip| {
+                    pill.tooltip(controls::tip(tip))
+                })
+                .on_click(
+                    cx.listener(|this, _event, _window, cx| this.toggle_menu(Menu::Quality, cx)),
+                );
+            if face.waiting {
+                motion::waiting("quality-switching", pill).into_any_element()
+            } else {
+                pill.into_any_element()
+            }
         });
 
         let chat = match self.chat {
@@ -392,6 +448,14 @@ impl VideoView {
             window,
             cx,
         );
+        // With the pill folded into More, More is where a switch under way
+        // is said (`menu::folded_quality`), so it breathes meanwhile: the
+        // bar held up for the switch has something on it that says why.
+        let more = if !self.fit.quality && self.switching.is_some() {
+            motion::waiting("more-switching", more).into_any_element()
+        } else {
+            more.into_any_element()
+        };
 
         // The pane given the watch page, or every pane back. After the pill
         // and before the buttons that never drop, since it folds into More
@@ -423,7 +487,7 @@ impl VideoView {
             // phase 4: guide. Pop out is not here: it is the header's and
             // More's, and this cluster never drops a button.
             fullscreen.into_any_element(),
-            more.into_any_element(),
+            more,
         ];
 
         // The right-hand cluster, and the one anchor every menu opens from.
@@ -648,7 +712,43 @@ pub(super) fn fit(width: f32, cluster: Cluster) -> Fit {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
     use super::*;
+
+    /// A pick switching a pane to `to`, from its rendition's row or, with
+    /// `default`, from the settings' row.
+    fn switching(to: &str, default: bool) -> Switching {
+        Switching {
+            to: SharedString::from(to.to_string()),
+            default,
+            since: Instant::now(),
+        }
+    }
+
+    /// At rest the pill says what plays, plainly, with no tooltip; while a
+    /// pick is under way it names what was picked, breathes, and says so in
+    /// a tooltip, under an id keyed on those words.
+    #[test]
+    fn the_pill_names_a_pick_under_way() {
+        let playing = SharedString::from("720p60");
+        let rest = pill_face(&playing, None);
+        assert_eq!(rest.label, playing);
+        assert!(!rest.waiting);
+        assert_eq!(rest.tip, None);
+
+        let picked = switching("480p30", false);
+        let busy = pill_face(&playing, Some(&picked));
+        assert_eq!(busy.label.as_ref(), "480p30");
+        assert!(busy.waiting);
+        assert_eq!(busy.tip.as_deref(), Some("Switching to 480p30"));
+        assert_ne!(busy.id, rest.id, "a tooltip up at rest would keep no words");
+
+        // The settings' row, by what the settings pick now.
+        let back = pill_face(&playing, Some(&switching("1080p60", true)));
+        assert_eq!(back.label.as_ref(), "1080p60");
+        assert_ne!(back.id, busy.id, "another pick drops the first one's words");
+    }
 
     /// How far through giving way a bar is: an index into [`NARROWINGS`].
     fn rank(fit: Fit) -> usize {

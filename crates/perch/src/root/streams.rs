@@ -31,7 +31,7 @@ pub(super) const NO_PLAYLIST: &str = "the recording came without a playlist";
 
 /// How a pane's stream is started: in place of whatever the pane had, or
 /// beside the picture on screen, to take over from it in place.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum How {
     /// The pane's one stream: opening, `Try again`, the settings sheet's
     /// restarts, and a restart of a pane with no picture yet. Whatever was
@@ -423,28 +423,30 @@ impl RootView {
             }
         });
 
-        let slot = &mut self.slots[index];
         match how {
             How::Cold => {
+                let slot = &mut self.slots[index];
                 slot.supervisor = Some(supervisor);
                 slot.pump = Some(pump);
                 slot.generation = generation;
-                slot.pending = None;
-                if let Some(view) = slot.video() {
+                self.set_pending(index, None, cx);
+                if let Some(view) = self.slots[index].video() {
                     view.update(cx, |view, _| view.cancel_swap());
                 }
             }
             // The stream on screen keeps its streamlink: killing it would
             // end the picture the new player is getting ready to replace.
-            // One resolving already is dropped, superseded.
+            // One resolving already is dropped, superseded; a pick says
+            // from now on that it is under way (`set_pending`).
             How::Beside(reason) => {
-                slot.pending = Some(PendingStart {
+                let pending = PendingStart {
                     supervisor,
                     pump,
                     generation,
                     for_height: pane_height,
                     reason,
-                });
+                };
+                self.set_pending(index, Some(pending), cx);
             }
         }
     }
@@ -523,6 +525,13 @@ impl RootView {
                         self.slots[index].chat.is_some(),
                     ),
                     maximize: self.maximize_button_of(key),
+                    // Nothing, but for a pick still resolving beside the
+                    // player this one replaces, which the bar goes on saying.
+                    switching: self.slots[index]
+                        .pending
+                        .as_ref()
+                        .and_then(PendingStart::switching)
+                        .cloned(),
                 };
                 // The pane's one player: its own size until the pane is
                 // measured, playing, and its position heard by the pane —
@@ -703,7 +712,7 @@ impl RootView {
         self.slots[index].pump = None;
         // And whatever was resolving beside it: there is no picture left to
         // take over from, and `Try again` starts afresh.
-        self.slots[index].pending = None;
+        self.set_pending(index, None, cx);
         // Replacing the state drops the player, and with it the frozen frame.
         let state = match reason {
             Stopped::Ended => StreamState::Ended,

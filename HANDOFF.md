@@ -78,7 +78,7 @@ App modules:
 | `trail.rs` | back and forward: the places behind and ahead, what a step passes over, and forgetting a place that is gone (pure, tested) |
 | `stage.rs` | where each pane is drawn — a pane, a mini-player tile, a window of its own, or nowhere while another pane has the watch page (`Place`) — which panes are popped out and which one is maximized (`Stage`), the cells the watch grid draws (`cells`) and what a pane's maximize control offers (`MaximizeButton`): the one owner of the answer both windows ask before drawing a player; and where a pane moved one place along the order goes (`moved`) (pure, tested) |
 | `os_window.rs` | what Perch asks of a window that gpui does not: its platform handle (`hwnd`, the one place a gpui window is asked for it — `instance::bring_forward` comes forward on it rather than looking it up itself), and keeping a pop-out above every other app (`keep_on_top`, Windows only) |
-| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams` (opening, restarting, closing, and `replace_with_video`, a recording swapped in for a live pane in place), `renditions` (what each pane plays, and when it restarts: the quality chosen against each pane's own height, `pane_height_for`, the upward re-pick when the grid changes, `sync_quality`, a pick from the pane's own menu, and how each changes what plays, `change_rendition` — beside a picture that covers the pane, to take over in place, and cold otherwise; and the root's half of that swap: what a start resolving beside a pane does with its events, `pending_event`, and what the pane keeps once its player has taken over or been given up on, `on_swapped` and `on_swap_failed`; tested), `panes` (where each pane is drawn, applied: `restage`, the one funnel every change of a pane's state, of which panes there are, of the page, of what is popped out and of what is maximized ends in; `set_slot_state`, the only write of a pane's state, which a test holds the root to; `video_in_main`, the only way the main window reaches a player, which a test holds the mini player and the pages to; and the maximize as the root drives it, `toggle_maximize`, `show_all_panes`, and `choose`, which takes it to the pane chosen; and `move_pane`, two panes swapping places in the order, from a header dropped on a pane or `Shift+←`/`Shift+→`), `pop_out` (a pane's picture in a window of its own, on top of other apps: the `PopOut` view, opening and closing it through `cx.defer`, `to_root`, the only way back to the root from it, and `offered`, Windows only), `broadcasts` (what a stopped live pane asks about its channel's past broadcasts, and whether it may offer to start by itself), `pane_actions` (what a pane asks for, by its key: a press on it or one of its controls, which takes the keys back for the root first, and its player's requests; the moment a pane key brings a pane's header up over its picture; and `run_guard`, which swallows the rest of a double-click whose first press took a player out from under the pointer — More's `Pop out`, the mini player's — where the player's own guard cannot follow), `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `prefs`, `recommended` (the rail's Recommended group: when to ask the worker, what its answer becomes, and the hooks that call it), `chrome` (pills, toasts, the rail), `mini_player` (what plays on while you browse, in the corner of the page), `title_bar` (the bar Perch draws across the top of the window — the rail button, back and forward, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`) |
+| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams` (opening, restarting, closing, and `replace_with_video`, a recording swapped in for a live pane in place), `renditions` (what each pane plays, and when it restarts: the quality chosen against each pane's own height, `pane_height_for`, the upward re-pick when the grid changes, `sync_quality`, a pick from the pane's own menu, and how each changes what plays, `change_rendition` — beside a picture that covers the pane, to take over in place, and cold otherwise; and the root's half of that swap: what a start resolving beside a pane does with its events, `pending_event`, and what the pane keeps once its player has taken over or been given up on, `on_swapped` and `on_swap_failed`; and `set_pending`, the only write of a pane's pending start, which tells its player what a pick is switching it to and which a test holds the root to; tested), `panes` (where each pane is drawn, applied: `restage`, the one funnel every change of a pane's state, of which panes there are, of the page, of what is popped out and of what is maximized ends in; `set_slot_state`, the only write of a pane's state, which a test holds the root to; `video_in_main`, the only way the main window reaches a player, which a test holds the mini player and the pages to; and the maximize as the root drives it, `toggle_maximize`, `show_all_panes`, and `choose`, which takes it to the pane chosen; and `move_pane`, two panes swapping places in the order, from a header dropped on a pane or `Shift+←`/`Shift+→`), `pop_out` (a pane's picture in a window of its own, on top of other apps: the `PopOut` view, opening and closing it through `cx.defer`, `to_root`, the only way back to the root from it, and `offered`, Windows only), `broadcasts` (what a stopped live pane asks about its channel's past broadcasts, and whether it may offer to start by itself), `pane_actions` (what a pane asks for, by its key: a press on it or one of its controls, which takes the keys back for the root first, and its player's requests; the moment a pane key brings a pane's header up over its picture; and `run_guard`, which swallows the rest of a double-click whose first press took a player out from under the pointer — More's `Pop out`, the mini player's — where the player's own guard cannot follow), `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `prefs`, `recommended` (the rail's Recommended group: when to ask the worker, what its answer becomes, and the hooks that call it), `chrome` (pills, toasts, the rail), `mini_player` (what plays on while you browse, in the corner of the page), `title_bar` (the bar Perch draws across the top of the window — the rail button, back and forward, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`) |
 | `target.rs` | what a typed or pasted thing means: a login, or a twitch.tv link to a channel or a recording; `link`, its inverse and the one place a twitch.tv URL is written, and `moment`, the second a link to a recording starts at (pure, tested) |
 | `browse.rs` | the picker page: following, popular, categories, search; which of them is on screen (`Discovery::place`) and which lists are still being waited on |
 | `channel_page.rs` | one channel's past broadcasts, and when each was; the recording card both pages use, and a stopped pane too; a recording's poster, and `archive_of`, which finds the recording of a broadcast that just ended (tested) |
@@ -89,7 +89,7 @@ App modules:
 | `layout.rs` | derives grid shape from window aspect, as `Grid::of`, the one grid the watch page, the divider drag and each pane's quality read; `quality_height`, the height a pane asks a rendition for; the page's `Body`, the title bar's height and drag edge, and the mini player's tiles, how far in it floats clear of the scrollbar, and the `Room` a browse list leaves for it; where a pop-out opens, stacked clear of where the open ones really are (`pop_out_bounds`) (pure, tested) |
 | `video_view.rs` | the player element: its sound, its hover, the picture; drawn as a pane, a mini-player tile, in a pop-out or not at all while another pane is maximized (`stage::Place`), moved between them only by `set_place`, and belonging to no window |
 | `video_view/swap.rs` | a rendition swapped in place: the new stream started beside the one on screen inside the same view, held to it by `align` (tested) and promoted once it has a picture and, on a recording, has caught up; `route`, the one rule a stream's frame wakes and its streamlink events reach the right start by (tested) |
-| `video_view/bar.rs` | the control bar over a playing picture: the seek row on a recording, the icons and their key-naming tooltips, the maximize control (`maximize_control`), what fits at the pane's width (`fit`, tested — the maximize folds into More after the quality pill), the one anchor menus open from; a pop-out's own right-hand end, Bring back and Close |
+| `video_view/bar.rs` | the control bar over a playing picture: the seek row on a recording, the icons and their key-naming tooltips, the quality pill (`pill_face`, tested — what plays, or a pick under way, breathing), the maximize control (`maximize_control`), what fits at the pane's width (`fit`, tested — the maximize folds into More after the quality pill), the one anchor menus open from; a pop-out's own right-hand end, Bring back and Close |
 | `video_view/menu.rs` | the bar's menus, the quality and More (with the maximize once the bar has folded it, and `Pop out` where the pop-out is offered): which is open (`Menu`, one at a time), the box, rows that act on the press (tested), and `run_guard`, which swallows the rest of a double-click a row took (tested) — after `Pop out`, which takes the player out of the window, the root's `run_guard` does |
 | `loudness.rs` | one pane's level and the Mute all hush over it: what mpv hears, and the only level ever reported to be remembered (pure, tested) |
 | `seek_bar.rs` | the bar on a recording, and the arithmetic behind it |
@@ -417,30 +417,62 @@ player, when the first frame with the new id arrives. A swap whose stream
 stops, whose channel closes, or that is not done in `SWAP_CEILING` (45 s)
 leaves the old player playing and emits `SwapFailed`; the root drops the
 start, and for a pick from the menu says so in a toast and hands the pane's
-override back to what plays. A re-pick that fails waits for the next growth,
-with no retry loop. A re-pick that resolves to the rendition already playing
-is dropped, and `sync_quality` leaves a pane alone while a start for a
-rendition at least as tall resolves beside it (`wants_swap`). Still cold:
-opening, `Try again`, the settings sheet's quality and credential restarts
-(a swap per pane there would be two players and two Twitch sessions per pane
-at once), and a pane whose picture does not cover it yet. Each step is in the
-log under the pane's key — `starting 1080p60 beside 480p`, `holding 1080p60
-at 616.40 for the pane at 613.90`, `reseeking`, and `swapped 480p->1080p60
-after 3930 ms; position 616.31->616.40`, with `, then 700.00` when it carried
-a seek — and `SWAP_LEAD`, `SWAP_CEILING` and `MAX_RESEEKS`, all three
-estimates, are to be tuned from it. `SWAP_LEAD` has only the new player's
-open to cover, since the pane's position is read once streamlink has
+override back to what plays. A pick is seen to be under way from the press,
+since the menu closes on it and the resolve alone takes seconds: with nothing
+changing on screen, a working switch was taken for a broken one. Its start
+carries what it asked for (`Restart::Pick`, a `video_view::Switching`: the
+rendition, or for the settings' row what the settings pick now, or for a
+stream whose renditions they cannot choose from their choice in a word that
+fits the pill's room, `settings_view::quality_word`: `Auto`, `Best`), and
+`RootView::set_pending`, the only write of `Slot::pending`, tells the player
+(`VideoView::set_switching`, a mirror like `set_chat`); a test counts the
+root's writes of the field. Not the view's own pending swap, which begins only
+once streamlink has resolved, and which `begin_swap` drops and makes again.
+Meanwhile the pill names the rendition picked and breathes
+(`motion::waiting`), in the lifted `theme::text()` rather than its resting
+colour, which at the bottom of a breath would fall to about 2.2:1 over a white
+frame (a test in `controls` measures it), with a `Switching to 480p30` tooltip
+under an id keyed on it; the menu marks the row the pick was made from,
+breathing; More's folded row says `Quality · switching to 480p30`, and More
+breathes while the pill is folded into it; and a pane's bar stays up with the
+pointer gone, then for `theme::SWITCH_LINGER` (1.5 s) after the switch ends
+either way, on a one-shot timer, so the new rendition or the old one back
+beside the toast can be read. Not a pop-out's bar, which has no pill and no
+More to say why it stayed up. The press itself hides nothing: it closes the
+menu, which may let the bar go, and the switch holds it up again in the same
+event, and `motion::Fade::set` takes a flip undone before any frame drew it
+back to the id the last frame drew under, so the bar does not blink. The same
+pick again (`RootView::pick`, `again`) leaves the start under way, and a
+player it may have lined up, alone; the same rendition from the other row
+moves only the menu's mark, and `on_swapped` marks the menu by the override as
+it is then. A re-pick that supersedes a pick of the settings' row still
+resolving, its pane grown meanwhile, stays a pick of what the settings want
+now, counted from the press (`re_pick`), so the bar does not fall quiet as if
+it had failed. Otherwise a re-pick is silent throughout. A re-pick that fails
+waits for the next growth, with no retry loop. A re-pick that resolves to the
+rendition already playing is dropped, and `sync_quality` leaves a pane alone
+while a start for a rendition at least as tall resolves beside it
+(`wants_swap`). Still cold: opening, `Try again`, the settings sheet's quality
+and credential restarts (a swap per pane there would be two players and two
+Twitch sessions per pane at once), and a pane whose picture does not cover it
+yet. Each step is in the log under the pane's key — `starting 1080p60 beside
+480p`, `holding 1080p60 at 616.40 for the pane at 613.90`, `reseeking`, and
+`swapped 480p->1080p60 after 3930 ms; position 616.31->616.40`, with `, then
+700.00` when it carried a seek and, for a pick, `(6120 ms since the pick)`
+after the first count, which is the wait somebody sat through, streamlink's
+resolve included — and `SWAP_LEAD`, `SWAP_CEILING` and `MAX_RESEEKS`, all
+three estimates, are to be tuned from it. `SWAP_LEAD` has only the new
+player's open to cover, since the pane's position is read once streamlink has
 resolved (`pending_event`): a swap's first `holding` line says what was left
-of the lead when the new player had a picture (its position less the
-pane's, 2.5 s in the example), and a first `reseeking` from behind the pane
-says the lead was not enough. Not the `swapped` line's time: it runs from
-the new player's start to the hand-over, so on a playing recording it comes
-out at about `SWAP_LEAD` whenever the lead was enough, however quickly the
-player opened. Not yet known:
-whether Twitch serves two live sessions on one token (if it does not, a live
-swap fails and the pane keeps what it plays, and live panes would go back to
-cold restarts), and what the audio does at the moment of taking over, which
-cannot be captured.
+of the lead when the new player had a picture (its position less the pane's,
+2.5 s in the example), and a first `reseeking` from behind the pane says the
+lead was not enough. Not the `swapped` line's time: it runs from the new
+player's start to the hand-over, so on a playing recording it comes out at
+about `SWAP_LEAD` whenever the lead was enough, however quickly the player
+opened. Not yet known: whether Twitch serves two live sessions on one token
+(if it does not, a live swap fails and the pane keeps what it plays, and live
+panes would go back to cold restarts), and what the audio does at the moment
+of taking over, which cannot be captured.
 
 **Animated GIFs need an `ElementId`.** From gpui's `img.rs`:
 
@@ -1479,7 +1511,8 @@ unconsidered.
   first. Both act on a click, unlike a menu's rows, which act on the press
   (see the GPUI traps). Callers build `tip` through `keys::Hint` where
   there is a key — More has none, and the quality is a pill of words with
-  no tooltip — and pass ids keyed on the state the glyph shows
+  no tooltip but while a pick is under way (`bar::pill_face`) — and pass
+  ids keyed on the state the glyph shows
   (`bar-pause`/`bar-play`); the bar takes the keys back for the root in the
   capture phase (`VideoView::return_keys`), so no button has to.
 - **Casing** — words on controls are sentence case: `Refresh`, `Open
@@ -1676,7 +1709,9 @@ header rests over it. The split:
   screen starts `theme::BAND_ROOM` down so the resting band never covers its
   words.
 - **Over the video**, only while the pointer is on it or one of its menus
-  is open: the control bar (`video_view/bar.rs`). At the left play or
+  is open, or on a pane while a quality somebody picked is under way and
+  for a moment after (`video_view::bar_wanted`): the control bar
+  (`video_view/bar.rs`). At the left play or
   pause, the speaker — crossed out whenever the pane is silent, Mute all's
   hold included — the volume slider
   and its figure; at the right the quality pill, with two panes or more the
@@ -1688,7 +1723,9 @@ header rests over it. The split:
   1:02:03`). Every icon lifts under the pointer and its tooltip says what a
   press does, and the key that does the same where there is one, from
   `keys::Hint`; More has no key, and the quality pill is words with no
-  tooltip. A narrow pane drops the figure, then the slider, then
+  tooltip. While a pick is under way the pill names it instead and
+  breathes, with a `Switching to …` tooltip, and the menu marks the row it
+  was made from (the swap trap under Video). A narrow pane drops the figure, then the slider, then
   folds the quality into More's first row and the maximize into the row
   after it (`bar::fit`, from the probe's width); play, the speaker and the
   right-hand buttons never go. The maximize control — `Maximize`, or `Show
@@ -2920,7 +2957,8 @@ should come back to where it was within noise.
 beside …`; then, only for a recording not yet lined up with the pane,
 `holding` or `reseeking` (and `unaligned after 3 reseeks; taking over
 anyway` if it gives up lining up); then `swapped A->B after N ms; position
-a->b`, or `couldn't swap to …` and why, or `called off the swap to …` when
+a->b` — `after N ms (M ms since the pick)` for a pick from the menu, M being
+the wait from the press — or `couldn't swap to …` and why, or `called off the swap to …` when
 the root moved on from it (see the swap trap under Video). A live pane, and
 a recording that opens close enough, go straight from `starting` to
 `swapped`. The log is `perch.log` in a release build and the console in a
@@ -2948,7 +2986,12 @@ whatever is drawn under it. That is the way in: the palette's `Choose quality
 for …` opens a pane's quality menu, and an open menu holds the bar up wherever
 the pointer is (`VideoView::sync_controls`). Each opening is good for one
 press. A press on a row or on any of the bar's controls closes the menu, which
-ends the hold, and the bar fades out within `theme::MOTION_HOVER`; only More
+ends the hold, and the bar fades out within `theme::MOTION_HOVER` — except
+after a row that picks a quality other than what plays on a pane whose
+picture covers it, which holds the bar up, with no blink at the press, until
+the switch ends and `theme::SWITCH_LINGER` after (a pick naming what already
+plays, or one on a pane with no picture yet, which starts cold, holds
+nothing); only More
 over the quality menu, the pill over More and More's quality row put one menu
 in place of another and keep it. So open the menu again from the palette
 before each press. Rows, the pill, More, chat and fullscreen act before the

@@ -726,4 +726,27 @@ mod tests {
             "an on-video label has to lift under the pointer, or the hover              wash is its only cue"
         );
     }
+
+    /// An on-video label that breathes — the quality pill while a pick is
+    /// under way (`video_view::bar`) — does so in the lifted words, since the
+    /// resting ones only just read over a white frame and at the bottom of a
+    /// breath (`theme::PULSE_FLOOR`) fall to about 2.2:1. Lifted, the low
+    /// point still clears 3:1, WCAG's floor for large text and for the parts
+    /// of a control, as the status screen's breathing line does over a
+    /// picture; and the top of the breath is the lifted label, legible.
+    #[test]
+    fn a_breathing_on_video_label_still_reads() {
+        let bar = theme::over_white(theme::video_chrome());
+        let lifted = Variant::OnVideo.hover_foreground();
+        let low = theme::contrast(bar.blend(lifted.opacity(theme::PULSE_FLOOR)), bar);
+        assert!(
+            low >= 3.0,
+            "a breathing on-video label reads {low:.2}:1 at the bottom of its breath"
+        );
+        let resting = Variant::OnVideo.foreground().opacity(theme::PULSE_FLOOR);
+        assert!(
+            theme::contrast(bar.blend(resting), bar) < low,
+            "the lifted words have to be the stronger"
+        );
+    }
 }

@@ -481,8 +481,22 @@ impl VideoView {
         let then = carried
             .map(|secs| format!(", then {secs:.2}"))
             .unwrap_or_default();
+        // For a pick, the wait somebody sat through as well, from the press:
+        // streamlink's resolve is in it, and the count from the new player's
+        // start is not. The root's word for the pick is still here, since it
+        // hears of this only from the event below (`on_swapped`).
+        let picked = self
+            .switching
+            .as_ref()
+            .map(|switching| {
+                format!(
+                    " ({} ms since the pick)",
+                    switching.since.elapsed().as_millis()
+                )
+            })
+            .unwrap_or_default();
         eprintln!(
-            "video: {} swapped {from}->{} after {} ms; position {from_pos:.2}->{to_pos:.2}{then}",
+            "video: {} swapped {from}->{} after {} ms{picked}; position {from_pos:.2}->{to_pos:.2}{then}",
             self.key,
             self.qualities.playing,
             since.elapsed().as_millis()

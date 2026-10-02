@@ -477,6 +477,13 @@ pub const PULSE_PERIOD: Duration = Duration::from_millis(1600);
 /// is something on the picture. `RootView::reveal_header` is the reader. A
 /// first guess, not a measurement.
 pub const HEADER_REVEAL: Duration = Duration::from_millis(1500);
+/// How long a pane's control bar stays up after a quality somebody picked has
+/// taken over or been given up on, with the pointer gone: long enough to read
+/// the pill's new words, or see the old ones back beside the toast, then the
+/// bar goes as it usually would. `VideoView::set_switching` is the reader. A
+/// first guess, like `HEADER_REVEAL`, and the same length for the same kind
+/// of glance.
+pub const SWITCH_LINGER: Duration = Duration::from_millis(1500);
 /// How faint a waiting indicator gets at the bottom of its breath. Never zero:
 /// something that vanishes entirely looks broken rather than busy.
 pub const PULSE_FLOOR: f32 = 0.45;

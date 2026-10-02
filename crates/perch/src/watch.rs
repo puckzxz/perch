@@ -42,7 +42,7 @@ use crate::motion;
 use crate::target::{self, Target};
 use crate::theme;
 use crate::video::PositionHandle;
-use crate::video_view::VideoView;
+use crate::video_view::{Switching, VideoView};
 
 /// Beyond this, panes are too small to read chat in and the CPU cost stops
 /// being worth it.
@@ -88,18 +88,28 @@ pub enum StreamState {
 
 /// Why a pane's stream is being started again beside the one on screen,
 /// which decides what becomes of an answer that changes nothing and of a
-/// start that fails.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// start that fails, and whether the pane says it is under way.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Restart {
     /// The pane grew, and the settings now pick a sharper rendition
     /// (`RootView::sync_quality`). Dropped if it resolves to the rendition
     /// already playing, and dropped quietly if it fails: the next growth
-    /// asks again.
+    /// asks again. Silent while it resolves, since nobody asked for it.
     RePick,
     /// A rendition picked from the pane's own menu, or the settings' choice
     /// picked again there (`RootView::request_quality`). Carried out
     /// whatever it resolves to, since somebody asked; a failure says so.
-    Pick,
+    /// And said while it resolves: what it carries is what the pane's bar
+    /// shows for as long as the start is pending (`VideoView::set_switching`),
+    /// so the words live exactly as long as the start does.
+    Pick(Switching),
+}
+
+impl Restart {
+    /// Whether this is a pick from the pane's menu, whatever it asked for.
+    pub fn is_pick(&self) -> bool {
+        matches!(self, Restart::Pick(_))
+    }
 }
 
 /// A start of a pane's stream resolving beside the one on screen; see
@@ -113,6 +123,18 @@ pub struct PendingStart {
     /// for no taller a pane does not start it again (`renditions`).
     pub for_height: u32,
     pub reason: Restart,
+}
+
+impl PendingStart {
+    /// What the pane is switching to because somebody picked it, while this
+    /// start resolves: `Some` for a pick and `None` for a re-pick. The one
+    /// fact `RootView::set_pending` tells the pane's player of.
+    pub fn switching(&self) -> Option<&Switching> {
+        match &self.reason {
+            Restart::Pick(switching) => Some(switching),
+            Restart::RePick => None,
+        }
+    }
 }
 
 /// One stream and everything that belongs to it.
@@ -157,6 +179,13 @@ pub struct Slot {
     /// it would end the stream the picture on screen is reading, and the
     /// pane with it. Promoted into `supervisor` once its player has taken
     /// over and the old one has been stopped (`RootView::on_swapped`).
+    ///
+    /// Written only through `RootView::set_pending`, which tells the pane's
+    /// player what a pick is switching to ([`PendingStart::switching`]), so
+    /// the bar's word for it cannot outlive the start or come before it. A
+    /// test holds the root to that. [`new`](Self::new) starts with none, and
+    /// a slot replaced whole (`RootView::replace_with_video`) or dropped
+    /// takes its player with it, so neither has a player left to tell.
     pub pending: Option<PendingStart>,
     /// Whether the pointer is over this pane's video, measured rather than
     /// reported — see `VideoView::hovered` for why that distinction matters.

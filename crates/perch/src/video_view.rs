@@ -145,6 +145,32 @@ pub struct Qualities {
     pub picked: bool,
 }
 
+/// A quality change somebody picked from a pane's menu, while it resolves
+/// beside the picture and until its player takes over: what the bar says in
+/// the meantime, so a pick that takes seconds is seen to be under way.
+///
+/// The root's fact, carried by the pending start itself
+/// (`watch::Restart::Pick`), and mirrored here on [`ChatButton`]'s pattern:
+/// written in exactly two places — [`Start::switching`] when the player is
+/// made, and [`VideoView::set_switching`], which only `RootView::set_pending`
+/// calls, the one write of the pane's pending start. Not the view's own
+/// `swap::Pending`, which comes seconds after the press, when streamlink
+/// has resolved, and which `begin_swap` drops and makes again.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Switching {
+    /// The rendition it asked for, which the pill names meanwhile: the
+    /// menu's rendition, or for the settings' row what the settings pick
+    /// at the pane's size now (`RootView::request_quality`).
+    pub to: SharedString,
+    /// Whether it was the settings' row, handing the pane back, rather than
+    /// a rendition: which row of the menu is marked meanwhile.
+    pub default: bool,
+    /// When it was picked: what the swap's log line counts the wait somebody
+    /// actually sat through from, beside its own count from the new player's
+    /// start (`swap`'s promote).
+    pub since: Instant,
+}
+
 pub struct VideoView {
     /// The pane's key (`watch::Slot::key`), which names this player in the
     /// log. A pane's key never changes in place, so neither does this.
@@ -208,6 +234,17 @@ pub struct VideoView {
     /// the maximize, of which panes there are or of what is popped out
     /// cannot leave the control offering the opposite of what a press does.
     maximize: MaximizeButton,
+    /// The quality change somebody picked, while it is under way: the pill
+    /// names it and breathes, the menu marks its row, and the bar stays up
+    /// (`sync_controls`). See [`Switching`] for why it is a mirror, and why
+    /// of the root's pending start rather than of `pending` here.
+    switching: Option<Switching>,
+    /// The bar held up for a moment once a switch has ended, either way, so
+    /// what it came to can be read: the one-shot timer that lets it go
+    /// ([`theme::SWITCH_LINGER`]), while it runs. Started by
+    /// [`set_switching`](Self::set_switching), and dropped — called off — by
+    /// the next switch.
+    linger: Option<Task<()>>,
     /// What the bar has room for at the pane's width, measured by the probe
     /// (`bar::fit`): the volume figure and slider, and the quality pill and
     /// the maximize control, which fold into More when they do not fit.
@@ -230,7 +267,8 @@ pub struct VideoView {
     /// mouse move. Asking where the pointer is fixes both.
     hovered: bool,
     /// Whether the control bar is up, and how far through fading it is.
-    /// Derived from `hovered` and the open menu by `sync_controls`.
+    /// Derived from `hovered`, the open menu, a scrub and a switch under way
+    /// (`switching`, `linger`) by `sync_controls`.
     controls: motion::Fade,
     /// Where the player is drawn. Presentation only: a tile draws no control
     /// bar, answers no hover and labels no seek bar, because the tile is a
@@ -286,6 +324,10 @@ pub struct Start {
     /// What its maximize control offers at the start; see
     /// `VideoView::maximize`.
     pub maximize: MaximizeButton,
+    /// What a pick is switching the pane to at the start, if one is under
+    /// way; see [`Switching`]. Almost always none: a new player is a cold
+    /// start, which ends whatever was resolving beside the old one.
+    pub switching: Option<Switching>,
 }
 
 impl VideoView {
@@ -346,7 +388,7 @@ impl VideoView {
             }
         });
 
-        Self {
+        let mut view = Self {
             key: start.key,
             stream,
             generation,
@@ -361,6 +403,8 @@ impl VideoView {
             root_focus: start.focus,
             chat: start.chat,
             maximize: start.maximize,
+            switching: start.switching,
+            linger: None,
             // Until the probe has measured the pane: the bar is hidden on
             // the first frame, and the probe's first pass corrects it.
             fit: bar::Fit::EVERYTHING,
@@ -374,7 +418,10 @@ impl VideoView {
             drawn_in: None,
             _pump: pump,
             _release: release,
-        }
+        };
+        // Up from the start if a pick is under way (`Start::switching`).
+        view.sync_controls();
+        view
     }
 
     /// Seconds into the recording, for whoever restarts this player and wants
@@ -539,6 +586,9 @@ impl VideoView {
         self.place = place;
         self.root_focus = focus;
         self.let_go();
+        // What holds the bar up without the pointer — a switch under way —
+        // holds it up in the new place too, from a fade started over.
+        self.sync_controls();
         cx.notify();
     }
 
@@ -581,17 +631,49 @@ impl VideoView {
     }
 
     /// Recompute whether the control bar should be up, and report whether that
-    /// changed anything.
-    ///
-    /// It stays up while a menu is open even after the pointer leaves, or
-    /// reaching for an option would dismiss the menu on the way. That is also
-    /// what lets the palette open a menu with the pointer nowhere near.
+    /// changed anything; the rule is [`bar_wanted`]'s.
     fn sync_controls(&mut self) -> bool {
-        // And while the thumb is held, wherever the pointer has dragged it:
-        // a bar that faded out mid-scrub would take the thumb with it.
-        let visible =
-            draws_bar(self.place) && (self.hovered || self.menu.is_some() || self.scrub.is_some());
+        let visible = bar_wanted(
+            self.place,
+            BarHolds {
+                hovered: self.hovered,
+                menu: self.menu.is_some(),
+                scrub: self.scrub.is_some(),
+                switch: self.switching.is_some() || self.linger.is_some(),
+            },
+        );
         self.controls.set(visible)
+    }
+
+    /// What a pick is switching the pane to now, from `RootView::set_pending`,
+    /// the one write of the pane's pending start; see [`Switching`] for why
+    /// nothing else calls this. Does nothing when nothing changed.
+    ///
+    /// A switch that ends — taken over, given up on, called off, or
+    /// superseded by a cold start — leaves the bar up for
+    /// [`theme::SWITCH_LINGER`], so what it came to can be read: the new
+    /// rendition on the pill, or the old one back beside the root's toast.
+    /// A one-shot timer lets it go, and repaints only if that brings the bar
+    /// down; nothing polls. A new switch calls a linger still running off.
+    pub fn set_switching(&mut self, switching: Option<Switching>, cx: &mut Context<Self>) {
+        if self.switching == switching {
+            return;
+        }
+        let ended = lingers_after(self.switching.as_ref(), switching.as_ref());
+        self.switching = switching;
+        self.linger = ended.then(|| {
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(theme::SWITCH_LINGER).await;
+                let _ = this.update(cx, |this, cx| {
+                    this.linger = None;
+                    if this.sync_controls() {
+                        cx.notify();
+                    }
+                });
+            })
+        });
+        self.sync_controls();
+        cx.notify();
     }
 
     /// Hand the keys back to the root, for a press on the control bar or on
@@ -644,7 +726,8 @@ impl VideoView {
     }
 
     /// Whether this pane's quality was picked from its own menu, for a choice
-    /// that did not need a new player to take effect.
+    /// that did not need a new player to take effect, and once a player
+    /// started beside the picture has taken over (`RootView::on_swapped`).
     pub fn set_picked(&mut self, picked: bool, cx: &mut Context<Self>) {
         self.qualities.picked = picked;
         cx.notify();
@@ -741,6 +824,47 @@ fn draws_bar(place: Place) -> bool {
         Place::Pane | Place::PopOut => true,
         Place::Tile | Place::Offstage => false,
     }
+}
+
+/// What may be holding a player's control bar up; see [`bar_wanted`].
+#[derive(Clone, Copy, Debug, Default)]
+struct BarHolds {
+    /// The pointer is over the player.
+    hovered: bool,
+    /// One of its menus is open.
+    menu: bool,
+    /// The seek bar's thumb is held.
+    scrub: bool,
+    /// A pick is switching its quality, or one ended a moment ago
+    /// ([`theme::SWITCH_LINGER`]).
+    switch: bool,
+}
+
+/// Whether the control bar of a player in `place` is up, given what is
+/// holding it.
+///
+/// Only where a bar is drawn at all ([`draws_bar`]). There, while the
+/// pointer is over the player; while a menu is open even after the pointer
+/// leaves, or reaching for an option would dismiss the menu on the way —
+/// which is also what lets the palette open a menu with the pointer nowhere
+/// near; and while the thumb is held, wherever the pointer has dragged it,
+/// since a bar that faded out mid-scrub would take the thumb with it.
+///
+/// And on a pane, while a quality somebody picked is under way and for a
+/// moment after: the pill saying so is on the bar, and a bar that faded
+/// with the pointer gone hid the only sign the pick was being carried out.
+/// Not in a pop-out, whose bar has no pill and no More, so nothing on it
+/// would say why it stayed up.
+fn bar_wanted(place: Place, holds: BarHolds) -> bool {
+    let switch = holds.switch && place == Place::Pane;
+    draws_bar(place) && (holds.hovered || holds.menu || holds.scrub || switch)
+}
+
+/// Whether a change of what a pick is switching to, from `old` to `new`,
+/// leaves the bar lingering: only a switch that has ended. One switch giving
+/// way to another is still under way, and a first one is nothing ending.
+fn lingers_after(old: Option<&Switching>, new: Option<&Switching>) -> bool {
+    old.is_some() && new.is_none()
 }
 
 impl VideoView {
@@ -971,5 +1095,77 @@ mod tests {
         for hidden in [false, true] {
             assert_eq!(ChatButton::of(hidden, false), ChatButton::Unavailable);
         }
+    }
+
+    /// A pick switching a pane to `to`, from its rendition's row or, with
+    /// `default`, from the settings' row.
+    fn switching(to: &str, default: bool) -> Switching {
+        Switching {
+            to: SharedString::from(to.to_string()),
+            default,
+            since: Instant::now(),
+        }
+    }
+
+    /// Every place a player can be.
+    const PLACES: [Place; 4] = [Place::Pane, Place::PopOut, Place::Tile, Place::Offstage];
+
+    /// The bar is up while the pointer is on the player, a menu is open or
+    /// the thumb is held, wherever a bar is drawn; nowhere else, and not
+    /// with nothing holding it.
+    #[test]
+    fn the_bar_follows_the_pointer_menus_and_scrubs() {
+        let holds = [
+            BarHolds {
+                hovered: true,
+                ..BarHolds::default()
+            },
+            BarHolds {
+                menu: true,
+                ..BarHolds::default()
+            },
+            BarHolds {
+                scrub: true,
+                ..BarHolds::default()
+            },
+        ];
+        for place in PLACES {
+            assert!(!bar_wanted(place, BarHolds::default()), "{place:?}");
+            for hold in holds {
+                assert_eq!(
+                    bar_wanted(place, hold),
+                    draws_bar(place),
+                    "{place:?} {hold:?}"
+                );
+            }
+        }
+    }
+
+    /// A quality change somebody picked holds a pane's bar up with the
+    /// pointer gone, from the press and through the moment after it ends;
+    /// not a pop-out's, whose bar has no pill to say why, nor a tile's or an
+    /// offstage player's, which draw none.
+    #[test]
+    fn a_switch_holds_a_panes_bar_up() {
+        let switch = BarHolds {
+            switch: true,
+            ..BarHolds::default()
+        };
+        assert!(bar_wanted(Place::Pane, switch));
+        for place in [Place::PopOut, Place::Tile, Place::Offstage] {
+            assert!(!bar_wanted(place, switch), "{place:?}");
+        }
+    }
+
+    /// Only a switch that has ended leaves the bar lingering: not the first
+    /// one, nor one giving way to another, nor nothing staying nothing.
+    #[test]
+    fn the_bar_lingers_only_once_a_switch_ends() {
+        let a = switching("480p30", false);
+        let b = switching("720p60", true);
+        assert!(lingers_after(Some(&a), None), "taken over or given up");
+        assert!(!lingers_after(None, Some(&a)), "just picked");
+        assert!(!lingers_after(Some(&a), Some(&b)), "picked again");
+        assert!(!lingers_after(None, None));
     }
 }

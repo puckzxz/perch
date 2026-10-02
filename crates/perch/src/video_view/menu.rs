@@ -15,11 +15,12 @@
 //! (`RootView::run_guard`).
 
 use gpui::{
-    canvas, div, prelude::*, px, Animation, AnimationExt, Context, DispatchPhase, Div, ElementId,
-    MouseButton, MouseDownEvent, SharedString, Stateful, Window,
+    canvas, div, prelude::*, px, Animation, AnimationExt, AnyElement, Context, DispatchPhase, Div,
+    ElementId, MouseButton, MouseDownEvent, SharedString, Stateful, Window,
 };
 
-use super::{bar, VideoEvent, VideoView};
+use super::{bar, Switching, VideoEvent, VideoView};
+use crate::motion;
 use crate::seek_bar;
 use crate::stage::Place;
 use crate::target;
@@ -153,12 +154,18 @@ impl VideoView {
     /// renditions. Picking a rendition holds it for as long as the pane is
     /// open, and until this row existed nothing handed the pane back short of
     /// closing it.
+    ///
+    /// The row marked is the one chosen ([`chosen`]): while a pick is under
+    /// way, the row it was made from, breathing, rather than what still
+    /// plays — the menu opened again mid-switch says what was asked for.
     fn quality_rows(&self, cx: &mut Context<Self>) -> Vec<Stateful<Div>> {
-        let picked = self.qualities.picked;
+        let switching = self.switching.as_ref();
+        let marked = chosen(self.qualities.picked, &self.qualities.playing, switching);
+        let waiting = switching.is_some();
         let mut rows = vec![quality_option(
             "quality-default",
             self.qualities.default.clone(),
-            !picked,
+            Mark::of(marked == Chosen::Default, waiting),
             None,
             cx,
         )
@@ -166,11 +173,11 @@ impl VideoView {
         .border_color(theme::border())];
 
         for (index, name) in self.qualities.available.iter().enumerate() {
-            let selected = picked && name.as_str() == self.qualities.playing.as_ref();
+            let selected = marked == Chosen::Rendition(name.as_str());
             rows.push(quality_option(
                 ("quality-option", index),
                 SharedString::from(name.clone()),
-                selected,
+                Mark::of(selected, waiting),
                 Some(name.clone()),
                 cx,
             ));
@@ -195,7 +202,7 @@ impl VideoView {
         if !self.fit.quality {
             folded.push(menu_row(
                 "more-quality",
-                format!("Quality · {}", self.qualities.playing).into(),
+                folded_quality(&self.qualities.playing, self.switching.as_ref()),
                 false,
                 // In place of this menu, as if from the pill.
                 |this, _window, cx| this.open_menu(Menu::Quality, cx),
@@ -321,16 +328,84 @@ pub(crate) fn rest_of_row_run(row_run: bool, click_count: usize) -> bool {
     row_run && click_count > 1
 }
 
+/// Which row of a pane's quality menu is marked as the one chosen; see
+/// [`chosen`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Chosen<'a> {
+    /// The settings' choice, the first row.
+    Default,
+    /// The rendition of this name.
+    Rendition(&'a str),
+}
+
+/// The row a pane's quality menu marks, with `playing` on screen, `picked`
+/// from the menu or not, and a pick `switching` the pane, if one is under
+/// way: the row that pick was made from, from the moment it is made;
+/// otherwise the rendition playing if it was picked, or the settings' row if
+/// not.
+pub(super) fn chosen<'a>(
+    picked: bool,
+    playing: &'a str,
+    switching: Option<&'a Switching>,
+) -> Chosen<'a> {
+    match switching {
+        Some(switching) if switching.default => Chosen::Default,
+        Some(switching) => Chosen::Rendition(&switching.to),
+        None if picked => Chosen::Rendition(playing),
+        None => Chosen::Default,
+    }
+}
+
+/// More's quality row, while the pill is folded into it: what plays, or
+/// what a pick under way is switching to.
+pub(super) fn folded_quality(
+    playing: &SharedString,
+    switching: Option<&Switching>,
+) -> SharedString {
+    match switching {
+        Some(switching) => format!("Quality · switching to {}", switching.to).into(),
+        None => format!("Quality · {playing}").into(),
+    }
+}
+
+/// How a row of the quality menu is marked: not at all, as the one chosen,
+/// or as the one chosen and still being switched to, which breathes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Mark {
+    None,
+    Chosen,
+    Switching,
+}
+
+impl Mark {
+    /// A row `selected` or not, in a menu whose pane is `switching` or not.
+    fn of(selected: bool, switching: bool) -> Self {
+        match (selected, switching) {
+            (false, _) => Mark::None,
+            (true, false) => Mark::Chosen,
+            (true, true) => Mark::Switching,
+        }
+    }
+}
+
 /// One row of the quality menu. `request` is what choosing it asks for: a
 /// rendition, or `None` for the settings' choice.
 fn quality_option(
     id: impl Into<ElementId>,
     label: SharedString,
-    selected: bool,
+    mark: Mark,
     request: Option<String>,
     cx: &mut Context<VideoView>,
 ) -> Stateful<Div> {
-    menu_row(
+    let selected = mark != Mark::None;
+    // The row being switched to breathes its words, as the pill does; the
+    // row itself, and its highlight under the pointer, stay still.
+    let label = if mark == Mark::Switching {
+        motion::waiting("quality-option-switching", div().child(label)).into_any_element()
+    } else {
+        label.into_any_element()
+    };
+    row_of(
         id,
         label,
         selected,
@@ -373,6 +448,18 @@ fn menu_row(
     on_press: impl Fn(&mut VideoView, &mut Window, &mut Context<VideoView>) + 'static,
     cx: &mut Context<VideoView>,
 ) -> Stateful<Div> {
+    row_of(id, label.into_any_element(), selected, on_press, cx)
+}
+
+/// [`menu_row`], with its words as any element: the quality menu's row being
+/// switched to breathes them (`quality_option`).
+fn row_of(
+    id: impl Into<ElementId>,
+    label: AnyElement,
+    selected: bool,
+    on_press: impl Fn(&mut VideoView, &mut Window, &mut Context<VideoView>) + 'static,
+    cx: &mut Context<VideoView>,
+) -> Stateful<Div> {
     div()
         .id(id.into())
         .px(px(theme::PANEL_PAD))
@@ -408,7 +495,67 @@ fn menu_row(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
     use super::*;
+
+    /// A pick switching a pane to `to`, from its rendition's row or, with
+    /// `default`, from the settings' row.
+    fn switching(to: &str, default: bool) -> Switching {
+        Switching {
+            to: SharedString::from(to.to_string()),
+            default,
+            since: Instant::now(),
+        }
+    }
+
+    /// At rest the menu marks the rendition playing if it was picked, and
+    /// the settings' row if not.
+    #[test]
+    fn the_menu_marks_what_plays_at_rest() {
+        assert_eq!(chosen(true, "720p60", None), Chosen::Rendition("720p60"));
+        assert_eq!(chosen(false, "720p60", None), Chosen::Default);
+    }
+
+    /// While a pick is under way the menu marks the row it was made from,
+    /// whatever still plays and whether that was picked.
+    #[test]
+    fn the_menu_marks_a_pick_from_the_press() {
+        let rendition = switching("480p30", false);
+        let default = switching("720p60", true);
+        for picked in [false, true] {
+            assert_eq!(
+                chosen(picked, "720p60", Some(&rendition)),
+                Chosen::Rendition("480p30")
+            );
+            assert_eq!(
+                chosen(picked, "1080p60", Some(&default)),
+                Chosen::Default,
+                "the settings' row, even when they pick a rendition by name"
+            );
+        }
+    }
+
+    /// More's folded quality row says what plays, or what a pick under way
+    /// is switching to.
+    #[test]
+    fn mores_quality_row_says_a_switch() {
+        let playing = SharedString::from("720p60");
+        assert_eq!(folded_quality(&playing, None).as_ref(), "Quality · 720p60");
+        assert_eq!(
+            folded_quality(&playing, Some(&switching("480p30", false))).as_ref(),
+            "Quality · switching to 480p30"
+        );
+    }
+
+    /// Only the chosen row of a menu whose pane is switching breathes.
+    #[test]
+    fn only_the_row_being_switched_to_breathes() {
+        assert_eq!(Mark::of(false, false), Mark::None);
+        assert_eq!(Mark::of(false, true), Mark::None);
+        assert_eq!(Mark::of(true, false), Mark::Chosen);
+        assert_eq!(Mark::of(true, true), Mark::Switching);
+    }
 
     #[test]
     fn toggling_the_open_menu_closes_it() {
