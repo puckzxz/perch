@@ -82,7 +82,7 @@ App modules:
 | `trail.rs` | back and forward: the places behind and ahead, what a step passes over, and forgetting a place that is gone (pure, tested) |
 | `stage.rs` | where each pane is drawn — a pane, a mini-player tile, a window of its own, or nowhere while another pane has the watch page (`Place`) — which panes are popped out and which one is maximized (`Stage`), the cells the watch grid draws (`cells`) and what a pane's maximize control offers (`MaximizeButton`): the one owner of the answer both windows ask before drawing a player; and where a pane moved one place along the order goes (`moved`) (pure, tested) |
 | `os_window.rs` | what Perch asks of a window that gpui does not: its platform handle (`hwnd`, the one place a gpui window is asked for it — `instance::bring_forward` comes forward on it rather than looking it up itself), and keeping a pop-out above every other app (`keep_on_top`, Windows only) |
-| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams` (opening, restarting, closing, and `replace_with_video` and `replace_with_channel`, a recording swapped in for a live pane in place and the channel back in a recording's, both through `replace_slot`), `renditions` (what each pane plays, and when it restarts: the quality chosen against each pane's own height, `pane_height_for`, the upward re-pick when the grid changes, `sync_quality`, a pick from the pane's own menu, and how each changes what plays, `change_rendition` — beside a picture that covers the pane, to take over in place, and cold otherwise; and the root's half of that swap: what a start resolving beside a pane does with its events, `pending_event`, and what the pane keeps once its player has taken over or been given up on, `on_swapped` and `on_swap_failed`; and `set_pending`, the only write of a pane's pending start, which tells its player what a pick is switching it to and which a test holds the root to; tested), `panes` (where each pane is drawn, applied: `restage`, the one funnel every change of a pane's state, of which panes there are, of the page, of what is popped out and of what is maximized ends in; `set_slot_state`, the only write of a pane's state, which a test holds the root to; `video_in_main`, the only way the main window reaches a player, which a test holds the mini player and the pages to; and the maximize as the root drives it, `toggle_maximize`, `show_all_panes`, and `choose`, which takes it to the pane chosen; and `move_pane`, two panes swapping places in the order, from a header dropped on a pane or `Shift+←`/`Shift+→`), `pop_out` (a pane's picture in a window of its own, on top of other apps: the `PopOut` view, opening and closing it through `cx.defer`, `to_root`, the only way back to the root from it, and `offered`, Windows only), `broadcasts` (what a stopped live pane asks about its channel's past broadcasts, and whether it may offer to start by itself), `rewind` (a live pane's timeline: when each live player's broadcast began, `sync_live_since`, a press on it carried out at once or when the ask for the archive is answered, and the archive opened in the pane's place; and the way back: whether each recording's broadcast is still on, `still_live` and `sync_back_to_live`, and `LIVE` pressed, `back_to_live`), `hearing` (which panes are heard: More's `Only this one` and `Hear all again` through Mute all's hush, and `sync_hear_only`, the one writer of every player's `HearOnly` mirror after `Start`), `ad_breaks` (a pane's ad-break notice: begun on `StreamEvent::AdBreak`, ticked once a second by a timer the slot owns, taken down when it is over), `guide` (the guide over the watch page as the root runs it: `toggle_guide` from a pane's Guide button, which opens, moves or closes it, `close_guide`, `sync_guide_buttons`, the one writer of every player's `guide_from_here` mirror after `Start`, `fill_guide` through `fetch`, a card's Watch in place of the pane the guide was opened from — `replace_with_channel` — or `+ Add` through `Action::Add`, a category opened inside it, and the panel's shell: where it sits, the press outside that closes it, its probe into the veil), `pane_actions` (what a pane asks for, by its key: a press on it or one of its controls, which takes the keys back for the root first, and its player's requests; the moment a pane key brings a pane's header up over its picture; and `run_guard`, which swallows the rest of a double-click whose first press took a player out from under the pointer — More's `Pop out`, the mini player's — where the player's own guard cannot follow), `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `prefs`, `recommended` (the rail's Recommended group: when to ask the worker, what its answer becomes, and the hooks that call it), `last_live` (when the offline follows were last live: when to ask the worker, and what its answer does), `shared_chat` (Shared Chat labels: each chat watched as it is made, live or a replay (`watch_chat`), its word about a partner it cannot name turned into one ask per id, and the names handed to every chat), `badges` (chat badges: a chat's word about its room answered with the badges known for it, the global and per-room books asked for once each, and every answer handed to the chats it is for), `chrome` (pills, toasts, the rail, and its preview cards' state and timer, `point_rail_row`), `mini_player` (what plays on while you browse, in the corner of the page), `title_bar` (the bar Perch draws across the top of the window — the rail button, back and forward, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`) |
+| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams` (opening, restarting, closing, and `replace_with_video` and `replace_with_channel`, a recording swapped in for a live pane in place and the channel back in a recording's, both through `replace_slot`), `renditions` (what each pane plays, and when it restarts: the quality chosen against each pane's own height, `pane_height_for`, the upward re-pick when the grid changes, `sync_quality`, a pick from the pane's own menu, and how each changes what plays, `change_rendition` — beside a picture that covers the pane, to take over in place, and cold otherwise; and the root's half of that swap: what a start resolving beside a pane does with its events, `pending_event`, and what the pane keeps once its player has taken over or been given up on, `on_swapped` and `on_swap_failed`; and `set_pending`, the only write of a pane's pending start, which tells its player what a pick is switching it to and which a test holds the root to; tested), `panes` (where each pane is drawn, applied: `restage`, the one funnel every change of a pane's state, of which panes there are, of the page, of what is popped out and of what is maximized ends in; `set_slot_state`, the only write of a pane's state, which a test holds the root to; `video_in_main`, the only way the main window reaches a player, which a test holds the mini player and the pages to; and the maximize as the root drives it, `toggle_maximize`, `show_all_panes`, and `choose`, which takes it to the pane chosen; and `move_pane`, two panes swapping places in the order, from a header dropped on a pane or `Shift+←`/`Shift+→`), `pop_out` (a pane's picture in a window of its own, on top of other apps: the `PopOut` view, opening and closing it through `cx.defer`, `to_root`, the only way back to the root from it, and `offered`, Windows only), `broadcasts` (what a stopped live pane asks about its channel's past broadcasts, and whether it may offer to start by itself), `rewind` (a live pane's timeline: when each live player's broadcast began, `sync_live_since`, a press on it carried out at once or when the ask for the archive is answered, and the archive opened in the pane's place; and the way back: whether each recording's broadcast is still on, `still_live` and `sync_back_to_live`, and `LIVE` pressed, `back_to_live`), `hearing` (which panes are heard: More's `Only this one` and `Hear all again` through Mute all's hush, and `sync_hear_only`, the one writer of every player's `HearOnly` mirror after `Start`), `ad_breaks` (a pane's ad-break notice: begun on `StreamEvent::AdBreak`, ticked once a second by a timer the slot owns, taken down when it is over), `guide` (the guide over the watch page as the root runs it: `toggle_guide` from a pane's Guide button, which opens, moves or closes it, `close_guide`, `sync_guide_buttons`, the one writer of every player's `guide_from_here` mirror after `Start`, `fill_guide` through `fetch`, a card's Watch in place of the pane the guide was opened from — `replace_with_channel` — or `+ Add` through `Action::Add`, a category opened inside it, and the panel's shell: where it sits, the press outside that closes it, its probe into the veil), `pane_actions` (what a pane asks for, by its key: a press on it or one of its controls, which takes the keys back for the root first, and its player's requests; the moment a pane key brings a pane's header up over its picture; `copy`, the one place the clipboard is written; and `run_guard`, which swallows the rest of a double-click whose first press took a player out from under the pointer — More's `Pop out`, the mini player's — where the player's own guard cannot follow), `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `prefs`, `recommended` (the rail's Recommended group: when to ask the worker, what its answer becomes, and the hooks that call it), `last_live` (when the offline follows were last live: when to ask the worker, and what its answer does), `shared_chat` (Shared Chat labels: each chat watched as it is made, live or a replay (`watch_chat`), its word about a partner it cannot name turned into one ask per id, and the names handed to every chat), `badges` (chat badges: a chat's word about its room answered with the badges known for it, the global and per-room books asked for once each, and every answer handed to the chats it is for), `chrome` (pills, toasts, the rail, and its preview cards' state and timer, `point_rail_row`), `mini_player` (what plays on while you browse, in the corner of the page), `title_bar` (the bar Perch draws across the top of the window — the rail button, back and forward, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`) |
 | `target.rs` | what a typed or pasted thing means: a login, or a twitch.tv link to a channel or a recording; `link`, its inverse and the one place a twitch.tv URL is written, and `moment`, the second a link to a recording starts at (pure, tested) |
 | `browse.rs` | the picker page: home, popular, categories, search; which of them is on screen (`Discovery::place`) and which lists are still being waited on (`is_loading`, and by key for the guide, `is_pending` and `error_for`); the stream card both the page and the guide draw (`card`, offering what `CardOffers` says) |
 | `channel_page.rs` | one channel's past broadcasts, and when each was; the recording card both pages use, and a stopped pane too; a recording's poster, and `archive_of`, which finds the recording of a broadcast that just ended (tested) |
@@ -110,6 +110,7 @@ App modules:
 | `chat/room.rs` | what the room says, as the chat pane keeps it: `ROOMSTATE`'s modes merged (`room_state`, which also loads the third-party emotes for a new room or a full line) with their line at the foot (`modes_line`), and a timeout or ban greying its person's rows (`clear_person`) |
 | `chat/badges.rs` | the chat pane's badges: the books the root hands it (`set_badges`) and the group before a name (`badge_group`) |
 | `chat/reply.rs` | a reply's line above it (`reply_line`), and whether its first word is the `@parent` that line already says (`skips_leading_mention`, pure, tested) |
+| `chat/copy_menu.rs` | a chat row's right-click menu: what each entry copies from a row (`entries`, pure, tested), which link or emote the press was on (`press_target`), opening it at the pointer (`row_menu`), and the menu, deferred and anchored, with rows that act on the press (tested) |
 | `chat_display.rs` | how every chat is drawn: `ChatDisplay`, the text-size steps, `Metrics::of` (line, emote, badge, padding and piece budget from the size) and `draws_time_break` (pure, tested) |
 | `chat_badges.rs` | chat badges worked out: Helix's answers as books by set and version, a channel's own picture over the global one (`ChatBadges::art`), the tooltip (`tooltip`, `Subscriber, 14 months`), and which books to ask for (`Library`, once each a session) (pure, tested) |
 | `chat_words.rs` | what a chat says about itself in words: a timeout or ban (`ban_notice`), the line above a reply (`reply_context`), the line of modes and a mode's notice (`modes_line`, `mode_notice`) (pure, tested) |
@@ -1205,21 +1206,44 @@ player sit on the window's edge as well and do not gate theirs yet.
 `cx.write_to_clipboard(gpui::ClipboardItem::new_string(..))` (app.rs:1041),
 which needs no focus and no window, and opening a link in the browser is
 `cx.open_url` (app.rs:1078). Perch writes the clipboard in one place,
-`RootView::on_pane_action`'s `CopyLink`, followed by the toast that says it
-did. Each platform has its own `write_to_clipboard` under gpui's; the macOS
-one is compiled by CI's Mac leg and has never been run for Perch.
+`RootView::copy`, followed by the toast that says it did: `Copy link` from
+More or the palette, and a chat row's copy menu, whose chat asks the root
+(`ChatViewEvent::Copy`) rather than writing it itself. Each platform has its
+own `write_to_clipboard` under gpui's; the macOS one is compiled by CI's Mac
+leg and has never been run for Perch.
+
+**The right button arrives as itself.** Windows' `WM_RBUTTONDOWN` and
+`WM_RBUTTONUP` are dispatched as `MouseDown`/`MouseUp` with
+`MouseButton::Right` (gpui's windows/events.rs:82-88), so
+`on_mouse_down(MouseButton::Right, ..)` hears a right press, bubbling from
+the element under the pointer outward like a left one, and the root's
+`track_focus` hears it too (it takes any button, div.rs:2025-2037). A click,
+though, is only ever made from the left button (div.rs:2139), so a link's
+`on_click` never fires on a right press. The chat's copy menu leans on the
+order: a link or an emote notes that it was pressed, and its row, which
+hears the same press next, opens the menu about it (`chat::copy_menu`).
 
 **`deferred` leaves every clip behind.** A deferred element is prepainted
 and painted after the whole tree, with the element offset it was given but
 none of its ancestors' content masks (`Window::defer_draw`,
 `prepaint_deferred_draws`), and its hitboxes go in last, so it is on top for
 the pointer as well as the eye. That is what lets the rail's preview card
-stand beside a row of a scrolling, clipped list (`sidebar::row`): it is
-`deferred(anchored()..)`, with `anchored` keeping it inside the window. It
-is also why it may not take part in anything the tree is clipped for: the
-root's content wrapper clips the toasts and the mini player off the title
-bar (below), and a deferred element is not held by that. The preview card
-has no listeners, so it has no hitbox at all.
+stand beside a row of a scrolling, clipped list (`sidebar::row`), and a
+chat's copy menu reach past its chat (`chat::copy_menu`): each is
+`deferred(anchored()..)`, with `anchored` keeping it inside the window.
+It is also why neither may take part in anything the tree is clipped for:
+the root's content wrapper clips the toasts and the mini player off the
+title bar (below), and a deferred element is not held by that. The preview
+card has no listeners, so it has no hitbox at all, and the copy menu opens
+at a press inside a chat, below the bar, and occludes. It keeps the text
+style it was deferred under, so a menu deferred from inside a chat would
+take the chat's text size and leading; the copy menu sets its own. And it
+is drawn over the modals too: the palette and the settings sheet are plain
+children of the content wrapper, not deferred, so a copy menu left open
+when either opens by its key (`Ctrl+K`, `Ctrl+,`) floated over the scrim
+and took the presses meant for the modal under it. Opening either closes
+every chat's copy menu first (`RootView::close_copy_menus`); a press on the
+gear needs nothing, since the menu's own press-outside closes it.
 
 **A notify from a probe asks for no frame.** A `canvas` probe's first
 closure runs in prepaint (`DrawPhase::Prepaint`, window.rs:2014), and there
@@ -3028,6 +3052,39 @@ position. The check is measured — `viewport_bounds` against `mouse_position`
 — like every hover here, so a pointer that leaves the window without a move
 event still releases the rows at the next repaint. A `CLEARMSG` greys the row
 it names rather than removing it, keyed on the `id` tag `ChatMessage` carries.
+The copy menu holds the rows too while it is open, wherever the pointer goes,
+and gives the hold back to the pointer when it closes, so `Chat paused` stays
+up under a pointer still on the chat rather than the rows landing on the
+close.
+
+**A right-click on a row offers to copy it.** gpui's text cannot be
+drag-selected, and a message is a row of separate words and pictures besides,
+so the pieces are copied whole: `Copy message` (the text as sent, so emote
+names stand where the pictures were and a reply keeps its `@name`), `Copy
+name` (the display name, as drawn), `Copy link` while the row has one — the
+one pressed, or else its first, written as the chat opens it, a bare host
+with its `https://` — and `Copy emote name` when the press was on an emote.
+An event copies its note and its writer, or Twitch's sentence alone; the
+app's own notices, their words. `chat::copy_menu::entries` decides, pure and
+tested, from the row as it was when the menu opened. The menu is the chat's
+own state, not the root's as the chat options menu is, because what it offers
+is the chat's rows: the chat opens it, draws it (deferred, at the pointer;
+see the GPUI traps) and closes it — on a press outside it, in the capture
+phase, so that press still lands, a right-click on another row reopening it
+there; on `Esc`, through `RootView::close_menus`; when the palette or the
+settings sheet opens, which it would otherwise float over; and with the
+chat, when `let_go_hold` puts it away — the chat gone off the screen, or
+hidden with `C` or its glyph (`toggle_chat`) — or a replay's `Reset` clears
+its rows. The emote's right press listens on the picture, as its tooltip
+does, not on the line-high wrapper the picture overhangs. A row acts
+on the press, as every menu's does, and asks the root to copy
+(`ChatViewEvent::Copy`), which writes the clipboard, toasts what it copied
+(`Message copied`, `Name copied`, `Link copied`, `Emote name copied`) and
+takes the rest of the press's run, so a double-click cannot open the link the
+closed menu leaves under the pointer. It occludes, so a press on it reaches
+nothing under it; the panes' probes still see through it, as they see through
+everything but the guide (`crate::veil`), so a menu reaching over the next
+pane can bring that pane's bar up under the pointer.
 
 **Shared Chat copies are labelled with the channel they came from.** In a
 Shared Chat session a line said in any of the channels is copied into the

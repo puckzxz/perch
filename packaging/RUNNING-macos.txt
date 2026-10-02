@@ -172,6 +172,9 @@ that folds the rail away, back and forward, the search box and Settings, on
 either page. Rest the pointer on a live channel in the rail for a moment to
 see its picture and title beside it.
 
+Right-click a chat message to copy it, its sender's name, a link in it or the
+name of the emote you clicked on.
+
 
 perch is MIT licensed; see LICENSE. Not affiliated with, endorsed by, or
 connected to Twitch Interactive, Inc.

@@ -68,6 +68,8 @@ impl RootView {
         self.palette_selected = 0;
 
         if self.palette_open {
+            // Not under a chat's copy menu, which would draw over it.
+            self.close_copy_menus(cx);
             // Opened on a query from last time, the first thing you type lands
             // in the middle of it.
             self.palette_input

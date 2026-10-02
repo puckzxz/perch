@@ -50,6 +50,8 @@ impl RootView {
         if self.palette_open {
             self.toggle_palette(window, cx);
         }
+        // Nor under a chat's copy menu, which would draw over it.
+        self.close_copy_menus(cx);
         self.focus.focus(window);
 
         // Only the fields it shows: whatever else the app writes while the

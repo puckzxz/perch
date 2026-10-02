@@ -75,8 +75,8 @@ impl RootView {
             // moment is offered, and the palette's row is More by name.
             PaneAction::OpenOnTwitch => cx.open_url(&self.slots[index].link(true)),
             PaneAction::CopyLink => {
-                cx.write_to_clipboard(ClipboardItem::new_string(self.slots[index].link(true)));
-                self.toast("Link copied", cx);
+                let link = self.slots[index].link(true);
+                self.copy(link, "Link copied", cx);
             }
             // Out into a window of its own, and back. This arrives with the
             // main window whoever asked — the pop-out's bar through the
@@ -141,10 +141,11 @@ impl RootView {
         }
     }
 
-    /// Close every menu open over a pane: a pane's chat options menu and
-    /// whichever menu is open on a player's bar. Returns whether any was.
-    /// For `Esc`, and for the guide coming up or going, whose button stops
-    /// the press that a menu's own dismiss would otherwise have heard.
+    /// Close every menu open over a pane: a pane's chat options menu,
+    /// whichever menu is open on a player's bar, and a chat row's copy menu
+    /// (`chat::copy_menu`). Returns whether any was. For `Esc`, and for the
+    /// guide coming up or going, whose button stops the press that a menu's
+    /// own dismiss would otherwise have heard.
     pub(super) fn close_menus(&mut self, cx: &mut Context<Self>) -> bool {
         let videos: Vec<_> = self
             .slots
@@ -158,7 +159,35 @@ impl RootView {
         for view in videos {
             closed |= view.update(cx, |view, cx| view.close_menu(cx));
         }
+        closed |= self.close_copy_menus(cx);
         closed
+    }
+
+    /// Close every chat's copy menu (`chat::copy_menu`); returns whether
+    /// one was open. For `Esc` with the other menus, and for the palette or
+    /// the settings sheet opening: the copy menu is drawn deferred, over
+    /// everything the window draws, the modals and their scrim included, so
+    /// left open it would float over the modal and take its presses.
+    pub(super) fn close_copy_menus(&mut self, cx: &mut Context<Self>) -> bool {
+        let chats: Vec<_> = self
+            .slots
+            .iter()
+            .filter_map(|slot| slot.chat.clone())
+            .collect();
+        let mut closed = false;
+        for chat in chats {
+            closed |= chat.update(cx, |chat, cx| chat.close_menu(cx));
+        }
+        closed
+    }
+
+    /// Put `text` on the clipboard and say so with `toast`: More's and the
+    /// palette's `Copy link`, and a row of a chat's copy menu. The one place
+    /// Perch writes the clipboard, which is the app's, not a window's, so it
+    /// needs neither (see HANDOFF.md, "The clipboard is the app's").
+    pub(super) fn copy(&mut self, text: String, toast: &'static str, cx: &mut Context<Self>) {
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        self.toast(toast, cx);
     }
 
     /// Show or hide the chat of the pane at `index`, and remember it for that
@@ -190,10 +219,16 @@ impl RootView {
         }
         // Hiding chat takes the header off the panel and over the picture,
         // where it only shows under the pointer; showing where it went says
-        // that it went somewhere, rather than away.
+        // that it went somewhere, rather than away. And the chat put away
+        // lets go as one gone off the screen does: its copy menu would
+        // otherwise come back with it at its old place, and hold its rows
+        // back all the while (`ChatView::let_go_hold`).
         if hidden {
             let key = self.slots[index].key.clone();
             self.reveal_header(&key, cx);
+            if let Some(chat) = self.slots[index].chat.clone() {
+                chat.update(cx, |chat, cx| chat.let_go_hold(cx));
+            }
         }
 
         let channel = self.slots[index].channel.clone();

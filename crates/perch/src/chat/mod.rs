@@ -11,9 +11,11 @@
 //! The view is split by what it handles, the way `root/` is: this file has
 //! the view, its rows and how a message is drawn; `room` what the room says
 //! about itself (its modes, a timeout or a ban); `badges` the chat badges;
-//! and `reply` a reply's context line.
+//! `reply` a reply's context line; and `copy_menu` what a right-click on a
+//! row offers to copy.
 
 mod badges;
+mod copy_menu;
 mod reply;
 mod room;
 
@@ -23,8 +25,8 @@ use std::sync::Arc;
 use emotes::{apply_named_emotes, tokenize, EmoteLoader, EmoteSets, ImageCache, Token};
 use gpui::{
     div, img, list, point, prelude::*, px, AnyElement, Context, Entity, EventEmitter,
-    ListAlignment, ListState, Pixels, RetainAllImageCache, SharedString, Subscription, Task,
-    Window,
+    ListAlignment, ListState, MouseButton, Pixels, RetainAllImageCache, SharedString, Subscription,
+    Task, Window,
 };
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 
@@ -41,6 +43,8 @@ use crate::shared_chat::{self, Label};
 use crate::theme;
 use crate::veil;
 use crate::video::PositionHandle;
+
+use self::copy_menu::{CopyMenu, Target};
 
 /// Emote names are worth showing on hover: half of chat is emotes, and knowing
 /// what one is called is the difference between reading a message and guessing.
@@ -170,6 +174,11 @@ pub enum ChatViewEvent {
     /// asking the worker for any it has not got; it is told every time, and
     /// `chat_badges::Library::wants` keeps that to one ask per room.
     Room(String),
+    /// A row of the copy menu was pressed (`copy_menu`): put `text` on the
+    /// clipboard and say so with `toast`. The root does both
+    /// (`RootView::copy`), which keeps the clipboard written in one place,
+    /// and takes the rest of the press's run.
+    Copy { text: String, toast: &'static str },
 }
 
 impl EventEmitter<ChatViewEvent> for ChatView {}
@@ -266,6 +275,16 @@ pub struct ChatView {
     /// (`chat_words::modes_line`), and what a composer, when there is one,
     /// reads to say why it cannot send.
     modes: Option<RoomModes>,
+    /// The copy menu, while a right-click has it open over a row; see
+    /// `copy_menu`. For the moment only, like every menu.
+    menu: Option<CopyMenu>,
+    /// What a right press landed on inside the row that is about to hear
+    /// it — a link or an emote — said by that piece's listener for the
+    /// row's own (`copy_menu`). Taken by the row in the same press.
+    pressed: Option<Target>,
+    /// How many copy menus this chat has opened: what keys each one's
+    /// arrival, so one opened in place of another fades in as itself.
+    menus_opened: u64,
     _link: Link,
     _pump: Task<()>,
     _emote_pump: Task<()>,
@@ -394,6 +413,9 @@ impl ChatView {
             badges: ChatBadges::default(),
             room_id: None,
             modes: None,
+            menu: None,
+            pressed: None,
+            menus_opened: 0,
             _link: link,
             _pump: pump,
             _emote_pump: emote_pump,
@@ -463,6 +485,8 @@ impl ChatView {
                 let count = self.rows.len();
                 self.rows.clear();
                 self.held.clear();
+                // About a row that has gone.
+                self.close_menu(cx);
                 self.list.splice(0..count, 0);
                 self.striped = false;
                 self.loaded = false;
@@ -619,8 +643,14 @@ impl ChatView {
     /// list's bounds from the last layout against the pointer now, so a
     /// pointer that left the window without a move event still releases the
     /// rows at the next repaint.
+    ///
+    /// The copy menu holds the rows too, for as long as it is open, wherever
+    /// the pointer is — on the menu, past the chat's edge, or off the window
+    /// — so the row it is about stays where it was right-clicked. Closing it
+    /// hands the hold back to the pointer, measured like this, so a pointer
+    /// still over the chat goes on holding it; see `copy_menu`.
     fn sync_hold(&mut self, over: bool) {
-        let hold = over && self.at_live();
+        let hold = (over || self.menu.is_some()) && self.at_live();
         if !hold && !self.held.is_empty() {
             for (kind, sent_at) in std::mem::take(&mut self.held) {
                 self.push(kind, sent_at);
@@ -638,8 +668,11 @@ impl ChatView {
     /// the pointer over it would go on holding every row that arrived, past
     /// the cap that bounds the rows on screen, for as long as it was away.
     /// Nothing for a chat holding nothing back, which is most of them, so
-    /// telling one on every restage costs nothing.
+    /// telling one on every restage costs nothing. A copy menu open over a
+    /// chat that has gone off the screen goes with it, as it would hold the
+    /// rows otherwise.
     pub fn let_go_hold(&mut self, cx: &mut Context<Self>) {
+        self.close_menu(cx);
         if !self.hold && self.held.is_empty() {
             return;
         }
@@ -834,14 +867,17 @@ impl ChatView {
             RowKind::Event(notice) => self.render_event(row, notice, time, &metrics, cx),
         };
 
-        if !stamped {
-            return body;
-        }
+        // The right button anywhere on the row, its time break included,
+        // opens its copy menu; see `copy_menu`.
+        let menu = Self::row_menu(row.seq, cx);
         div()
             .w_full()
             .flex()
             .flex_col()
-            .child(Self::time_break(row.stamp.clone()))
+            .on_mouse_down(MouseButton::Right, menu)
+            .when(stamped, |row_box| {
+                row_box.child(Self::time_break(row.stamp.clone()))
+            })
             .child(body)
             .into_any_element()
     }
@@ -1010,6 +1046,9 @@ impl ChatView {
                 let text = SharedString::from(piece.to_string());
                 let styled = match (&url, parsed.kind) {
                     (Some(url), _) => {
+                        // The right button says which link it was, for the
+                        // row's copy menu.
+                        let pressed = Self::press_target(Target::Link(url.clone()), cx);
                         let url = url.clone();
                         div()
                             .id(SharedString::from(format!(
@@ -1021,6 +1060,7 @@ impl ChatView {
                             .cursor_pointer()
                             .hover(|style| style.text_color(theme::text()))
                             .child(text)
+                            .on_mouse_down(MouseButton::Right, pressed)
                             .on_click(cx.listener(move |_, _event, _window, cx| cx.open_url(&url)))
                             .into_any_element()
                     }
@@ -1194,11 +1234,15 @@ impl ChatView {
                 }
                 Token::Emote(emote) => {
                     let resolved = self.cache.get_or_request(&emote.url);
+                    // The right button says which emote it was, for the
+                    // row's copy menu, picture or not.
+                    let pressed = Self::press_target(Target::Emote(emote.name.clone()), cx);
                     line = line.child(match resolved {
                         // Until the image lands, show the emote's name so the
                         // message still reads correctly.
                         None => div()
                             .text_color(theme::text_dim())
+                            .on_mouse_down(MouseButton::Right, pressed)
                             .child(SharedString::from(emote.name))
                             .into_any_element(),
                         // The id is what makes animated emotes animate: GPUI
@@ -1217,6 +1261,12 @@ impl ChatView {
                             // image overhang it, so a row with emotes is no
                             // taller than one without and the list keeps a
                             // single vertical rhythm to scan down.
+                            //
+                            // The right button listens on the picture, not the
+                            // wrapper, for the same reason the tooltip does:
+                            // the picture overhangs the wrapper above and
+                            // below, and a press on the overhang is on the
+                            // emote as much as one in the middle.
                             div()
                                 .flex_none()
                                 .h(px(metrics.line))
@@ -1230,6 +1280,7 @@ impl ChatView {
                                         .id((SharedString::from(emote.url.clone()), emote_index))
                                         .h(px(metrics.emote))
                                         .mt(px(-metrics.overhang))
+                                        .on_mouse_down(MouseButton::Right, pressed)
                                         .tooltip(move |_window, cx| {
                                             cx.new(|_| EmoteTooltip { name: name.clone() }).into()
                                         }),
@@ -1392,6 +1443,7 @@ impl Render for ChatView {
             .line_height(px(metrics.line))
             .child(body)
             .when_some(modes, |pane, modes| pane.child(Self::modes_line(modes)))
+            .children(self.copy_menu(cx))
     }
 }
 

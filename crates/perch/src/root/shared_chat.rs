@@ -17,8 +17,9 @@ impl RootView {
     /// Shared Chat name already known, so a partner met in another pane is
     /// named here from the first line. It says when it meets a partner it
     /// cannot name (only a live chat ever does) and what its room is, for
-    /// its badges (`root::badges`). The subscription lasts as long as the
-    /// chat does.
+    /// its badges (`root::badges`), and asks for what a row of its copy menu
+    /// copies to go on the clipboard (`copy`). The subscription lasts as
+    /// long as the chat does.
     pub(super) fn watch_chat(&mut self, chat: &Entity<ChatView>, cx: &mut Context<Self>) {
         let known: Vec<_> = self
             .source_rooms
@@ -32,6 +33,13 @@ impl RootView {
         cx.subscribe(chat, |this: &mut RootView, chat, event, cx| match event {
             ChatViewEvent::UnknownRoom(id) => this.ask_channel_name(id),
             ChatViewEvent::Room(room) => this.on_chat_room(chat, room, cx),
+            // A row of the menu acts on the press and has closed it; the
+            // rest of the press's run would land on whatever the closed menu
+            // left under the pointer, a link in chat among them (`run_guard`).
+            ChatViewEvent::Copy { text, toast } => {
+                this.take_rest_of_run();
+                this.copy(text.clone(), toast, cx);
+            }
         })
         .detach();
     }

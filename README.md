@@ -441,6 +441,13 @@ out or banned, chat says so — `ronni was timed out for 10 minutes`, `ronni was
 banned` — and every message of theirs on screen, a resub's note included, is
 greyed the same way.
 
+Right-click a message to copy it: **Copy message** copies the text as it was
+sent, emote names and all; **Copy name** the name; **Copy link**, when the
+message has one, the link you clicked on or else its first; and **Copy emote
+name**, when you clicked on an emote. A toast says what was copied. A click
+anywhere else or `Esc` closes the menu, and the chat stays paused while it is
+open, so the message does not scroll away from under it.
+
 While you are signed in, names wear their Twitch badges in front of them —
 broadcaster, moderator, VIP, the channel's own subscriber and bits badges —
 in Twitch's order, and the pointer on one says what it is: `Subscriber, 14
