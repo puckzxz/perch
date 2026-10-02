@@ -319,10 +319,7 @@ mod tests {
     fn the_watch_page_is_its_own_route() {
         let mut discovery = Discovery::default();
         assert_eq!(route_of(Page::Watch, &discovery), Route::Watch);
-        assert_eq!(
-            route_of(Page::Browse, &discovery),
-            Route::Tab(Tab::Following)
-        );
+        assert_eq!(route_of(Page::Browse, &discovery), Route::Tab(Tab::Home));
 
         discovery.tab = Tab::Popular;
         assert_eq!(route_of(Page::Watch, &discovery), Route::Watch);

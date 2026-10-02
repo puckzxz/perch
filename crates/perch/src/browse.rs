@@ -1,5 +1,5 @@
-//! The browse page: what you follow, what is popular, what is on, and what
-//! you have watched.
+//! The browse page: what to watch next, what is popular, what is on, and
+//! what you have watched.
 //!
 //! A page rather than a sidebar. Picking what to watch and watching it are
 //! different activities, and giving the picker the whole window means
@@ -9,7 +9,8 @@
 //! they are the same question asked three ways. Only categories look
 //! different, and only because box art is a different shape from a
 //! thumbnail. The history is a grid of recordings, drawn by the card a
-//! channel's page uses; see `history_page`.
+//! channel's page uses; see `history_page`. Home, the tab the page opens on,
+//! is who you follow and what you left half-watched, together; see `home`.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -27,9 +28,9 @@ use twitch_api::{Category, Channel, LiveStream, Video, VideoKind};
 use crate::channel_page;
 use crate::controls;
 use crate::history_page;
+use crate::home;
 use crate::layout;
 use crate::motion;
-use crate::palette;
 use crate::theme;
 use crate::twitch::{ListKey, Request};
 
@@ -78,18 +79,33 @@ const SEARCH_CATEGORY_LIMIT: usize = 12;
 /// `gap` is the space *between* cards, so N cards have N-1 of them.
 pub fn card_width(width: f32, min: f32, max: f32, gap: f32) -> f32 {
     let usable = (width - 2.0 * theme::PAGE_PAD).max(min);
-    // How many `min`-wide cards fit, counting the gap each one after the first
-    // brings with it.
-    let columns = (((usable + gap) / (min + gap)).floor() as usize).max(1);
+    let columns = columns(width, min, gap);
     let each = (usable - (columns - 1) as f32 * gap) / columns as f32;
     each.clamp(min, max)
+}
+
+/// How many cards of at least `min` fit side by side in `width`, `gap`
+/// apart: the columns [`card_width`] divides the row into, and so how many
+/// cards one row of a grid holds. Never fewer than one, however narrow.
+///
+/// Its own function for Home, whose Continue watching shows one row of the
+/// history and has to know how long a row is.
+pub fn columns(width: f32, min: f32, gap: f32) -> usize {
+    let usable = (width - 2.0 * theme::PAGE_PAD).max(min);
+    // How many `min`-wide cards fit, counting the gap each one after the first
+    // brings with it.
+    (((usable + gap) / (min + gap)).floor() as usize).max(1)
 }
 
 /// Which of the browse page's lists is showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Tab {
+    /// Who you follow that is live, the recordings you did not finish, then
+    /// everyone else you follow: "what should I watch", answered on one
+    /// page, and the one the app opens on. It was the Following tab, which
+    /// had the follows alone; see `home`.
     #[default]
-    Following,
+    Home,
     Popular,
     Categories,
     /// The recordings you have watched, each where you left it. The one tab
@@ -98,13 +114,13 @@ pub enum Tab {
 }
 
 impl Tab {
-    pub const ALL: [Tab; 4] = [Tab::Following, Tab::Popular, Tab::Categories, Tab::History];
+    pub const ALL: [Tab; 4] = [Tab::Home, Tab::Popular, Tab::Categories, Tab::History];
 
     /// The tab's name: the words on its pill, and in the palette's `Go to`
     /// row for it.
     pub fn label(self) -> &'static str {
         match self {
-            Tab::Following => "Following",
+            Tab::Home => "Home",
             Tab::Popular => "Popular",
             Tab::Categories => "Categories",
             Tab::History => "History",
@@ -190,7 +206,7 @@ pub enum Place<'a> {
 impl Place<'_> {
     /// The request for the first page of this place's list: what filling it
     /// asks for, and what refreshing it asks for again. `None` for the
-    /// Following and History tabs, whose lists no browse request fills — the
+    /// Home and History tabs, whose lists no browse request fills — the
     /// follows poll's and the app's own.
     ///
     /// The one place a place turns into a request. Filling, refreshing and
@@ -202,7 +218,7 @@ impl Place<'_> {
         match self {
             Place::Tab(Tab::Popular) => Some(Request::Popular { after: None }),
             Place::Tab(Tab::Categories) => Some(Request::Categories { after: None }),
-            Place::Tab(Tab::Following | Tab::History) => None,
+            Place::Tab(Tab::Home | Tab::History) => None,
             Place::Category(category) => Some(Request::Category {
                 category: (*category).clone(),
                 after: None,
@@ -255,7 +271,7 @@ impl Discovery {
     }
 
     /// Which list the page is showing, as the request that fills it names
-    /// it: `None` for the Following and History tabs, which no browse request
+    /// it: `None` for the Home and History tabs, which no browse request
     /// fills. Read off [`Place::first_page`], so it cannot name a list other
     /// than the one that request is waited on as.
     pub fn shown_key(&self) -> Option<ListKey> {
@@ -406,7 +422,7 @@ pub enum Action {
     OpenCategory(Category),
     CloseCategory,
     /// Ask Twitch for this, as though it had been typed into the title bar's
-    /// search box: what the Following tab's filter offers when nobody matches.
+    /// search box: what Home's filter offers when nothing matches.
     Search(String),
     CloseSearch,
     /// Look at a channel's past broadcasts. The id rides along when the list
@@ -429,6 +445,9 @@ pub enum Action {
     ForgetVideo(String),
     /// Take every recording off the history.
     ClearHistory,
+    /// Show one of the tabs, as its pill does: Home's Continue watching
+    /// raises it for the whole history when it has more than one row.
+    ShowTab(Tab),
     /// Open the settings sheet. Only the not-signed-in state raises this: it is
     /// the one empty state whose instruction is "Open settings", and telling
     /// somebody where a button is instead of giving them the button is the sort
@@ -446,7 +465,7 @@ pub enum Action {
 
 impl Action {
     /// Open an offline channel's page, which is what a click on its name does
-    /// wherever the name is: the Following tab, search results and the rail.
+    /// wherever the name is: Home, search results and the rail.
     /// The id rides along when the list had one.
     pub fn open_channel(channel: &Channel) -> Self {
         Action::OpenChannel {
@@ -759,7 +778,7 @@ fn card<V: 'static>(
 /// carry the old list's offset onto the new one.
 #[derive(Default, Clone)]
 pub struct Scrolls {
-    pub following: ScrollHandle,
+    pub home: ScrollHandle,
     pub popular: ScrollHandle,
     pub categories: ScrollHandle,
     pub category: ScrollHandle,
@@ -856,106 +875,8 @@ pub(crate) fn offline_pill<V: 'static>(
     )
 }
 
-/// The Following tab: who is live, then who is not.
-///
-/// Both under one scroller rather than two, so there is still only ever one
-/// thing to scroll. Each heading disappears with its list, which is what keeps
-/// a fully-live follows list looking exactly as it did before offline channels
-/// existed.
-///
-/// `filter` narrows both lists as it is typed. It is the same subsequence
-/// match the palette uses, and it exists because the offline list is the
-/// longest thing in the app and the box beside it asks Twitch, not the app:
-/// finding someone you already follow had no path that did not involve
-/// scrolling a wall of names.
-#[allow(clippy::too_many_arguments)]
-fn following_view<V: 'static>(
-    follows: &[LiveStream],
-    offline: &[Channel],
-    filter: &str,
-    filter_box: AnyElement,
-    room: layout::Room,
-    cache: &ImageCache,
-    can_add: bool,
-    scroll: &ScrollHandle,
-    on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + Clone + 'static,
-    cx: &mut Context<V>,
-) -> AnyElement {
-    let filter = filter.trim();
-    let live: Vec<LiveStream> = follows
-        .iter()
-        .filter(|stream| {
-            palette::matches(&stream.display_name, filter)
-                || palette::matches(&stream.user_login, filter)
-        })
-        .cloned()
-        .collect();
-    let offline: Vec<&Channel> = offline
-        .iter()
-        .filter(|channel| {
-            palette::matches(&channel.display_name, filter)
-                || palette::matches(&channel.login, filter)
-        })
-        .collect();
-
-    let mut page = scroller("browse-grid", scroll, room.bottom)
-        .child(div().flex_none().w(px(FILTER_WIDTH)).child(filter_box));
-
-    if !live.is_empty() {
-        page = page
-            .when(!offline.is_empty(), |page| page.child(heading("Live")))
-            .child(stream_row(
-                &live,
-                room.width,
-                cache,
-                can_add,
-                on_action.clone(),
-                cx,
-            ));
-    }
-
-    if !offline.is_empty() {
-        let mut row = wrap_row(theme::GAP_TIGHT);
-        for (index, channel) in offline.iter().enumerate() {
-            row = row.child(offline_pill(
-                ("offline-follow", index),
-                channel,
-                on_action.clone(),
-                cx,
-            ));
-        }
-        page = page.child(heading("Offline")).child(row);
-    }
-
-    // The same notice every other empty list gets, rather than a heading over
-    // nothing — and the way on from it: this box never leaves the app, so a
-    // name it cannot find is one to ask Twitch about instead.
-    if live.is_empty() && offline.is_empty() && !filter.is_empty() {
-        let query = filter.to_string();
-        page = page.child(
-            notice(
-                format!("Nobody you follow matches “{filter}”").into(),
-                "This box only looks through the channels you follow.".into(),
-                false,
-            )
-            .child(
-                controls::pill(
-                    "filter-search",
-                    format!("Search Twitch for “{filter}”"),
-                    controls::Variant::Primary,
-                )
-                .on_click(cx.listener(move |view, _event, window, cx| {
-                    on_action(view, Action::Search(query.clone()), window, cx)
-                })),
-            ),
-        );
-    }
-
-    scrollable(page, scroll).into_any_element()
-}
-
-/// The follows filter box. As wide as a name, not as wide as the page.
-const FILTER_WIDTH: f32 = 260.0;
+/// Home's filter box. As wide as a name, not as wide as the page.
+pub(crate) const FILTER_WIDTH: f32 = 260.0;
 
 pub(crate) fn heading(text: &'static str) -> impl IntoElement {
     div()
@@ -965,7 +886,7 @@ pub(crate) fn heading(text: &'static str) -> impl IntoElement {
         .child(text)
 }
 
-fn stream_row<V: 'static>(
+pub(crate) fn stream_row<V: 'static>(
     streams: &[LiveStream],
     width: f32,
     cache: &ImageCache,
@@ -1100,8 +1021,8 @@ fn search_view<V: 'static>(
     } else {
         let shown = SEARCH_CATEGORY_LIMIT.min(results.categories.len());
         // Who is on, then who is not, then games: the order of how directly
-        // each is the thing searched for. The headings are the Following
-        // tab's, because they divide the same way.
+        // each is the thing searched for. The headings are like Home's,
+        // because they divide the same way.
         let mut offline = wrap_row(theme::GAP_TIGHT);
         for (index, channel) in results.channels.iter().enumerate() {
             offline = offline.child(offline_pill(
@@ -1326,7 +1247,7 @@ pub(crate) fn notice(title: SharedString, detail: SharedString, error: bool) -> 
 }
 
 /// A message filling the page when there is nothing to show.
-fn empty_state<V: 'static>(
+pub(crate) fn empty_state<V: 'static>(
     sign_in: &SignIn,
     follows_loaded: bool,
     on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + 'static,
@@ -1492,23 +1413,20 @@ pub fn page<V: 'static>(
                 .child(list)
                 .into_any_element()
         }
-        // Sign-in lives on this tab, so an empty follows list has more to
-        // say than "nothing here". Both lists have to be empty: signed in
-        // with everybody offline is not the same as not signed in, and
-        // testing only the live one would hide the sign-in prompt behind a
-        // stale offline list after a client id change.
-        Place::Tab(Tab::Following) if follows.is_empty() && offline.is_empty() => {
-            empty_state(sign_in, follows_loaded, on_action, cx)
-        }
-        Place::Tab(Tab::Following) => following_view(
-            follows,
-            offline,
+        Place::Tab(Tab::Home) => home::view(
+            home::Lists {
+                live: follows,
+                offline,
+                history,
+                sign_in,
+                follows_loaded,
+            },
             filter,
             filter_box,
             room,
             cache,
             can_add,
-            &scrolls.following,
+            &scrolls.home,
             on_action,
             cx,
         ),
@@ -1801,7 +1719,7 @@ mod tests {
     #[test]
     fn each_place_waits_on_the_list_its_first_page_fills() {
         let mut discovery = Discovery::default();
-        for tab in [Tab::Following, Tab::History] {
+        for tab in [Tab::Home, Tab::History] {
             discovery.tab = tab;
             assert!(discovery.place().first_page().is_none(), "{tab:?}");
             assert_eq!(discovery.shown_key(), None, "{tab:?}");

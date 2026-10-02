@@ -66,7 +66,7 @@ a minute and costs nothing:
 perch then shows a code to enter at twitch.tv/activate, and your follows list
 appears. Nothing secret is ever stored in the binary.
 
-Without it: the follows page says "Not signed in" and offers you Settings,
+Without it: Home says "Not signed in" and offers you Settings,
 and Popular, Categories and search say "Not signed in" too, since every
 list perch asks Twitch for needs a sign-in, and so does a stopped pane's
 offer of the channel's last broadcast. Watching a channel by name — ⌘K

@@ -153,7 +153,7 @@ pub struct Entry {
 /// (live channels by viewers, then commands), and re-ranking it by how well a
 /// three-letter query matched would throw that away for no gain at this size.
 ///
-/// Public because the Following tab's filter uses the same test: one idea of
+/// Public because Home's filter uses the same test: one idea of
 /// what "matches" means, wherever the user types a few letters of a name.
 pub fn matches(haystack: &str, needle: &str) -> bool {
     if needle.is_empty() {
@@ -252,8 +252,9 @@ fn resume_row(watched: &Watched) -> Entry {
 
 /// Whether a history entry answers to `query`: its channel, by the same
 /// few-letters match as every name here, or its title, containing the query
-/// whole — see [`TITLE_QUERY_MIN`].
-fn watched_matches(watched: &Watched, query: &str) -> bool {
+/// whole — see [`TITLE_QUERY_MIN`]. Home's filter narrows its Continue
+/// watching by the same test.
+pub(crate) fn watched_matches(watched: &Watched, query: &str) -> bool {
     if matches(&watched.channel_name, query) || matches(&watched.channel_login, query) {
         return true;
     }
@@ -273,7 +274,7 @@ fn watched_matches(watched: &Watched, query: &str) -> bool {
 /// query they would be a hundred rows of people who are not streaming, but
 /// with a name typed they are the reason to open the palette at all — the
 /// offline list is the longest thing in the app and this is its only filter
-/// besides the one on the Following tab.
+/// besides the one on Home.
 ///
 /// Anything typed that reads as a channel or a recording — a login, or a
 /// twitch.tv link — gets rows of its own once nothing followed answers to it
@@ -367,8 +368,8 @@ pub fn entries(
     }
 
     if !query.is_empty() {
-        // An offline channel opens its page, the way its name does on the
-        // Following tab. It used to open a pane that could only say the
+        // An offline channel opens its page, the way its name does on
+        // Home. It used to open a pane that could only say the
         // channel was offline, which is what the row already said.
         for channel in offline {
             if !matches(&channel.display_name, query) && !matches(&channel.login, query) {
@@ -1000,7 +1001,7 @@ mod tests {
             .position(|entry| entry.kind == "offline")
             .unwrap();
         assert!(live < off, "an offline channel outranked a live one");
-        // Its page, as on the Following tab — not a pane saying it is off.
+        // Its page, as on Home — not a pane saying it is off.
         assert_eq!(
             typed[off].command,
             Command::Videos {

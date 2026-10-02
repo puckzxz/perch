@@ -31,12 +31,12 @@ impl RootView {
                 0.0
             },
         };
-        // Whether the follows are what the page is showing — the Following
-        // tab with nothing taking it over — which is when resting the pointer
-        // on the page holds them where they stand, live and offline alike.
-        let following = matches!(self.discovery.place(), Place::Tab(Tab::Following));
-        if !following {
-            self.hold_live(LiveList::Following, false, cx);
+        // Whether the follows are what the page is showing — Home with
+        // nothing taking it over — which is when resting the pointer on the
+        // page holds them where they stand, live and offline alike.
+        let home = matches!(self.discovery.place(), Place::Tab(Tab::Home));
+        if !home {
+            self.hold_live(LiveList::Home, false, cx);
         }
         // Whether the channel whose page is open is on right now, which is
         // what its bar offers beside the recordings: the stream, or the chat.
@@ -48,7 +48,7 @@ impl RootView {
 
         let body = browse::page(
             &self.follows,
-            &self.offline,
+            &self.home_offline,
             self.filter.read(cx).value().as_ref(),
             Input::new(&self.filter).cleanable(true).into_any_element(),
             &self.discovery,
@@ -64,7 +64,7 @@ impl RootView {
             cx,
         );
         let body = self
-            .holding(LiveList::Following, following, body, cx)
+            .holding(LiveList::Home, home, body, cx)
             .flex_1()
             .min_h_0()
             .flex()
@@ -160,7 +160,7 @@ impl RootView {
         div()
             .id(match list {
                 LiveList::Rail => "rail-hold",
-                LiveList::Following => "following-hold",
+                LiveList::Home => "home-hold",
             })
             .relative()
             .on_hover(cx.listener(|_, _: &bool, _window, cx| cx.notify()))
@@ -173,10 +173,10 @@ impl RootView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        // The Following tab is not on screen, so it holds nothing: its probe
-        // is not painted here, and would otherwise leave its last word — the
-        // pointer was on the card that opened this page — standing for good.
-        self.hold_live(LiveList::Following, false, cx);
+        // Home is not on screen, so it holds nothing: its probe is not
+        // painted here, and would otherwise leave its last word — the pointer
+        // was on the card that opened this page — standing for good.
+        self.hold_live(LiveList::Home, false, cx);
 
         // The panes the page draws, in the order it draws them, and the grid
         // it draws them in: every slot in a cell of its own, or the

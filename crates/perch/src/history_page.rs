@@ -111,6 +111,43 @@ fn byline(watched: &Watched, now: DateTime<Utc>) -> String {
     .join(" · ")
 }
 
+/// Whether `watched` is one still to pick up: not watched to its end, or near
+/// enough — see `settings::history::finished_at`. What the tab's Continue
+/// watching lists, and Home's, which is the same list cut to one row: one
+/// test, so the two never disagree about what is left to finish.
+pub(crate) fn unfinished(watched: &Watched) -> bool {
+    !watched.finished
+}
+
+/// One history entry's card: the recording as a channel's page draws it,
+/// where it was left, said by whose it is and when, with the offer to
+/// forget it. The tab's, and Home's Continue watching, which shows the same
+/// cards and does the same things with them.
+///
+/// `index` has to be unique on the page, since the card's element ids are
+/// made from it.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn entry_card<V: 'static>(
+    index: usize,
+    watched: &Watched,
+    card_width: f32,
+    cache: &ImageCache,
+    can_add: bool,
+    now: DateTime<Utc>,
+    on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + Clone + 'static,
+    cx: &mut Context<V>,
+) -> impl IntoElement {
+    let recording = video(watched, now);
+    let item = Card {
+        index,
+        video: &recording,
+        watched: Some(watched),
+        byline: byline(watched, now),
+        forgettable: true,
+    };
+    channel_page::card(item, card_width, cache, can_add, now, on_action, cx)
+}
+
 /// The tab: what is part-watched first, since picking one of those up is the
 /// reason to be here, then what was finished.
 #[allow(clippy::too_many_arguments)]
@@ -143,23 +180,17 @@ pub fn view<V: 'static>(
     );
     // Numbered across both sections, since the cards' element ids are made
     // from it and the two rows share one page.
-    let (going, done): (Vec<&Watched>, Vec<&Watched>) =
-        history.videos.iter().partition(|watched| !watched.finished);
+    let (going, done): (Vec<&Watched>, Vec<&Watched>) = history
+        .videos
+        .iter()
+        .partition(|watched| unfinished(watched));
     let mut next_index = 0;
     let mut row_of = |entries: &[&Watched], cx: &mut Context<V>| {
         let mut row = browse::wrap_row(theme::GAP_SECTION);
         for watched in entries {
-            let recording = video(watched, now);
-            let item = Card {
-                index: next_index,
-                video: &recording,
-                watched: Some(watched),
-                byline: byline(watched, now),
-                forgettable: true,
-            };
-            next_index += 1;
-            row = row.child(channel_page::card(
-                item,
+            row = row.child(entry_card(
+                next_index,
+                watched,
                 card_width,
                 cache,
                 can_add,
@@ -167,6 +198,7 @@ pub fn view<V: 'static>(
                 on_action.clone(),
                 cx,
             ));
+            next_index += 1;
         }
         row
     };

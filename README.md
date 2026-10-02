@@ -51,14 +51,14 @@ Or build it, which is the rest of this page.
 ## Running it
 
 ```
-run.cmd                    open on the follows page       (Windows)
+run.cmd                    open on Home                   (Windows)
 run.cmd forsen             open a channel
 run.cmd forsen xqc         open two, side by side
 run.cmd forsen --volume 30
 ```
 
 ```
-./run.sh                   open on the follows page       (macOS, Linux)
+./run.sh                   open on Home                   (macOS, Linux)
 ./run.sh forsen            open a channel
 ./run.sh forsen xqc        open two, side by side
 ./run.sh forsen --volume 30
@@ -352,11 +352,19 @@ per request rather than a choice. **Load more** at the end of the list fetches
 the next hundred — a page you asked for, rather than a list that grows while you
 scroll past it.
 
-## Follows
+## Home
 
-Live channels first, as cards; everyone else you follow below as names. A name
-opens the channel's page — its past broadcasts, and a control for its chat,
-which connects whether or not anyone is streaming.
+The browse page opens on **Home**, which answers "what should I watch": who
+you follow that is live, as cards; then *Continue watching*, the recordings you
+opened and did not finish, most recently watched first; then everyone else you
+follow, as names. Continue watching is one row of the **History** tab's own
+cards, as many as fit the window, and **Show all** beside its heading goes to
+that tab when there are more. It needs no sign-in, since the history is the
+app's own, and shows above the sign-in prompt when nobody is signed in. The
+offline names lead with the channels you watched most recently, live or
+recorded; the ones you never watched follow by name. A name opens the
+channel's page — its past broadcasts, and a control for its chat, which
+connects whether or not anyone is streaming.
 
 The list refreshes itself every minute. `Ctrl+R`, or Refresh beside the tabs,
 asks again now — for whichever list is on screen, not just follows.
@@ -366,7 +374,7 @@ the way chat does: a refresh then updates the numbers where they stand, drops
 whoever ended and adds whoever started at the end, and the list is put back in
 order once the pointer leaves — so a card is never swapped for its neighbour
 between aiming at it and clicking. The rail does the same. So do the offline
-names, on the tab and in the rail: somebody whose stream ends joins the end of
+names, on Home and in the rail: somebody whose stream ends joins the end of
 them until the pointer leaves, rather than landing in the middle and pushing
 every name after them down.
 
@@ -378,11 +386,12 @@ start and it begins without you. That is the pane's **Start when they go
 live** switch, on unless you turn it off, and it is there only for channels
 you follow, since the poll that notices is the follows poll.
 
-The box at the top of the Following tab filters both lists as you type, live
-and offline, by the same few-letters-of-a-name match the palette uses. It is
-the opposite of the search box in the title bar: that one asks Twitch, this one
-asks the app, and nothing typed here leaves it — until nobody you follow
-matches, when it offers to ask Twitch instead.
+The box at the top of Home filters all three as you type, live, unfinished and
+offline, by the same few-letters-of-a-name match the palette uses; a recording
+answers to its channel's name or to a word of its title. It is the opposite of
+the search box in the title bar: that one asks Twitch, this one asks the app,
+and nothing typed here leaves it — until nothing on the page matches, when it
+offers to ask Twitch instead.
 
 Cards are as wide as the window allows: the grid takes the room it has and
 divides it, rather than leaving whatever a fixed width could not use as a gutter
@@ -405,7 +414,7 @@ yourself, and Unmute all leaves a stream you had muted muted. Every list leaves
 room at its foot, so nothing is stuck under the player. Settings can turn it
 off, in which case leaving the watch page stops the streams instead — all but
 those popped out, which play on in their own windows — which is the cheaper
-answer if you go to the follows page to pick the next thing rather than to
+answer if you go to Home to pick the next thing rather than to
 glance at the list.
 
 ### The rail
@@ -456,8 +465,8 @@ the right of it; the rail belongs to the window.
 than aimed at. It filters what the app already knows, so it costs nothing and
 runs on every keystroke; the search box in the title bar is the one that asks
 Twitch. `qb` finds QuickyBaby. Offline follows are in it too, once you have
-typed something, and open the channel's page, as their names do on the
-Following tab; a live channel's past broadcasts are a row of their own. A
+typed something, and open the channel's page, as their names do on
+Home; a live channel's past broadcasts are a row of their own. A
 playing pane's quality menu is a row too, once you have typed something:
 `Choose quality for …` brings the pane's controls up with the menu open. Every
 tab is a `Go to` row, and going back to watching or stopping everything is
@@ -478,7 +487,7 @@ opened was a recording you had not finished, it leads the empty palette, so
 ## Past broadcasts
 
 Every channel has a page of what it broadcast before: click an offline name on
-the Following tab, the **Past broadcasts** control that appears on a live card,
+Home, the **Past broadcasts** control that appears on a live card,
 or the palette's row for it — or search for it by name, since a search lists
 the channels that answer to it and are not on, as names under the live ones.
 The recordings are cards like the streams are, with the length where a
@@ -506,7 +515,8 @@ live stream and one of its recordings can be open side by side.
 
 Every recording you open is kept on the **History** tab, newest first: the ones
 you are part-way through under *Continue watching*, each saying where you left
-it, then the ones you finished. Opening a recording again — from there, from its
+it, then the ones you finished. The first row of the unfinished ones is on
+Home too. Opening a recording again — from there, from its
 channel's page, or from the palette — picks up where you left it, and the pane
 says so while it opens; one watched to within a minute of its end starts from
 the top, and a link with a `?t=` goes where the link says. Cards on a channel's
@@ -572,7 +582,7 @@ To create the Client ID: register an application, set **OAuth Redirect URL** to
 to **Public**. No client secret — sign-in uses the device code flow, so nothing
 secret is ever stored in the binary. Paste the Client ID into settings and the
 title bar will show a code to enter at `twitch.tv/activate`, on either page, until
-the sign-in lands; the Following tab shows it too.
+the sign-in lands; Home shows it too.
 
 The auth-token cookie is a **full account credential**, and it is worth knowing
 exactly where it goes before you paste one in. It is stored in plain text, which

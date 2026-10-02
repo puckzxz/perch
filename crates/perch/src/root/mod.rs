@@ -198,6 +198,13 @@ pub(crate) struct RootView {
     /// Everyone followed, live or not. Kept apart from `follows` all the way to
     /// the screen; see `twitch_api::Channel`.
     offline: Vec<Channel>,
+    /// The same channels as `offline`, in Home's order rather than the
+    /// rail's: by when you last watched them (`home::by_last_watched`), not
+    /// by name. Its own list because each holds still under the pointer by
+    /// the same rule — sorted only where `offline` is put back in name order,
+    /// never while held — and a sort drawn every frame from the other would
+    /// move names under the pointer; see `RootView::hold_live`.
+    home_offline: Vec<Channel>,
     /// A follows request the user asked for by hand is outstanding. Only their
     /// requests set this, so the minute-by-minute poll does not blink the
     /// control every time it runs.
@@ -221,12 +228,12 @@ pub(crate) struct RootView {
     /// from ones that were already streaming. Without this every poll would
     /// re-announce everybody.
     known_live: HashSet<String>,
-    /// Whether the pointer is over the rail, and over the Following tab, as
+    /// Whether the pointer is over the rail, and over Home, as
     /// the last frame measured it. While either is, a poll updates the
     /// follows, live and offline, where they stand rather than sorting them —
     /// see `RootView::hold_live`.
     rail_pointed: bool,
-    following_pointed: bool,
+    home_pointed: bool,
     /// Whether the rail's offline follows are unfolded. For this session
     /// only, and folded at the start of each: unfolded, it is the longest
     /// list in the app, up to a thousand rows built every frame, and most
@@ -245,8 +252,8 @@ pub(crate) struct RootView {
     /// through do not record steps of their own; see `RootView::record`.
     recording: bool,
     search: Entity<InputState>,
-    /// The Following tab's filter. Typed into, never sent anywhere: it narrows
-    /// the two lists already on the page with the palette's own matcher.
+    /// Home's filter. Typed into, never sent anywhere: it narrows the lists
+    /// already on the page with the palette's own matcher.
     filter: Entity<InputState>,
     /// Scroll positions for the browse lists and the rail, held here so the
     /// scrollbars drawn over them read the same state the lists write.
@@ -407,8 +414,9 @@ impl RootView {
         .detach();
 
         // The opposite of the search box: every keystroke, and nothing leaves
-        // the app. See `browse::following_view`.
-        let filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter your follows"));
+        // the app. See `home::view`.
+        let filter =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Filter follows and recordings"));
         cx.subscribe(&filter, |_: &mut RootView, _, event, cx| {
             if matches!(event, InputEvent::Change) {
                 cx.notify();
@@ -450,12 +458,13 @@ impl RootView {
             pop_out_last: None,
             follows: Vec::new(),
             offline: Vec::new(),
+            home_offline: Vec::new(),
             refreshing: false,
             avatars: HashMap::new(),
             follows_loaded: false,
             known_live: HashSet::new(),
             rail_pointed: false,
-            following_pointed: false,
+            home_pointed: false,
             rail_offline_open: false,
             recommended: Recommended::default(),
             sign_in: SignIn::Connecting,

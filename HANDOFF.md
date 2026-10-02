@@ -80,9 +80,10 @@ App modules:
 | `os_window.rs` | what Perch asks of a window that gpui does not: its platform handle (`hwnd`, the one place a gpui window is asked for it — `instance::bring_forward` comes forward on it rather than looking it up itself), and keeping a pop-out above every other app (`keep_on_top`, Windows only) |
 | `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams` (opening, restarting, closing, and `replace_with_video`, a recording swapped in for a live pane in place), `renditions` (what each pane plays, and when it restarts: the quality chosen against each pane's own height, `pane_height_for`, the upward re-pick when the grid changes, `sync_quality`, a pick from the pane's own menu, and how each changes what plays, `change_rendition` — beside a picture that covers the pane, to take over in place, and cold otherwise; and the root's half of that swap: what a start resolving beside a pane does with its events, `pending_event`, and what the pane keeps once its player has taken over or been given up on, `on_swapped` and `on_swap_failed`; and `set_pending`, the only write of a pane's pending start, which tells its player what a pick is switching it to and which a test holds the root to; tested), `panes` (where each pane is drawn, applied: `restage`, the one funnel every change of a pane's state, of which panes there are, of the page, of what is popped out and of what is maximized ends in; `set_slot_state`, the only write of a pane's state, which a test holds the root to; `video_in_main`, the only way the main window reaches a player, which a test holds the mini player and the pages to; and the maximize as the root drives it, `toggle_maximize`, `show_all_panes`, and `choose`, which takes it to the pane chosen; and `move_pane`, two panes swapping places in the order, from a header dropped on a pane or `Shift+←`/`Shift+→`), `pop_out` (a pane's picture in a window of its own, on top of other apps: the `PopOut` view, opening and closing it through `cx.defer`, `to_root`, the only way back to the root from it, and `offered`, Windows only), `broadcasts` (what a stopped live pane asks about its channel's past broadcasts, and whether it may offer to start by itself), `pane_actions` (what a pane asks for, by its key: a press on it or one of its controls, which takes the keys back for the root first, and its player's requests; the moment a pane key brings a pane's header up over its picture; and `run_guard`, which swallows the rest of a double-click whose first press took a player out from under the pointer — More's `Pop out`, the mini player's — where the player's own guard cannot follow), `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `prefs`, `recommended` (the rail's Recommended group: when to ask the worker, what its answer becomes, and the hooks that call it), `chrome` (pills, toasts, the rail), `mini_player` (what plays on while you browse, in the corner of the page), `title_bar` (the bar Perch draws across the top of the window — the rail button, back and forward, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`) |
 | `target.rs` | what a typed or pasted thing means: a login, or a twitch.tv link to a channel or a recording; `link`, its inverse and the one place a twitch.tv URL is written, and `moment`, the second a link to a recording starts at (pure, tested) |
-| `browse.rs` | the picker page: following, popular, categories, search; which of them is on screen (`Discovery::place`) and which lists are still being waited on |
+| `browse.rs` | the picker page: home, popular, categories, search; which of them is on screen (`Discovery::place`) and which lists are still being waited on |
 | `channel_page.rs` | one channel's past broadcasts, and when each was; the recording card both pages use, and a stopped pane too; a recording's poster, and `archive_of`, which finds the recording of a broadcast that just ended (tested) |
-| `history_page.rs` | the history tab, and the one translation between a video and a history entry |
+| `history_page.rs` | the history tab, its entry card and its test for unfinished (both reused by Home), and the one translation between a video and a history entry |
+| `home.rs` | Home, the tab the app opens on: live follows, Continue watching (one row of the history), offline follows by when last watched; the filter over all three |
 | `watch.rs` | the grid of panes; `Slot` lives here, made by `Slot::new`, with `PendingStart`, a start of its stream resolving beside the picture, and `PaneAction`, everything a pane asks of the root; the band a header rides over the picture on, and when it is up (`Slot::point`, `band_wanted`, tested); the layer a dragged header is dropped on (`drop_layer`, `PaneDrag`) |
 | `watch/header.rs` | a pane's header — name, numbers, what is on, `muted`/`paused`, the pop-out icon that turns into Bring back, and the × — each icon naming its key — the handle a pane is dragged by onto another, and `Placement`, the one rule for where it goes: the chat panel, or over the picture with no chat on screen (tested) |
 | `watch/status.rs` | a pane with no picture: `Showing`, the one reading of its state that the pane's sentence and the mini player's word both come from, and the screen drawn from it under the player — a starting pane's poster, a stopped one's next steps and what room it has for them (`next_up_room`), and `Elsewhere`, a pane whose picture is in a window of its own, with `Bring back` (tested) |
@@ -2011,8 +2012,9 @@ dropped request. It is only surfaced when somebody actually pressed the button;
 the minute-by-minute poll fails to stderr, because an hour-long outage should
 not be sixty toasts about a list that is still on screen.
 
-Three lists on one page — following, popular, categories — because they are the
-same question asked three ways, so they share one grid and one card. Only
+Three lists on one page — home, popular, categories — because they are the
+same question asked three ways, so they share one grid and one card (Home adds
+a row of the history's recordings between its live cards and its names). Only
 categories look different, and only because box art is 3:4 rather than 16:9.
 Opening a category *replaces* the page rather than nesting inside the tab, so
 there is only ever one thing to scroll. Which takeover is up is
@@ -2073,6 +2075,31 @@ With nothing typed, the palette leads with the newest part-watched recording
 when its channel also leads the recents, which is what it looks like when the
 last thing opened was that recording: Ctrl+K then Enter carries on with it.
 
+**Home is the landing page, and the history's front row.** The browse page's
+first tab (`Tab::Home`, the default, so the app opens on it) was the Following
+tab; it is now who is live, then Continue watching, then the offline names,
+under one scroller and one filter (`home.rs`). Continue watching is the
+History tab's own cards (`history_page::entry_card`) for the entries the tab
+itself calls unfinished (`history_page::unfinished`, which is `!finished`), in
+the history's order, which is already most recently watched first. It is cut
+to one row — `browse::columns` at the card width every grid uses, at least
+one and at most `CONTINUING_MAX` (6) — and "Show all" goes to the History tab
+(`Action::ShowTab`) rather than unfolding a second copy of it. It needs no
+sign-in, so with no follows it sits above the sign-in prompt or the loading
+notice. The offline names go by when you last watched them
+(`home::by_last_watched`): `Settings::recent` first, then the history's
+channels, then everyone never watched by name. Joining the two is exact,
+since a channel that fell off the eight recents was watched before every one
+still in them. That order lives in its own list, `RootView::home_offline`,
+beside the rail's name-ordered `offline`, and is sorted only where the rail's
+is — a poll while nothing is held, and the hold's release
+(`follows::home_offline_after`, `hold_live`) — never at draw time. A first
+cut sorted it every frame, and it broke the hold: a channel whose stream had
+just ended joined the end of the names, then jumped to where you last
+watched it, usually near the top since you had probably watched it live,
+shifting every name after it under the pointer. Each of those is a pure
+function with tests, in `home.rs` and `root/follows.rs`.
+
 **Forgetting can be taken back.** `History::forget` and `clear` return what
 they took — each entry with the place it stood (`history::Forgotten`) — and
 the toast that says so carries it as `ToastAction::Undo`; its `Undo` hands it
@@ -2130,7 +2157,7 @@ caller.
 **The live follows hold still while pointed at.** They are sorted by viewers,
 and a poll a minute used to re-sort them, swapping neighbours whose counts
 crossed — so a rail row or a card could change between aiming and clicking.
-Now a probe on the rail and one on the Following tab (`RootView::holding`, a
+Now a probe on the rail and one on Home (`RootView::holding`, a
 canvas measuring the pointer against its own bounds, the way chat's hold is
 measured) report whether the pointer is over them, and while either is,
 `on_streams` merges the poll into the order on screen (`follows::keep_order`):
@@ -2138,7 +2165,7 @@ the ones still live keep their places with the new numbers, the ones that
 ended go, the ones that started join the end. When the last is let go,
 `hold_live` sorts by viewers again with `twitch_api::by_viewers`, the one rule
 every list of streams is sorted by. A list that is not on screen is released
-by the page that is not drawing it — the watch page for the Following tab, a
+by the page that is not drawing it — the watch page for Home, a
 folded rail for the rail — because an unpainted probe says nothing, and the
 pointer was always on the card that opened the watch page.
 
@@ -2146,9 +2173,11 @@ The offline names hold the same way, since both lists show them: a fresh
 `FollowedChannels` goes through `follows::offline_after`, which filters out
 whoever is live and, while either probe is pointed at, merges with the same
 `keep_order` — so somebody whose stream ended joins the end of the names
-rather than landing in the middle and pushing the rest down. On release
-`hold_live` puts them back in name order with `twitch_api::by_name`, the one
-rule `followed_channels` sorts by.
+rather than landing in the middle and pushing the rest down. Home's copy of
+the names (`home_offline`) goes through `follows::home_offline_after`, held
+the same way. On release `hold_live` puts the rail's back in name order with
+`twitch_api::by_name`, the one rule `followed_channels` sorts by, and Home's
+in last-watched order with `home::by_last_watched`.
 
 **A went-live toast is the way to the channel**, not only news of it:
 `Toast::action`, watch from the text and `+ Add` from the pill beside it. And

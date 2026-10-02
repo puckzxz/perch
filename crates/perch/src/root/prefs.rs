@@ -106,6 +106,7 @@ impl RootView {
                             this.sign_in = SignIn::Connecting;
                             this.follows.clear();
                             this.offline.clear();
+                            this.home_offline.clear();
                             this.known_live.clear();
                             this.avatars.clear();
                             this.follows_loaded = false;

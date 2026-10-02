@@ -25,6 +25,7 @@ mod controls;
 mod cpu_log;
 mod diagnostics;
 mod history_page;
+mod home;
 mod instance;
 mod keys;
 mod launch;
@@ -216,7 +217,7 @@ fn main() {
         eprintln!();
         eprintln!("Name up to {MAX_PANES} channels, or twitch.tv links to channels or");
         eprintln!("recordings, to open them side by side.");
-        eprintln!("With no channel, opens on the follows page.");
+        eprintln!("With no channel, opens on Home.");
         eprintln!("While {APP_NAME} runs, launching it again brings the window forward");
         eprintln!("and opens what is named there.");
         eprintln!("Settings live at {}", settings_path.display());

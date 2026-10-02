@@ -71,9 +71,9 @@ impl RootView {
             Place::Category(_) => discovery.streams.is_empty(),
             Place::Search(results) => results.is_empty(),
             Place::Channel(page) => page.videos().is_empty(),
-            // Following is the follows poll's, and the history is the app's
-            // own; neither has anything to ask for here.
-            Place::Tab(Tab::Following | Tab::History) => false,
+            // Home is the follows poll's and the history's, and the history
+            // is the app's own; neither has anything to ask for here.
+            Place::Tab(Tab::Home | Tab::History) => false,
         };
         let request = place.first_page().filter(|_| empty);
         if let Some(request) = request {
@@ -103,7 +103,7 @@ impl RootView {
             }
             // Nothing on the history came from Twitch, so there is nothing to
             // ask again; the follows are what goes stale on that page.
-            Place::Tab(Tab::Following | Tab::History) => {
+            Place::Tab(Tab::Home | Tab::History) => {
                 self.refresh_follows();
                 cx.notify();
                 return;
@@ -238,7 +238,7 @@ impl RootView {
                 this.discovery.streams.clear();
                 cx.notify();
             }
-            // What was typed into the Following tab's filter moves to the box
+            // What was typed into Home's filter moves to the box
             // that asks Twitch, and is asked there — so the results page says
             // what it is showing, and back does not return to a filter that
             // still matches nobody.
@@ -269,6 +269,7 @@ impl RootView {
             Action::AddVideo(video) => this.open_video(*video, false, window, cx),
             Action::ForgetVideo(id) => this.forget_video(&id, cx),
             Action::ClearHistory => this.clear_history(cx),
+            Action::ShowTab(tab) => this.show_tab(tab, window, cx),
             // Moves a row, not the app: nothing is recorded, since `record`
             // only takes a step when where the app is has changed.
             Action::SetPinned { login, pinned } => this.set_pinned(login, pinned, cx),
@@ -373,7 +374,7 @@ impl RootView {
                 .next
                 .clone()
                 .map(|after| Request::Categories { after: Some(after) }),
-            Place::Tab(Tab::Following | Tab::History) => None,
+            Place::Tab(Tab::Home | Tab::History) => None,
         };
 
         if let Some(request) = request {

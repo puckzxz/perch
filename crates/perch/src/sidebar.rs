@@ -136,7 +136,7 @@ impl Row<'_> {
 
     /// What a click on the row does: watch whoever is live, followed or
     /// suggested, and open the page of anyone else, which is what a click on
-    /// an offline name does on the Following tab.
+    /// an offline name does on Home.
     fn open(&self) -> Action {
         match self {
             Row::Live(stream) => Action::Watch(stream.user_login.clone()),
