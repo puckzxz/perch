@@ -156,7 +156,7 @@ a minute. They apply to every chat and are remembered.
 
 Back and forward go through the pages you have been on, the way a browser
 does. The mouse's side buttons and the arrows in the bar across the top do
-the same. The house beside the arrows goes straight to Home from anywhere.
+the same. The house before the arrows goes straight to Home from anywhere.
 
 The guide icon, beside chat on a pane's controls, raises the guide over the
 lower half of the watch page while every pane keeps playing: your live

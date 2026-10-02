@@ -90,7 +90,7 @@ build is several times slower at it.
 The player's controls are on a bar that comes up over the video while the
 pointer is on it, and those a key also works name the key in their tooltips;
 the quality, the guide and More have no key. The rest — the rail button,
-back, forward and Home, search and settings — sit in the bar across the top
+Home, back and forward, search and settings — sit in the bar across the top
 of the window. Neither is any use when you are not holding the mouse.
 
 | | |
@@ -169,7 +169,7 @@ replay shows the chat icon crossed out, with nothing to press.
 Back and forward work the way they do in a browser. `Alt+←` and `Alt+→`, the
 arrows in the title bar or the mouse's side buttons walk back through the
 tabs, categories, searches, channel pages and the watch page you have been
-on, and forward again. The house beside the arrows goes straight to Home from
+on, and forward again. The house before the arrows goes straight to Home from
 anywhere, the watch page included, which it leaves the way `Esc` does; back
 returns from it. `Esc` and the `← Back` beside a search or a channel's
 name still step out of whatever has taken the page over, and back takes that

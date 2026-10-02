@@ -298,7 +298,7 @@ impl RootView {
         Some(bar.into_any_element())
     }
 
-    /// The rail button, back, forward and Home, and the search box: the
+    /// The rail button, Home, back and forward, and the search box: the
     /// page-level controls, at the left of the bar, before the drag strip.
     ///
     /// One group, so one veil covers them all while a modal is up: the sheet
@@ -398,9 +398,9 @@ impl RootView {
             .gap(px(theme::GAP_TIGHT))
             .px(px(theme::GAP_TIGHT))
             .child(rail)
+            .child(home)
             .child(back)
             .child(forward)
-            .child(home)
             .child(search)
             // Last, so it is over them all. It takes the pointer without
             // doing anything with it; the modal is what to answer.
