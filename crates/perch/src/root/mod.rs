@@ -136,6 +136,13 @@ struct Toast {
     fade: motion::Fade,
     /// What clicking it does, when it says something you can act on.
     action: Option<ToastAction>,
+    /// How long it has left, which stops going down while the pointer is on
+    /// the stack; see `RootView::hold_toasts`.
+    countdown: chrome::Countdown,
+    /// The one timer that takes it down when its countdown runs out, held
+    /// only while the countdown runs. Dropping it is what cancels it, so a
+    /// held toast, an answered one and one taken down keep no timer behind.
+    timer: Option<Task<()>>,
 }
 
 /// What a toast offers. A "went live" toast used to be a fact to read and
@@ -337,6 +344,10 @@ pub(crate) struct RootView {
     settings_panel: Option<Entity<SettingsPanel>>,
     toasts: Vec<Toast>,
     next_toast: u64,
+    /// Whether the pointer was on a toast at the last frame, from the
+    /// stack's probes: while it is, no toast counts down. See
+    /// `RootView::hold_toasts`.
+    toasts_held: bool,
     _cache_pump: Task<()>,
 
     /// Recordings opened by link that are still to be looked up.
@@ -512,6 +523,7 @@ impl RootView {
             settings_panel: None,
             toasts: Vec::new(),
             next_toast: 0,
+            toasts_held: false,
             _cache_pump: cache_pump,
             linked_videos: Vec::new(),
             _launch_pump: Self::pump_launches(launches, window, cx),

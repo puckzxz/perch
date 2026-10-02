@@ -187,8 +187,8 @@ impl RootView {
     /// Only a header that lives over the picture. One above chat is always
     /// on screen, underline and all, so it needs no reveal; that pane still
     /// takes the reveal off any other, since one pane at a time is revealed.
-    /// Taken down by a timer — the toasts' pattern — unless a later reveal
-    /// has started since, whose own timer is the one that counts.
+    /// Taken down by a detached timer unless a later reveal has started
+    /// since, whose own timer is the one that counts.
     ///
     /// For a pane key, for chat going away, and for a pane moved to another
     /// place in the grid (`move_pane`), which is somewhere you were not

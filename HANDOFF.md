@@ -1832,10 +1832,10 @@ was on it and is `theme::MENU_MIN_WIDTH` now, and the volume slider's
 `VOLUME_FIGURE`, which `bar::fit` reads too. A zero (`px(0.)`) is left out on
 purpose: the divider seams and the seek bar's time label hang off zero-sized
 anchors by design. The sixth will show genuine timings — the follows poll, the
-toast lifetime, an mpv frame wait — but no *animation* duration should appear
-outside `theme.rs`. The last should return nothing: a control at zero opacity
-still takes clicks (see "Things not to redo"), and only `motion` fades one
-there, on its way to `invisible()`.
+toast lifetime and its resume floor, an mpv frame wait — but no *animation*
+duration should appear outside `theme.rs`. The last should return nothing: a
+control at zero opacity still takes clicks (see "Things not to redo"), and
+only `motion` fades one there, on its way to `invisible()`.
 
 ### Where controls live
 
@@ -2419,6 +2419,34 @@ retry keyed on presence alone would find it gone and turn "ended" into
 poll lists a broadcast that began before it stopped: it asked in that
 broadcast's first seconds, before streamlink could find it, and gets one try
 per broadcast, remembered in `Slot::retried_for`.
+
+**A toast holds still under the pointer**, so one being read or reached for
+does not go: while the pointer is on any card, no toast counts down
+(`RootView::hold_toasts`). All of them rather than the one pointed at: the
+stack hangs from the top, so one going above the card under the pointer
+would pull that card out from under it. When the pointer leaves, each gets
+back what it had left, but at least `TOAST_RESUME_FLOOR` (two seconds), so
+one held in its last moment does not vanish as the pointer moves off; one
+already fading out when the pointer reached it comes back. A toast arriving
+while the stack is held waits with the rest. The clock is measured, not
+ticked (`chrome::Countdown`, tested): a running toast holds one one-shot
+timer for exactly what it has left, a held one holds none, and the timer is
+a `Task` the toast owns, so holding it, answering it or taking it down
+cancels it by dropping it — no epoch to check. What the whole stack does on
+a hold or a release is pure too (`chrome::hold` and `chrome::release`, which
+hands back the timers to start), so the root only spawns them. Hover is
+measured, as everywhere else: a `canvas` probe in each card ORs into a cell
+made fresh each frame, and one more probe after the cards reports the lot
+once, which relies on gpui prepainting a div's children in order
+(div.rs:1412-1416). Reported per card instead, a pointer moving from one
+card to the next would read as having left between the two reports. Each
+card's `on_hover` only wakes a repaint, and `hold_toasts` does nothing on a
+frame that says what the last one did, so a still pointer draws no frames.
+The reporter is drawn with no toasts too, so a stack emptied under the
+pointer lets go. A toast under a modal is not held: the palette and the
+settings sheet are drawn over the stack with scrims that cover it, so the
+probes alone would hold every toast while the pointer worked in the modal;
+the reporter asks `modal_open` and lets go instead.
 
 **A stopped live pane asks what the channel broadcast**: `Request::Broadcasts`,
 the five newest archives (`twitch_api::recent_videos`), asked on Offline and
@@ -3066,9 +3094,9 @@ active, so the pointer can never answer the question. So `1`–`4`, `Tab` and
 `Shift+←`/`Shift+→` or a header drop, bring that pane's band up for
 `theme::HEADER_REVEAL` (`RootView::reveal_header`), underline and all when it
 is marked. One pane at a time: a reveal takes it off the others.
-It sets `Slot::revealed`, which `band_wanted` reads, and a timer clears it —
-the toasts' pattern, numbered by `reveal_epoch` so an earlier reveal's timer
-cannot take down a later one (`reveal_is_current`). A header in the panel is
+It sets `Slot::revealed`, which `band_wanted` reads, and a detached timer
+clears it, numbered by `reveal_epoch` so an earlier reveal's timer cannot
+take down a later one (`reveal_is_current`). A header in the panel is
 always on screen and gets none. Never on `Space`, `M` or the plain arrows,
 which answer for themselves; `keys.rs` says the same at the top. Whether brief
 chrome after a key or a drop suits is a product call, so the reveal can be

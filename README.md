@@ -443,8 +443,10 @@ them until the pointer leaves, rather than landing in the middle and pushing
 every name after them down.
 
 When somebody you follow goes live, a notice says so in the corner; click it
-to watch them, or `+ Add` beside it to open them next to what is playing. A
-pane left on a channel that was off, or whose broadcast ended, starts by
+to watch them, or `+ Add` beside it to open them next to what is playing.
+Notices wait while the pointer is on them, and stay at least a couple of
+seconds after it moves off, so one you are reading or reaching for does not
+go. A pane left on a channel that was off, or whose broadcast ended, starts by
 itself when a later poll finds them on again — open a channel before they
 start and it begins without you. That is the pane's **Start when they go
 live** switch, on unless you turn it off, and it is there only for channels
