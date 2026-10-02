@@ -670,7 +670,8 @@ impl ChatView {
             //
             // Dropped into the column directly, it was a wrapping line inside a
             // flex *column*, and gpui sized it from its own content — which for
-            // a line whose every word is `min_w_0` is one character wide. The
+            // a line whose every word was then `min_w_0` was one character
+            // wide, and is still only its widest piece (`render_word`). The
             // words then wrapped one per line and painted straight over the
             // rows beneath, so a resub with a note attached, or an announcement
             // carrying a link, came out as a vertical stack of letters. It only
@@ -688,23 +689,31 @@ impl ChatView {
         Self::row_frame(row).child(column).into_any_element()
     }
 
-    /// One word of message text, styled for whatever it turned out to be.
+    /// One word of message text, styled for whatever it turned out to be, as
+    /// the pieces it is drawn in: one, for nearly every word.
     ///
     /// The punctuation around a word is rendered separately so a trailing comma
-    /// is neither underlined nor sent to the browser.
+    /// is neither underlined nor sent to the browser, and it rides with the
+    /// piece it touches, so it never wraps onto a line of its own.
     ///
-    /// Every word here can shrink below its content width, which sounds like it
-    /// would break words in half and does not: `flex_wrap` moves a word to the
-    /// next line long before it would have to shrink, so shrinking only ever
-    /// happens to a word that is wider than the *whole* pane. That is a long
-    /// URL, in practice, and the alternative is the one this replaced — a link
-    /// that simply runs off the edge of the chat, unreadable and unclickable
-    /// past the boundary.
+    /// No piece shrinks. A word longer than [`chat_text::PIECE_CHARS`] — a long
+    /// URL, in practice, or a wall of one letter — is drawn as several pieces
+    /// edge to edge ([`chat_text::pieces`]), each short enough to fit any chat
+    /// on a line of its own, and `flex_wrap` breaks the line between them; a
+    /// link breaks just after its separators, the way it reads, and each piece
+    /// opens it. Every piece after the first takes back the line's gap between
+    /// words (`theme::GAP_WORD`) with a margin, so the word reads as one; where
+    /// a piece starts a line, that margin is in the row's padding.
     ///
-    /// Breaking one is gpui's job and it is better at it than a character cap
-    /// would be: `/` is not a word character, so a URL breaks at its path
-    /// separators, and a run with no break opportunity at all — an opaque media
-    /// id — is hard-broken at the edge rather than overflowing.
+    /// It used to be one element per word that could shrink below its width
+    /// (`min_w_0`), leaving gpui to wrap a link wider than the pane inside
+    /// itself. gpui measured those rows wrong: its text element hands back the
+    /// size from its last measurement whenever it is asked for its natural
+    /// width (`elements/text.rs`), and a word that is both measured whole and
+    /// measured squeezed in one layout pass got the wrong one for one of them.
+    /// The row came out shorter than it drew, and painted over the next
+    /// message, or taller, with a blank line in it. A word that always fits
+    /// measures the same both ways.
     fn render_word(
         &self,
         word: &str,
@@ -712,52 +721,23 @@ impl ChatView {
         position: usize,
         text_color: gpui::Hsla,
         cx: &mut Context<Self>,
-    ) -> AnyElement {
+    ) -> Vec<AnyElement> {
         let parsed = chat_text::classify(word);
-
-        let styled = match parsed.kind {
-            Kind::Plain => {
-                // The common case, and worth keeping as one element rather than
-                // three: most words have no punctuation to split off.
-                return div()
-                    .min_w_0()
-                    .text_color(text_color)
-                    .child(SharedString::from(word.to_string()))
-                    .into_any_element();
-            }
-            Kind::Link => {
-                let url = parsed.url();
-                div()
-                    .id(SharedString::from(format!("chat-link-{seq}-{position}")))
-                    .min_w_0()
-                    .text_color(theme::accent())
-                    .underline()
-                    .cursor_pointer()
-                    .hover(|style| style.text_color(theme::text()))
-                    .child(SharedString::from(parsed.body.to_string()))
-                    .on_click(cx.listener(move |_, _event, _window, cx| cx.open_url(&url)))
-                    .into_any_element()
-            }
-            Kind::Mention => {
-                // Drawn in the colour of whoever is being talked to, when we
-                // have seen them speak. Otherwise left alone: a wrong colour is
-                // worse than none.
-                let color = parsed
-                    .mentioned()
-                    .and_then(|login| self.colors.get(&login.to_ascii_lowercase()).copied())
-                    .map(theme::readable)
-                    .unwrap_or(text_color);
-                div()
-                    .min_w_0()
-                    .font_weight(theme::weight_title())
-                    .text_color(color)
-                    .child(SharedString::from(parsed.body.to_string()))
-                    .into_any_element()
-            }
+        // A plain word keeps its punctuation in its text: there is nothing to
+        // keep it out of, and one element is cheaper than three.
+        let (leading, body, trailing) = match parsed.kind {
+            Kind::Plain => ("", word, ""),
+            Kind::Link | Kind::Mention => (parsed.leading, parsed.body, parsed.trailing),
         };
+        let url = (parsed.kind == Kind::Link).then(|| parsed.url());
+        // Drawn in the colour of whoever is being talked to, when we have seen
+        // them speak. Otherwise left alone: a wrong colour is worse than none.
+        let mention_color = parsed
+            .mentioned()
+            .and_then(|login| self.colors.get(&login.to_ascii_lowercase()).copied())
+            .map(theme::readable)
+            .unwrap_or(text_color);
 
-        // Pinned, so a shrinking row takes it out of the word rather than out
-        // of the comma after it.
         let punctuation = |text: &str| {
             div()
                 .flex_none()
@@ -765,19 +745,67 @@ impl ChatView {
                 .child(SharedString::from(text.to_string()))
         };
 
-        div()
-            .min_w_0()
-            .flex()
-            .flex_row()
-            .items_baseline()
-            .when(!parsed.leading.is_empty(), |row| {
-                row.child(punctuation(parsed.leading))
+        let pieces = chat_text::pieces(body, chat_text::PIECE_CHARS);
+        let last = pieces.len() - 1;
+        pieces
+            .into_iter()
+            .enumerate()
+            .map(|(index, piece)| {
+                let text = SharedString::from(piece.to_string());
+                let styled = match (&url, parsed.kind) {
+                    (Some(url), _) => {
+                        let url = url.clone();
+                        div()
+                            .id(SharedString::from(format!(
+                                "chat-link-{seq}-{position}-{index}"
+                            )))
+                            .flex_none()
+                            .text_color(theme::accent())
+                            .underline()
+                            .cursor_pointer()
+                            .hover(|style| style.text_color(theme::text()))
+                            .child(text)
+                            .on_click(cx.listener(move |_, _event, _window, cx| cx.open_url(&url)))
+                            .into_any_element()
+                    }
+                    (None, Kind::Mention) => div()
+                        .flex_none()
+                        .font_weight(theme::weight_title())
+                        .text_color(mention_color)
+                        .child(text)
+                        .into_any_element(),
+                    (None, _) => div()
+                        .flex_none()
+                        .text_color(text_color)
+                        .child(text)
+                        .into_any_element(),
+                };
+                let before = (index == 0 && !leading.is_empty()).then_some(leading);
+                let after = (index == last && !trailing.is_empty()).then_some(trailing);
+                let element = if before.is_none() && after.is_none() {
+                    styled
+                } else {
+                    div()
+                        .flex_none()
+                        .flex()
+                        .flex_row()
+                        .items_baseline()
+                        .children(before.map(punctuation))
+                        .child(styled)
+                        .children(after.map(punctuation))
+                        .into_any_element()
+                };
+                if index == 0 {
+                    element
+                } else {
+                    div()
+                        .flex_none()
+                        .ml(px(-theme::GAP_WORD))
+                        .child(element)
+                        .into_any_element()
+                }
             })
-            .child(styled)
-            .when(!parsed.trailing.is_empty(), |row| {
-                row.child(punctuation(parsed.trailing))
-            })
-            .into_any_element()
+            .collect()
     }
 
     /// One message as a wrapping line of name, words and emotes — without the
@@ -845,8 +873,8 @@ impl ChatView {
             match token {
                 Token::Text(text) => {
                     for word in text.split_whitespace() {
-                        line =
-                            line.child(self.render_word(word, row.seq, word_index, text_color, cx));
+                        line = line
+                            .children(self.render_word(word, row.seq, word_index, text_color, cx));
                         word_index += 1;
                     }
                 }

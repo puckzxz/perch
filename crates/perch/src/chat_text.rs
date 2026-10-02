@@ -172,9 +172,119 @@ pub fn classify(word: &str) -> Word<'_> {
     }
 }
 
+/// The most characters one piece of a word is drawn as; see [`pieces`].
+///
+/// Sixteen of the widest glyphs at body size come to about 190 pixels, inside
+/// the narrowest chat there is (`theme::CHAT_WIDTH_MIN`, 260, less the row's
+/// padding on both sides), so a piece always fits on a line of its own.
+pub const PIECE_CHARS: usize = 16;
+
+/// `word` cut into runs of at most `max` characters, in order, which put
+/// together give the word back.
+///
+/// A word is drawn as these, edge to edge, so no piece is ever wider than the
+/// chat and the line wraps between pieces: a long link breaks across lines
+/// without any piece of it having to shrink and wrap inside itself, which gpui
+/// measures wrong (see `ChatView::render_word`). A word no longer than `max`
+/// is one piece, which is nearly every word.
+///
+/// A cut goes just after the last separator a link breaks at — `/`, `.`, `?`,
+/// `&`, `=`, `-`, `_`, `#`, `:` — that leaves the piece non-empty, so a URL
+/// breaks at its path the way it reads; a run with none, an opaque id or a
+/// wall of one letter, is cut at `max` itself. Cuts fall on characters, never
+/// inside one.
+pub fn pieces(word: &str, max: usize) -> Vec<&str> {
+    let max = max.max(1);
+    if word.chars().count() <= max {
+        return vec![word];
+    }
+    let breaks_after = |c: char| matches!(c, '/' | '.' | '?' | '&' | '=' | '-' | '_' | '#' | ':');
+    let mut out = Vec::new();
+    // Where the piece being built starts, how many characters it holds, and
+    // the byte just past the last separator in it, if it has one.
+    let mut start = 0;
+    let mut count = 0;
+    let mut cut_at: Option<usize> = None;
+    for (index, c) in word.char_indices() {
+        if count == max {
+            let cut = cut_at.filter(|&cut| cut > start).unwrap_or(index);
+            out.push(&word[start..cut]);
+            // What follows the cut starts the next piece, separators included.
+            start = cut;
+            count = word[cut..index].chars().count();
+            cut_at = word[cut..index]
+                .char_indices()
+                .rfind(|&(_, c)| breaks_after(c))
+                .map(|(at, c)| cut + at + c.len_utf8());
+        }
+        count += 1;
+        if breaks_after(c) {
+            cut_at = Some(index + c.len_utf8());
+        }
+    }
+    out.push(&word[start..]);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Pieces put back together are the word, none is empty, and none is
+    /// longer than the limit.
+    fn assert_pieces(word: &str, max: usize) -> Vec<&str> {
+        let got = pieces(word, max);
+        assert_eq!(got.concat(), word);
+        for piece in &got {
+            assert!(!piece.is_empty(), "an empty piece of {word:?}: {got:?}");
+            assert!(
+                piece.chars().count() <= max,
+                "{piece:?} is longer than {max} in {got:?}"
+            );
+        }
+        got
+    }
+
+    #[test]
+    fn a_word_that_fits_is_one_piece() {
+        assert_eq!(pieces("hello", PIECE_CHARS), vec!["hello"]);
+        assert_eq!(pieces("", PIECE_CHARS), vec![""]);
+        let sixteen = "abcdefghijklmnop";
+        assert_eq!(pieces(sixteen, 16), vec![sixteen]);
+    }
+
+    /// A link breaks just after its separators, the way it reads.
+    #[test]
+    fn a_link_breaks_after_its_separators() {
+        let url = "https://www.youtube.com/channel/UCSDZkgmigfYbdw7hJ-6Wo6A";
+        let got = assert_pieces(url, PIECE_CHARS);
+        assert_eq!(got[0], "https://www.");
+        assert_eq!(got[1], "youtube.com/");
+        assert!(got.len() > 2);
+        let steam = assert_pieces("https://store.steampowered.com/app/899770/LastEpoch", 16);
+        assert!(steam
+            .iter()
+            .take(steam.len() - 1)
+            .all(|piece| { piece.ends_with(['/', '.', '?', '&', '=', '-', '_', '#', ':']) }));
+    }
+
+    /// A run with nowhere to break is cut at the limit.
+    #[test]
+    fn a_run_with_no_separator_is_cut_at_the_limit() {
+        let wall = "A".repeat(40);
+        assert_eq!(
+            assert_pieces(&wall, 16),
+            vec!["A".repeat(16), "A".repeat(16), "A".repeat(8)]
+        );
+    }
+
+    /// Cuts fall between characters, whatever their size in bytes.
+    #[test]
+    fn cuts_fall_on_characters() {
+        let word = "é".repeat(20) + "日本語のテキスト";
+        assert_pieces(&word, 16);
+        assert_pieces("ab/日本語のテキストとリンク/xyz/もっと長い道", 6);
+    }
 
     fn kind(word: &str) -> Kind {
         classify(word).kind

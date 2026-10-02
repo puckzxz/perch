@@ -2592,9 +2592,9 @@ rule above the first row of each minute instead, and the rows get their width
 back.
 
 **An event row's body is wrapped in a `flex_row`**, and that is load-bearing. A
-`message_line` is a `flex_wrap` row whose every word is `min_w_0`; dropped
-straight into the event's `flex_col`, gpui sized it from its own content, which
-for a line that can shrink to nothing is one character wide. The words then
+`message_line` is a `flex_wrap` row; dropped straight into the event's
+`flex_col`, gpui sized it from its own content, which for a line whose words
+could then shrink to nothing was one character wide. The words then
 wrapped one per line and painted over the rows beneath — so a resub with a note
 attached, or an announcement carrying a link, came out as a vertical stack of
 letters. Ordinary messages never showed it because they are already a row's
@@ -2621,15 +2621,29 @@ deliberately omits `.so`, `.is`, `.at` and `.it` — real TLDs and common Englis
 words both. Punctuation is split off the ends so a trailing comma is neither
 underlined nor sent to the browser.
 
-**Every word can shrink below its content width**, which sounds like it would
-break words in half and does not: `flex_wrap` moves a word to the next line long
-before it would have to shrink, so shrinking only ever reaches a word wider than
-the *whole* pane. That is a long URL, in practice, and without it the link ran
-off the edge of the chat — unreadable and unclickable past the boundary. The
-breaking itself is gpui's job and it is better at it than a character cap would
-be: `/` is not in `LineWrapper::is_word_char`, so a URL breaks at its path
-separators, and a run with no break opportunity at all — an opaque media id — is
-hard-broken at the edge rather than allowed to overflow.
+**No word shrinks; a long one is drawn in pieces.** A word longer than
+`chat_text::PIECE_CHARS` (16) — a long URL, in practice, or a wall of one
+letter — is cut by `chat_text::pieces` into runs short enough to fit the
+narrowest chat on a line of their own, drawn edge to edge, so `flex_wrap`
+breaks the line between pieces. A link is cut just after its separators (`/`,
+`.`, `?`, `&`, `=`, `-`, `_`, `#`, `:`), the way it reads, every piece opens it,
+and punctuation rides with the piece it touches. Pieces after the first take
+back the line's word gap with a negative margin (`-GAP_WORD`), which sits in
+the row's padding where a piece starts a line.
+
+It used to be one element per word that could shrink below its width
+(`min_w_0`), leaving gpui to wrap a link wider than the pane inside itself.
+gpui measured those rows wrong, and they drew over the next message or carried
+a blank line, in live chat and in replays alike (reproduced on recording
+2888969029 at 25,344 s, a Nightbot message with two links). The cause is in
+gpui's text element (`vendor/gpui/src/elements/text.rs`, the measure closure):
+asked for its size with no width to wrap at, it hands back whatever its last
+measurement produced, wrapped or not (`wrap_width.is_none() || ...`). A word
+that taffy measures both whole and squeezed in one pass gets the wrong size for
+one of the two. A word that always fits measures the same either way, which is
+why only words wider than the pane ever showed it, and why nothing in gpui
+needed patching. Keep chat's words `flex_none`; anything else that wraps text
+inside a shrinking flex item can meet the same thing.
 
 **Mentions take the colour of whoever is being addressed,** from a login→colour
 map that fills itself as people talk. A miss renders plainly rather than
@@ -3895,11 +3909,14 @@ None of these is being worked on; all of them are real.
   the library's own flex row, and the text inside is still measured at max
   content. The width has to go on the container the text is a child of; see
   `controls::full_text`, where all three were built and only the third wrapped.
-- Do not put a `flex_wrap` row of `min_w_0` children directly inside a flex
-  column. gpui sizes it from its own content, and a line that can shrink to
-  nothing measures one character wide — so it wraps one letter per line and
-  paints over whatever is beneath. Wrap it in a `flex_row` first; see
-  `render_event`.
+- Do not put a `flex_wrap` row directly inside a flex column. gpui sizes it
+  from its own content, so it wraps at its narrowest and paints over whatever
+  is beneath (one letter per line, back when chat's words could shrink to
+  nothing). Wrap it in a `flex_row` first; see `render_event`.
+- Do not let a text element shrink below its width and wrap inside a flex item
+  that taffy also measures whole. gpui's text measure returns its last size
+  when asked with no wrap width, so the row comes out the wrong height; draw
+  long words in pieces instead (`chat_text::pieces`).
 - Do not assume `gpui-component` draws its own icons. It asks the *host* for
   `icons/<name>.svg` and ships none, so with no `AssetSource` every chevron,
   eye and clear button renders as nothing — and silently, since a missing asset
