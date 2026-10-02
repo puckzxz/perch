@@ -117,6 +117,11 @@ their tooltips; the quality and More have none. A channel that is off
 offers its last broadcast, and starts by itself when it comes back on if
 you follow it; a stream that ends offers its recording from the start.
 
+On a live stream a timeline runs above those controls, from the start
+of the broadcast to now. Click or drag back along it and let go to watch
+the broadcast's recording from that moment in the same pane, if the
+channel keeps its past broadcasts; you need to be signed in.
+
 P, or the icon beside a pane's ×, moves its picture into a small window of
 its own that stays on top of other apps; its chat stays put. P again, or
 Bring back, returns it. On the browse page P, or Pop out on the mini

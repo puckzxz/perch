@@ -17,7 +17,8 @@
 //!
 //! What the bar offers that is not the player's to do — the pane's chat,
 //! opening it on twitch.tv, copying its link, popping it out or bringing it
-//! back, giving it the watch page — it asks the root for, as
+//! back, giving it the watch page, going back along a live broadcast's
+//! timeline into its recording — it asks the root for, as
 //! [`VideoEvent::Pane`], the same way it asks for a new quality.
 //!
 //! A player draws nothing at all until its picture arrives, not even a
@@ -49,6 +50,7 @@ pub use swap::{route, Wake, SWAP_LEAD};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use chrono::{DateTime, Utc};
 use gpui::{
     canvas, div, img, prelude::*, Animation, AnimationExt, Bounds, ClickEvent, Context, ElementId,
     Entity, EventEmitter, FocusHandle, MouseDownEvent, Pixels, Point, RenderImage, SharedString,
@@ -59,6 +61,7 @@ use gpui_component::slider::{SliderEvent, SliderState};
 use crate::controls;
 use crate::loudness::Loudness;
 use crate::motion;
+use crate::rewind;
 use crate::seek_bar;
 use crate::stage::{MaximizeButton, Place};
 use crate::theme;
@@ -249,6 +252,19 @@ pub struct VideoView {
     /// (`bar::fit`): the volume figure and slider, and the quality pill and
     /// the maximize control, which fold into More when they do not fit.
     fit: bar::Fit,
+    /// Whether the pane is wide enough for a live stream's timeline, measured
+    /// by the probe with `fit` (`bar::timeline_fits`). A recording's seek row
+    /// is drawn whatever the width, as it always was.
+    timeline_fits: bool,
+    /// When the live broadcast on screen began, which its timeline runs from
+    /// to now; `None` on a recording, and on a live stream no list has said
+    /// it of, which then has no timeline.
+    ///
+    /// A mirror, on [`ChatButton`]'s pattern: the lists are the root's.
+    /// Written in exactly two places — [`Start::live_since`] when the player
+    /// is made, and [`set_live_since`](Self::set_live_since), which only
+    /// `RootView::sync_live_since` calls, after every answer from the worker.
+    live_since: Option<DateTime<Utc>>,
     /// Whether the pointer is over this player, measured from the pane's own
     /// bounds rather than taken from GPUI's `on_hover`.
     ///
@@ -328,6 +344,9 @@ pub struct Start {
     /// way; see [`Switching`]. Almost always none: a new player is a cold
     /// start, which ends whatever was resolving beside the old one.
     pub switching: Option<Switching>,
+    /// When a live broadcast began, for its timeline; see
+    /// `VideoView::live_since`.
+    pub live_since: Option<DateTime<Utc>>,
 }
 
 impl VideoView {
@@ -408,6 +427,8 @@ impl VideoView {
             // Until the probe has measured the pane: the bar is hidden on
             // the first frame, and the probe's first pass corrects it.
             fit: bar::Fit::EVERYTHING,
+            timeline_fits: true,
+            live_since: start.live_since,
             hovered: false,
             controls: motion::Fade::hidden(),
             place: start.place,
@@ -467,6 +488,11 @@ impl VideoView {
     }
 
     /// The pointer let go, wherever it is: seek to where the scrub got to.
+    ///
+    /// On a live stream's timeline, ask the root to go back to that moment
+    /// of the broadcast (`PaneAction::Rewind`), which replaces the pane with
+    /// its recording; a release within `rewind::EDGE_SECS` of the live edge
+    /// asks for nothing, and the pane plays on live.
     fn end_scrub(&mut self, cx: &mut Context<Self>) {
         let Some(fraction) = self.scrub.take() else {
             return;
@@ -474,6 +500,11 @@ impl VideoView {
         if let Some(timeline) = self.stream.timeline() {
             let extent = timeline.extent(self.stream.position());
             self.seek_to(fraction as f64 * extent);
+        } else if let Some(since) = self.live_since {
+            if let Some(at) = rewind::pressed_at(since, fraction, Utc::now()) {
+                let moment = rewind::Moment { at, since };
+                cx.emit(VideoEvent::Pane(PaneAction::Rewind(moment)));
+            }
         }
         self.sync_controls();
         cx.notify();
@@ -755,6 +786,16 @@ impl VideoView {
         }
     }
 
+    /// When the live broadcast on screen began, from
+    /// `RootView::sync_live_since`; see `VideoView::live_since` for why
+    /// nothing else calls this. Repaints only on a change.
+    pub fn set_live_since(&mut self, live_since: Option<DateTime<Utc>>, cx: &mut Context<Self>) {
+        if self.live_since != live_since {
+            self.live_since = live_since;
+            cx.notify();
+        }
+    }
+
     /// What the pane's maximize control offers now, from
     /// `RootView::restage`; see `VideoView::maximize` for why nothing else
     /// calls this.
@@ -765,15 +806,17 @@ impl VideoView {
         }
     }
 
-    /// Note what the bar has room for, from the probe. Returns whether that
-    /// changed, the only time a repaint is worth it: the width moves with
-    /// every pixel of a window being dragged, and what fits changes a few
-    /// times across all of them.
-    fn set_fit(&mut self, fit: bar::Fit) -> bool {
-        if self.fit == fit {
+    /// Note what the bar has room for, from the probe: `fit` on its row of
+    /// buttons, and whether a live stream's timeline fits above it. Returns
+    /// whether that changed, the only time a repaint is worth it: the width
+    /// moves with every pixel of a window being dragged, and what fits
+    /// changes a few times across all of them.
+    fn set_fit(&mut self, fit: bar::Fit, timeline_fits: bool) -> bool {
+        if self.fit == fit && self.timeline_fits == timeline_fits {
             return false;
         }
         self.fit = fit;
+        self.timeline_fits = timeline_fits;
         true
     }
 
@@ -985,11 +1028,12 @@ impl Render for VideoView {
                 let inside = window.is_window_hovered() && bounds.contains(&pointer);
                 // In logical pixels, the bar's own: the bar spans the pane.
                 let fit = bar::fit(f32::from(bounds.size.width), cluster);
+                let timeline_fits = bar::timeline_fits(f32::from(bounds.size.width));
                 this.update(cx, |view: &mut Self, cx| {
                     let hovered = view.set_hovered(inside);
                     let scrubbed = view.follow_scrub(pointer.x);
                     let pointed = view.follow_pointer(inside.then_some(pointer));
-                    let fitted = view.set_fit(fit);
+                    let fitted = view.set_fit(fit, timeline_fits);
                     if hovered || scrubbed || pointed || fitted {
                         cx.notify();
                     }

@@ -278,7 +278,9 @@ impl RootView {
                 self.discovery.finish(&ListKey::Videos { login, kind });
             }
             TwitchEvent::Video { id, result } => self.on_linked_video(id, result, window, cx),
-            TwitchEvent::Broadcasts { login, result } => self.on_broadcasts(login, result, cx),
+            TwitchEvent::Broadcasts { login, result } => {
+                self.on_broadcasts(login, result, window, cx)
+            }
             // The rail's, and no list's: nothing here waits on it or says
             // its failure. See `root::recommended`.
             TwitchEvent::Recommended(result) => self.on_recommended(result, cx),
@@ -298,6 +300,9 @@ impl RootView {
             // `BrowseError` names its list. Kept out of the page all the same.
             TwitchEvent::BrowseError { list: None, reason } => eprintln!("browse: {reason}"),
         }
+        // Any answer may have brought a list that says when a live pane's
+        // broadcast began, which its timeline runs from; see `rewind`.
+        self.sync_live_since(cx);
         cx.notify();
     }
 

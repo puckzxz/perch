@@ -219,6 +219,25 @@ last broadcast and the recording need a sign-in to be found. Chat stays
 connected either way, which is where the goodnights are, until a recording
 takes the pane's place and brings its own chat replay.
 
+### Going back in a live stream
+
+Above the bar on a live pane is a timeline of the broadcast so far, from
+when it started up to now, with the thumb at the live edge: how long the
+stream has been going on its left and `LIVE` on its right. Point at it and
+it says the time under the pointer, as a recording's seek bar does. Click
+or drag back along it and let go, and the pane switches to the broadcast's
+recording at that moment — the one Twitch is still making — with a seek bar
+of its own and the chat replayed beside it, the way **Watch from the start**
+plays a stream that has ended. A press within half a minute of the edge does
+nothing, and the stream plays on.
+
+Rewinding needs a sign-in, and a channel that keeps its past broadcasts:
+one that does not, or whose recording Twitch has not listed yet, says
+`No past broadcast to rewind into` and stays live. The timeline is there
+once the stream has been going for more than half a minute, when a list
+Perch has fetched says when it started — your follows, popular, a category
+or a search — and on a pane wide enough to aim along it.
+
 ### Panes in another order
 
 With two panes or more on the page, drag a pane by its header onto another
@@ -274,12 +293,12 @@ bar or on its cell, the same icon in its header, `P` in either window, or the
 palette's `Bring … back`.
 
 The pop-out is dragged by its picture and resized from its edges. Its bar
-has play, the volume, a recording's seek row, **Bring back** and **Close**,
-and it answers `Space`, `M`, the arrows, `P` and `Ctrl+W`. Closing it the way
-Windows closes any window — `Alt+F4`, or from the taskbar — brings the pane
-back; its own **Close** closes the pane. Closing Perch closes every pop-out
-with it. A popped pane whose stream goes off or ends comes back to its cell,
-where what it offers next is.
+has play, the volume, a recording's seek row or a live stream's timeline,
+**Bring back** and **Close**, and it answers `Space`, `M`, the arrows, `P` and
+`Ctrl+W`. Closing it the way Windows closes any window — `Alt+F4`, or from
+the taskbar — brings the pane back; its own **Close** closes the pane.
+Closing Perch closes every pop-out with it. A popped pane whose stream goes
+off or ends comes back to its cell, where what it offers next is.
 
 Its quality follows its own window, the way a pane's follows its cell: make
 the window larger and it moves to a sharper rendition once you stop, with no

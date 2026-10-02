@@ -1,4 +1,6 @@
-//! The seek bar on a past broadcast, and the arithmetic behind it.
+//! The seek bar on a past broadcast, and the arithmetic behind it. A live
+//! pane's timeline is drawn with it too, from the broadcast's start to now
+//! with the thumb at the live edge (`video_view::bar`, `crate::rewind`).
 //!
 //! Drawn by hand rather than with the widget library's slider, for three
 //! reasons that are each enough on their own. That slider reports no drag end,
@@ -38,6 +40,14 @@ use crate::theme;
 /// at either end of the bar: centred on the pointer, half of it hangs past
 /// the track's end, above the time this leaves room for.
 const TIME_WIDTH: f32 = 54.0;
+
+/// How wide the bar is with a track `track` wide: the track, and the times
+/// either side of it with the gaps before and after it. What a bar that
+/// leaves itself off a narrow pane — a live pane's timeline — measures by
+/// (`video_view::bar::timeline_fits`).
+pub fn width_with_track(track: f32) -> f32 {
+    2.0 * TIME_WIDTH + 2.0 * theme::GAP_TIGHT + track
+}
 
 /// How long a recording is, and whether it is still getting longer.
 #[derive(Debug, Clone, Copy)]

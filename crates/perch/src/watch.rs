@@ -39,6 +39,7 @@ pub use self::status::{showing, Showing};
 use crate::chat::ChatView;
 use crate::layout;
 use crate::motion;
+use crate::rewind::{Moment, Rewind};
 use crate::target::{self, Target};
 use crate::theme;
 use crate::video::PositionHandle;
@@ -247,9 +248,25 @@ pub struct Slot {
     pub archives: Lookup,
     /// The id of the broadcast a live pane is showing, read off the live list
     /// when its picture arrived and again when it ended: what finds that
-    /// broadcast's recording among `archives` (`channel_page::archive_of`).
-    /// `None` for a channel in no list, and for a recording.
+    /// broadcast's recording among `archives` (`channel_page::archive_of`),
+    /// and the recording to rewind into while it plays
+    /// (`rewind::archive_for`). `None` for a channel in no list, and for a
+    /// recording.
     pub broadcast: Option<String>,
+    /// A live pane's rewind: the broadcast's recording, once a press on the
+    /// timeline has found it, and a press waiting on the ask for it (see
+    /// `crate::rewind`). Made afresh whenever the pane begins to play, as
+    /// `archives` is forgotten then, so it is always about the broadcast on
+    /// screen. Untouched on a recording.
+    pub rewind: Rewind,
+    /// How many answers about the channel's past broadcasts are still on
+    /// their way for asks the pane has forgotten: `archives` waiting, or
+    /// `rewind` asking, when it began to play again. The worker answers in
+    /// the order it was asked, so the next this many answers are those, and
+    /// `RootView::on_broadcasts` lets them go by rather than hand a list from
+    /// before the pane played again to an ask made since. Back to none when
+    /// the worker that owed them is gone (`RootView::forget_asks`).
+    pub stray_answers: usize,
 }
 
 /// Where a pane's ask about its channel's past broadcasts has got to.
@@ -365,6 +382,8 @@ impl Slot {
             retried_for: None,
             archives: Lookup::NotAsked,
             broadcast: None,
+            rewind: Rewind::default(),
+            stray_answers: 0,
         }
     }
 
@@ -663,6 +682,11 @@ pub enum PaneAction {
     /// The same, from its start: `Watch from the start` on a pane whose
     /// broadcast has just ended, which plays that broadcast's recording.
     WatchFromStart(Box<Video>),
+    /// Go back to this moment of the broadcast a live pane is showing: a
+    /// press let go on its bar's timeline, short of the live edge. Plays the
+    /// broadcast's recording, still being made, from there in the pane's
+    /// place; see `RootView::rewind`.
+    Rewind(Moment),
 }
 
 /// How every pane in the current grid is arranged. Identical for all of them,

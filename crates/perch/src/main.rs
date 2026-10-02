@@ -36,6 +36,7 @@ mod motion;
 mod os_window;
 mod palette;
 mod recommended;
+mod rewind;
 mod root;
 mod seek_bar;
 mod settings_view;

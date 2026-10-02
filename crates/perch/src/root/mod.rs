@@ -51,6 +51,7 @@ mod pop_out;
 mod prefs;
 mod recommended;
 mod renditions;
+mod rewind;
 mod shortcuts;
 mod streams;
 mod title_bar;

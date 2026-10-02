@@ -1,5 +1,6 @@
 //! The control bar along the bottom of a playing picture: the seek row on a
-//! recording, then the row of icons every stream has.
+//! recording, or the timeline of a live broadcast so far, then the row of
+//! icons every stream has.
 //!
 //! An `impl VideoView` of its own, so the bar can grow without the player
 //! growing with it. It reads the player's fields directly, since a child
@@ -37,6 +38,17 @@
 //! maximize control after it, and never drops play, volume or a button of
 //! the right-hand cluster.
 //!
+//! A live stream's timeline is the recording's seek row, in its place above
+//! the buttons, spanning the broadcast from its start to now with the thumb
+//! at the live edge, the time there on its left and `LIVE` on its right.
+//! Pointing at it says the time under the pointer, as on a recording, and a
+//! press let go back along it opens the broadcast's recording at that moment
+//! in the pane's place (`crate::rewind`); one within half a minute of the
+//! edge does nothing. It grows as the bar redraws, which a live picture does
+//! at its frame rate: nothing ticks for it. It takes a row rather than room
+//! on the buttons', so [`fit`] gives nothing up for it; a pane too narrow
+//! for a track worth aiming along ([`timeline_fits`]) leaves it off.
+//!
 //! The maximize control gives the pane the whole watch page, chat and all,
 //! and on the pane that has it shows every pane again (`stage`'s
 //! `MaximizeButton`, mirrored as `VideoView::maximize`). It stands just
@@ -51,6 +63,7 @@
 //! chat and its menus stay with its cell in the main window, and the window
 //! is too small to want them.
 
+use chrono::Utc;
 use gpui::{
     div, prelude::*, px, AnyElement, Context, Div, MouseButton, SharedString, Stateful, Window,
 };
@@ -61,6 +74,7 @@ use crate::assets::Icon;
 use crate::controls::{self, Variant};
 use crate::keys::Hint;
 use crate::motion;
+use crate::rewind;
 use crate::seek_bar;
 use crate::stage::{MaximizeButton, Place};
 use crate::theme;
@@ -183,11 +197,24 @@ pub(super) struct MaximizeControl {
     pub(super) words: &'static str,
 }
 
+/// The narrowest track a live timeline is drawn with. On a six-hour
+/// broadcast a pixel of it is a little under four minutes, which is still a
+/// stretch you can aim at; narrower, the bar is left off.
+const LIVE_TRACK_MIN: f32 = 96.0;
+
+/// Whether a bar `width` logical pixels wide has room for a live stream's
+/// timeline: its padding, the two times and a track of [`LIVE_TRACK_MIN`].
+pub(super) fn timeline_fits(width: f32) -> bool {
+    width >= 2.0 * theme::PANEL_PAD + seek_bar::width_with_track(LIVE_TRACK_MIN)
+}
+
 impl VideoView {
-    /// The seek bar, on a recording. A live stream has no timeline and gets
-    /// nothing here, so its control bar is exactly what it was.
-    fn seek_row(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let timeline = self.stream.timeline()?;
+    /// The seek row: a recording's seek bar, or a live stream's timeline
+    /// ([`live_row`](Self::live_row)).
+    fn seek_row(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let Some(timeline) = self.stream.timeline() else {
+            return self.live_row(cx);
+        };
         let position = self.stream.position();
         let extent = timeline.extent(position);
         // While the thumb is held the left-hand time follows it rather than
@@ -212,13 +239,61 @@ impl VideoView {
             position: seek_bar::timecode(shown).into(),
             extent: seek_bar::timecode(extent).into(),
         };
-        Some(seek_bar::element(
-            state,
-            |this: &mut Self, fraction, _window, cx| this.begin_scrub(fraction, cx),
-            |this: &mut Self, _window, cx| this.end_scrub(cx),
-            |this: &mut Self, bounds| this.track = Some(bounds),
-            cx,
-        ))
+        Some(
+            seek_bar::element(
+                state,
+                |this: &mut Self, fraction, _window, cx| this.begin_scrub(fraction, cx),
+                |this: &mut Self, _window, cx| this.end_scrub(cx),
+                |this: &mut Self, bounds| this.track = Some(bounds),
+                cx,
+            )
+            .into_any_element(),
+        )
+    }
+
+    /// A live stream's timeline: the broadcast from its start to now, the
+    /// thumb at the live edge, through the recording's seek bar and its
+    /// scrub, so pointing, pressing and dragging go exactly as they do there
+    /// and only the release differs (`end_scrub`). Nothing where no list has
+    /// said when the broadcast began, where `rewind::span` offers none — a
+    /// broadcast too new to go back in, or a start that cannot be this
+    /// broadcast's — and on a pane too narrow for it ([`timeline_fits`]).
+    fn live_row(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.timeline_fits {
+            return None;
+        }
+        let span = rewind::span(self.live_since?, Utc::now())?;
+        // While the thumb is held the left-hand time follows it, as on a
+        // recording; at rest it is the time at the edge, the uptime.
+        let shown = self
+            .scrub
+            .map(|fraction| rewind::secs_at(fraction, span))
+            .unwrap_or(span);
+        let hover = self
+            .scrub
+            .or(self.pointing)
+            .map(|fraction| seek_bar::Hover {
+                fraction,
+                time: seek_bar::timecode(rewind::secs_at(fraction, span)).into(),
+            });
+        let state = seek_bar::State {
+            played: 1.0,
+            scrub: self.scrub,
+            hover,
+            position: seek_bar::timecode(shown).into(),
+            // The badge word, in its conventional capitals.
+            extent: "LIVE".into(),
+        };
+        Some(
+            seek_bar::element(
+                state,
+                |this: &mut Self, fraction, _window, cx| this.begin_scrub(fraction, cx),
+                |this: &mut Self, _window, cx| this.end_scrub(cx),
+                |this: &mut Self, bounds| this.track = Some(bounds),
+                cx,
+            )
+            .into_any_element(),
+        )
     }
 
     pub(super) fn control_bar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -950,6 +1025,24 @@ mod tests {
             );
         }
         assert!(widths().any(|width| fit(width, ANOTHER) != fit(width, PANE)));
+    }
+
+    /// A live timeline is drawn on a pane wide enough to aim along it, the
+    /// smallest pop-out included, and left off one too narrow; the edge is
+    /// one width, with nothing taken back either side of it.
+    #[test]
+    fn a_live_timeline_needs_room_for_its_track() {
+        assert!(timeline_fits(1600.0));
+        assert!(timeline_fits(theme::POP_OUT_MIN_WIDTH));
+        assert!(!timeline_fits(0.0));
+        assert!(
+            !timeline_fits(2.0 * theme::PANEL_PAD + seek_bar::width_with_track(0.0)),
+            "room for the two times and no track"
+        );
+        let edge = widths()
+            .find(|width| timeline_fits(*width))
+            .expect("some width fits it");
+        assert!(widths().filter(|width| *width >= edge).all(timeline_fits));
     }
 
     /// A pop-out at the least size its window may be is still a player: its

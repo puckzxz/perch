@@ -6,9 +6,11 @@
 //! Asked through the worker's own request for it (`Request::Broadcasts`),
 //! never a channel page's: a pane's answer must not land on a page's shelf,
 //! nor its failure on a page. The answer lands in the pane's
-//! `Slot::archives`, by the channel it was asked for.
+//! `Slot::archives`, by the channel it was asked for — or, for a live pane
+//! that asked to rewind, in its `Slot::rewind` (`root::rewind`), which rides
+//! the same request.
 
-use gpui::Context;
+use gpui::{Context, Window};
 use twitch_api::Video;
 
 use super::RootView;
@@ -30,7 +32,8 @@ impl RootView {
     /// still off never blanks the card it is showing.
     ///
     /// The channel's id, which Helix lists videos by, comes from whatever
-    /// list knows it; failing all of them, the worker looks it up by name.
+    /// list knows it; failing all of them, the worker looks it up by name
+    /// ([`request_broadcasts`](Self::request_broadcasts)).
     pub(super) fn ask_broadcasts(&mut self, index: usize) {
         let Some(slot) = self.slots.get(index) else {
             return;
@@ -42,6 +45,17 @@ impl RootView {
             return;
         }
         let login = slot.channel.clone();
+        if self.request_broadcasts(login) {
+            self.slots[index].archives.asked();
+        }
+    }
+
+    /// Send the worker the ask about `login`'s newest past broadcasts,
+    /// reporting whether anyone is there to answer it: a stopped pane's
+    /// ([`ask_broadcasts`](Self::ask_broadcasts)) and a live pane's rewind
+    /// (`rewind`) alike, whose answers both come to
+    /// [`on_broadcasts`](Self::on_broadcasts).
+    pub(super) fn request_broadcasts(&mut self, login: String) -> bool {
         let user_id = self
             .stream_info(&login)
             .map(|stream| stream.user_id.clone())
@@ -59,25 +73,34 @@ impl RootView {
                     .and_then(|page| page.user_id.clone())
             })
             .filter(|id| !id.is_empty());
-        if self.twitch.request(Request::Broadcasts { login, user_id }) {
-            self.slots[index].archives.asked();
-        }
+        self.twitch.request(Request::Broadcasts { login, user_id })
     }
 
     /// The worker's answer about `login`'s past broadcasts, for the live
     /// pane on that channel — ignored if the pane has gone since, or is no
     /// longer waiting on it. A pane that began to play again while the ask
-    /// was out has forgotten it, and an answer taken then would stand in for
-    /// the fresh ask its next stop makes: an ended broadcast matched against
-    /// a list from before it existed. A failed ask leaves the pane's last
-    /// answer standing, if it had one ([`Lookup::settle`]).
+    /// was out has forgotten it, and its answer is let go by when it comes:
+    /// taken, it would stand in for the fresh ask its next stop makes, or a
+    /// rewind's — an ended broadcast matched against a list from before it
+    /// existed, or a live one told it has no archive. A failed ask leaves the
+    /// pane's last answer standing, if it had one ([`Lookup::settle`]).
     ///
     /// The recordings are also the newer word on any the history holds, as a
     /// channel page's listing is.
+    ///
+    /// Answers are told apart by order, which the worker keeps. An answer to
+    /// an ask the pane forgot when it began to play again is let go by
+    /// ([`Slot::stray_answers`](crate::watch::Slot::stray_answers)), so it
+    /// can stand in for no ask made since. After those, a live pane waiting
+    /// on its rewind takes the answer first (`rewind`): a pane asks for its
+    /// rewind only while it plays and for itself only once it has stopped,
+    /// so a pane waiting on both — one that stopped with a rewind's ask out —
+    /// asked for the rewind first, and the first answer is that one.
     pub(super) fn on_broadcasts(
         &mut self,
         login: String,
         result: Result<Vec<Video>, String>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let answer = match result {
@@ -91,6 +114,18 @@ impl RootView {
             }
         };
         if let Some(slot) = self
+            .slots
+            .iter_mut()
+            .find(|slot| slot.is_live() && slot.channel == login && slot.stray_answers > 0)
+        {
+            slot.stray_answers -= 1;
+        } else if let Some(index) = self
+            .slots
+            .iter()
+            .position(|slot| slot.is_live() && slot.channel == login && slot.rewind.asking())
+        {
+            self.on_rewind_answer(index, answer.as_deref(), window, cx);
+        } else if let Some(slot) = self
             .slots
             .iter_mut()
             .find(|slot| slot.is_live() && slot.channel == login && slot.archives.waiting())
@@ -128,6 +163,10 @@ impl RootView {
     /// (`ask_missing`); a repeat goes back to the answer it would have
     /// replaced ([`Lookup::forget`]).
     ///
+    /// A live pane's ask for its rewind too, and the press waiting on it,
+    /// which nothing will now carry out: the next press asks again. And the
+    /// answers a pane was letting go by, which will not come either.
+    ///
     /// The rail's ask for recommendations too, which is not a pane's but dies
     /// with the worker the same way, and would otherwise hold off every ask
     /// after it for good; see `Recommended::forget`. And the ask for when the
@@ -136,6 +175,8 @@ impl RootView {
     pub(super) fn forget_asks(&mut self) {
         for slot in &mut self.slots {
             slot.archives.forget();
+            slot.rewind.forget();
+            slot.stray_answers = 0;
         }
         self.recommended.forget();
         self.last_live.forget();

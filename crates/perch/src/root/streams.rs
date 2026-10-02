@@ -14,6 +14,7 @@ use twitch_api::{LiveStream, Video, VideoKind};
 use super::navigation::Route;
 use super::{Page, RootView};
 use crate::chat::{ChatView, Feed};
+use crate::rewind::Rewind;
 use crate::video::{Playback, PositionHandle, SizeHandle, StartOptions, Stopped, VideoStream};
 use crate::video_view::{self, ChatButton, Qualities, Start, VideoView, Wake};
 use crate::watch::{LiveInfo, Lookup, PendingStart, Restart, Slot, Source, StreamState, MAX_PANES};
@@ -488,15 +489,22 @@ impl RootView {
             } => {
                 // Playing again: whatever the pane learned about its
                 // channel's past broadcasts when it last stopped is about
-                // that stop, and the next one asks afresh. And which
+                // that stop, and the next one asks afresh; and an archive
+                // found to rewind into was the last broadcast's. And which
                 // broadcast this is, read while the live list still has it,
-                // for finding its recording once it ends.
+                // for finding its recording once it ends, or to rewind.
                 let broadcast = self
                     .stream_info(&self.slots[index].channel)
                     .map(|stream| stream.id.clone())
                     .filter(|id| !id.is_empty());
+                let live_since = self.live_since(&self.slots[index]);
                 let slot = &mut self.slots[index];
+                // An ask still out is forgotten here, and its answer is
+                // let go by when it comes; see `Slot::stray_answers`.
+                slot.stray_answers +=
+                    usize::from(slot.archives.waiting()) + usize::from(slot.rewind.asking());
                 slot.archives = Lookup::NotAsked;
+                slot.rewind = Rewind::default();
                 slot.broadcast = if slot.is_live() { broadcast } else { None };
                 // What the player is handed: the relay for a live stream, or
                 // the recording's playlist and where to open it.
@@ -532,6 +540,10 @@ impl RootView {
                         .as_ref()
                         .and_then(PendingStart::switching)
                         .cloned(),
+                    // What a live pane's timeline runs from, if a list
+                    // says; one that says later reaches the player through
+                    // `sync_live_since`.
+                    live_since,
                 };
                 // The pane's one player: its own size until the pane is
                 // measured, playing, and its position heard by the pane —

@@ -96,6 +96,9 @@ impl RootView {
             PaneAction::WatchFromStart(video) => {
                 self.replace_with_video(key, *video, 0.0, window, cx)
             }
+            // Back along a live pane's timeline: the broadcast's recording,
+            // still being made, from that moment; see `rewind`.
+            PaneAction::Rewind(moment) => self.rewind(index, moment, window, cx),
         }
     }
 
