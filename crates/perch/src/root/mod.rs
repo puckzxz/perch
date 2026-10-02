@@ -40,6 +40,7 @@ mod chrome;
 mod commands;
 mod follows;
 mod history;
+mod last_live;
 mod launches;
 mod mini_player;
 mod navigation;
@@ -76,6 +77,7 @@ use self::follows::LiveList;
 use self::navigation::Route;
 use self::pop_out::PoppedOut;
 use crate::browse::{self, Discovery, SignIn};
+use crate::last_live::LastLive;
 use crate::launch::Launch;
 use crate::layout::Body;
 use crate::recommended::Recommended;
@@ -242,6 +244,10 @@ pub(crate) struct RootView {
     /// The rail's Recommended group: the asks out, the answers in, and the
     /// rows shown. For this session only; see `crate::recommended`.
     recommended: Recommended,
+    /// When each offline follow was last live, by login, and the asks for
+    /// it: the words under the names on Home and in the rail. For this
+    /// session only; see `crate::last_live`.
+    last_live: LastLive,
     sign_in: SignIn,
     /// Everything the browse page shows besides your follows.
     discovery: Discovery,
@@ -467,6 +473,7 @@ impl RootView {
             home_pointed: false,
             rail_offline_open: false,
             recommended: Recommended::default(),
+            last_live: LastLive::default(),
             sign_in: SignIn::Connecting,
             discovery: Discovery::default(),
             trail: Trail::default(),

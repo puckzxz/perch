@@ -14,12 +14,12 @@
 //! live channels you do not follow that are like the ones you watch, each
 //! saying which channel led to it — see `crate::recommended`, which says
 //! where they come from and how rarely they are asked for. Then everyone
-//! else followed, as names, folded under a count, because that is the longest
-//! list in the app and most evenings nobody wants it. Folded is where it
-//! starts each session, and folded it builds no rows and asks for no
-//! pictures. The rows all hold still under the pointer; see
-//! `RootView::hold_live`. A pin is made and taken off from a followed
-//! channel's row itself, under the pointer, and saved by
+//! else followed, as names, each saying when it was last live, folded under
+//! a count, because that is the longest list in the app and most evenings
+//! nobody wants it. Folded is where it starts each session, and folded it
+//! builds no rows and asks for no pictures. The rows all hold still under
+//! the pointer; see `RootView::hold_live`. A pin is made and taken off from
+//! a followed channel's row itself, under the pointer, and saved by
 //! `RootView::set_pinned`.
 //!
 //! On the left, opposite chat. Chat belongs to the pane it is part of and sits
@@ -39,6 +39,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use chrono::{DateTime, Utc};
 use emotes::ImageCache;
 use gpui::{div, img, prelude::*, px, Context, ElementId, ScrollHandle, SharedString, Window};
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
@@ -48,6 +49,7 @@ use twitch_api::{Channel, LiveStream};
 use crate::assets::Icon;
 use crate::browse::{format_viewers, Action};
 use crate::controls;
+use crate::last_live::LastLive;
 use crate::recommended::Suggestion;
 use crate::theme;
 
@@ -86,10 +88,12 @@ pub struct Rail<'a> {
     /// way; empty whenever the group is hidden. See `crate::recommended`.
     pub recommended: &'a [Suggestion],
     /// Login to profile picture, for everyone the worker has looked up this
-    /// session. Only live follows are looked up; an offline row has a face
-    /// only if its channel was live earlier and nobody has restarted since.
-    /// A recommendation brings its own picture.
+    /// session: live follows at every poll, offline ones once a session (see
+    /// `twitch::unpictured`). A recommendation brings its own picture.
     pub avatars: &'a HashMap<String, String>,
+    /// When each offline follow was last live, as far as Twitch has said:
+    /// the line under an offline row's name. See `crate::last_live`.
+    pub last_live: &'a LastLive,
     /// The channels open in a live pane.
     pub watching: &'a [String],
     /// Whether "open beside what is playing" is on offer; see
@@ -296,21 +300,35 @@ impl Group {
 /// on a pinned row to unpin it — and any live row, while there is room beside
 /// what is playing, `+`.
 ///
-/// An offline channel, or a pin nobody can place, is the name alone in
-/// `text_dim`, with no dot and no count: there is nobody watching to count,
-/// and a dimmer name is what tells it from the live rows around it at a
-/// glance. Its face is whatever this session already has for it; the rail
-/// asks Twitch for no pictures of channels that are not live.
+/// An offline channel, or a pin nobody can place, is the name in `text_dim`,
+/// with no dot and no count: there is nobody watching to count, and a dimmer
+/// name is what tells it from the live rows around it at a glance. Under an
+/// offline follow's name, where a live row says what is on, is when it was
+/// last live ("Live 3 hours ago"), once Twitch has said; the row is the
+/// avatar's height either way, which two lines of text exactly fill, so the
+/// line costs the rail no room. Its face is the one the worker looked up
+/// for it once this session (see `twitch::poll_follows`).
 fn row<V: 'static>(
     group: Group,
     channel: Row<'_>,
     rail: &Rail<'_>,
+    now: DateTime<Utc>,
     cache: &ImageCache,
     on_action: impl Fn(&mut V, Action, &mut Window, &mut Context<V>) + Clone + 'static,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
     let live = channel.live();
     let login = channel.login().to_string();
+    // The line under the name: a live row's game or reason, or an offline
+    // follow's last time live, in the colour each says it in.
+    let about: Option<(SharedString, gpui::Hsla)> = match (live, channel) {
+        (Some((about, color, _)), _) => Some((SharedString::from(about.to_string()), color)),
+        (None, Row::Offline(offline)) => rail
+            .last_live
+            .words(&offline.login, now)
+            .map(|words| (SharedString::from(words), theme::text_dim())),
+        (None, _) => None,
+    };
     let watching = live.is_some() && rail.watching.contains(&login);
     let can_add = live.is_some() && rail.can_add;
     let offers_pin = channel.offers_pin();
@@ -392,7 +410,7 @@ fn row<V: 'static>(
                 .flex()
                 .flex_col()
                 .child(name)
-                .when_some(live, |text, (about, color, _)| {
+                .when_some(about, |text, (about, color)| {
                     text.child(
                         div()
                             .w_full()
@@ -401,7 +419,7 @@ fn row<V: 'static>(
                             .text_size(px(theme::TEXT_META))
                             .line_height(px(theme::LINE_TIGHT))
                             .text_color(color)
-                            .child(SharedString::from(about.to_string())),
+                            .child(about),
                     )
                 }),
         )
@@ -524,6 +542,7 @@ pub fn rail<V: 'static>(
         rail.pinned,
         rail.follows_loaded,
     );
+    let now = Utc::now();
 
     // Its own scroller. The rail is as tall as the window and a hundred live
     // follows is longer than that, and it must not scroll the page behind it.
@@ -546,6 +565,7 @@ pub fn rail<V: 'static>(
                 Group::Pinned,
                 *channel,
                 &rail,
+                now,
                 cache,
                 on_action.clone(),
                 cx,
@@ -559,6 +579,7 @@ pub fn rail<V: 'static>(
             Group::Live,
             Row::Live(stream),
             &rail,
+            now,
             cache,
             on_action.clone(),
             cx,
@@ -596,6 +617,7 @@ pub fn rail<V: 'static>(
                 Group::Recommended,
                 Row::Recommended(suggestion),
                 &rail,
+                now,
                 cache,
                 on_action.clone(),
                 cx,
@@ -620,6 +642,7 @@ pub fn rail<V: 'static>(
                     Group::Offline,
                     Row::Offline(channel),
                     &rail,
+                    now,
                     cache,
                     on_action.clone(),
                     cx,

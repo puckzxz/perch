@@ -362,9 +362,26 @@ cards, as many as fit the window, and **Show all** beside its heading goes to
 that tab when there are more. It needs no sign-in, since the history is the
 app's own, and shows above the sign-in prompt when nobody is signed in. The
 offline names lead with the channels you watched most recently, live or
-recorded; the ones you never watched follow by name. A name opens the
-channel's page — its past broadcasts, and a control for its chat, which
-connects whether or not anyone is streaming.
+recorded; the ones you never watched follow by name. Each says when that
+channel was last live beside its name — "Live 3 hours ago", "Live yesterday",
+"Live 2 weeks ago" — and a name opens the channel's page: its past
+broadcasts, and a control for its chat, which connects whether or not anyone
+is streaming. Each heading carries how many are under it, after the filter:
+*Live now · 23*, *Continue watching · 5*, *Offline · 103*.
+
+When each channel was last live comes from the same unpublished Twitch query
+the recommendations use (see "The rail"), asked without your sign-in, a
+hundred channels to a request: for everyone offline when the follows list
+first arrives, then only for a channel whose stream has just ended or one you
+have just followed, and for everyone again every fifteen minutes at most —
+never at every minute's refresh. Twitch says when a channel's last stream
+started, not when it ended, so Perch also notes the last time each refresh
+saw a channel live and counts from whichever is later: a stream that ended
+while Perch was open reads right to within a minute, and one that ended
+before you opened it is counted from when it started. If the request fails,
+the names simply go without it; a line in the log says why, and nothing else
+changes. If Twitch refuses the query outright, Perch stops asking for the
+rest of the session.
 
 The list refreshes itself every minute. `Ctrl+R`, or Refresh beside the tabs,
 asks again now — for whichever list is on screen, not just follows.
@@ -429,7 +446,8 @@ under Offline and a count — click the count to unfold them, and again to fold
 them away; they start folded each time Perch starts. Click a live channel,
 followed or recommended, to watch it, or `+` to open it beside what is already
 playing; click anyone else for their channel's page. Offline names get their
-pictures too, asked for once each time Perch starts.
+pictures too, asked for once each time Perch starts, and under each name the
+same "Live 3 hours ago" Home shows, where a live row says what is on.
 
 Recommendations start from the channels open in your panes and the ones you
 watched most recently, six at most. For each, Twitch says who else its viewers

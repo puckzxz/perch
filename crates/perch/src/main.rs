@@ -28,6 +28,7 @@ mod history_page;
 mod home;
 mod instance;
 mod keys;
+mod last_live;
 mod launch;
 mod layout;
 mod loudness;

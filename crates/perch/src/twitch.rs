@@ -1,6 +1,7 @@
 //! The Twitch worker: signing in, keeping the follows list fresh, and
-//! answering the browse page's requests, a stopped pane's, and the rail's
-//! ask for channels like the ones watched.
+//! answering the browse page's requests, a stopped pane's, the rail's ask
+//! for channels like the ones watched, and when the offline follows were
+//! last live.
 //!
 //! One thread owns the session, and it has to. Refresh tokens are single-use,
 //! so two things refreshing at once would spend the same token twice and lock
@@ -15,7 +16,7 @@
 //! asks for in between, which is what the request channel is: `recv_timeout`
 //! against the next poll deadline is both the wait and the mailbox.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
@@ -24,7 +25,7 @@ use std::time::{Duration, Instant};
 
 use futures::channel::mpsc;
 use settings::{OAuthTokens, Settings};
-use twitch_api::recommend::SimilarChannel;
+use twitch_api::recommend::{LastBroadcast, SimilarChannel};
 use twitch_api::{Category, Channel, LiveStream, Session, Video, VideoKind};
 
 /// How often to re-ask Twitch who is live.
@@ -99,6 +100,16 @@ pub enum Request {
     /// browse list and touches no follows, and its failure travels in its
     /// answer.
     Recommend { seeds: Vec<String> },
+    /// When each of `logins` last went live, for the words under an offline
+    /// follow's name on Home and in the rail: up to a hundred logins a
+    /// request to Twitch's unpublished GraphQL endpoint
+    /// (`twitch_api::recommend::last_broadcasts`). The root decides which
+    /// logins and how often; see `crate::last_live`.
+    ///
+    /// Anonymous, and answered in [`run`] ahead of the session's upkeep, for
+    /// the reasons [`Recommend`](Request::Recommend) is. It fills no browse
+    /// list, and its failure travels in its answer.
+    LastLive { logins: Vec<String> },
 }
 
 /// Which browse list a request fills, so its answer — or its failure — can
@@ -124,17 +135,19 @@ pub enum ListKey {
 }
 
 impl Request {
-    /// The browse list this fills, or `None` for the four that fill none:
+    /// The browse list this fills, or `None` for the five that fill none:
     /// the follows poll, whose lists are not the browse page's, a recording
     /// looked up for a link, whose failure is a toast, a pane's past
-    /// broadcasts, which are the pane's, and the rail's recommendations,
-    /// which are the rail's.
+    /// broadcasts, which are the pane's, the rail's recommendations, which
+    /// are the rail's, and when the offline follows were last live, which is
+    /// words on names already on screen.
     pub fn list_key(&self) -> Option<ListKey> {
         match self {
             Request::Follows
             | Request::Video { .. }
             | Request::Broadcasts { .. }
-            | Request::Recommend { .. } => None,
+            | Request::Recommend { .. }
+            | Request::LastLive { .. } => None,
             Request::Popular { .. } => Some(ListKey::Popular),
             Request::Categories { .. } => Some(ListKey::Categories),
             Request::Category { category, .. } => Some(ListKey::Category(category.id.clone())),
@@ -240,6 +253,13 @@ pub enum TwitchEvent {
     /// event with the failure inside it, for the reason
     /// [`Broadcasts`](TwitchEvent::Broadcasts) has one.
     Recommended(Recommendations),
+    /// When each login of a [`Request::LastLive`] last went live, keyed by
+    /// login as Twitch writes it, or why not. A login Twitch has no account
+    /// for is simply absent. Its own event with the failure inside it, for
+    /// the reason [`Broadcasts`](TwitchEvent::Broadcasts) has one; the
+    /// failure is a [`RecommendError`] because it is the same endpoint, and
+    /// a refusal means the same: stop asking.
+    LastLive(Result<HashMap<String, LastBroadcast>, RecommendError>),
     /// Sign-in itself failed, so nothing works.
     Error(String),
     /// One browse request failed. The session is fine; only that list is empty,
@@ -258,9 +278,9 @@ pub enum TwitchEvent {
 /// there are none.
 pub type Recommendations = Result<Vec<(String, Vec<SimilarChannel>)>, RecommendError>;
 
-/// Why a [`Request::Recommend`] came back with nothing. Two kinds, because
-/// the root does different things with them; see
-/// `recommended::Recommended::answered`.
+/// Why a [`Request::Recommend`] or a [`Request::LastLive`] came back with
+/// nothing. Two kinds, because the root does different things with them; see
+/// `recommended::Recommended::answered` and `last_live::LastLive::answered`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RecommendError {
     /// Twitch would not run the query (`twitch_api::Error::QueryRefused`):
@@ -575,8 +595,8 @@ fn serve(
     let list = request.list_key();
     let result = match request {
         // Intercepted by the caller: the first because it owns the poll
-        // timer, the second because it needs no session.
-        Request::Follows | Request::Recommend { .. } => return,
+        // timer, the other two because they need no session.
+        Request::Follows | Request::Recommend { .. } | Request::LastLive { .. } => return,
         Request::Popular { after } => {
             twitch_api::top_streams(client_id, token, None, after.as_deref())
                 .map(|page| TwitchEvent::Popular(Listing::from(page, after.is_some())))
@@ -884,6 +904,17 @@ fn run(
                     let _ = tx.unbounded_send(TwitchEvent::Recommended(answer));
                 }
             }
+            // Anonymous too, and two requests for a couple of hundred
+            // follows, asked once in fifteen minutes; see `crate::last_live`.
+            Ok(Request::LastLive { logins }) => {
+                let answer = twitch_api::recommend::last_broadcasts(&logins).map_err(|e| match e {
+                    twitch_api::Error::QueryRefused(message) => RecommendError::Refused(message),
+                    e => RecommendError::Failed(e.to_string()),
+                });
+                if !stop.load(Ordering::Relaxed) {
+                    let _ = tx.unbounded_send(TwitchEvent::LastLive(answer));
+                }
+            }
             Ok(request) => {
                 if !keep_session_fresh(&mut session, &client_id, &settings_path, &tx, &stop) {
                     return;
@@ -938,7 +969,7 @@ mod tests {
     }
 
     /// Every request the browse page makes names the list it fills, and the
-    /// four that fill none say so. A request with no key would leave its list
+    /// five that fill none say so. A request with no key would leave its list
     /// with nothing to wait on, and its failure with nowhere to be said; a
     /// pane's or the rail's request with one would end a browse list's wait.
     #[test]
@@ -961,6 +992,12 @@ mod tests {
             (
                 Request::Recommend {
                     seeds: vec!["forsen".into()],
+                },
+                None,
+            ),
+            (
+                Request::LastLive {
+                    logins: vec!["forsen".into()],
                 },
                 None,
             ),

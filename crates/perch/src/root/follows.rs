@@ -163,6 +163,10 @@ impl RootView {
                 self.follows_loaded = true;
                 // A channel followed since is no recommendation.
                 self.update_recommended();
+                // And when the offline ones were last live: everyone on the
+                // first list, then only whoever has newly joined it, until
+                // the interval comes round; see `LastLive::next_ask`.
+                self.ask_last_live();
                 cx.notify();
             }
             TwitchEvent::Avatars(images) => {
@@ -278,6 +282,9 @@ impl RootView {
             // The rail's, and no list's: nothing here waits on it or says
             // its failure. See `root::recommended`.
             TwitchEvent::Recommended(result) => self.on_recommended(result, cx),
+            // Words on the offline names, and no list's either; see
+            // `root::last_live`.
+            TwitchEvent::LastLive(result) => self.on_last_live(result, cx),
             // Said on the list that failed, which may not be the one on
             // screen by now; see `Discovery::shown_error`.
             TwitchEvent::BrowseError {
@@ -364,6 +371,11 @@ impl RootView {
             .retain(|channel| !now_live.contains(&channel.login));
         self.home_offline
             .retain(|channel| !now_live.contains(&channel.login));
+        // And when they were last live is about the stream before this one;
+        // it is asked about afresh once this one ends, and until then this
+        // poll's time is the latest it is known live.
+        self.last_live
+            .went_live(now_live.iter().map(String::as_str), Utc::now());
 
         self.known_live = now_live;
         self.follows = if self.live_held() {

@@ -49,6 +49,7 @@ impl RootView {
         let body = browse::page(
             &self.follows,
             &self.home_offline,
+            &self.last_live,
             self.filter.read(cx).value().as_ref(),
             Input::new(&self.filter).cleanable(true).into_any_element(),
             &self.discovery,

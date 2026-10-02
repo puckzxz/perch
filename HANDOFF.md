@@ -78,12 +78,12 @@ App modules:
 | `trail.rs` | back and forward: the places behind and ahead, what a step passes over, and forgetting a place that is gone (pure, tested) |
 | `stage.rs` | where each pane is drawn — a pane, a mini-player tile, a window of its own, or nowhere while another pane has the watch page (`Place`) — which panes are popped out and which one is maximized (`Stage`), the cells the watch grid draws (`cells`) and what a pane's maximize control offers (`MaximizeButton`): the one owner of the answer both windows ask before drawing a player; and where a pane moved one place along the order goes (`moved`) (pure, tested) |
 | `os_window.rs` | what Perch asks of a window that gpui does not: its platform handle (`hwnd`, the one place a gpui window is asked for it — `instance::bring_forward` comes forward on it rather than looking it up itself), and keeping a pop-out above every other app (`keep_on_top`, Windows only) |
-| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams` (opening, restarting, closing, and `replace_with_video`, a recording swapped in for a live pane in place), `renditions` (what each pane plays, and when it restarts: the quality chosen against each pane's own height, `pane_height_for`, the upward re-pick when the grid changes, `sync_quality`, a pick from the pane's own menu, and how each changes what plays, `change_rendition` — beside a picture that covers the pane, to take over in place, and cold otherwise; and the root's half of that swap: what a start resolving beside a pane does with its events, `pending_event`, and what the pane keeps once its player has taken over or been given up on, `on_swapped` and `on_swap_failed`; and `set_pending`, the only write of a pane's pending start, which tells its player what a pick is switching it to and which a test holds the root to; tested), `panes` (where each pane is drawn, applied: `restage`, the one funnel every change of a pane's state, of which panes there are, of the page, of what is popped out and of what is maximized ends in; `set_slot_state`, the only write of a pane's state, which a test holds the root to; `video_in_main`, the only way the main window reaches a player, which a test holds the mini player and the pages to; and the maximize as the root drives it, `toggle_maximize`, `show_all_panes`, and `choose`, which takes it to the pane chosen; and `move_pane`, two panes swapping places in the order, from a header dropped on a pane or `Shift+←`/`Shift+→`), `pop_out` (a pane's picture in a window of its own, on top of other apps: the `PopOut` view, opening and closing it through `cx.defer`, `to_root`, the only way back to the root from it, and `offered`, Windows only), `broadcasts` (what a stopped live pane asks about its channel's past broadcasts, and whether it may offer to start by itself), `pane_actions` (what a pane asks for, by its key: a press on it or one of its controls, which takes the keys back for the root first, and its player's requests; the moment a pane key brings a pane's header up over its picture; and `run_guard`, which swallows the rest of a double-click whose first press took a player out from under the pointer — More's `Pop out`, the mini player's — where the player's own guard cannot follow), `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `prefs`, `recommended` (the rail's Recommended group: when to ask the worker, what its answer becomes, and the hooks that call it), `chrome` (pills, toasts, the rail), `mini_player` (what plays on while you browse, in the corner of the page), `title_bar` (the bar Perch draws across the top of the window — the rail button, back and forward, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`) |
+| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams` (opening, restarting, closing, and `replace_with_video`, a recording swapped in for a live pane in place), `renditions` (what each pane plays, and when it restarts: the quality chosen against each pane's own height, `pane_height_for`, the upward re-pick when the grid changes, `sync_quality`, a pick from the pane's own menu, and how each changes what plays, `change_rendition` — beside a picture that covers the pane, to take over in place, and cold otherwise; and the root's half of that swap: what a start resolving beside a pane does with its events, `pending_event`, and what the pane keeps once its player has taken over or been given up on, `on_swapped` and `on_swap_failed`; and `set_pending`, the only write of a pane's pending start, which tells its player what a pick is switching it to and which a test holds the root to; tested), `panes` (where each pane is drawn, applied: `restage`, the one funnel every change of a pane's state, of which panes there are, of the page, of what is popped out and of what is maximized ends in; `set_slot_state`, the only write of a pane's state, which a test holds the root to; `video_in_main`, the only way the main window reaches a player, which a test holds the mini player and the pages to; and the maximize as the root drives it, `toggle_maximize`, `show_all_panes`, and `choose`, which takes it to the pane chosen; and `move_pane`, two panes swapping places in the order, from a header dropped on a pane or `Shift+←`/`Shift+→`), `pop_out` (a pane's picture in a window of its own, on top of other apps: the `PopOut` view, opening and closing it through `cx.defer`, `to_root`, the only way back to the root from it, and `offered`, Windows only), `broadcasts` (what a stopped live pane asks about its channel's past broadcasts, and whether it may offer to start by itself), `pane_actions` (what a pane asks for, by its key: a press on it or one of its controls, which takes the keys back for the root first, and its player's requests; the moment a pane key brings a pane's header up over its picture; and `run_guard`, which swallows the rest of a double-click whose first press took a player out from under the pointer — More's `Pop out`, the mini player's — where the player's own guard cannot follow), `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `prefs`, `recommended` (the rail's Recommended group: when to ask the worker, what its answer becomes, and the hooks that call it), `last_live` (when the offline follows were last live: when to ask the worker, and what its answer does), `chrome` (pills, toasts, the rail), `mini_player` (what plays on while you browse, in the corner of the page), `title_bar` (the bar Perch draws across the top of the window — the rail button, back and forward, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`) |
 | `target.rs` | what a typed or pasted thing means: a login, or a twitch.tv link to a channel or a recording; `link`, its inverse and the one place a twitch.tv URL is written, and `moment`, the second a link to a recording starts at (pure, tested) |
 | `browse.rs` | the picker page: home, popular, categories, search; which of them is on screen (`Discovery::place`) and which lists are still being waited on |
 | `channel_page.rs` | one channel's past broadcasts, and when each was; the recording card both pages use, and a stopped pane too; a recording's poster, and `archive_of`, which finds the recording of a broadcast that just ended (tested) |
 | `history_page.rs` | the history tab, its entry card and its test for unfinished (both reused by Home), and the one translation between a video and a history entry |
-| `home.rs` | Home, the tab the app opens on: live follows, Continue watching (one row of the history), offline follows by when last watched; the filter over all three |
+| `home.rs` | Home, the tab the app opens on: live follows, Continue watching (one row of the history), offline follows by when last watched, each saying when it was last live; the filter over all three, and the counts on the headings after it (`counted`) |
 | `watch.rs` | the grid of panes; `Slot` lives here, made by `Slot::new`, with `PendingStart`, a start of its stream resolving beside the picture, and `PaneAction`, everything a pane asks of the root; the band a header rides over the picture on, and when it is up (`Slot::point`, `band_wanted`, tested); the layer a dragged header is dropped on (`drop_layer`, `PaneDrag`) |
 | `watch/header.rs` | a pane's header — name, numbers, what is on, `muted`/`paused`, the pop-out icon that turns into Bring back, and the × — each icon naming its key — the handle a pane is dragged by onto another, and `Placement`, the one rule for where it goes: the chat panel, or over the picture with no chat on screen (tested) |
 | `watch/status.rs` | a pane with no picture: `Showing`, the one reading of its state that the pane's sentence and the mini player's word both come from, and the screen drawn from it under the player — a starting pane's poster, a stopped one's next steps and what room it has for them (`next_up_room`), and `Elsewhere`, a pane whose picture is in a window of its own, with `Bring back` (tested) |
@@ -99,10 +99,11 @@ App modules:
 | `chat.rs` | chat pane: rows, emotes, scrollback |
 | `chat_text.rs` | what a word in a message is — link, mention or plain (pure, tested) |
 | `settings_view.rs` | settings sheet |
-| `twitch.rs` | the worker: sign-in, follows polling, browse requests, a stopped pane's ask for its channel's past broadcasts, and the rail's anonymous ask for channels like the ones watched (`Request::Recommend`, answered ahead of the session's upkeep) |
+| `twitch.rs` | the worker: sign-in, follows polling, browse requests, a stopped pane's ask for its channel's past broadcasts, the rail's anonymous ask for channels like the ones watched (`Request::Recommend`), and the anonymous ask for when the offline follows were last live (`Request::LastLive`), both answered ahead of the session's upkeep |
 | `keys.rs` | the keymap: actions, bindings, contexts, the listing, and the keys a tooltip may name (`Hint`) |
 | `theme.rs` | **all** colour, spacing, type and motion tokens |
-| `sidebar.rs` | the follows rail down the left, beside both pages: Pinned, Live, Recommended, then Offline folded under a count (`groups`, pure, tested) |
+| `sidebar.rs` | the follows rail down the left, beside both pages: Pinned, Live, Recommended, then Offline folded under a count, each offline row saying when it was last live where a live row says what is on (`groups`, pure, tested) |
+| `last_live.rs` | when each offline follow was last live, worked out: when to ask (`LastLive::next_ask`), what is kept, and the words ("Live 3 hours ago", `wording`, reusing `channel_page::when` past a day) (pure, tested) |
 | `recommended.rs` | the rail's Recommended group worked out: the seeds (`seeds`), when to ask (`Recommended::next_ask`), and what the answers come to (`suggestions`, `reason`) (pure, tested) |
 | `palette.rs` | the command palette, and what it can run |
 | `controls.rs` | the one button, the variants it comes in, the icon button, the heading that folds (`fold`) and the plain one it sits among (`group_heading`), the window's caption buttons, the picture a pop-out is dragged by (`drag_layer`), and the two tooltip builders (`tip`, `full_text`) |
@@ -2100,6 +2101,43 @@ watched it, usually near the top since you had probably watched it live,
 shifting every name after it under the pointer. Each of those is a pure
 function with tests, in `home.rs` and `root/follows.rs`.
 
+**Each offline name says when it was last live, and each heading how many.**
+"Live 3 hours ago" sits beside the name inside Home's pill (`text_dim`,
+lifting to `text_muted` with the name under the pointer, since `text_dim` on
+the hovered pill measures 4.44:1), and on the rail's offline rows as the
+second line, where a live row has its game — the row is the avatar's 30px
+either way, which two 15px lines exactly fill, so it costs no room. The data
+is `twitch_api::recommend::last_broadcasts` (the `users(logins:)` query on
+the same anonymous GraphQL endpoint as Recommended, a hundred logins a
+request), through `Request::LastLive`, answered in `run` ahead of the
+session's upkeep like `Recommend`. When to ask is `last_live::LastLive::next_ask`:
+every offline follow on the first `FollowedChannels`, then only logins not
+asked about since — `on_streams` calls `went_live` with the live list, which
+drops a live channel's answer and its asked mark, so it is asked about once
+at the first poll that has it offline again — and everyone once
+`last_live::REFRESH` (fifteen minutes) is up; one ask at a time, only signed
+in, and never at every poll. A failure is one stderr line (`last live: …`)
+and the names without words; answers in hand stay. A refusal
+(`twitch_api::Error::QueryRefused`, carried as `RecommendError::Refused`) is
+one line too and sets `refused`, after which `next_ask` asks nothing for the
+session. Twitch's answer is `lastBroadcast.startedAt`, when the last stream
+*started*, so on its own a channel that just ended a six-hour stream would
+read "Live 6 hours ago". `went_live` therefore takes the poll's `Utc::now()`
+and keeps it per login in `seen_live` (kept through a full answer), and
+`words` counts from the later of that and `startedAt`; with no answer yet it
+counts from `seen_live` alone. A stream that ended before launch is still
+counted from its start — the query could add the last archive's `createdAt`
+plus `lengthSeconds` if that ever matters. The words count hours for
+the first day and then hand over to `channel_page::when` ("Live yesterday",
+"Live 3 days ago", "Live last week", "Live on 1 Jul"). A channel Twitch
+already says is live, or one that never broadcast, says nothing. The answers
+live on the root (`RootView::last_live`) keyed by `channel_key` and go to
+`home::Lists` and `sidebar::Rail`. The headings read "Live now · 23",
+"Continue watching · 5", "Offline · 103" (`home::counted`), counted after the
+filter; Continue watching counts every match, including those behind "Show
+all" (`Continuing::total`). "Live now" still only appears beside another
+section.
+
 **Forgetting can be taken back.** `History::forget` and `clear` return what
 they took — each entry with the place it stood (`history::Forgotten`) — and
 the toast that says so carries it as `ToastAction::Undo`; its `Undo` hands it
@@ -3412,7 +3450,12 @@ None of these is being worked on; all of them are real.
     seed is one request on the worker, so a full ask of six holds the browse
     requests behind it for as long as six requests take. And the reason
     takes the game's place on the row, so what a recommended channel is
-    playing is not on the rail, whose rows have no tooltips.
+    playing is not on the rail, whose rows have no tooltips. When the offline
+    follows were last live comes from the same endpoint
+    (`twitch_api::recommend::last_broadcasts`); it breaks the same quiet way,
+    the names losing their "Live 3 hours ago" (except those the polls saw
+    live this session) and stderr saying why, and a refusal stops it asking
+    for the session.
 19. **The history is only as fresh as the last listing.** An entry keeps the
     title and the picture from when it was last opened or listed, so a title
     edited since shows the old one until the channel's page is opened again.

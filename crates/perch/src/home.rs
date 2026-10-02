@@ -10,8 +10,10 @@
 //! Everything here is the app's already. The live cards are the ones every
 //! list of streams draws, the recordings are the History tab's own cards
 //! (`history_page::entry_card`), and the offline names are the ones search
-//! results show. What this module adds is which of them, and in what order:
-//! [`continuing`] and [`by_last_watched`], pure and tested.
+//! results show, each saying when it was last live (`crate::last_live`).
+//! What this module adds is which of them, and in what order: [`continuing`]
+//! and [`by_last_watched`], pure and tested. Each heading carries how many
+//! are under it, after the filter ([`counted`]).
 
 use std::collections::HashMap;
 
@@ -22,6 +24,7 @@ use settings::history::{History, Watched};
 use twitch_api::{Channel, LiveStream};
 
 use crate::browse::{self, Action, SignIn, Tab};
+use crate::last_live::LastLive;
 use crate::{controls, history_page, layout, palette, theme};
 
 /// The most recordings Continue watching shows, however wide the window.
@@ -39,6 +42,9 @@ pub struct Lists<'a> {
     /// [`by_last_watched`]), or held where they stand while the pointer is on
     /// the page. Drawn in the order given.
     pub offline: &'a [Channel],
+    /// When each offline follow was last live, as far as Twitch has said:
+    /// the words beside its name.
+    pub last_live: &'a LastLive,
     pub history: &'a History,
     pub sign_in: &'a SignIn,
     /// Whether a follows poll has answered yet, which is what tells an empty
@@ -46,13 +52,16 @@ pub struct Lists<'a> {
     pub follows_loaded: bool,
 }
 
-/// What Continue watching shows: the recordings, and whether the history has
-/// more than fitted.
+/// What Continue watching shows: the recordings, whether the history has
+/// more than fitted, and how many matched in all.
 #[derive(Debug, PartialEq)]
 pub struct Continuing<'a> {
     pub shown: Vec<&'a Watched>,
     /// More matched than the row holds, which is what offers "Show all".
     pub more: bool,
+    /// Every unfinished recording that matched, shown or not: the count on
+    /// the heading, which says how much "Show all" has behind it.
+    pub total: usize,
 }
 
 /// The unfinished recordings that match `filter`, most recently watched
@@ -73,8 +82,20 @@ pub fn continuing<'a>(history: &'a History, filter: &str, row: usize) -> Continu
         .filter(|watched| history_page::unfinished(watched))
         .filter(|watched| palette::watched_matches(watched, filter));
     let shown: Vec<&Watched> = matching.by_ref().take(cap).collect();
-    let more = matching.next().is_some();
-    Continuing { shown, more }
+    let rest = matching.count();
+    Continuing {
+        total: shown.len() + rest,
+        more: rest > 0,
+        shown,
+    }
+}
+
+/// A heading with how many are under it: "Live now · 23". The count is of
+/// what the section lists after the filter, so typing in the box counts
+/// down with it; Continue watching counts every match, including those
+/// behind "Show all".
+fn counted(label: &str, count: usize) -> String {
+    format!("{label} · {count}")
 }
 
 /// Put the offline follows in the order you last watched them, most recent
@@ -154,9 +175,10 @@ impl Sections {
 /// thing in the app and the box in the title bar asks Twitch, not the app.
 ///
 /// With no follows at all — signed out, signing in, the first poll still
-/// out — the page is the Following tab's empty state, sign-in included, with
-/// Continue watching over it when there is anything to continue: the
-/// history is the app's own, and needs no sign-in to play from.
+/// out — the page is the follows' empty state (`browse::empty_state`),
+/// sign-in included, with Continue watching over it when there is anything
+/// to continue: the history is the app's own, and needs no sign-in to play
+/// from.
 #[allow(clippy::too_many_arguments)]
 pub fn view<V: 'static>(
     lists: Lists,
@@ -238,7 +260,7 @@ pub fn view<V: 'static>(
     if sections.live {
         page = page
             .when(sections.live_heading, |page| {
-                page.child(browse::heading("Live now"))
+                page.child(browse::heading(counted("Live now", live.len())))
             })
             .child(browse::stream_row(
                 &live,
@@ -262,16 +284,20 @@ pub fn view<V: 'static>(
     }
 
     if sections.offline {
+        let now = Utc::now();
         let mut row = browse::wrap_row(theme::GAP_TIGHT);
         for (index, channel) in offline.iter().enumerate() {
             row = row.child(browse::offline_pill(
                 ("offline-follow", index),
                 channel,
+                lists.last_live.words(&channel.login, now),
                 on_action.clone(),
                 cx,
             ));
         }
-        page = page.child(browse::heading("Offline")).child(row);
+        page = page
+            .child(browse::heading(counted("Offline", offline.len())))
+            .child(row);
     }
 
     // The same notice every other empty list gets, rather than a heading over
@@ -346,7 +372,10 @@ fn continuing_section<V: 'static>(
         .flex()
         .flex_row()
         .items_center()
-        .child(browse::heading("Continue watching"))
+        .child(browse::heading(counted(
+            "Continue watching",
+            continuing.total,
+        )))
         .child(div().flex_1())
         .when(continuing.more, |line| {
             line.child(
@@ -421,10 +450,12 @@ mod tests {
         let wide = continuing(&history, "", 4);
         assert_eq!(ids(&wide), ["a", "c", "d"], "a finished one was listed");
         assert!(!wide.more, "offered more when everything fitted");
+        assert_eq!(wide.total, 3);
 
         let narrow = continuing(&history, "", 2);
         assert_eq!(ids(&narrow), ["a", "c"]);
         assert!(narrow.more, "the third was neither shown nor offered");
+        assert_eq!(narrow.total, 3, "counted only what fitted");
     }
 
     /// However narrow, one card; however wide, six.
@@ -467,6 +498,7 @@ mod tests {
         let by_name = continuing(&history, "xq", 1);
         assert_eq!(ids(&by_name), ["a"]);
         assert!(by_name.more, "the other xqc recording was not offered");
+        assert_eq!(by_name.total, 2, "counted what the filter left out");
 
         assert_eq!(ids(&continuing(&history, "forsen plays", 3)), ["b"]);
         assert!(continuing(&history, "nobody", 3).shown.is_empty());
@@ -505,6 +537,13 @@ mod tests {
         let mut offline = vec![channel("aaa"), channel("Forsen")];
         by_last_watched(&mut offline, &["#forsen".to_string()], &History::default());
         assert_eq!(offline[0].login, "Forsen");
+    }
+
+    /// A heading says how many are under it.
+    #[test]
+    fn headings_carry_their_counts() {
+        assert_eq!(counted("Live now", 23), "Live now · 23");
+        assert_eq!(counted("Offline", 0), "Offline · 0");
     }
 
     /// "Live now" titles the cards only when something else shares the page;

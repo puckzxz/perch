@@ -130,12 +130,15 @@ impl RootView {
     ///
     /// The rail's ask for recommendations too, which is not a pane's but dies
     /// with the worker the same way, and would otherwise hold off every ask
-    /// after it for good; see `Recommended::forget`.
+    /// after it for good; see `Recommended::forget`. And the ask for when the
+    /// offline follows were last live, for the same reason; see
+    /// `LastLive::forget`.
     pub(super) fn forget_asks(&mut self) {
         for slot in &mut self.slots {
             slot.archives.forget();
         }
         self.recommended.forget();
+        self.last_live.forget();
     }
 
     /// Whether a pane on `channel` offers `Start when they go live`: only

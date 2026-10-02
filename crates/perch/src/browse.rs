@@ -29,6 +29,7 @@ use crate::channel_page;
 use crate::controls;
 use crate::history_page;
 use crate::home;
+use crate::last_live::LastLive;
 use crate::layout;
 use crate::motion;
 use crate::theme;
@@ -846,7 +847,11 @@ pub(crate) fn wrap_row(gap: f32) -> gpui::Div {
         .content_start()
 }
 
-/// One offline follow: a name, and nothing else there is to say.
+/// One offline follow: a name, and on Home when it was last live ("Live 3
+/// hours ago", `last_live::LastLive::words`) beside it in the dim meta
+/// colour, inside the same pill so the whole of it is the click. `None` is
+/// the name alone, as search results show it and as Home does until Twitch
+/// has said.
 ///
 /// A name rather than a card on purpose. A card is mostly a picture, and an
 /// offline channel has none — a thumbnail URL that is stale by hours at best,
@@ -861,6 +866,7 @@ pub(crate) fn wrap_row(gap: f32) -> gpui::Div {
 pub(crate) fn offline_pill<V: 'static>(
     id: impl Into<gpui::ElementId>,
     channel: &Channel,
+    last_live: Option<String>,
     on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + 'static,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
@@ -870,20 +876,55 @@ pub(crate) fn offline_pill<V: 'static>(
         SharedString::from(channel.display_name.clone()),
         controls::Variant::Pill,
     )
+    .when_some(last_live, |pill, words| {
+        // Its own colour rather than the label's, lifting with the name
+        // under the pointer by a step of its own (`last_live_color`), so the
+        // age stays the quieter of the two either way.
+        pill.group(OFFLINE_PILL_GROUP)
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(theme::GAP_WORD))
+            .child(
+                div()
+                    .text_size(px(theme::TEXT_META))
+                    .font_weight(gpui::FontWeight::NORMAL)
+                    .text_color(last_live_color(false))
+                    .group_hover(OFFLINE_PILL_GROUP, |style| {
+                        style.text_color(last_live_color(true))
+                    })
+                    .child(SharedString::from(words)),
+            )
+    })
     .on_click(
         cx.listener(move |view, _event, window, cx| on_action(view, action.clone(), window, cx)),
     )
 }
 
+/// The group an offline pill's age watches for the pointer.
+const OFFLINE_PILL_GROUP: &str = "offline-pill";
+
+/// The colour of when an offline name was last live, on its pill: the dim
+/// meta colour at rest, and the pill's own resting label colour under the
+/// pointer, where the name has lifted to full text and the dim one would
+/// read too faintly on the wash.
+fn last_live_color(hovered: bool) -> gpui::Hsla {
+    if hovered {
+        theme::text_muted()
+    } else {
+        theme::text_dim()
+    }
+}
+
 /// Home's filter box. As wide as a name, not as wide as the page.
 pub(crate) const FILTER_WIDTH: f32 = 260.0;
 
-pub(crate) fn heading(text: &'static str) -> impl IntoElement {
+pub(crate) fn heading(text: impl Into<SharedString>) -> impl IntoElement {
     div()
         .text_size(px(theme::TEXT_LABEL))
         .font_weight(theme::weight_label())
         .text_color(theme::text_dim())
-        .child(text)
+        .child(text.into())
 }
 
 pub(crate) fn stream_row<V: 'static>(
@@ -1028,6 +1069,7 @@ fn search_view<V: 'static>(
             offline = offline.child(offline_pill(
                 ("search-offline", index),
                 channel,
+                None,
                 on_action.clone(),
                 cx,
             ));
@@ -1337,6 +1379,7 @@ pub(crate) fn browse_placeholder(discovery: &Discovery, empty: SharedString) -> 
 pub fn page<V: 'static>(
     follows: &[LiveStream],
     offline: &[Channel],
+    last_live: &LastLive,
     filter: &str,
     filter_box: AnyElement,
     discovery: &Discovery,
@@ -1417,6 +1460,7 @@ pub fn page<V: 'static>(
             home::Lists {
                 live: follows,
                 offline,
+                last_live,
                 history,
                 sign_in,
                 follows_loaded,
@@ -1494,6 +1538,23 @@ pub fn page<V: 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// When an offline name was last live reads on its pill at rest and,
+    /// lifted a step, under the pointer's wash.
+    #[test]
+    fn last_live_reads_on_its_pill() {
+        let pill = theme::surface_raised();
+        for (state, hovered, under) in [
+            ("at rest", false, pill),
+            ("hovered", true, pill.blend(theme::hover())),
+        ] {
+            let ratio = theme::contrast(last_live_color(hovered), under);
+            assert!(
+                ratio >= theme::MIN_CONTRAST,
+                "when a name was last live reads {ratio:.2}:1 {state}"
+            );
+        }
+    }
 
     fn a_video(id: &str, kind: VideoKind) -> Video {
         Video {
