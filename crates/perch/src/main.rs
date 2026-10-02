@@ -41,6 +41,7 @@ mod rewind;
 mod root;
 mod seek_bar;
 mod settings_view;
+mod shared_chat;
 mod sidebar;
 mod stage;
 mod target;

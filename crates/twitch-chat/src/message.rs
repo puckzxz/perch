@@ -130,6 +130,21 @@ pub struct ChatMessage {
     /// Twitch's id for this message, from the `id` tag: what a `CLEARMSG`
     /// names when a moderator deletes one message rather than a person.
     pub id: Option<String>,
+    /// The numeric id of the channel this was really said in, when that is
+    /// not the channel whose chat it arrived in: a line copied in from a
+    /// partner's chat during a Shared Chat session.
+    ///
+    /// Twitch marks every line of a shared session with `source-room-id`, the
+    /// room it was sent from, beside `room-id`, the room it is being
+    /// delivered to. The original carries both and they are the same; only
+    /// the copies differ. So this is set only where they differ, and a
+    /// message said here, shared or not, carries `None`. A line with a source
+    /// and no `room-id` to compare it against keeps the source: Twitch always
+    /// sends `room-id`, and a copy is the likelier reading of one that did
+    /// not. Twitch sends it on `PRIVMSG` and `USERNOTICE` alike, so a resub
+    /// note copied in from a partner carries it too. A replay never does:
+    /// its comments come from a query that has no such field.
+    pub source_room: Option<String>,
 }
 
 /// Twitch's default colour set, used when a user has not chosen one.
@@ -217,8 +232,20 @@ impl ChatMessage {
             emotes: message.tag("emotes").map(str::to_string),
             sent_at: message.tag("tmi-sent-ts").and_then(|ts| ts.parse().ok()),
             id: message.tag("id").map(str::to_string),
+            source_room: source_room(message),
         }
     }
+}
+
+/// The room a Shared Chat copy was really said in, from its tags: see
+/// [`ChatMessage::source_room`]. Read off the line rather than the message,
+/// because a `USERNOTICE` carries it on the notice as a whole and its body is
+/// assembled from the same tags.
+fn source_room(message: &IrcMessage) -> Option<String> {
+    message
+        .tag("source-room-id")
+        .filter(|source| message.tag("room-id") != Some(*source))
+        .map(str::to_string)
 }
 
 /// What a `USERNOTICE` was about, coarsely.
@@ -277,6 +304,13 @@ pub struct ChatNotice {
     /// and word handling as everything else they say.
     pub body: Option<ChatMessage>,
     pub sent_at: Option<u64>,
+    /// The numeric id of the channel the event really happened in, when it
+    /// was copied into this chat from a Shared Chat partner's: the same
+    /// reading of the same tags as [`ChatMessage::source_room`], kept on the
+    /// notice itself because most events carry no body. A partner's gifted
+    /// subs or a raid on a partner arrive as Twitch's sentence alone, and
+    /// that sentence is what would read as if it happened here.
+    pub source_room: Option<String>,
 }
 
 impl ChatNotice {
@@ -291,11 +325,19 @@ impl ChatNotice {
         if system.is_empty() && body.is_none() {
             return None;
         }
+        // A Shared Chat copy of an event says so in `msg-id`
+        // (`sharedchatnotice`) and carries what it really was in
+        // `source-msg-id`, so a partner's raid is still tinted as a raid.
+        let id = match message.tag("msg-id") {
+            Some("sharedchatnotice") => message.tag("source-msg-id"),
+            other => other,
+        };
         Some(Self {
-            kind: NoticeKind::from_msg_id(message.tag("msg-id").unwrap_or_default()),
+            kind: NoticeKind::from_msg_id(id.unwrap_or_default()),
             system,
             body,
             sent_at: message.tag("tmi-sent-ts").and_then(|ts| ts.parse().ok()),
+            source_room: source_room(message),
         })
     }
 }
@@ -446,6 +488,78 @@ mod tests {
         let notice = ChatNotice::from_irc(&parse_line(invented).unwrap()).unwrap();
         assert_eq!(notice.kind, NoticeKind::Other);
         assert_eq!(notice.system, "Somebody did something");
+    }
+
+    /// A line copied into this chat from a partner's during a Shared Chat
+    /// session, in the shape Twitch's IRC guide documents (`source-room-id`
+    /// beside the line's own `room-id`), trimmed of tags that play no part.
+    const SHARED_COPY: &str = "@display-name=Fan;room-id=141981764;source-room-id=12826;source-id=f1a2b3c4-0000-4000-8000-000000000001;id=d5e6f7a8-0000-4000-8000-000000000002;tmi-sent-ts=1787734134163 :fan!fan@fan.tmi.twitch.tv PRIVMSG #twitchdev :Howdy!";
+
+    #[test]
+    fn a_shared_chat_copy_names_the_room_it_was_said_in() {
+        let chat = ChatMessage::from_irc(&parse_line(SHARED_COPY).unwrap()).unwrap();
+        assert_eq!(chat.source_room.as_deref(), Some("12826"));
+        // Its own id, not the source's: a CLEARMSG here names this one.
+        assert_eq!(
+            chat.id.as_deref(),
+            Some("d5e6f7a8-0000-4000-8000-000000000002")
+        );
+    }
+
+    /// The original, in the channel it was said in, carries the same tag
+    /// naming its own room. It is not a copy, and wears nothing.
+    #[test]
+    fn the_original_of_a_shared_line_is_not_a_copy() {
+        let original = "@display-name=Fan;room-id=12826;source-room-id=12826;source-id=f1a2b3c4-0000-4000-8000-000000000001 :fan!fan@fan.tmi.twitch.tv PRIVMSG #twitch :Howdy!";
+        let chat = ChatMessage::from_irc(&parse_line(original).unwrap()).unwrap();
+        assert_eq!(chat.source_room, None);
+
+        let unshared =
+            "@display-name=Fan;room-id=12826 :fan!fan@fan.tmi.twitch.tv PRIVMSG #twitch :hi";
+        let chat = ChatMessage::from_irc(&parse_line(unshared).unwrap()).unwrap();
+        assert_eq!(chat.source_room, None);
+
+        // An empty tag reads as absent, as every tag does.
+        let empty = "@room-id=12826;source-room-id= :fan!fan@fan.tmi.twitch.tv PRIVMSG #twitch :hi";
+        let chat = ChatMessage::from_irc(&parse_line(empty).unwrap()).unwrap();
+        assert_eq!(chat.source_room, None);
+    }
+
+    /// The guide's own example line has a source and no `room-id`; it is
+    /// read as a copy.
+    #[test]
+    fn a_source_with_no_room_to_compare_is_a_copy() {
+        let line = "@source-room-id=12826 :twitchdev!twitchdev@twitchdev.tmi.twitch.tv PRIVMSG #twitchrivals :Howdy!";
+        let chat = ChatMessage::from_irc(&parse_line(line).unwrap()).unwrap();
+        assert_eq!(chat.source_room.as_deref(), Some("12826"));
+    }
+
+    /// A resub copied in from a partner: the note under Twitch's sentence is
+    /// labelled like any message from there.
+    #[test]
+    fn a_shared_notes_body_names_its_room_too() {
+        let line = r"@msg-id=sharedchatnotice;source-msg-id=resub;login=someone;display-name=Someone;room-id=141981764;source-room-id=12826;system-msg=Someone\ssubscribed\sfor\s5\smonths!;tmi-sent-ts=1 :tmi.twitch.tv USERNOTICE #twitchdev :still here";
+        let notice = ChatNotice::from_irc(&parse_line(line).unwrap()).unwrap();
+        assert_eq!(notice.source_room.as_deref(), Some("12826"));
+        // Still a resub, by `source-msg-id`, not an unknown `sharedchatnotice`.
+        assert_eq!(notice.kind, NoticeKind::Subscription);
+        assert_eq!(notice.body.unwrap().source_room.as_deref(), Some("12826"));
+    }
+
+    /// Most copied events have no body: a partner's gifted sub is Twitch's
+    /// sentence and nothing else, and the notice itself names the room.
+    #[test]
+    fn a_shared_event_with_no_body_names_its_room() {
+        let line = r"@msg-id=sharedchatnotice;source-msg-id=subgift;login=giver;display-name=Giver;room-id=141981764;source-room-id=12826;system-msg=Giver\sgifted\sa\sTier\s1\ssub\sto\sFan!;tmi-sent-ts=1 :tmi.twitch.tv USERNOTICE #twitchdev";
+        let notice = ChatNotice::from_irc(&parse_line(line).unwrap()).unwrap();
+        assert!(notice.body.is_none());
+        assert_eq!(notice.source_room.as_deref(), Some("12826"));
+        assert_eq!(notice.kind, NoticeKind::Subscription);
+
+        // The same event in the partner's own chat is no copy.
+        let own = r"@msg-id=subgift;login=giver;room-id=12826;source-room-id=12826;system-msg=Giver\sgifted\sa\ssub :tmi.twitch.tv USERNOTICE #twitch";
+        let notice = ChatNotice::from_irc(&parse_line(own).unwrap()).unwrap();
+        assert_eq!(notice.source_room, None);
     }
 
     #[test]

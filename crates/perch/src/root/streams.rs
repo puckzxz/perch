@@ -182,6 +182,10 @@ impl RootView {
                 cx,
             )
         });
+        // The names of Shared Chat partners, and its word when it meets one
+        // it cannot name; see `root::shared_chat`. A replay's chat carries
+        // no source rooms, so only a live one is watched.
+        self.watch_chat(&chat, cx);
         let chat_hidden = self.settings.chat_hidden_for(&channel);
         Slot::new(
             channel.clone(),

@@ -8,12 +8,14 @@
 //! message is tokenised into words and emotes and laid out in a `flex_wrap`
 //! row: wrapping then happens at token boundaries, which is where you want it.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use emotes::{apply_named_emotes, tokenize, EmoteLoader, EmoteSets, ImageCache, Token};
 use gpui::{
-    div, img, list, point, prelude::*, px, AnyElement, Context, Entity, ListAlignment, ListState,
-    Pixels, RetainAllImageCache, SharedString, Subscription, Task, Window,
+    div, img, list, point, prelude::*, px, AnyElement, Context, Entity, EventEmitter,
+    ListAlignment, ListState, Pixels, RetainAllImageCache, SharedString, Subscription, Task,
+    Window,
 };
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 
@@ -23,6 +25,7 @@ use crate::chat_display::{self, ChatDisplay, Metrics};
 use crate::chat_text::{self, Kind};
 use crate::controls;
 use crate::motion;
+use crate::shared_chat::{self, Label};
 use crate::theme;
 use crate::video::PositionHandle;
 
@@ -138,6 +141,18 @@ pub enum Feed {
     },
 }
 
+/// What a chat tells whoever made it.
+pub enum ChatViewEvent {
+    /// A line arrived copied from a Shared Chat partner's room, by its
+    /// numeric id, that this chat cannot name yet. Said at every such line
+    /// until the name arrives (`learn_rooms`): the root decides whether it
+    /// is worth asking about (`RootView::ask_channel_name`), which keeps the
+    /// one-ask-per-id rule in one place for every chat.
+    UnknownRoom(String),
+}
+
+impl EventEmitter<ChatViewEvent> for ChatView {}
+
 /// The thread behind a feed, held only so that dropping the view stops it.
 enum Link {
     Live { _client: ChatClient },
@@ -203,6 +218,18 @@ pub struct ChatView {
     /// change from the chat options menu, through
     /// [`set_display`](Self::set_display).
     display: ChatDisplay,
+    /// The labels of the Shared Chat partners named so far, by numeric room
+    /// id: the root's (`shared_chat::SourceRooms`), mirrored here when the
+    /// chat is made and as each name arrives, through
+    /// [`learn_rooms`](Self::learn_rooms). Empty on a replay, whose lines
+    /// carry no source room.
+    rooms: HashMap<String, Label>,
+    /// Whether the pointer is in the window, as `render` last read it, for
+    /// the rows the list lays out after it: a Shared Chat tag gives its
+    /// tooltip only while it is ([`source_tag`](Self::source_tag)), because
+    /// a tooltip outlives a pointer that leaves the window (HANDOFF, GPUI
+    /// traps), and the left-hand pane's chat runs to the window's edge.
+    window_hovered: bool,
     _link: Link,
     _pump: Task<()>,
     _emote_pump: Task<()>,
@@ -243,7 +270,7 @@ impl ChatView {
             while let Some(event) = events.next().await {
                 if this
                     .update(cx, |this: &mut ChatView, cx| {
-                        this.apply(event);
+                        this.apply(event, cx);
                         cx.notify();
                     })
                     .is_err()
@@ -326,13 +353,15 @@ impl ChatView {
             hold: false,
             held: Vec::new(),
             display,
+            rooms: HashMap::new(),
+            window_hovered: false,
             _link: link,
             _pump: pump,
             _emote_pump: emote_pump,
         }
     }
 
-    fn apply(&mut self, event: ChatEvent) {
+    fn apply(&mut self, event: ChatEvent, cx: &mut Context<Self>) {
         match event {
             // "connected", not "joined #channel": the second is IRC's word for
             // it, and nobody reading a chat pane is thinking about IRC.
@@ -355,6 +384,7 @@ impl ChatView {
             ChatEvent::Message(message) => {
                 let sent_at = message.sent_at;
                 self.colors.insert(message.login.clone(), message.color);
+                self.name_source(message.source_room.as_deref(), cx);
                 self.append(RowKind::Message(message), sent_at)
             }
             ChatEvent::Notice(notice) => {
@@ -364,6 +394,9 @@ impl ChatView {
                 if let Some(body) = &notice.body {
                     self.colors.insert(body.login.clone(), body.color);
                 }
+                // The notice's own room, not the body's: most copied events
+                // have no body.
+                self.name_source(notice.source_room.as_deref(), cx);
                 self.append(RowKind::Event(notice), sent_at)
             }
             ChatEvent::Cleared { login } => {
@@ -405,6 +438,48 @@ impl ChatView {
             }
             ChatEvent::Unavailable { reason } => self.append(RowKind::Notice(reason.into()), None),
         }
+    }
+
+    /// Ask for the name of the room a line was copied from, its
+    /// `source_room`, if it was copied from one this chat cannot name yet.
+    /// See [`ChatViewEvent`].
+    fn name_source(&self, source_room: Option<&str>, cx: &mut Context<Self>) {
+        if let Some(id) = source_room {
+            if !self.rooms.contains_key(id) {
+                cx.emit(ChatViewEvent::UnknownRoom(id.to_string()));
+            }
+        }
+    }
+
+    /// Label lines copied from these Shared Chat partners from now on, and
+    /// the ones already here: names the root has just learned, or every one
+    /// it knew when this chat was made (`RootView::watch_chat`).
+    ///
+    /// A row that gains a label is wider on its first line, so it may wrap
+    /// differently, and the list goes on trusting its old measurement of it
+    /// — so if any row here, held ones aside, is from one of these rooms,
+    /// every row is handed back unmeasured ([`remeasure`](Self::remeasure)).
+    /// A name arrives once a partner per session, so this is rare.
+    pub fn learn_rooms(&mut self, learned: &[(String, Label)], cx: &mut Context<Self>) {
+        self.rooms.extend(
+            learned
+                .iter()
+                .map(|(id, label)| (id.clone(), label.clone())),
+        );
+        let from = |source_room: &Option<String>| {
+            source_room
+                .as_ref()
+                .is_some_and(|room| learned.iter().any(|(id, _)| id == room))
+        };
+        let relabelled = self.rows.iter().any(|row| match &row.kind {
+            RowKind::Message(message) => from(&message.source_room),
+            RowKind::Event(notice) => from(&notice.source_room),
+            RowKind::Notice(_) => false,
+        });
+        if relabelled {
+            self.remeasure();
+        }
+        cx.notify();
     }
 
     /// Whether the pane is showing the newest message.
@@ -540,7 +615,20 @@ impl ChatView {
     /// text size changes every row, and the times change which rows carry a
     /// break — and the list goes on trusting a measurement until something
     /// tells it otherwise, so rows would overlap or leave gaps. So every row
-    /// is handed back to it unmeasured.
+    /// is handed back to it unmeasured ([`remeasure`](Self::remeasure)).
+    pub fn set_display(&mut self, display: ChatDisplay, cx: &mut Context<Self>) {
+        if self.display == display {
+            return;
+        }
+        self.display = display;
+        self.remeasure();
+        cx.notify();
+    }
+
+    /// Hand every row back to the list unmeasured, for a change that may
+    /// have made any of them a different height: a new text size or times
+    /// setting (`set_display`), or a Shared Chat label arriving for rows
+    /// already drawn (`learn_rooms`).
     ///
     /// Following live, by `reset`, which also runs the measuring pass again
     /// so the scrollbar's extent is right; it costs one layout of every row,
@@ -553,11 +641,7 @@ impl ChatView {
     /// reader keeps their place, at the top of that row, and the thumb's
     /// extent is short until they scroll back through — the trade
     /// [`follow_live`](Self::follow_live) explains.
-    pub fn set_display(&mut self, display: ChatDisplay, cx: &mut Context<Self>) {
-        if self.display == display {
-            return;
-        }
-        self.display = display;
+    fn remeasure(&mut self) {
         let count = self.rows.len();
         if self.at_live() {
             self.list.reset(count);
@@ -566,7 +650,6 @@ impl ChatView {
             self.list.splice(0..top, top);
             self.list.splice(top..count, count - top);
         }
-        cx.notify();
     }
 
     /// The frame every row shares.
@@ -682,9 +765,12 @@ impl ChatView {
                 )
                 .into_any_element(),
 
-            RowKind::Message(message) => Self::row_frame(row, &metrics)
-                .child(self.message_line(row, message, time, &metrics, cx))
-                .into_any_element(),
+            RowKind::Message(message) => {
+                let source = shared_chat::label(message.source_room.as_deref(), &self.rooms);
+                Self::row_frame(row, &metrics)
+                    .child(self.message_line(row, message, time, source, &metrics, cx))
+                    .into_any_element()
+            }
 
             RowKind::Event(notice) => self.render_event(row, notice, time, &metrics, cx),
         };
@@ -719,6 +805,12 @@ impl ChatView {
     /// (`chat_text::piece_chars`), so a long unbroken run in it could draw a
     /// piece wider than its line at the narrowest chat. The note is the same
     /// event, so it carries no time of its own.
+    ///
+    /// An event copied in from a Shared Chat partner's room carries its tag
+    /// (`source_tag`) on that same first line, after the time: on Twitch's
+    /// sentence, which is what would otherwise read as if it happened here,
+    /// or on the body's line when there is no sentence. Once, and not again
+    /// on the note, which is the same event.
     fn render_event(
         &self,
         row: &Row,
@@ -733,19 +825,21 @@ impl ChatView {
             .flex()
             .flex_col()
             .gap_y(px(theme::GAP_TIGHT));
+        let mut source = shared_chat::label(notice.source_room.as_deref(), &self.rooms);
 
-        // The time goes to whichever line comes first: the sentence's, or
-        // the body's when there is no sentence.
+        // The time and the tag go to whichever line comes first: the
+        // sentence's, or the body's when there is no sentence.
         if !notice.system.is_empty() {
+            let tag = source.take().map(|label| self.source_tag(row, label));
             column = column.child(
                 div()
                     .w_full()
                     .flex()
                     .flex_row()
                     .items_start()
-                    .when_some(time.take(), |line, time| {
-                        line.gap(px(theme::GAP_WORD)).child(time)
-                    })
+                    .gap(px(theme::GAP_WORD))
+                    .children(time.take())
+                    .children(tag)
                     .child(
                         div()
                             .flex_1()
@@ -774,6 +868,7 @@ impl ChatView {
                 row,
                 body,
                 time.take(),
+                source,
                 metrics,
                 cx,
             )));
@@ -910,6 +1005,21 @@ impl ChatView {
             .collect()
     }
 
+    /// The quiet tag naming the Shared Chat partner a row was copied from
+    /// (`controls::quiet_tag`), `Said in <name>'s chat` under the pointer
+    /// while the pointer is in the window (`window_hovered`). Like the time
+    /// it is supporting information in the meta size, and does not grow with
+    /// the text. It is one unbroken word, a channel's name of at most 25
+    /// characters, which fits the narrowest chat on a line of its own as a
+    /// speaker's name does.
+    fn source_tag(&self, row: &Row, label: &Label) -> gpui::Stateful<gpui::Div> {
+        controls::quiet_tag(label.name.clone())
+            .id(SharedString::from(format!("chat-source-{}", row.seq)))
+            .when(self.window_hovered, |tag| {
+                tag.tooltip(controls::tip(label.tooltip.clone()))
+            })
+    }
+
     /// One message as a wrapping line of name, words and emotes — without the
     /// row frame around it.
     ///
@@ -924,11 +1034,18 @@ impl ChatView {
     /// only its own width on the first line, which is what the gutter this
     /// replaced could not do (see `row_frame`). Sizes come from `metrics`,
     /// the chat's text size.
+    ///
+    /// `source`, for a line copied in from a Shared Chat partner's room, is
+    /// that partner's label (`shared_chat::label` decides whether and what),
+    /// drawn after the time and before the name as a tag
+    /// ([`source_tag`](Self::source_tag)). The caller decides, because an
+    /// event's note leaves it to the event's first line (`render_event`).
     fn message_line(
         &self,
         row: &Row,
         message: &ChatMessage,
         time: Option<gpui::Div>,
+        source: Option<&Label>,
         metrics: &Metrics,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
@@ -956,7 +1073,8 @@ impl ChatView {
             .flex_wrap()
             .items_center()
             .gap_x(px(theme::GAP_WORD))
-            .children(time);
+            .children(time)
+            .children(source.map(|label| self.source_tag(row, label)));
 
         // An action puts the name inside the sentence, so it is not repeated.
         let name = if message.is_action {
@@ -1065,7 +1183,8 @@ impl Render for ChatView {
 
         // Where the pointer is, against where the list was last laid out.
         // Before `at_live` is read: releasing held rows changes it.
-        let over = window.is_window_hovered()
+        self.window_hovered = window.is_window_hovered();
+        let over = self.window_hovered
             && self
                 .list
                 .viewport_bounds()

@@ -549,6 +549,23 @@ pub fn tag(label: impl Into<SharedString>) -> gpui::Div {
         .child(label.into())
 }
 
+/// Where something came from, said in a word in front of it: the channel a
+/// Shared Chat line was copied from, before the speaker's name
+/// (`ChatView::source_tag`). A [`tag`]'s shape and size, quieter: the
+/// raised surface rather than the accent's wash, and the dim tier, as
+/// [`waiting`] is, because it rides on every copied line of a busy shared
+/// chat and is supporting information rather than a state to notice.
+///
+/// Solid rather than a wash, because a chat row is the pane with a stripe or
+/// an event's wash over it, and a translucent chip over the loud wash lifted
+/// what was behind muted text to 4.37:1, under the bar. On a solid chip the
+/// row cannot matter, and `a_quiet_tag_reads_on_every_chat_row` holds it so.
+pub fn quiet_tag(label: impl Into<SharedString>) -> gpui::Div {
+    tag(label)
+        .bg(theme::surface_raised())
+        .text_color(theme::text_dim())
+}
+
 /// A fact drawn on a picture: the viewers and uptime on a stream's thumbnail,
 /// a recording's length or where it was left, the time under the pointer on a
 /// seek bar. A row, so a live dot can sit in front of the number.
@@ -646,6 +663,32 @@ mod tests {
                 ratio >= theme::MIN_CONTRAST,
                 "a {variant:?} label reads {ratio:.2}:1 on what it sits on"
             );
+        }
+    }
+
+    /// A quiet tag sits in a chat row, which is the pane surface with a
+    /// stripe or an event's wash over it, or neither, and lays its own chip
+    /// on top; every combination is measured, on both surfaces a chat is
+    /// drawn on. The chip is solid, so they all come to the same thing, and
+    /// this is what says so if it ever stops being.
+    #[test]
+    fn a_quiet_tag_reads_on_every_chat_row() {
+        let rows = [
+            None,
+            Some(theme::stripe()),
+            Some(theme::event_wash()),
+            Some(theme::event_wash_loud()),
+        ];
+        for surface in [theme::surface(), theme::surface_raised()] {
+            for row in rows {
+                let under = row.map_or(surface, |wash| surface.blend(wash));
+                let behind = under.blend(theme::surface_raised());
+                let ratio = theme::contrast(theme::text_dim(), behind);
+                assert!(
+                    ratio >= theme::MIN_CONTRAST,
+                    "a quiet tag reads {ratio:.2}:1 on {row:?} over {surface:?}"
+                );
+            }
         }
     }
 

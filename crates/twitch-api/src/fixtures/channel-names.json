@@ -1,0 +1,22 @@
+{
+  "data": {
+    "users": [
+      {
+        "id": "12826",
+        "login": "twitch",
+        "displayName": "Twitch"
+      },
+      {
+        "id": "141981764",
+        "login": "twitchdev",
+        "displayName": "TwitchDev"
+      },
+      null,
+      {
+        "id": "22484632",
+        "login": "forsen",
+        "displayName": "forsen"
+      }
+    ]
+  }
+}

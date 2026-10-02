@@ -52,6 +52,7 @@ mod prefs;
 mod recommended;
 mod renditions;
 mod rewind;
+mod shared_chat;
 mod shortcuts;
 mod streams;
 mod title_bar;
@@ -83,6 +84,7 @@ use crate::launch::Launch;
 use crate::layout::Body;
 use crate::recommended::Recommended;
 use crate::settings_view::SettingsPanel;
+use crate::shared_chat::SourceRooms;
 use crate::stage::Stage;
 use crate::trail::Trail;
 use crate::twitch::TwitchService;
@@ -249,6 +251,10 @@ pub(crate) struct RootView {
     /// it: the words under the names on Home and in the rail. For this
     /// session only; see `crate::last_live`.
     last_live: LastLive,
+    /// The names of the channels Shared Chat lines were copied from, by
+    /// their numeric ids, and the asks for them: every chat's labels, which
+    /// each chat mirrors. For this session only; see `crate::shared_chat`.
+    source_rooms: SourceRooms,
     sign_in: SignIn,
     /// Everything the browse page shows besides your follows.
     discovery: Discovery,
@@ -482,6 +488,7 @@ impl RootView {
             rail_offline_open: false,
             recommended: Recommended::default(),
             last_live: LastLive::default(),
+            source_rooms: SourceRooms::default(),
             sign_in: SignIn::Connecting,
             discovery: Discovery::default(),
             trail: Trail::default(),

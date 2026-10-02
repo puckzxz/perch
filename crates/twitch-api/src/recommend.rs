@@ -22,10 +22,17 @@
 //! each channel last went live, and whether it is live now. Helix has the
 //! second and not the first.
 //!
-//! Both were verified on 1 October 2026 with anonymous requests carrying no
-//! credentials. Nothing here sends the user's token: `isLoggedIn` is false,
-//! and a token issued to this app's Client-ID has no business beside the
-//! website's.
+//! The third, [`channel_names`], is `users(ids:)`, asked the same way: the
+//! login and display name of a channel known only by its numeric id, which is
+//! all a Shared Chat line says about the room it was copied from
+//! (`twitch_chat::ChatMessage::source_room`). Helix has that one too, behind
+//! a token; asked here, a chat pane's label needs nothing of the session.
+//! Verified anonymously on 2 October 2026.
+//!
+//! The first two were verified on 1 October 2026 with anonymous requests
+//! carrying no credentials. Nothing here sends the user's token: `isLoggedIn`
+//! is false, and a token issued to this app's Client-ID has no business
+//! beside the website's.
 //!
 //! **This is not an API anyone offered.** Asked on Twitch's developer forum in
 //! July 2019 whether third parties may use `gql.twitch.tv`, BarryCarlyon
@@ -44,9 +51,10 @@
 //! HTTP 4xx, which is what a block would most likely look like though none
 //! was seen, is [`Error::Api`] whatever its body. A shelf that
 //! has been renamed or dropped is an empty list rather than an error, which
-//! hides the group just the same. `fixtures/side-nav.json` and
-//! `fixtures/last-broadcasts.json` are answers as Twitch sent them that day,
-//! trimmed, and are what the parsers are tested against.
+//! hides the group just the same. `fixtures/side-nav.json`,
+//! `fixtures/last-broadcasts.json` and `fixtures/channel-names.json` are
+//! answers as Twitch sent them on those days, trimmed, and are what the
+//! parsers are tested against.
 
 use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasher, Hasher};
@@ -55,7 +63,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 
-use crate::{agent, answered, body_message, text, text_or_empty, Error};
+use crate::{agent, answered, body_message, text, text_or_empty, Channel, Error};
 
 const ENDPOINT: &str = "https://gql.twitch.tv/gql";
 /// The website's Client-ID, which every client of this endpoint uses. Not the
@@ -73,13 +81,18 @@ const SIMILAR_SHELF: &str = "similar-streamer";
 /// nothing a login contains can change what the query says.
 const LAST_BROADCASTS: &str = "query LastBroadcasts($logins: [String!]) { \
      users(logins: $logins) { login lastBroadcast { startedAt } stream { id } } }";
-/// How many logins one [`last_broadcasts`] request carries.
+/// Asked with variables for the reason [`LAST_BROADCASTS`] is.
+const CHANNEL_NAMES: &str = "query ChannelNames($ids: [ID!]) { \
+     users(ids: $ids) { id login displayName } }";
+/// How many logins one [`last_broadcasts`] request carries, and how many ids
+/// one [`channel_names`] request does.
 ///
 /// A choice, not a limit Twitch was seen to enforce: 101 logins were answered
 /// in full on 1 October 2026, and so were 250 with repeats among them. A
 /// hundred is Helix's cap on the same question, keeps one answer around ten
 /// kilobytes, and leaves room under whatever limit there is that nobody went
-/// looking for.
+/// looking for. The hundred ids a `users(ids:)` request carries are the same
+/// choice by analogy, and were not probed past a handful.
 const LOGINS_PER_REQUEST: usize = 100;
 /// The `errors` messages that mean a failure on Twitch's side that passes:
 /// the ones TwitchDropsMiner retries (`gql_request` in its `twitch.py`), and
@@ -299,6 +312,60 @@ fn last_broadcasts_requests(logins: &[String]) -> impl Iterator<Item = Value> + 
         .map(last_broadcasts_request)
 }
 
+// ── Channel names ────────────────────────────────────────────────────
+
+/// One request's body, for a batch of up to a hundred ids
+/// (`LOGINS_PER_REQUEST`).
+pub fn channel_names_request(ids: &[String]) -> Value {
+    json!({
+        "query": CHANNEL_NAMES,
+        "variables": { "ids": ids },
+    })
+}
+
+/// Each channel in a `users(ids:)` answer.
+///
+/// An id Twitch has no account for comes back as a bare `null` in its
+/// place, as an unknown login does for [`parse_last_broadcasts`], and is
+/// simply not in the list. One with no login is skipped too: there is
+/// nothing to name it by. A display name that is missing or empty is the
+/// login, the way Helix's own fallbacks run. An `errors` array is an error,
+/// as everywhere here.
+pub fn parse_channel_names(body: &Value) -> Result<Vec<Channel>, Error> {
+    if let Some(error) = gql_error(body) {
+        return Err(error);
+    }
+    Ok(body
+        .pointer("/data/users")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|user| {
+            let login = text(user, "login").filter(|login| !login.is_empty())?;
+            let user_id = text(user, "id").filter(|id| !id.is_empty())?;
+            let display_name = text(user, "displayName")
+                .filter(|name| !name.is_empty())
+                .unwrap_or(login);
+            Some(Channel {
+                login: login.to_string(),
+                user_id: user_id.to_string(),
+                display_name: display_name.to_string(),
+            })
+        })
+        .collect())
+}
+
+/// The channels behind `ids`, as [`parse_channel_names`] reads them: asked
+/// a hundred at a time, no ids being no request, and one batch failing
+/// failing the lot, as [`last_broadcasts`] does.
+pub fn channel_names(ids: &[String]) -> Result<Vec<Channel>, Error> {
+    let mut all = Vec::new();
+    for request in ids.chunks(LOGINS_PER_REQUEST).map(channel_names_request) {
+        all.extend(parse_channel_names(&post(&request)?)?);
+    }
+    Ok(all)
+}
+
 // ── Ranking ──────────────────────────────────────────────────────────
 
 /// A channel to suggest, and the channels that led to it.
@@ -491,6 +558,10 @@ mod tests {
     /// `Summit1G` (in that case), `esl_csgo`, a login that does not exist,
     /// `asmongold` and `lirik_247`.
     const LAST_BROADCASTS_ANSWER: &str = include_str!("fixtures/last-broadcasts.json");
+    /// A `users(ids:)` answer from 2 October 2026, asked by variables for
+    /// `12826` (twitch), `141981764` (twitchdev), an id with no account and
+    /// `22484632` (forsen), which writes its display name in lowercase.
+    const CHANNEL_NAMES_ANSWER: &str = include_str!("fixtures/channel-names.json");
 
     fn side_nav() -> Value {
         serde_json::from_str(SIDE_NAV_ANSWER).unwrap()
@@ -786,6 +857,61 @@ mod tests {
         let query = request["query"].as_str().unwrap();
         assert!(query.contains("users(logins: $logins)"));
         assert!(!query.contains("forsen"));
+    }
+
+    #[test]
+    fn channel_names_as_twitch_sends_them() {
+        let body: Value = serde_json::from_str(CHANNEL_NAMES_ANSWER).unwrap();
+        let found = parse_channel_names(&body).unwrap();
+        let named: Vec<(&str, &str, &str)> = found
+            .iter()
+            .map(|c| {
+                (
+                    c.user_id.as_str(),
+                    c.login.as_str(),
+                    c.display_name.as_str(),
+                )
+            })
+            .collect();
+        // Four asked, one with no account.
+        assert_eq!(
+            named,
+            [
+                ("12826", "twitch", "Twitch"),
+                ("141981764", "twitchdev", "TwitchDev"),
+                ("22484632", "forsen", "forsen"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_channel_with_no_name_is_skipped_or_named_by_its_login() {
+        let body = json!({ "data": { "users": [
+            { "id": "1", "login": "", "displayName": "Nameless" },
+            { "id": "", "login": "noid", "displayName": "NoId" },
+            { "id": "3", "login": "plain", "displayName": "" },
+            { "id": "4", "login": "bare" },
+        ] } });
+        let found = parse_channel_names(&body).unwrap();
+        let names: Vec<&str> = found.iter().map(|c| c.display_name.as_str()).collect();
+        assert_eq!(names, ["plain", "bare"]);
+        assert!(parse_channel_names(&json!({})).unwrap().is_empty());
+        // Refused like every other query here.
+        let refusal = json!({ "errors": [{ "message": "failed integrity check" }] });
+        assert_eq!(
+            refused(parse_channel_names(&refusal)),
+            "failed integrity check"
+        );
+    }
+
+    /// The ids travel as a variable, not spelled into the query text.
+    #[test]
+    fn the_channel_names_request_carries_ids_as_a_variable() {
+        let request = channel_names_request(&["12826".into()]);
+        assert_eq!(request["variables"]["ids"], json!(["12826"]));
+        let query = request["query"].as_str().unwrap();
+        assert!(query.contains("users(ids: $ids)"));
+        assert!(!query.contains("12826"));
     }
 
     #[test]

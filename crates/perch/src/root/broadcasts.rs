@@ -171,7 +171,9 @@ impl RootView {
     /// with the worker the same way, and would otherwise hold off every ask
     /// after it for good; see `Recommended::forget`. And the ask for when the
     /// offline follows were last live, for the same reason; see
-    /// `LastLive::forget`.
+    /// `LastLive::forget`. And the asks for Shared Chat partners' names,
+    /// which would otherwise never be asked again; see
+    /// `SourceRooms::forget`.
     pub(super) fn forget_asks(&mut self) {
         for slot in &mut self.slots {
             slot.archives.forget();
@@ -180,6 +182,7 @@ impl RootView {
         }
         self.recommended.forget();
         self.last_live.forget();
+        self.source_rooms.forget();
     }
 
     /// Whether a pane on `channel` offers `Start when they go live`: only

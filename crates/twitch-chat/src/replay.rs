@@ -552,6 +552,8 @@ fn comment(node: &Value) -> Option<Comment> {
             emotes,
             sent_at,
             id: Some(id.clone()),
+            // A recording's comments say nothing of Shared Chat.
+            source_room: None,
         },
         id,
         offset,
@@ -855,6 +857,7 @@ mod tests {
                 emotes: None,
                 sent_at: Some(sent_at),
                 id: None,
+                source_room: None,
             },
         }
     }

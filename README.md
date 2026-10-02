@@ -386,6 +386,14 @@ leaves. A pane you have scrolled back in is left alone; its position is already
 yours. A message a moderator deletes stays where it was, greyed and marked
 `deleted`, rather than vanishing from under your eye.
 
+When channels share their chat — Twitch's **Shared Chat**, during a
+collaboration — what is said in a partner's chat is copied into this one, and
+so are its subs, gifts and raids. Those lines start with a small tag naming
+the channel they came from, and the pointer on it says `Said in <name>'s
+chat`. The name is looked up once per
+partner while you are signed in; until it is known, or if the lookup fails, the
+line shows without a tag. A past broadcast's chat replay has no such tags.
+
 Popular and the categories arrive a hundred at a time, which is Twitch's cap
 per request rather than a choice. **Load more** at the end of the list fetches
 the next hundred — a page you asked for, rather than a list that grows while you
