@@ -801,6 +801,19 @@ impl RootView {
     /// as well, through [`live_info`](Self::live_info) and
     /// [`channel_name`](Self::channel_name).
     pub(super) fn stream_info(&self, channel: &str) -> Option<&LiveStream> {
+        self.listed_stream(channel).or_else(|| {
+            self.pane_streams
+                .streams
+                .iter()
+                .find(|stream| stream.user_login == channel)
+        })
+    }
+
+    /// [`stream_info`](Self::stream_info) from the lists the app fetches for
+    /// their own sake alone, without the streams asked for an open pane that
+    /// none of them carries: which panes still need asking about
+    /// (`root::pane_streams`).
+    pub(super) fn listed_stream(&self, channel: &str) -> Option<&LiveStream> {
         let search = self
             .discovery
             .search

@@ -313,9 +313,10 @@ back.
 Rewinding needs a sign-in, and a channel that keeps its past broadcasts:
 one that does not, or whose recording Twitch has not listed yet, says
 `No past broadcast to rewind into` and stays live. The timeline is there
-once the stream has been going for more than half a minute, when a list
-Perch has fetched says when it started — your follows, popular, a category
-or a search — and on a pane wide enough to aim along it.
+once the stream has been going for more than half a minute, and on a pane
+wide enough to aim along it. A channel you opened by name or from
+Recommended asks Twitch when its stream started, so its timeline comes up a
+moment after its picture.
 
 ### Panes in another order
 

@@ -138,6 +138,10 @@ impl RootView {
     /// A header being dragged whose pane has gone is let go of here too, so
     /// no pane goes on offering itself to a drag of nothing.
     pub(super) fn restage(&mut self, cx: &mut Context<Self>) {
+        // A live pane that has started playing, on a channel no list
+        // carries, asks after its stream: the start its timeline runs from,
+        // and its header's count and title (`root::pane_streams`).
+        self.ask_pane_streams();
         if self
             .pane_move
             .as_deref()

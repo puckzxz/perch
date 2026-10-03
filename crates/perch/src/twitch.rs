@@ -154,6 +154,15 @@ pub enum Request {
         login: String,
         user_id: Option<String>,
     },
+    /// Full stream records for the channels of open live panes that no
+    /// list the app has fetched carries — a pane opened by name, from a
+    /// link or from the rail's Recommended group, whose answers say no
+    /// start, no title and no count — so its timeline has a start to run
+    /// from and its header something to say (`root::pane_streams`).
+    /// Helix's `/streams` by login, with the token, so it goes through
+    /// [`serve`]; it fills no browse list, and its failure travels in its
+    /// answer.
+    PaneStreams { logins: Vec<String> },
     /// Send `message` to the chat of the channel whose numeric id is
     /// `broadcaster_id` (the room id its chat's `ROOMSTATE` carries), as
     /// the signed-in user: Helix's Send Chat Message
@@ -210,6 +219,7 @@ impl Request {
             | Request::ChannelNames { .. }
             | Request::Badges { .. }
             | Request::Schedule { .. }
+            | Request::PaneStreams { .. }
             | Request::SendChat { .. } => None,
             Request::Popular { .. } => Some(ListKey::Popular),
             Request::Categories { .. } => Some(ListKey::Categories),
@@ -355,6 +365,14 @@ pub enum TwitchEvent {
     Schedule {
         login: String,
         result: Result<Schedule, String>,
+    },
+    /// The streams a [`Request::PaneStreams`] asked for, with the logins it
+    /// asked about: one asked about and not among the streams is off. Or
+    /// why not. Its own event with the failure inside it, for the reason
+    /// [`Broadcasts`](TwitchEvent::Broadcasts) has one.
+    PaneStreams {
+        logins: Vec<String>,
+        result: Result<Vec<LiveStream>, String>,
     },
     /// Whether the signed-in token may send chat, from Twitch's token
     /// validation: at the worker's first poll and hourly after
@@ -848,6 +866,11 @@ fn serve(
                 })
                 .map_err(|e| e.to_string());
             Ok(TwitchEvent::Schedule { login, result })
+        }
+        Request::PaneStreams { logins } => {
+            let result =
+                twitch_api::streams_by_login(client_id, token, &logins).map_err(|e| e.to_string());
+            Ok(TwitchEvent::PaneStreams { logins, result })
         }
     };
 

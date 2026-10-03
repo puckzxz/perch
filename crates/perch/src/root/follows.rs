@@ -329,6 +329,9 @@ impl RootView {
             // A line on a channel's page or an offline pane, and no list's
             // either; see `root::schedule`.
             TwitchEvent::Schedule { login, result } => self.on_schedule(login, result, cx),
+            // A live pane's channel that no list carries; see
+            // `root::pane_streams`.
+            TwitchEvent::PaneStreams { logins, result } => self.on_pane_streams(logins, result, cx),
             // Said on the list that failed, which may not be the one on
             // screen by now; see `Discovery::shown_error`.
             TwitchEvent::BrowseError {
@@ -344,7 +347,9 @@ impl RootView {
         }
         // Any answer may have brought a list that says when a live pane's
         // broadcast began, which its timeline runs from, or that a rewound
-        // recording's broadcast is still on, or no longer; see `rewind`.
+        // recording's broadcast is still on, or no longer; see `rewind`. A
+        // live pane no list carries is asked about by itself, when due.
+        self.ask_pane_streams();
         self.sync_live_since(cx);
         self.sync_back_to_live(cx);
         cx.notify();

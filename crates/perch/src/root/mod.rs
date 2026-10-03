@@ -62,6 +62,7 @@ mod muted;
 mod navigation;
 mod pages;
 mod pane_actions;
+mod pane_streams;
 mod panes;
 mod pop_out;
 mod prefs;
@@ -322,6 +323,10 @@ pub(crate) struct RootView {
     /// page and on a pane that found it off. For this session only; see
     /// `crate::schedule`.
     schedules: Schedules,
+    /// The streams of open live panes' channels that no fetched list
+    /// carries, asked of Helix by login so such a pane has a timeline and a
+    /// header; see `root::pane_streams`.
+    pane_streams: pane_streams::PaneStreams,
     sign_in: SignIn,
     /// Whether the signed-in token may send chat, from Twitch's token
     /// validation (`TwitchEvent::ChatScope`) or a send refused for want of
@@ -587,6 +592,7 @@ impl RootView {
             source_rooms: SourceRooms::default(),
             badges: Library::default(),
             schedules: Schedules::default(),
+            pane_streams: pane_streams::PaneStreams::default(),
             sign_in: SignIn::Connecting,
             chat_scope: None,
             chat_sends: HashMap::new(),
