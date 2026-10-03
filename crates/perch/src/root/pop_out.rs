@@ -93,8 +93,8 @@ pub(super) struct PoppedOut {
 
 /// Whether the pop-out is offered on `platform`: only where gpui's source
 /// says it can stay on top and answer the pointer, which is Windows, and
-/// which the spike that brought it in checks there live (see
-/// `OVERHAUL-DECISIONS.md`). On macOS gpui's
+/// where the spike that brought it in was checked live (see the handoff's
+/// pop-out trap). On macOS gpui's
 /// `PopUp` is a panel that hides itself whenever the app is not the active
 /// one, by AppKit's default, and gpui counts the pointer over a window only
 /// while it is active (window.rs:1727-1737); a `Normal` window there is not

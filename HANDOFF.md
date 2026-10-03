@@ -45,6 +45,87 @@ parent, so nothing can ever overlap the video. No overlay controls, no rounded
 corners, no fading UI. Everything you see on top of the video exists because we
 did not take that path.
 
+## Product decisions
+
+Made with the user, most of them during the October 2026 UI overhaul, and
+still in force. Each carries its reason, so a change that cuts across one is a
+conversation with the user, not a cleanup. The overhaul's build order, live
+checks and review catches are in git history; what it left open is under
+"What to build next" and "Known limits".
+
+**Who it is for.** The user is the primary user: Windows 11, a 4K horizontal
+monitor at 100% scale with a vertical one beside it, and the mouse first —
+`Ctrl+K` and the shortcuts are rarely touched. So:
+
+- **Every feature needs a way in by the pointer; a key is an extra.** The
+  omnibox that was to take the title bar's search box (the first half of the
+  overhaul's phase 4), arrow keys in menus, a quality key and rebindable keys
+  are all deprioritised, and nothing new should need a new key. When adding a
+  stream without leaving the watch page turned out to be the real gap, the
+  answer was the guide's buttons, not the palette.
+- **The vertical monitor is a real setup, not an edge case.** Two streams
+  there stacked with each chat beside a squeezed picture until somebody looked
+  ("Known limits", item 8), so a layout change is looked at in a tall window
+  (about 1080x1900) as well as a wide one.
+- **Picture quality over CPU.** A CPU saving paid for in picture quality is
+  not taken; find the part of it that costs no quality instead (see the
+  Performance trap and "Things not to redo"). It is why a pop-out's quality
+  follows its window upwards only, and why panes maximized away keep their
+  rendition.
+- **No UI scale setting, and no list for hiding channels.** Both were offered
+  in October 2026 and declined: the app looks right at 100% to the person who
+  uses it, and nobody asked to hide anyone.
+
+**Multiview.**
+
+- **Sound stays separate per pane.** Each pane has its own level, remembered
+  per channel; Mute all and `Only this one` are a session hush beside that
+  level, never saved (see "Things not to redo").
+- **Chat stays per pane, so there is no focus layout** — no one large pane
+  with the rest as thumbnails sharing one chat. It is also why a maximized
+  pane draws the others as nothing rather than as a strip or thumbnails (see
+  "A pane given the window").
+- **A pop-out that stays on top of other apps is in**, Windows only until a
+  Mac has been seen ("Known limits", item 30).
+- **The mini player is not something the user relies on.** They usually close
+  it, and it can be turned off (the settings sheet's `Mini player` switch),
+  so a feature must not live only there: the player pack's controls were
+  kept off its tiles for that reason, and posters on its tiles, left out of
+  phase 2, stay low on the list.
+
+**The rail and Home.** Popular and Categories left the rail and stay browse
+tabs; Recommended came in, read from Twitch's unofficial `SideNav` query, a
+risk taken knowingly ("Known limits", item 18). Popular, Categories and
+History stay tabs beside Home rather than links at its foot, so each is one
+click away.
+
+**Voice.** The user left it to the developer: every word on a control is
+sentence case, notices, toasts and tooltips read as sentences, and a pane
+header's passive tags stay lowercase (`muted`, `paused`, `replay`, `ad
+break`). The rule and its open corners are under "Casing".
+
+**Features whose standing changed, and why.**
+
+- **Sending chat** was ruled out early and reversed on 2 October 2026, as "a
+  big feature missing". It goes through Helix with a scope of its own, so
+  reading stays anonymous; an emote picker, moderation commands and whispers
+  stay out (see "A live chat can send").
+- **`Alt` + wheel for a pane's volume.** The modifier was asked for by name,
+  so a wheel turned on the way past a video never changes its sound (see
+  "Things not to redo"). Middle-click toggles mute.
+- **Chat badges** were kept out of the comfort pack as a feature of their own,
+  then built in the chat pack, in live chat and replays, signed in.
+- **Desktop notifications** were first left out, since they touch packaging,
+  then wanted on the condition that they can be turned off or kept to pinned
+  channels: `Off`, `Pinned` (the default) or `All` ("Desktop notifications"
+  under Windows packaging).
+- **Clips** were not picked. Perch treats a clip as not a recording
+  (`target::HOSTS`), and showing them would reverse that: the user's call.
+- **Not recommended, for reasons outside perch:** polls and predictions need
+  the streamer's permissions, following and unfollowing were taken out of
+  Twitch's API, and chatter counts have no endpoint left (see "Known to be out
+  of reach").
+
 ---
 
 ## Layout
@@ -1588,9 +1669,10 @@ fails silently, and each was read out of gpui 0.2.2's source:
 at a time.** A pane popped out (`root/pop_out.rs`) is the same `VideoView` in
 another gpui window, and gpui gives every window its own sprite atlas, its own
 focus and dispatch tree, and its own frame-to-frame element state. Every one
-of these was read out of gpui 0.2.2's source; the spike that put them to the
-test together, what its live checks found and what is still to be checked,
-is recorded in `OVERHAUL-DECISIONS.md`:
+of these was read out of gpui 0.2.2's source. The spike that put them to the
+test together moved a playing pane into a second window and back on 1 October
+2026 with no stale picture and no assertion firing; what is still to be seen
+live is "Known limits", item 36:
 
 - **One window per `VideoView`.** `render` skips `update_image` for a frame
   it already holds, so a second window drawing the view would freeze on its
@@ -2147,12 +2229,14 @@ unconsidered.
   too (`Starting…`, `Forsen is offline`, `Finished`), since it sits over a
   sentence-case pill and beside the mini player's words for the same
   states. So is a toast (`Link copied`, `Couldn't switch to 480p30`, `Sign in
-  to rewind`), a notice like any other. Not swept yet, so do not take them for the rule: the passive words
-  that state a fact — a pane header's `muted`, `paused` and `replay` tags,
-  chat's `deleted`, chat's notices, the palette's kind column — are still
-  lowercase, and so is a failed pane's line, which is the failure
-  in the words of whatever failed (streamlink, mpv, the streamlink crate or
-  the player), passed through as is by `Showing::sentence`.
+  to rewind`), a notice like any other. A pane header's `muted`, `paused`,
+  `replay` and `ad break` tags stay lowercase on purpose (see "Product
+  decisions"). Not swept yet, so do not take them for the rule: the other
+  passive words that state a fact — chat's `deleted`, chat's notices, the
+  palette's kind column — are still lowercase, and so is a failed pane's
+  line, which is the failure in the words of whatever failed (streamlink,
+  mpv, the streamlink crate or the player), passed through as is by
+  `Showing::sentence`.
   `channel_page::kind_tag` is also read mid-sentence, in a palette row's
   `(replay)` and a history byline, so it cannot simply take a capital.
 - **Layout reads a `layout::Body`, never the viewport.** The body is the window
@@ -4139,7 +4223,7 @@ can be re-run safely.
 PowerShell + `System.Drawing`, then reading the PNG. The pattern:
 
 1. Poll for `MainWindowHandle`, `SetWindowPos` to topmost
-2. `SetCursorPos` to reveal hover-only UI
+2. `SetCursorPos` to reveal hover-only UI (only with the user away)
 3. `CopyFromScreen` into a bitmap, save, then `Read` the PNG
 
 `GetWindowRect` includes invisible resize borders at the sides and bottom —
@@ -4154,6 +4238,16 @@ directories: settings come from `APPDATA` (`settings::default_path`), the image
 cache from `LOCALAPPDATA` (`root::image_cache_dir`), and the one-perch pipe is
 named for a hash of the settings directory (`instance/windows.rs`, `key`), so
 the two share no files and nothing is handed over.
+
+**The user's own perch is usually running, and is theirs.** Stop a test
+copy, and anything it started, by process id, never by image name: a test
+copy stopped by name closed theirs once. Leave their settings, their
+`perch.log` and their sign-in alone; whatever needs the sign-in is
+unit-tested, or checked in their session with their consent. `Copy link`
+only with their consent too, saving and putting back what the clipboard
+held. Drive a test copy with posted messages (see the posted-input notes
+below); the real mouse and keys, `SetCursorPos` included, only when the
+user has said they are away.
 
 **With a pop-out open, the process has two top-level windows.** Find them
 with `EnumWindows` filtered by the process id, not `MainWindowHandle`, which
@@ -4260,8 +4354,10 @@ writes frames to disk with stats (per-channel means, alpha minimum, non-black
 percentage). A red Superman "S" on a blue suit is how BGRA vs RGBA got confirmed.
 
 **Clean up processes.** streamlink is a child of the app and dies with it on a
-graceful close, but a hard kill orphans it. `taskkill //F //IM streamlink.exe`
-on Windows, `pkill -f streamlink` on macOS.
+graceful close, but a hard kill orphans it (on Windows the job object takes it
+down even then; see "Known limits", item 7). Kill an orphan by its process id
+— `taskkill //F //PID <pid>` on Windows, `kill <pid>` on macOS — since a kill
+by name also takes the streams of a perch you did not start.
 
 ---
 
@@ -4377,9 +4473,10 @@ picture redraws at its new size, and the watch grid is cut in one place,
 `layout::Grid::of`.
 
 **What is left of the overhaul is agreed in outline**, and each phase so
-far left a seam for the parts still to come. An omnibox takes the place of
-the title bar's search box, which is one element in `title_bar_leading` so
-it can be swapped whole. The guide (phase 4) is built: its button took the
+far left a seam for the parts still to come. An omnibox would take the
+place of the title bar's search box (parked: the user is mouse-first; see
+"Product decisions"), which is one element in `title_bar_leading` so it can
+be swapped whole. The guide (phase 4) is built: its button took the
 right-hand cluster's fourth square, `bar::RIGHT_BUTTONS` — which is why
 phase 3's maximize control stands before the cluster and folds into More
 after the quality pill rather than joining it, and why the pop-out went in
@@ -4400,9 +4497,9 @@ emote picker, replying to a message, moderation commands and whispers.
 
 Left over from phase 1, smallest first:
 
-- The passive words the casing pass left alone — tags, toasts, chat's
-  notices, and a failed pane's line, which is the failure in its own words;
-  see "Casing". Phase 2 put the rest of a pane's status lines in sentence
+- The passive words the casing pass left alone — chat's notices, chat's
+  `deleted`, the palette's kind column, and a failed pane's line, which is
+  the failure in its own words; see "Casing". Phase 2 put the rest of a pane's status lines in sentence
   case.
 - Pin from a card, the channel page or the palette. `palette::entries` takes
   seven positional arguments, its tests call it thirty-odd times, and it
@@ -4431,6 +4528,8 @@ Left over from phase 2, smallest first:
   for now.
 - `Start when they go live` lasts for the session and is per pane. Keeping
   it per channel would be a setting.
+- A `Buffering…` word for a pane waiting on its stream; today nothing on
+  screen says so.
 
 Left over from phase 3, smallest first:
 
@@ -4449,7 +4548,10 @@ Left over from phase 3, smallest first:
   `scripts/verify-vendor.sh` told about the file — before it is offered.
 - The pop-out as a tool window, with no taskbar entry, and saving where
   pop-outs open, the pane order and the maximize across sessions: all left
-  out on purpose (see "Known limits").
+  out on purpose (see "Known limits"). So were insert-style reordering, a
+  picture under the pointer while dragging a header, dragging a pane between
+  windows, chat in a pop-out and a pop-out holding several panes: none was
+  asked for.
 
 Ranked by what would be noticed, roughly:
 
@@ -4478,6 +4580,8 @@ Ranked by what would be noticed, roughly:
    badges" and "A reply carries its parent" under Chat).
 5. **Rebindable keys.** `keys::bindings` is a plain `Vec<KeyBinding>` built
    from constants; the work is a UI and a settings shape, not a mechanism.
+   Deprioritised for the same reason as the omnibox: the user is
+   mouse-first.
 6. **The auth-token cookie off argv.** It is documented as a tradeoff, but a
    per-spawn `--config` file with a user-only ACL, deleted once streamlink has
    started, would take it out of the process list at the cost of one more file
@@ -4491,6 +4595,11 @@ Ranked by what would be noticed, roughly:
   IRC `NAMES` still responds but stops listing above ~1000 users, so it returns
   nothing on exactly the channels worth asking about. `viewer_count` from Get
   Streams is the only public number.
+- **Polls and predictions.** Creating or running one needs the
+  broadcaster's own scopes (`channel:manage:polls`,
+  `channel:manage:predictions`), so a viewer's token cannot.
+- **Following and unfollowing.** Twitch took both out of Helix; a client can
+  read follows but not change them.
 - **Moderation and whispers.** Not out of reach so much as not asked for:
   each needs a scope of its own (`moderator:manage:*`, `user:manage:whispers`)
   and a UI. Sending a message, once in this list because the user had ruled
@@ -4747,6 +4856,39 @@ None of these is being worked on; all of them are real.
     none: `notifications::show` is a no-op there, and its sheet field says
     so. A moved `perch.exe` leaves the scheme on the old path until the next
     toast.
+36. **Some of the overhaul has been seen only by its tests.** As of 2
+    October 2026 nobody had watched these work in the app. The user has
+    used it daily since, so read them as unconfirmed rather than suspect,
+    and look first here when one of them misbehaves:
+    - the pop-out: dragging by the picture and resizing from an edge with a
+      real mouse, the 256 × 144 floor, staying in front while another app
+      is active, `M`, the arrows and `Ctrl+W` in it, whether its bar blinks
+      as the pointer crosses between picture and bar, a pane paused, popped,
+      played, paused again and brought back showing the second pause (the
+      stale tile the pop-out trap guards), video memory over ten restarts
+      while popped and the CPU log with one open (see "Working on it"), two
+      or more stacking clear of each other, and its quality following its
+      size, and the re-pick on bringing one back; its other entry points
+      (the header icon, More's row, the mini player's tile and bar, `P` on
+      the browse page);
+    - phase 2's signed-in parts: an offline pane's last broadcast as a card
+      or pill, `Start when they go live` starting a pane, `Watch from the
+      start`, the live poster; and the failed screen when mpv cannot open;
+    - the swap on a recording, and whether Twitch serves two live sessions
+      on one token (item 3): a live pick has been seen to swap in the
+      user's own session, which did not settle whose token streamlink had;
+      and after a failed switch, its message with the bar's linger, and
+      More's folded row mid-switch on a narrow pane;
+    - the paused redraw after a resize, a pop-out, a bring-back and a
+      maximize (the video trap says what to do if it draws black or stale);
+    - maximize and reorder end to end: no remount or flash either way, the
+      re-pick on the way back, `Esc`'s order, a header dragged and dropped
+      or let go elsewhere, and `Shift` with an arrow;
+    - the comfort, player and chat packs and what came with them: chat's
+      text size and time on every message, Shared Chat tags, toasts holding
+      still under the pointer, `Alt` + wheel, middle-click, `Only this
+      one`, the ad-break notice, badges, reply lines, the guide, the rail's
+      preview cards, right-click copy and sending chat.
 
 ## Things not to redo
 
