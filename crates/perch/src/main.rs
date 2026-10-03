@@ -45,6 +45,7 @@ mod rail_preview;
 mod recommended;
 mod rewind;
 mod root;
+mod schedule;
 mod seek_bar;
 mod settings_view;
 mod shared_chat;

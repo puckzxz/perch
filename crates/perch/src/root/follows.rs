@@ -325,6 +325,9 @@ impl RootView {
             // see `root::shared_chat`.
             TwitchEvent::ChannelNames { ids, result } => self.on_channel_names(ids, result, cx),
             TwitchEvent::Badges { channel, result } => self.on_badges(channel, result, cx),
+            // A line on a channel's page or an offline pane, and no list's
+            // either; see `root::schedule`.
+            TwitchEvent::Schedule { login, result } => self.on_schedule(login, result, cx),
             // Said on the list that failed, which may not be the one on
             // screen by now; see `Discovery::shown_error`.
             TwitchEvent::BrowseError {

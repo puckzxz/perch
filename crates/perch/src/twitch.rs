@@ -2,7 +2,8 @@
 //! answering the browse page's requests, a stopped pane's, the rail's ask
 //! for channels like the ones watched, when the offline follows were last
 //! live, whose chat a Shared Chat line was copied from, what the badges
-//! in a chat look like, and sending a chat message.
+//! in a chat look like, when an offline channel says it will be on next,
+//! and sending a chat message.
 //!
 //! One thread owns the session, and it has to. Refresh tokens are single-use,
 //! so two things refreshing at once would spend the same token twice and lock
@@ -31,6 +32,7 @@ use settings::{OAuthTokens, Settings};
 use twitch_api::badges::BadgeSet;
 use twitch_api::chat::SendOutcome;
 use twitch_api::recommend::{LastBroadcast, SimilarChannel};
+use twitch_api::schedule::Schedule;
 use twitch_api::{Category, Channel, LiveStream, Session, Video, VideoKind};
 
 /// How often to re-ask Twitch who is live.
@@ -141,6 +143,17 @@ pub enum Request {
     /// through [`serve`] like the browse page's asks; it fills no browse
     /// list, and its failure travels in its answer.
     Badges { channel: Option<String> },
+    /// A channel's stream schedule, for the line saying when it is on next
+    /// under an offline channel's page header and on an offline pane: Helix's
+    /// Get Channel Stream Schedule (`twitch_api::schedule`). The root asks
+    /// once per channel a session, when one of those first needs it; see
+    /// `crate::schedule`. `user_id` as for [`Videos`](Request::Videos).
+    /// Helix, with the token, so it goes through [`serve`]; it fills no
+    /// browse list, and its failure travels in its answer.
+    Schedule {
+        login: String,
+        user_id: Option<String>,
+    },
     /// Send `message` to the chat of the channel whose numeric id is
     /// `broadcaster_id` (the room id its chat's `ROOMSTATE` carries), as
     /// the signed-in user: Helix's Send Chat Message
@@ -178,14 +191,15 @@ pub enum ListKey {
 }
 
 impl Request {
-    /// The browse list this fills, or `None` for the eight that fill none:
+    /// The browse list this fills, or `None` for the nine that fill none:
     /// the follows poll, whose lists are not the browse page's, a recording
     /// looked up for a link or a pane's muted stretches, whose failure is a
     /// toast or a line in the log, a pane's past
     /// broadcasts, which are the pane's, the rail's recommendations, which
     /// are the rail's, when the offline follows were last live, which is
     /// words on names already on screen, and the names of Shared Chat
-    /// partners, the chat badges and a message sent, which are the chats'.
+    /// partners, the chat badges and a message sent, which are the chats',
+    /// and a channel's schedule, which is a line on a page or a pane.
     pub fn list_key(&self) -> Option<ListKey> {
         match self {
             Request::Follows
@@ -195,6 +209,7 @@ impl Request {
             | Request::LastLive { .. }
             | Request::ChannelNames { .. }
             | Request::Badges { .. }
+            | Request::Schedule { .. }
             | Request::SendChat { .. } => None,
             Request::Popular { .. } => Some(ListKey::Popular),
             Request::Categories { .. } => Some(ListKey::Categories),
@@ -332,6 +347,14 @@ pub enum TwitchEvent {
     Badges {
         channel: Option<String>,
         result: Result<Vec<BadgeSet>, String>,
+    },
+    /// The schedule a [`Request::Schedule`] asked for, by the login it was
+    /// asked for, or why not: empty for a channel that has never made one.
+    /// Its own event with the failure inside it, for the reason
+    /// [`Broadcasts`](TwitchEvent::Broadcasts) has one.
+    Schedule {
+        login: String,
+        result: Result<Schedule, String>,
     },
     /// Whether the signed-in token may send chat, from Twitch's token
     /// validation: at the worker's first poll and hourly after
@@ -817,6 +840,14 @@ fn serve(
             }
             .map_err(|e| e.to_string());
             Ok(TwitchEvent::Badges { channel, result })
+        }
+        Request::Schedule { login, user_id } => {
+            let result = user_id_or_lookup(client_id, token, &login, user_id)
+                .and_then(|user_id| {
+                    twitch_api::schedule::channel_schedule(client_id, token, &user_id)
+                })
+                .map_err(|e| e.to_string());
+            Ok(TwitchEvent::Schedule { login, result })
         }
     };
 

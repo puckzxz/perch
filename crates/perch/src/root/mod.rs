@@ -32,6 +32,7 @@
 //! | `recommended` | the rail's Recommended group: when to ask the worker, and what its answer becomes |
 //! | `shared_chat` | the chats' Shared Chat labels: hearing an unnamed partner, asking its name, handing it to every chat; and `watch_chat`, which listens to every chat made |
 //! | `badges` | the chats' badges: hearing a chat's room, asking the worker for the global and the room's badge books, handing each to the chats it is for |
+//! | `schedule` | when an offline channel says it will be on next: asked of the worker once a session, the first time its page or a pane that found it off is drawn, and the answer kept |
 //! | `chrome` | pills, toasts, the rail |
 //! | `mini_player` | what plays on while you browse, in the corner of the page |
 //! | `title_bar` | the bar Perch draws across the top of the window: the rail button, back and forward, search, settings, and on Windows the caption buttons |
@@ -67,6 +68,7 @@ mod prefs;
 mod recommended;
 mod renditions;
 mod rewind;
+mod schedule;
 mod shared_chat;
 mod shortcuts;
 mod streams;
@@ -102,6 +104,7 @@ use crate::last_live::LastLive;
 use crate::launch::Launch;
 use crate::layout::Body;
 use crate::recommended::Recommended;
+use crate::schedule::Schedules;
 use crate::settings_view::SettingsPanel;
 use crate::shared_chat::SourceRooms;
 use crate::stage::Stage;
@@ -301,6 +304,11 @@ pub(crate) struct RootView {
     /// which each chat mirrors. For this session only; see
     /// `crate::chat_badges`.
     badges: Library,
+    /// Each channel's stream schedule Helix has answered with, and the asks
+    /// for them: the line saying when an offline channel is on next, on its
+    /// page and on a pane that found it off. For this session only; see
+    /// `crate::schedule`.
+    schedules: Schedules,
     sign_in: SignIn,
     /// Whether the signed-in token may send chat, from Twitch's token
     /// validation (`TwitchEvent::ChatScope`) or a send refused for want of
@@ -563,6 +571,7 @@ impl RootView {
             last_live: LastLive::default(),
             source_rooms: SourceRooms::default(),
             badges: Library::default(),
+            schedules: Schedules::default(),
             sign_in: SignIn::Connecting,
             chat_scope: None,
             chat_sends: HashMap::new(),

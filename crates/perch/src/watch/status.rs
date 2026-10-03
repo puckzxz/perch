@@ -14,6 +14,8 @@
 //! over it rather than out of black. Stopped, it says why, and offers what
 //! there is: an offline channel's last broadcast and `Start when they go
 //! live`, an ended broadcast's recording from its start, and asking again.
+//! An offline channel's screen ends with when the channel says it is on
+//! next, where its schedule says (`crate::schedule`).
 
 use chrono::Utc;
 use emotes::ImageCache;
@@ -194,6 +196,10 @@ pub(super) enum NextUpRoom {
 /// beside the rest of the screen.
 const PILL_ROW: f32 = theme::LINE_TIGHT + 2.0 * theme::CONTROL_PAD_Y + theme::GAP;
 
+/// The line saying when an offline channel is on next and the gap above it:
+/// what the box gives up for it before [`next_up_room`] shares out the rest.
+const SCHEDULE_ROW: f32 = theme::LINE_TIGHT + theme::GAP;
+
 /// What a stopped pane whose video box is `width` by `height` has room for,
 /// beside its sentence and controls ([`theme::STATUS_ROOM`]).
 ///
@@ -212,6 +218,23 @@ pub(super) fn next_up_room(width: f32, height: f32) -> NextUpRoom {
     } else {
         NextUpRoom::Nothing
     }
+}
+
+/// [`next_up_room`] for a pane that may also have a line saying when the
+/// channel is on next, and whether that line is drawn.
+///
+/// The line's row comes out of the box first, so a card never pushes it out
+/// of the pane. When what is left has room for nothing, the line gives its
+/// row back instead: a pane that was tall enough for the last broadcast's
+/// pill keeps it, since something to watch now outranks a time to come back.
+pub(super) fn offer_room(width: f32, height: f32, schedule: bool) -> (NextUpRoom, bool) {
+    if schedule {
+        let room = next_up_room(width, height - SCHEDULE_ROW);
+        if room != NextUpRoom::Nothing {
+            return (room, true);
+        }
+    }
+    (next_up_room(width, height), false)
 }
 
 /// What an ended pane offers for watching the broadcast again from its
@@ -243,15 +266,17 @@ fn from_start<'a>(next: Option<NextUp<'a>>, looking: bool) -> FromStart<'a> {
 ///
 /// Absolute over the whole pane, so it splits nothing with the player, which
 /// is drawn over it; see `watch::pane`. `room` is what the box has room for
-/// beside the sentence ([`next_up_room`]), `window_hovered` gates the one
-/// tooltip, as the header's are gated, and `cache` is where the pictures
-/// come from.
+/// beside the sentence and `show_schedule` whether the line saying when the
+/// channel is on next fits as well (both from [`offer_room`]),
+/// `window_hovered` gates the tooltips, as the header's are gated, and
+/// `cache` is where the pictures come from.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn screen<V: 'static>(
     slot: &Slot,
     pane: &PaneInfo,
     showing: Showing<'_>,
     room: NextUpRoom,
+    show_schedule: bool,
     window_hovered: bool,
     cache: &ImageCache,
     on_pane: impl Fn(&mut V, &str, PaneAction, &mut Window, &mut Context<V>) + Clone + 'static,
@@ -336,11 +361,20 @@ pub(super) fn screen<V: 'static>(
             let last = pane
                 .next
                 .map(|next| last_broadcast(slot, next, room, window_hovered, cache, &on_pane, cx));
+            // Under what there is to do now, the one thing to know about
+            // later; not in a pane too short for it, which keeps its
+            // controls and its pill.
+            let schedule = pane
+                .schedule
+                .clone()
+                .filter(|_| show_schedule)
+                .map(|line| schedule_line(slot, line, window_hovered));
             words
                 .child(label)
                 .children(last.flatten())
                 .children(switch)
                 .children(again)
+                .children(schedule)
         }
         Showing::Ended => {
             let start = match from_start(pane.next, pane.looking) {
@@ -495,6 +529,31 @@ fn last_broadcast<V: 'static>(
         }
         NextUpRoom::Nothing => None,
     }
+}
+
+/// When an offline channel is on next, in the quiet meta tier under the
+/// screen's controls, cut short at the pane's edge with the whole of it a
+/// hover away.
+///
+/// Full width with a one-line clamp rather than `truncate`: a child of the
+/// screen's flex column is given no definite width when it is measured, so
+/// `truncate` there clips mid-letter instead of ending in an ellipsis (the
+/// shape `browse::one_line` uses; see HANDOFF's truncation trap).
+fn schedule_line(slot: &Slot, line: SharedString, window_hovered: bool) -> Stateful<Div> {
+    div()
+        .id(pane_id(&slot.key, "schedule"))
+        .w_full()
+        .px(px(theme::PANEL_PAD))
+        .text_center()
+        .text_ellipsis()
+        .line_clamp(1)
+        .text_size(px(theme::TEXT_META))
+        .line_height(px(theme::LINE_TIGHT))
+        .text_color(theme::text_muted())
+        .child(line.clone())
+        .when(window_hovered, |row| {
+            row.tooltip(controls::full_text([line]))
+        })
 }
 
 /// One of the screen's pills: `words` on it, `role` in its id, and `action`
@@ -686,6 +745,40 @@ mod tests {
     #[test]
     fn a_tiny_box_gets_nothing() {
         assert_eq!(next_up_room(300.0, 120.0), NextUpRoom::Nothing);
+    }
+
+    /// The schedule line takes its row first where what is left still has
+    /// room for something; a pane only tall enough for the pill keeps the
+    /// pill and drops the line rather than losing both.
+    #[test]
+    fn the_schedule_line_never_costs_the_pill() {
+        let pill_only = theme::STATUS_ROOM + PILL_ROW;
+        assert_eq!(
+            offer_room(300.0, pill_only, true),
+            (NextUpRoom::Line, false),
+            "too short for both: the pill stays"
+        );
+        assert_eq!(
+            offer_room(300.0, pill_only + SCHEDULE_ROW, true),
+            (NextUpRoom::Line, true),
+            "room for both"
+        );
+        assert_eq!(
+            offer_room(300.0, pill_only, false),
+            (NextUpRoom::Line, false),
+            "no schedule, no line"
+        );
+        assert_eq!(offer_room(300.0, 120.0, true), (NextUpRoom::Nothing, false));
+        match offer_room(800.0, 720.0, true) {
+            (NextUpRoom::Card(width), true) => {
+                let (alone, _) = offer_room(800.0, 720.0, false);
+                assert!(
+                    matches!(alone, NextUpRoom::Card(w) if w >= width),
+                    "the line's row comes out of the card's room"
+                );
+            }
+            other => panic!("a tall pane fits a card and the line, got {other:?}"),
+        }
     }
 
     /// With the ended broadcast's recording found, the pane offers it from

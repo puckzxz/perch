@@ -722,6 +722,11 @@ pub struct PaneInfo<'a> {
     /// pane with no picture keys its id and its tooltip on, as the bar's does
     /// (`VideoView::guide_from_here`).
     pub guide_from_here: bool,
+    /// When the channel says it is on next, for a pane that found it off:
+    /// "Next stream: Tue 7:00 PM · Title · Game", or "On a break until 12
+    /// Oct" (`schedule::Schedules::words`). `None` for any other pane, and
+    /// for a channel with no schedule or none known yet.
+    pub schedule: Option<SharedString>,
 }
 
 /// A recording a stopped pane offers, and where it was left if it has been
@@ -1056,11 +1061,15 @@ fn pane<V: 'static>(
             Placement::Panel => height,
             Placement::OverPicture => height - theme::BAND_ROOM,
         };
+        // Less the line saying when the channel is on next, where there is
+        // one and it fits, so a card never pushes it out of the box.
+        let (room, show_schedule) = status::offer_room(width, height, info.schedule.is_some());
         status::screen(
             slot,
             info,
             showing,
-            status::next_up_room(width, height),
+            room,
+            show_schedule,
             window_hovered,
             cache,
             on_pane.clone(),

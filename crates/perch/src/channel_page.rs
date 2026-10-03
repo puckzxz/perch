@@ -441,7 +441,10 @@ fn byline(video: &Video, now: DateTime<Utc>) -> String {
 /// `live` is whether the channel is on right now, which decides the one other
 /// control the bar offers: the stream, when there is one, or else the chat,
 /// which is what clicking an offline name used to open and stays one click
-/// away.
+/// away. `next` is when the channel, being off, says it is on next
+/// (`schedule::Schedules::words`), which the bar says beside that control:
+/// the one thing about the channel worth knowing before choosing a
+/// recording, and nothing when it has no schedule.
 ///
 /// `history` is what has been watched, so a recording part-watched says so on
 /// its card and a click on it picks up where it was left.
@@ -452,6 +455,7 @@ pub fn view<V: 'static>(
     sign_in: &SignIn,
     history: &History,
     live: bool,
+    next: Option<String>,
     room: layout::Room,
     cache: &ImageCache,
     can_add: bool,
@@ -544,6 +548,27 @@ pub fn view<V: 'static>(
         let on_action = on_action.clone();
         move |view, _event, window, cx| on_action(view, Action::Watch(login.clone()), window, cx)
     }));
+    // Quiet beside the control, and the first thing to give way when the
+    // bar runs out of room, with the whole of it a hover away: ungated, as
+    // the browse page's tooltips are, inside the window's own margin.
+    let other = div()
+        .min_w_0()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(theme::GAP))
+        .children(next.map(|next| {
+            let next = SharedString::from(next);
+            div()
+                .id("channel-next")
+                .min_w_0()
+                .truncate()
+                .text_size(px(theme::TEXT_META))
+                .text_color(theme::text_muted())
+                .tooltip(controls::full_text([next.clone()]))
+                .child(next)
+        }))
+        .child(other.flex_none());
 
     div()
         .flex_1()

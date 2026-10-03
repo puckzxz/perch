@@ -65,10 +65,10 @@ in any chat, starts a new one.
 
 Without it: Home says "Not signed in" and offers you Settings,
 and Popular, Categories and search say "Not signed in" too, since every
-list perch asks Twitch for needs a sign-in, and so does a stopped pane's
-offer of the channel's last broadcast. Watching a channel by name —
-Ctrl+K and its name, or perch.exe followed by it — and its chat still
-work.
+list perch asks Twitch for needs a sign-in, and so do a stopped pane's
+offer of the channel's last broadcast and the line saying when the
+channel is on next. Watching a channel by name — Ctrl+K and its name, or
+perch.exe followed by it — and its chat still work.
 
 
 Optional: the auth-token cookie
@@ -123,9 +123,10 @@ also works name the key in their tooltips; the quality, the guide and More
 have none. Alt and the mouse wheel over a picture change its volume (the
 wheel alone does not), and a middle click mutes or unmutes it. While Twitch
 plays an ad the picture holds still, and the pane's header says "ad break"
-until it is over. A channel that is off offers its last broadcast, and
-starts by itself when it comes back on if you follow it; a stream that ends
-offers its recording from the start.
+until it is over. A channel that is off offers its last broadcast, says
+when it is on next if it has a schedule on Twitch, and starts by itself
+when it comes back on if you follow it; a stream that ends offers its
+recording from the start.
 
 On a live stream a timeline runs above those controls, from the start
 of the broadcast to now. Click or drag back along it and let go to watch

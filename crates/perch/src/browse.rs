@@ -1572,6 +1572,7 @@ pub fn page<V: 'static>(
     can_add: bool,
     scrolls: &Scrolls,
     channel_live: bool,
+    channel_next: Option<String>,
     on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + Clone + 'static,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
@@ -1584,6 +1585,7 @@ pub fn page<V: 'static>(
             sign_in,
             history,
             channel_live,
+            channel_next,
             room,
             cache,
             can_add,

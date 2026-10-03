@@ -232,13 +232,16 @@ name, and the stream fades in over it when it arrives. A channel that is off
 says so and offers what there is instead: its last broadcast, as a card where
 there is room, which plays right there in place of the live pane; **Start when
 they go live**, a switch that is on unless you turn it off, for a channel you
-follow; and **Try again**. When a stream ends the pane says so — it does not
-simply stop on its last frame, which is indistinguishable from a pause — and
-offers **Watch from the start**, which plays that broadcast's recording from
-the top in the same pane once Twitch lists it, **Try again** and **Close**. The
-last broadcast and the recording need a sign-in to be found. Chat stays
-connected either way, which is where the goodnights are, until a recording
-takes the pane's place and brings its own chat replay.
+follow; and **Try again**. Under those it says when the channel is on next, if
+it has a schedule on Twitch — *Next stream: Tue 7:00 PM · its title · its
+game*, in your clock's format — or that it is *On a break until 12 Oct*. When
+a stream ends the pane says so — it does not simply stop on its last frame,
+which is indistinguishable from a pause — and offers **Watch from the start**,
+which plays that broadcast's recording from the top in the same pane once
+Twitch lists it, **Try again** and **Close**. The last broadcast, the
+recording and the schedule need a sign-in to be found. Chat stays connected
+either way, which is where the goodnights are, until a recording takes the
+pane's place and brings its own chat replay.
 
 ### The guide: more to watch, without leaving
 
@@ -679,7 +682,9 @@ the channels that answer to it and are not on, as names under the live ones.
 The recordings are cards like the streams are, with the length where a
 stream's card has its viewer count, and how long ago it was underneath. One
 still being recorded carries the live dot and says how long it has been going
-so far; it can be watched from the start while the stream is on.
+so far; it can be watched from the start while the stream is on. While the
+channel is off, the bar at the top says when it is on next, beside **Open
+chat**, if it has a schedule on Twitch, or that it is on a break.
 
 A switch at the top of the page turns it to the channel's **Highlights** or its
 **Uploads**, each a list of its own. They play the way a broadcast does, but as

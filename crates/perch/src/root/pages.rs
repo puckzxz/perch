@@ -46,6 +46,16 @@ impl RootView {
             .channel
             .as_ref()
             .is_some_and(|page| self.stream_info(&page.login).is_some());
+        // When that channel, being off, says it is on next: asked about the
+        // first time its page is drawn (`root::schedule`).
+        let channel_next = match self.discovery.channel.as_ref() {
+            Some(page) if !channel_live => {
+                let login = page.login.clone();
+                self.ask_schedule(&login);
+                self.schedule_words(&login)
+            }
+            _ => None,
+        };
 
         let body = browse::page(
             &self.follows,
@@ -62,6 +72,7 @@ impl RootView {
             self.can_add(),
             &self.scrolls,
             channel_live,
+            channel_next,
             |this: &mut RootView, action, window, cx| this.on_browse_action(action, window, cx),
             cx,
         );
@@ -184,6 +195,20 @@ impl RootView {
         // it covers them; see `guide_panel`.
         let guide = self.guide_panel(window, cx);
 
+        // A pane that found its channel off says when the channel is on
+        // next; its schedule is asked about the first time one is drawn
+        // (`root::schedule`), before the panes below borrow the root.
+        let offline: Vec<String> = self
+            .cells()
+            .into_iter()
+            .map(|index| &self.slots[index])
+            .filter(|slot| self.showing_in_main(slot, cx) == Showing::Offline)
+            .map(|slot| slot.channel.clone())
+            .collect();
+        for login in &offline {
+            self.ask_schedule(login);
+        }
+
         // The panes the page draws, in the order it draws them, and the grid
         // it draws them in: every slot in a cell of its own, or the
         // maximized pane alone in a grid of one, through the same `pane` —
@@ -236,6 +261,10 @@ impl RootView {
                     chat_menu: (self.chat_menu.as_deref() == Some(slot.key.as_str()))
                         .then(|| ChatDisplay::of(&self.settings)),
                     guide_from_here: self.guide.up_from(&slot.key),
+                    schedule: (showing == Showing::Offline)
+                        .then(|| self.schedule_words(&slot.channel))
+                        .flatten()
+                        .map(Into::into),
                 }
             })
             .collect();

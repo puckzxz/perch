@@ -56,8 +56,17 @@ impl RootView {
     /// (`rewind`) alike, whose answers both come to
     /// [`on_broadcasts`](Self::on_broadcasts).
     pub(super) fn request_broadcasts(&mut self, login: String) -> bool {
-        let user_id = self
-            .stream_info(&login)
+        let user_id = self.known_user_id(&login);
+        self.twitch.request(Request::Broadcasts { login, user_id })
+    }
+
+    /// `login`'s Helix id, from whatever list knows it: the live ones, the
+    /// offline follows, or the channel page open on it. `None` when none
+    /// does, and the worker looks it up by name. For the asks that Helix
+    /// answers by id: a pane's past broadcasts, and a channel's schedule
+    /// (`root::schedule`).
+    pub(super) fn known_user_id(&self, login: &str) -> Option<String> {
+        self.stream_info(login)
             .map(|stream| stream.user_id.clone())
             .or_else(|| {
                 self.offline
@@ -72,8 +81,7 @@ impl RootView {
                     .filter(|page| page.login == login)
                     .and_then(|page| page.user_id.clone())
             })
-            .filter(|id| !id.is_empty());
-        self.twitch.request(Request::Broadcasts { login, user_id })
+            .filter(|id| !id.is_empty())
     }
 
     /// The worker's answer about `login`'s past broadcasts, for the live
@@ -175,7 +183,8 @@ impl RootView {
     /// `LastLive::forget`. And the asks for Shared Chat partners' names,
     /// which would otherwise never be asked again; see
     /// `SourceRooms::forget`. And the asks for chat badges, likewise; see
-    /// `chat_badges::Library::forget`.
+    /// `chat_badges::Library::forget`. And the asks for channels'
+    /// schedules, likewise; see `schedule::Schedules::forget`.
     pub(super) fn forget_asks(&mut self) {
         for slot in &mut self.slots {
             slot.archives.forget();
@@ -186,6 +195,7 @@ impl RootView {
         self.last_live.forget();
         self.source_rooms.forget();
         self.badges.forget();
+        self.schedules.forget();
     }
 
     /// Whether a pane on `channel` offers `Start when they go live`: only
