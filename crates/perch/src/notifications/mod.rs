@@ -189,14 +189,19 @@ impl Notice {
 /// Show `notices`, off the UI thread: the first of a session registers perch
 /// with Windows first, and every one is a round trip to the notification
 /// platform. Failures go to the log, since the in-app toast has said it
-/// anyway. Nothing, off Windows.
+/// anyway.
+#[cfg(windows)]
 pub fn show(notices: Vec<Notice>) {
-    if notices.is_empty() {
-        return;
+    if !notices.is_empty() {
+        windows::show(notices);
     }
-    #[cfg(windows)]
-    windows::show(notices);
 }
+
+/// Nothing, off Windows. Its own definition rather than a `cfg` on the call
+/// inside one: with the call gone, what was left of the shared body (an early
+/// `return` as its last statement) failed clippy on macOS only.
+#[cfg(not(windows))]
+pub fn show(_notices: Vec<Notice>) {}
 
 /// Take back what showing notifications registered with Windows, now that
 /// Desktop notifications is Off. Nothing, off Windows.
