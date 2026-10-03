@@ -39,6 +39,7 @@ mod launch;
 mod layout;
 mod loudness;
 mod motion;
+mod notifications;
 mod os_window;
 mod palette;
 mod rail_preview;

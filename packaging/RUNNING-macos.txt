@@ -97,6 +97,9 @@ Where things live
 
 Deleting the settings file resets everything, including the sign-in.
 
+Desktop notifications, in Settings, are Windows only for now: on a Mac the
+notice in the corner of perch's window is how it says a channel went live.
+
 
 Getting around
 --------------

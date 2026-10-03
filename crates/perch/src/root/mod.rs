@@ -112,7 +112,9 @@ use crate::trail::Trail;
 use crate::twitch::{SignInStart, TwitchService};
 use crate::video_view::VideoView;
 use crate::watch::{ResizeStart, Slot, StreamState, MAX_PANES};
-use crate::{cpu_log, keys, layout, motion, rail_preview, sidebar, theme, vod, APP_NAME};
+use crate::{
+    cpu_log, keys, layout, motion, notifications, rail_preview, sidebar, theme, vod, APP_NAME,
+};
 
 /// Emotes and thumbnails are reproducible, so they live in the platform's
 /// cache directory rather than roaming with settings.
@@ -269,6 +271,17 @@ pub(crate) struct RootView {
     /// from ones that were already streaming. Without this every poll would
     /// re-announce everybody.
     known_live: HashSet<String>,
+    /// Whether the worker's first live list has come back, which seeds
+    /// `known_live` in silence. Its own flag rather than an empty
+    /// `known_live`, which is also every poll after one where nobody followed
+    /// was live; false again with the worker stopped (`stop_twitch`), so a
+    /// restarted one's first poll is silent too.
+    streams_seeded: bool,
+    /// The broadcast each followed channel was last seen live with, so a
+    /// desktop notification is sent once a broadcast; see `notifications`.
+    /// Kept across a restarted worker, which only forgets `known_live`: a
+    /// broadcast seen before it is no news after.
+    seen_broadcasts: notifications::Seen,
     /// Whether the pointer is over the rail, and over Home, as
     /// the last frame measured it. While either is, a poll updates the
     /// follows, live and offline, where they stand rather than sorting them —
@@ -562,6 +575,8 @@ impl RootView {
             follows_loaded: false,
             follows_complete: false,
             known_live: HashSet::new(),
+            streams_seeded: false,
+            seen_broadcasts: notifications::Seen::default(),
             rail_pointed: false,
             home_pointed: false,
             guide_pointed: false,

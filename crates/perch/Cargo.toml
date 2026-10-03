@@ -38,6 +38,12 @@ libc = "0.2"
 # uses the same crate and does not re-export it.
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6"
+# Only for go-live notifications (`notifications`): WinRT's toasts, and the
+# registry keys that let an unpackaged program show one and be opened by its
+# click. Both at the versions gpui already builds, so neither brings a crate
+# of its own into the build; only the toast's two features are new to it.
+windows = { version = "0.61", features = ["Data_Xml_Dom", "UI_Notifications"] }
+windows-registry = "0.5"
 
 # Only to stamp the icon onto the .exe; see build.rs.
 [target.'cfg(windows)'.build-dependencies]

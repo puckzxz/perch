@@ -15,7 +15,7 @@ use gpui_component::{
     switch::Switch,
     IndexPath,
 };
-use settings::{QualityPreference, SheetFields};
+use settings::{DesktopNotifications, QualityPreference, SheetFields};
 
 use crate::browse::SignIn;
 use crate::controls;
@@ -96,6 +96,26 @@ const HISTORY_OPTIONS: [(&str, usize); 4] = [
     ("Off — join with an empty pane", 0),
 ];
 
+/// Offered in the Desktop notifications dropdown, in the order of
+/// `DesktopNotifications::ALL`: who is told, in a notification from the
+/// operating system, that a followed channel went live while perch was in
+/// the background.
+fn notifications_label(answer: DesktopNotifications) -> &'static str {
+    match answer {
+        DesktopNotifications::Off => "Off",
+        DesktopNotifications::Pinned => "Pinned only",
+        DesktopNotifications::All => "All followed",
+    }
+}
+
+/// What the Desktop notifications field says under its dropdown. Windows
+/// only for now, and the sheet says so elsewhere rather than offering
+/// something that does nothing without a word.
+#[cfg(windows)]
+const NOTIFICATIONS_HELP: &str = "When a channel you follow goes live while perch isn't the window you're using (minimised, behind other windows, or while you work in another app), Windows tells you in a notification; click it to watch. Pinned only is the channels pinned to the top of the rail. The first one registers perch with Windows under your user, and Off takes that back out.";
+#[cfg(not(windows))]
+const NOTIFICATIONS_HELP: &str = "Windows only for now: on this system the toast inside the window is how perch says a channel went live.";
+
 pub enum SettingsEvent {
     /// What the sheet's controls say, for the root to take with
     /// `Settings::adopt_sheet`. Only the fields the sheet owns: it never has
@@ -117,6 +137,7 @@ pub struct SettingsPanel {
     auth_token: Entity<InputState>,
     quality: Entity<SelectState<Vec<SharedString>>>,
     history: Entity<SelectState<Vec<SharedString>>>,
+    notifications: Entity<SelectState<Vec<SharedString>>>,
     /// Held here rather than read back off the switch: a `Switch` reports
     /// clicks and keeps no state of its own.
     miniplayer: bool,
@@ -183,12 +204,24 @@ impl SettingsPanel {
         let history =
             cx.new(|cx| SelectState::new(options, Some(IndexPath::new(selected)), window, cx));
 
+        let selected = DesktopNotifications::ALL
+            .iter()
+            .position(|answer| *answer == fields.desktop_notifications)
+            .unwrap_or(0);
+        let options: Vec<SharedString> = DesktopNotifications::ALL
+            .iter()
+            .map(|answer| SharedString::from(notifications_label(*answer)))
+            .collect();
+        let notifications =
+            cx.new(|cx| SelectState::new(options, Some(IndexPath::new(selected)), window, cx));
+
         Self {
             miniplayer: fields.miniplayer,
             client_id,
             auth_token,
             quality,
             history,
+            notifications,
             sign_in_status: sign_in.summary(),
             sign_out_offered: sign_in.can_sign_out(),
             sign_in_offered: sign_in.offers_sign_in(),
@@ -243,6 +276,15 @@ impl SettingsPanel {
             .map(|path| path.row)
             .unwrap_or(0);
 
+        // Nothing selected, which the dropdown never leaves it at, is the
+        // default rather than the first row: Off is not a guess to make.
+        let desktop_notifications = self
+            .notifications
+            .read(cx)
+            .selected_index(cx)
+            .and_then(|path| DesktopNotifications::ALL.get(path.row).copied())
+            .unwrap_or_default();
+
         // Every field the sheet owns, spelled out: a field `SheetFields`
         // gains does not compile here until the sheet says what it is.
         cx.emit(SettingsEvent::Saved(SheetFields {
@@ -251,6 +293,7 @@ impl SettingsPanel {
             quality,
             chat_history: HISTORY_OPTIONS[index].1,
             miniplayer: self.miniplayer,
+            desktop_notifications,
         }));
     }
 
@@ -444,6 +487,12 @@ impl Render for SettingsPanel {
                         "Opens a new chat pane with what was already being said. Twitch publishes no scrollback, so these come from the community service Chatterino uses — which means the request tells someone other than Twitch which channels you watch.",
                         Select::new(&self.history),
                     ))
+                    .child(Self::section("Notifications"))
+                    .child(Self::field(
+                        "Desktop notifications",
+                        NOTIFICATIONS_HELP,
+                        Select::new(&self.notifications),
+                    ))
                     .child(Self::section("Keyboard"))
                     .child(Self::field(
                         "Keyboard shortcuts",
@@ -526,6 +575,16 @@ impl Render for SettingsPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every answer has its own words in the dropdown, in sentence case.
+    #[test]
+    fn every_notifications_answer_is_named() {
+        let labels: Vec<&str> = DesktopNotifications::ALL
+            .into_iter()
+            .map(notifications_label)
+            .collect();
+        assert_eq!(labels, ["Off", "Pinned only", "All followed"]);
+    }
 
     /// A pane's quality menu names the settings' choice the way the sheet
     /// does — in sentence case, never the word the file stores — and a value

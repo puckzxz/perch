@@ -29,7 +29,21 @@ impl Launch {
     /// Read `args`, the command line after the program's name.
     pub fn read(args: impl IntoIterator<Item = String>) -> Self {
         let mut launch = Self::default();
-        let mut args = args.into_iter();
+        let mut args = args.into_iter().peekable();
+        // One of perch's own links, which is how Windows opens a clicked
+        // go-live notification (`notifications`): the link is the launch,
+        // and anything after it is ignored rather than read. Windows writes
+        // the link into a command line inside quotes, and a link made to
+        // close them early could otherwise carry options of its own.
+        if let Some(link) = args.next_if(|arg| target::is_app_link(arg)) {
+            match target::parse_app_link(&link) {
+                Some(target) => launch.targets.push(target),
+                None => launch
+                    .warnings
+                    .push(format!("{link:?} is not a link perch can open; skipped")),
+            }
+            return launch;
+        }
         while let Some(arg) = args.next() {
             match arg.as_str() {
                 "--volume" => match args.next().and_then(|v| v.parse::<u8>().ok()) {
@@ -101,6 +115,24 @@ mod tests {
         assert_eq!(loud.volume, None);
         assert_eq!(loud.warnings.len(), 1);
         assert_eq!(loud.targets, [Target::Channel("xqc".into())]);
+    }
+
+    /// A clicked notification's launch is its link, and nothing after it
+    /// counts; a link in perch's scheme anywhere else is not a channel.
+    #[test]
+    fn an_app_link_is_the_whole_launch() {
+        let launch = read(&["perch://watch/xqc", "--volume", "100", "forsen"]);
+        assert_eq!(launch.targets, [Target::Channel("xqc".into())]);
+        assert_eq!(launch.volume, None);
+        assert!(launch.warnings.is_empty());
+
+        let odd = read(&["perch://settings", "forsen"]);
+        assert!(odd.targets.is_empty());
+        assert_eq!(odd.warnings.len(), 1);
+
+        let later = read(&["forsen", "perch://watch/xqc"]);
+        assert_eq!(later.targets, [Target::Channel("forsen".into())]);
+        assert_eq!(later.warnings.len(), 1);
     }
 
     #[test]

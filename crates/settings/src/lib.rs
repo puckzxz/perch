@@ -98,29 +98,60 @@ impl ChatTextSize {
     ];
 }
 
-/// Read [`Settings::chat_text_size`], taking anything that is not one of the
-/// steps above as [`ChatTextSize::Default`] rather than failing the file.
+/// Read one of the fields named by a word — [`Settings::chat_text_size`],
+/// [`Settings::desktop_notifications`] — taking anything that is not one of
+/// its words as the field's default rather than failing the file.
 ///
 /// A plain enum would refuse a name it does not know, and one bad field
 /// fails the whole file: a step a later build adds, read by this one, or a
 /// hand edit that wrote `"Larger"` with the capital the menu shows. The app
 /// would then run on defaults, and every save after would fail too, since
 /// saving reads the file first (`save_preferences`). The module promises a
-/// file from a newer build still loads, so this one field gives way instead.
-fn lenient_text_size<'de, D>(deserializer: D) -> Result<ChatTextSize, D::Error>
+/// file from a newer build still loads, so these fields give way instead.
+fn lenient<'de, D, T>(deserializer: D) -> Result<T, D::Error>
 where
     D: serde::Deserializer<'de>,
+    T: Deserialize<'de> + Default,
 {
     #[derive(Deserialize)]
     #[serde(untagged)]
-    enum Read {
-        Known(ChatTextSize),
+    enum Read<T> {
+        Known(T),
         Unknown(serde::de::IgnoredAny),
     }
-    Ok(match Read::deserialize(deserializer)? {
-        Read::Known(size) => size,
-        Read::Unknown(_) => ChatTextSize::Default,
+    Ok(match Read::<T>::deserialize(deserializer)? {
+        Read::Known(value) => value,
+        Read::Unknown(_) => T::default(),
     })
+}
+
+/// Who a desktop notification is for when a followed channel goes live
+/// while perch is in the background; see
+/// [`Settings::desktop_notifications`]. Windows only: `perch`'s
+/// `notifications` shows them, and on macOS it shows nothing whatever this
+/// says.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DesktopNotifications {
+    /// None. The in-app toast still says who went live, as it always did.
+    Off,
+    /// Only the channels pinned to the top of the rail ([`Settings::pinned`]):
+    /// the few somebody has already said come first. The default, because a
+    /// notification for every followed channel is a lot to be handed on the
+    /// first day without having asked for it.
+    #[default]
+    Pinned,
+    /// Every followed channel.
+    All,
+}
+
+impl DesktopNotifications {
+    /// Every answer, quietest first: the order the sheet lists them in.
+    pub const ALL: [DesktopNotifications; 3] = [
+        DesktopNotifications::Off,
+        DesktopNotifications::Pinned,
+        DesktopNotifications::All,
+    ];
 }
 
 /// Twitch credentials.
@@ -337,8 +368,8 @@ pub struct Settings {
     /// channel, because it is about the reader's eyes and the screen, which
     /// are the same whichever channel is on. A file from before it existed
     /// loads as [`ChatTextSize::Default`], which is the size chat always was,
-    /// and so does a step this build does not know ([`lenient_text_size`]).
-    #[serde(default, deserialize_with = "lenient_text_size")]
+    /// and so does a step this build does not know ([`lenient`]).
+    #[serde(default, deserialize_with = "lenient")]
     pub chat_text_size: ChatTextSize,
     /// Whether every chat message carries its own time at its start, in place
     /// of the once-a-minute breaks: the same menu's toggle. Off by default,
@@ -355,6 +386,12 @@ pub struct Settings {
     /// rather it stopped. On, it is one click back into what you were watching.
     #[serde(default = "yes")]
     pub miniplayer: bool,
+    /// Who gets a desktop notification on going live while perch is in the
+    /// background: the settings sheet's Desktop notifications. A file from
+    /// before it existed loads as [`DesktopNotifications::Pinned`], and so
+    /// does a word this build does not know ([`lenient`]).
+    #[serde(default, deserialize_with = "lenient")]
+    pub desktop_notifications: DesktopNotifications,
     /// How much of a stacked cell the video keeps, 0.0 for "work it out".
     ///
     /// Chat *beside* the video has a width and the video takes the rest;
@@ -404,6 +441,7 @@ impl Default for Settings {
             chat_message_times: false,
             video_share: 0.0,
             miniplayer: true,
+            desktop_notifications: DesktopNotifications::Pinned,
             sidebar_collapsed: false,
             window: None,
         }
@@ -411,8 +449,8 @@ impl Default for Settings {
 }
 
 /// What the settings sheet shows and saves: the client id, the auth-token
-/// cookie, quality, chat history and the mini player — and nothing else of
-/// [`Settings`].
+/// cookie, quality, chat history, the mini player and desktop notifications
+/// — and nothing else of [`Settings`].
 ///
 /// The sheet is handed these when it opens ([`SheetFields::of`]) and hands
 /// them back when it saves ([`Settings::adopt_sheet`]), so it cannot carry
@@ -431,6 +469,7 @@ pub struct SheetFields {
     pub quality: QualityPreference,
     pub chat_history: usize,
     pub miniplayer: bool,
+    pub desktop_notifications: DesktopNotifications,
 }
 
 impl SheetFields {
@@ -442,6 +481,7 @@ impl SheetFields {
             quality: settings.quality.clone(),
             chat_history: settings.chat_history,
             miniplayer: settings.miniplayer,
+            desktop_notifications: settings.desktop_notifications,
         }
     }
 }
@@ -677,12 +717,14 @@ impl Settings {
             quality,
             chat_history,
             miniplayer,
+            desktop_notifications,
         } = sheet;
         self.credentials.client_id = client_id.clone();
         self.credentials.auth_token = auth_token.clone();
         self.quality = quality.clone();
         self.chat_history = *chat_history;
         self.miniplayer = *miniplayer;
+        self.desktop_notifications = *desktop_notifications;
     }
 
     /// Fold a pre-0.2.2 file's single last channel into the list.
@@ -1047,8 +1089,45 @@ mod tests {
         assert_eq!(settings.chat_history, 100);
         assert_eq!(settings.chat_text_size, ChatTextSize::Default);
         assert!(!settings.chat_message_times);
+        assert_eq!(settings.desktop_notifications, DesktopNotifications::Pinned);
         assert!(settings.channel_prefs.is_empty());
         assert!(settings.pinned.is_empty());
+    }
+
+    /// Who gets a desktop notification goes to disk by name and comes back
+    /// as it was set; a word this build does not know loads as the default
+    /// and takes nothing else in the file down with it.
+    #[test]
+    fn desktop_notifications_round_trip_by_name_and_give_way() {
+        let path = temp_file("desktop-notifications");
+        let _ = std::fs::remove_file(&path);
+        for answer in DesktopNotifications::ALL {
+            let settings = Settings {
+                desktop_notifications: answer,
+                ..Settings::default()
+            };
+            settings.save(&path).unwrap();
+            assert_eq!(Settings::load(&path).unwrap().desktop_notifications, answer);
+        }
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            text.contains(r#""desktop_notifications": "all""#),
+            "got {text}"
+        );
+        let _ = std::fs::remove_file(&path);
+
+        for word in [r#""everyone""#, r#""Off""#, "3", "null"] {
+            let settings: Settings = serde_json::from_str(&format!(
+                r#"{{"volume": 55, "desktop_notifications": {word}}}"#
+            ))
+            .unwrap();
+            assert_eq!(
+                settings.desktop_notifications,
+                DesktopNotifications::Pinned,
+                "{word}"
+            );
+            assert_eq!(settings.volume, 55, "{word} took the file down");
+        }
     }
 
     /// The chat options go to disk by name and come back as they were set.
@@ -1119,8 +1198,9 @@ mod tests {
 
         loaded.save(&path).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
+        // The key, not the word: `desktop_notifications` can say "pinned".
         assert!(
-            !text.contains("pinned"),
+            !text.contains(r#""pinned":"#),
             "an empty list was written: {text}"
         );
         let _ = std::fs::remove_file(&path);
@@ -1325,7 +1405,7 @@ mod tests {
     }
 
     /// What the settings sheet saves is as old as the sheet. Adopting it
-    /// takes the five fields the sheet shows, and leaves every other field as
+    /// takes the six fields the sheet shows, and leaves every other field as
     /// the live settings have it: a recent channel, which can change while
     /// the sheet is open, and a pin, the rail, the window and a channel's
     /// level, which cannot today but are not the sheet's either.
@@ -1356,6 +1436,7 @@ mod tests {
         sheet.quality = QualityPreference::Fixed("720p".into());
         sheet.chat_history = 0;
         sheet.miniplayer = false;
+        sheet.desktop_notifications = DesktopNotifications::Off;
 
         let before = live.clone();
         live.adopt_sheet(&sheet);
@@ -1365,6 +1446,7 @@ mod tests {
         assert_eq!(live.quality, QualityPreference::Fixed("720p".into()));
         assert_eq!(live.chat_history, 0);
         assert!(!live.miniplayer);
+        assert_eq!(live.desktop_notifications, DesktopNotifications::Off);
 
         assert_eq!(live.pinned, ["forsen"], "saving the sheet unpinned");
         assert_eq!(live.recent, ["xqc"], "saving the sheet forgot a channel");
@@ -1389,7 +1471,7 @@ mod tests {
             "the sheet owns no sign-in"
         );
 
-        // Everything but the five, exactly as it was.
+        // Everything but the six, exactly as it was.
         let mut untouched = live.clone();
         untouched.adopt_sheet(&SheetFields::of(&before));
         assert_eq!(untouched, before);

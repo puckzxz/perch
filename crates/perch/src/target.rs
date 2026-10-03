@@ -126,6 +126,57 @@ pub fn link(target: &Target) -> String {
     }
 }
 
+/// The scheme of perch's own links, which a desktop notification opens
+/// (`notifications`). Windows hands a link in it to the program registered
+/// for it, which is perch, as the one argument of a launch; see
+/// [`app_link`].
+pub const APP_SCHEME: &str = "perch";
+
+/// perch's own link to watch `login`: `perch://watch/<login>`, what a
+/// go-live notification opens when it is clicked. A link of perch's rather
+/// than twitch.tv's, because Windows opens a twitch.tv link in the browser;
+/// this one comes back to perch as a launch, which `instance` hands to the
+/// running window like any other. [`parse_app_link`] reads it back.
+/// Written only by the Windows notifications, so dead code to the macOS
+/// leg's clippy, which runs with `-D warnings`.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn app_link(login: &str) -> String {
+    format!("{APP_SCHEME}://watch/{}", channel_key(login))
+}
+
+/// Whether `arg` is one of perch's own links, of any kind: the scheme, in
+/// any case, and a colon. The launch it comes in is the link and nothing
+/// else (see `launch`), however well or badly the rest reads.
+pub fn is_app_link(arg: &str) -> bool {
+    arg.len() > APP_SCHEME.len()
+        && arg.is_char_boundary(APP_SCHEME.len())
+        && arg[..APP_SCHEME.len()].eq_ignore_ascii_case(APP_SCHEME)
+        && arg[APP_SCHEME.len()..].starts_with(':')
+}
+
+/// The channel one of perch's own links names ([`app_link`]), or nothing for
+/// a link that names none: anything but `watch/` and a login.
+///
+/// Read strictly, since anything on the machine — a web page, through the
+/// browser's prompt — can open a link in the scheme once it is registered:
+/// all a link can do is open a channel, which a twitch.tv link already can.
+/// The slashes after the colon, and one after the login, are taken or left,
+/// because what hands the link over may write them either way.
+pub fn parse_app_link(text: &str) -> Option<Target> {
+    let text = text.trim();
+    if !is_app_link(text) {
+        return None;
+    }
+    let rest = &text[APP_SCHEME.len() + 1..];
+    let rest = rest.trim_start_matches('/');
+    let rest = rest.strip_suffix('/').unwrap_or(rest);
+    let (verb, login) = rest.split_once('/')?;
+    if !verb.eq_ignore_ascii_case("watch") || login.starts_with('#') {
+        return None;
+    }
+    channel(login)
+}
+
 /// The moment a link to a recording `position` seconds in starts at: the
 /// whole second it is in, or none in the first second, which [`link`] writes
 /// as no time anyway. Read by the link a pane hands out and by the words that
@@ -232,6 +283,40 @@ mod tests {
         assert_eq!(moment(-3.0), None, "a position before the start");
         assert_eq!(moment(1.0), Some(1));
         assert_eq!(moment(3723.7), Some(3723));
+    }
+
+    /// perch's own link to a channel reads back as the channel, however
+    /// whatever handed it over wrote the slashes and the case.
+    #[test]
+    fn an_app_link_reads_back_as_the_channel_it_names() {
+        assert_eq!(app_link("#Forsen"), "perch://watch/forsen");
+        assert_eq!(parse_app_link(&app_link("xqc")), channel("xqc"));
+        assert_eq!(parse_app_link("perch:watch/xqc"), channel("xqc"));
+        assert_eq!(parse_app_link("PERCH://Watch/XQC/"), channel("xqc"));
+        assert!(is_app_link("Perch:anything"));
+        assert!(!is_app_link("perch"));
+        assert!(!is_app_link("perchance"));
+        assert!(!is_app_link("forsen"));
+    }
+
+    /// A link in perch's scheme that names anything but a channel to watch
+    /// opens nothing.
+    #[test]
+    fn an_app_link_to_anything_else_is_nothing() {
+        for text in [
+            "perch:",
+            "perch://",
+            "perch://watch",
+            "perch://watch/",
+            "perch://watch/two words",
+            "perch://watch/#forsen",
+            "perch://watch/forsen/extra",
+            "perch://open/forsen",
+            "perch://watch/forsen?x=1",
+            "https://www.twitch.tv/forsen",
+        ] {
+            assert_eq!(parse_app_link(text), None, "{text}");
+        }
     }
 
     #[test]

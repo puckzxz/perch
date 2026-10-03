@@ -36,6 +36,7 @@ impl RootView {
         self.offline.clear();
         self.home_offline.clear();
         self.known_live.clear();
+        self.streams_seeded = false;
         self.avatars.clear();
         self.follows_loaded = false;
         self.follows_complete = false;

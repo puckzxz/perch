@@ -83,12 +83,13 @@ App modules:
 |---|---|
 | `main.rs` | the process: first perch or a launch to hand over, the window, where stderr goes |
 | `instance/` | one perch per settings file: the claim, and a later launch handing its arguments to the running one — a named pipe on Windows, `flock` and a socket on Unix |
-| `launch.rs` | what a launch's arguments ask for, read the one way at startup and on a handover (pure, tested) |
+| `launch.rs` | what a launch's arguments ask for, read the one way at startup and on a handover; a launch whose first argument is one of perch's own `perch:` links is that link and nothing else (pure, tested) |
+| `notifications/` | the desktop notification when a followed channel goes live with the window in the background: who is told (`who`, by the setting, the pins, the focus, the first poll and `Seen`, the broadcast each channel was last seen with; pure, tested) and what it says (`Notice`, and `batch`, which caps a poll at three), then the Windows half — a WinRT toast under perch's AppUserModelID, the HKCU keys that make it showable and its click open `perch://watch/<login>`, and `forget`, which takes them out when the setting goes Off. Nothing off Windows. See "Desktop notifications" under Windows packaging |
 | `trail.rs` | back and forward: the places behind and ahead, what a step passes over, and forgetting a place that is gone (pure, tested) |
 | `stage.rs` | where each pane is drawn — a pane, a mini-player tile, a window of its own, or nowhere while another pane has the watch page (`Place`) — which panes are popped out and which one is maximized (`Stage`), the cells the watch grid draws (`cells`) and what a pane's maximize control offers (`MaximizeButton`): the one owner of the answer both windows ask before drawing a player; and where a pane moved one place along the order goes (`moved`) (pure, tested) |
 | `os_window.rs` | what Perch asks of a window that gpui does not: its platform handle (`hwnd`, the one place a gpui window is asked for it — `instance::bring_forward` comes forward on it rather than looking it up itself), and keeping a pop-out above every other app (`keep_on_top`, Windows only) |
 | `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `account` (the sign-in as the user drives it: the settings sheet's Sign out, Sign in, Sign in again for the chat scope, and `restart_twitch`, the worker started over, which a new client id does too), `chat_send` (sending chat: what each live chat's composer is told about the user, `sync_chat_access`, a message handed to the worker under a number of the root's, `send_chat`, and its answer handed back to the chat it came from, `on_chat_sent`), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams` (opening, restarting, closing, and `replace_with_video` and `replace_with_channel`, a recording swapped in for a live pane in place and the channel back in a recording's, both through `replace_slot`), `renditions` (what each pane plays, and when it restarts: the quality chosen against each pane's own height, `pane_height_for`, the upward re-pick when the grid changes, `sync_quality`, a pick from the pane's own menu, and how each changes what plays, `change_rendition` — beside a picture that covers the pane, to take over in place, and cold otherwise; and the root's half of that swap: what a start resolving beside a pane does with its events, `pending_event`, and what the pane keeps once its player has taken over or been given up on, `on_swapped` and `on_swap_failed`; and `set_pending`, the only write of a pane's pending start, which tells its player what a pick is switching it to and which a test holds the root to; and `beside_rendition`, the rendition a start beside a live picture names from the pane's menu, so streamlink skips its probe; tested), `warm` (streamlink started ahead for a live pane's quality menu: `quality_menu` on `VideoEvent::QualityMenu`, up to four renditions nearest what plays, `to_warm`, tested, each a `watch::WarmStart` on the slot whose `Ready` is kept until a pick takes it, `take_warm` and `adopt_warm` from `start_stream`, let go a grace after the menu closes, at its age while the menu stays open (`expire_warm`), with the player, or by a cold start; none for what a pick is already starting), `panes` (where each pane is drawn, applied: `restage`, the one funnel every change of a pane's state, of which panes there are, of the page, of what is popped out and of what is maximized ends in; `set_slot_state`, the only write of a pane's state, which a test holds the root to; `video_in_main`, the only way the main window reaches a player, which a test holds the mini player and the pages to; and the maximize as the root drives it, `toggle_maximize`, `show_all_panes`, and `choose`, which takes it to the pane chosen; and `move_pane`, two panes swapping places in the order, from a header dropped on a pane or `Shift+←`/`Shift+→`), `pop_out` (a pane's picture in a window of its own, on top of other apps: the `PopOut` view, opening and closing it through `cx.defer`, `to_root`, the only way back to the root from it, and `offered`, Windows only), `broadcasts` (what a stopped live pane asks about its channel's past broadcasts, and whether it may offer to start by itself), `rewind` (a live pane's timeline: when each live player's broadcast began, `sync_live_since`, a press on it carried out at once or when the ask for the archive is answered, and the archive opened in the pane's place; and the way back: whether each recording's broadcast is still on, `still_live` and `sync_back_to_live`, and `LIVE` pressed, `back_to_live`), `hearing` (which panes are heard: More's `Only this one` and `Hear all again` through Mute all's hush, and `sync_hear_only`, the one writer of every player's `HearOnly` mirror after `Start`), `ad_breaks` (a pane's ad-break notice: begun on `StreamEvent::AdBreak`, ticked once a second by a timer the slot owns, taken down when it is over), `guide` (the guide over the watch page as the root runs it: `toggle_guide` from a pane's Guide button, which opens, moves or closes it, `close_guide`, `sync_guide_buttons`, the one writer of every player's `guide_from_here` mirror after `Start`, `fill_guide` through `fetch`, a card's Watch in place of the pane the guide was opened from — `replace_with_channel` — or `+ Add` through `Action::Add`, a category opened inside it, and the panel's shell: where it sits, the press outside that closes it, its probe into the veil), `pane_actions` (what a pane asks for, by its key: a press on it or one of its controls, which takes the keys back for the root first, and its player's requests; the moment a pane key brings a pane's header up over its picture; `copy`, the one place the clipboard is written; and `run_guard`, which swallows the rest of a double-click whose first press took a player out from under the pointer — More's `Pop out`, the mini player's — where the player's own guard cannot follow), `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `muted` (a recording's muted stretches: heard from every Helix answer that lists videos, `hear_muted`, given to a pane that opens one without them, as the history's do, `with_muted`, asked for once through `Request::Video` only when nothing was heard, also when sign-in lands, `ask_muted_for_open`, an answer claimed by a pane's question before a link's, `Muted::claim`, tested, and taken onto every pane playing it and its player's seek bar, `take_muted`), `prefs`, `recommended` (the rail's Recommended group: when to ask the worker, what its answer becomes, and the hooks that call it), `last_live` (when the offline follows were last live: when to ask the worker, and what its answer does), `shared_chat` (Shared Chat labels: each chat watched as it is made, live or a replay (`watch_chat`), its word about a partner it cannot name turned into one ask per id, and the names handed to every chat), `badges` (chat badges: a chat's word about its room answered with the badges known for it, the global and per-room books asked for once each, and every answer handed to the chats it is for), `schedule` (when an offline channel says it is on next: `ask_schedule`, called while drawing an offline channel's page and a pane that found its channel off, once a channel a session, and `on_schedule`), `chrome` (pills, toasts, the rail, and its preview cards' state and timer, `point_rail_row`), `mini_player` (what plays on while you browse, in the corner of the page), `title_bar` (the bar Perch draws across the top of the window — the rail button, Home, back and forward, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`) |
-| `target.rs` | what a typed or pasted thing means: a login, or a twitch.tv link to a channel or a recording; `link`, its inverse and the one place a twitch.tv URL is written, and `moment`, the second a link to a recording starts at (pure, tested) |
+| `target.rs` | what a typed or pasted thing means: a login, or a twitch.tv link to a channel or a recording; `link`, its inverse and the one place a twitch.tv URL is written, and `moment`, the second a link to a recording starts at; and perch's own `perch://watch/<login>` link, written by `app_link` for a notification to open and read back by `parse_app_link` (pure, tested) |
 | `browse.rs` | the picker page: home, popular, categories, search; which of them is on screen (`Discovery::place`) and which lists are still being waited on (`is_loading`, and by key for the guide, `is_pending` and `error_for`); the stream card both the page and the guide draw (`card`, offering what `CardOffers` says) |
 | `channel_page.rs` | one channel's past broadcasts, and when each was; the recording card both pages use, and a stopped pane too; a recording's poster, and `archive_of`, which finds the recording of a broadcast that just ended (tested) |
 | `history_page.rs` | the history tab, its entry card and its test for unfinished (both reused by Home), and the one translation between a video and a history entry |
@@ -123,7 +124,7 @@ App modules:
 | `chat_words.rs` | what a chat says about itself in words: a timeout or ban (`ban_notice`), the line above a reply (`reply_context`), the line of modes and a mode's notice (`modes_line`, `mode_notice`) (pure, tested) |
 | `chat_tint.rs` | which wash a chat row wears: an event's, an announcement's colour, a highlighted or first message (`Wash`, `message_wash`, `event_wash`) (pure, tested) |
 | `chat_text.rs` | what a word in a message is — link, mention or plain (pure, tested) |
-| `settings_view.rs` | settings sheet, and its Sign out (`SettingsEvent::SignOut`) |
+| `settings_view.rs` | settings sheet, and its Sign out (`SettingsEvent::SignOut`); Desktop notifications is its one Windows-only field, and its help says so off Windows |
 | `twitch.rs` | the worker: sign-in, follows polling, browse requests, a stopped pane's ask for its channel's past broadcasts (which a live pane's rewind rides too), the rail's anonymous ask for channels like the ones watched (`Request::Recommend`), the anonymous ask for when the offline follows were last live (`Request::LastLive`), and the anonymous ask for Shared Chat partners' names (`Request::ChannelNames`), all three answered ahead of the session's upkeep, the chats' badges from Helix (`Request::Badges`), a channel's stream schedule from Helix (`Request::Schedule`, a 404 read as no schedule), a chat message sent (`Request::SendChat`), and the token validated at the first poll and hourly, saying whether it may send (`TwitchEvent::ChatScope`) |
 | `keys.rs` | the keymap: actions, bindings, contexts, the listing, and the keys a tooltip may name (`Hint`) |
 | `theme.rs` | **all** colour, spacing, type and motion tokens |
@@ -1145,9 +1146,9 @@ written only on the way out — but they are why the sheet owns a list of
 fields rather than the root keeping a list of exceptions: whatever the app
 writes outside the sheet, now or later, has to survive saving it. The sheet is
 handed `settings::SheetFields` — the client id, the auth-token cookie,
-quality, chat history and the mini player — and hands the same type back, so
-it never holds the rest to hand back; `Settings::adopt_sheet` takes those
-five and nothing else, and `adopting_the_sheet_keeps_everything_it_does_not_own`
+quality, chat history, the mini player and desktop notifications — and hands
+the same type back, so it never holds the rest to hand back;
+`Settings::adopt_sheet` takes those six and nothing else, and `adopting_the_sheet_keeps_everything_it_does_not_own`
 holds it to exactly that, pins, volumes and placement included. A field the
 sheet gains does not compile until both ends handle it: the panel builds the
 type with a struct literal, and `adopt_sheet` takes it apart with no `..`.
@@ -1844,6 +1845,72 @@ without one warns and produces an icon-less binary rather than failing.
 `assets/make-icon.ps1` regenerates the `.ico` — entries up to 128px are DIBs
 and 256 is a PNG, because GDI+ cannot read a PNG-payload entry back, so a
 PNG-only file is one you cannot open to check.
+
+**Desktop notifications** (`notifications/`). The follows poll's go-live
+news goes to a Windows toast as well as the in-app one when the main window
+is not active (`Window::is_window_active`; a focused pop-out counts as away,
+since the in-app toast is drawn in the main window), to whoever
+`Settings::desktop_notifications` covers — Off, Pinned (the default) or All.
+`notifications::who` is the rule and its tests are the spec: never at the
+worker's first poll (`RootView::streams_seeded`, the flag the in-app toast
+goes by too — not an empty `known_live`, which is also every poll after a
+night with nobody live, and would swallow the first go-live of the morning;
+`stop_twitch` resets it), never with the window in front,
+and once a broadcast — `Seen` keeps the broadcast id (or `started_at` where
+Helix gave none) each channel was last seen live with, noted for every stream
+in every poll whether or not anybody was told, so a stream that blinks out of
+one poll and back is not news, and nor is one already live at launch. `Seen`
+outlives `restart_twitch`, which only empties `known_live`. "In front" is
+the active window, not a visible one: perch in view on one monitor while
+somebody types on the other gets both the in-app notice and the toast, which
+the docs say. `notifications::batch` caps a poll at three toasts — past
+three, the third is `<name> and <n> others went live` and opens the first
+of the rest — since the first good poll after a sleep or an outage can find
+a dozen new broadcasts at once.
+
+How it is shown was chosen from Microsoft's own description of desktop-app
+toast activation. An unpackaged app needs an AppUserModelID Windows knows,
+and the shortcut-free way to make one known is a key under
+`HKCU\Software\Classes\AppUserModelId\<id>` with `DisplayName` and
+`IconUri` (what the Python `windows-toasts` package's registration script
+writes). Getting the *click* back into the process needs a COM activator: a
+CLSID on a shortcut and a class factory registered at startup. Without one,
+the only activation a desktop toast keeps is a protocol's — Microsoft's
+table for the "no COM / stub CLSID" option: visuals and actions, protocol
+activation of your own app, no in-process activation. So the toast is
+`activationType="protocol"` with `launch="perch://watch/<login>"`, and
+`HKCU\Software\Classes\perch` runs `"<exe>" "%1"`. Windows starts a
+second perch with the link; `instance` hands it to the running one with the
+foreground right the click gave it (`give_way`), which comes forward and
+opens the channel through the same `open_targets` as any launch. A perch
+since closed starts on the channel. `Launch::read` takes a first argument in
+the scheme as the whole launch and reads nothing after it, because a link
+that closes the command line's quotes could otherwise add options;
+`target::parse_app_link` accepts only `watch/<login>`. Anything on the
+machine can open a `perch:` link once the scheme exists — a web page, after
+the browser asks — and the most it can do is open a channel. The legacy
+`Shell_NotifyIcon` balloon was the other option: it needs a tray icon kept
+for the life of the process, and Windows 10 and 11 show balloons as toasts
+anyway, so it was all of the cost for none of the gain.
+
+The bindings are the `windows` crate at 0.61 with `UI_Notifications` and
+`Data_Xml_Dom`, and `windows-registry` 0.5: the versions vendored gpui
+already builds, so `Cargo.lock` gained two dependency edges and no package
+(the two features are the only new code compiled). `tauri-winrt-notification`
+would have wrapped the same three calls and brought `quick-xml` with it. The
+toast is shown on a short-lived thread of its own (the windows crate joins the
+MTA for a thread with no apartment, `CoIncrementMTAUsage` in its factory
+cache), and the first of a session registers first, writing a value only where
+it differs: the AUMID key, the scheme pointing at `current_exe`, and the 256px
+PNG cut out of the embedded `perch.ico` (`png_in_ico`) as
+`%LOCALAPPDATA%\perch\perch.png` for `IconUri`. One mutex covers register,
+show and `forget`, which the sheet calls on a save that turns the setting Off:
+it removes the AUMID key, the scheme only if its command still starts a
+`perch.exe`, and the PNG. perch never sets the process's own AUMID — that would
+part its taskbar button from a pinned shortcut — so the id is only the name
+toasts go out under. None of this has been seen working on a desktop yet: the
+tests cover who is told, the XML and the command line, and the mechanism rests
+on the documentation above (see "Known limits").
 
 ### Motion
 
@@ -4668,6 +4735,18 @@ None of these is being worked on; all of them are real.
     opened by name, or from the recommendations — it never shows. And the
     first part of a broadcast a reconnect split has a finished playlist, so
     it never shows `LIVE` either.
+35. **Desktop notifications are Windows-only, and unproven on a desktop.**
+    The registry AUMID, the toast and the protocol click were built from
+    Microsoft's documentation and checked by compiling, not by watching one
+    arrive; the first live run should confirm the toast shows under `perch`
+    with its icon, and that a click from the banner and from the
+    notification centre brings perch forward (the foreground right passes
+    from the click to the second launch to the running window, the
+    `give_way` path, which nothing here has exercised from a toast). A toast
+    can come up to a poll — a minute — after the stream starts. macOS shows
+    none: `notifications::show` is a no-op there, and its sheet field says
+    so. A moved `perch.exe` leaves the scheme on the old path until the next
+    toast.
 
 ## Things not to redo
 

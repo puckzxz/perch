@@ -11,6 +11,7 @@ use settings::history::History;
 use twitch_api::{Channel, LiveStream, Video};
 
 use super::{LinkedVideo, RootView, ToastAction};
+use crate::notifications;
 
 /// A list of follows that the pointer can rest on, and hold still.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -349,10 +350,15 @@ impl RootView {
         cx.notify();
     }
 
-    /// Take a fresh follows list and announce anyone who just came online.
+    /// Take a fresh follows list and announce anyone who just came online:
+    /// in a toast, and with the window in the background in a desktop
+    /// notification too, to whoever Desktop notifications covers; see
+    /// `notifications`.
     ///
     /// The first poll seeds the known set silently: on launch everyone is
-    /// "newly" live, and eight toasts at once would be worse than none.
+    /// "newly" live, and eight toasts at once would be worse than none. Only
+    /// the first, though (`streams_seeded`): a poll after one with nobody
+    /// live announces whoever is live now.
     pub(super) fn on_streams(
         &mut self,
         streams: Vec<LiveStream>,
@@ -361,7 +367,8 @@ impl RootView {
     ) {
         let now_live: HashSet<String> = streams.iter().map(|s| s.user_login.clone()).collect();
 
-        if !self.known_live.is_empty() {
+        let first_poll = !self.streams_seeded;
+        if !first_poll {
             let mut newly: Vec<&LiveStream> = streams
                 .iter()
                 .filter(|s| !self.known_live.contains(&s.user_login))
@@ -370,14 +377,11 @@ impl RootView {
             for stream in newly {
                 // A stream with no category set has an empty game, and joined
                 // regardless the notice ended in a dangling " · ".
-                let text = [
-                    format!("{} went live", stream.display_name),
-                    stream.game_name.clone(),
-                ]
-                .into_iter()
-                .filter(|part| !part.trim().is_empty())
-                .collect::<Vec<_>>()
-                .join(" · ");
+                let text = [notifications::went_live(stream), stream.game_name.clone()]
+                    .into_iter()
+                    .filter(|part| !part.trim().is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" · ");
                 self.toast_with(
                     text,
                     Some(ToastAction::Watch(stream.user_login.clone())),
@@ -385,6 +389,20 @@ impl RootView {
                 );
             }
         }
+
+        // Before `known_live` moves on: who was live at the last poll is how
+        // the newly live are told apart. Focus is the main window's alone,
+        // which is where the toast is.
+        let told = notifications::who(
+            &streams,
+            &self.known_live,
+            first_poll,
+            self.settings.desktop_notifications,
+            |login| self.settings.is_pinned(login),
+            window.is_window_active(),
+            &mut self.seen_broadcasts,
+        );
+        notifications::show(notifications::batch(&told));
 
         // A pane that found nothing to play, whose channel this poll lists as
         // broadcasting, tries again by itself when `Start when they go live`
@@ -426,6 +444,7 @@ impl RootView {
             .went_live(now_live.iter().map(String::as_str), Utc::now());
 
         self.known_live = now_live;
+        self.streams_seeded = true;
         self.follows = if self.live_held() {
             keep_order(&self.follows, streams, |stream| stream.user_login.as_str())
         } else {

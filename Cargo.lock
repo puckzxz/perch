@@ -4095,6 +4095,8 @@ dependencies = [
  "streamlink",
  "twitch-api",
  "twitch-chat",
+ "windows 0.61.3",
+ "windows-registry 0.5.3",
  "winresource",
 ]
 

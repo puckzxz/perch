@@ -9,14 +9,14 @@ use gpui::{
     canvas, prelude::*, App, Context, DispatchPhase, MouseButton, MouseMoveEvent, MouseUpEvent,
     Window,
 };
-use settings::SheetFields;
+use settings::{DesktopNotifications, SheetFields};
 
 use super::{Resize, RootView};
 use crate::chat_display::ChatDisplay;
 use crate::settings_view::{SettingsEvent, SettingsPanel};
 use crate::twitch::SignInStart;
 use crate::watch::ResizeStart;
-use crate::{layout, theme};
+use crate::{layout, notifications, theme};
 
 /// How long a run of changes is left to settle before the file is written.
 /// A volume drag is a change per pixel; the file is written once, after.
@@ -79,6 +79,11 @@ impl RootView {
                         let miniplayer_off = this.settings.miniplayer && !updated.miniplayer;
                         let stream_changed = this.settings.quality != updated.quality
                             || this.settings.credentials.auth_token != updated.auth_token;
+                        // Turned off, what showing them registered with
+                        // Windows comes back out; see `notifications`.
+                        let notifications_off = this.settings.desktop_notifications
+                            != DesktopNotifications::Off
+                            && updated.desktop_notifications == DesktopNotifications::Off;
 
                         // Only what the sheet owns, so whatever the app wrote
                         // while it was open — the channel a later launch
@@ -101,6 +106,9 @@ impl RootView {
                         // panes by: those in windows of their own play on.
                         if miniplayer_off {
                             this.retire_homeless(cx);
+                        }
+                        if notifications_off {
+                            notifications::forget();
                         }
 
                         // Apply immediately rather than asking for a restart,

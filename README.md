@@ -35,7 +35,9 @@ Inc.
 
 Built binaries are on the [releases
 page](https://github.com/puckzxz/perch/releases): a zip per platform, no
-installer, nothing written outside your own user folder. Windows gets the
+installer, nothing written outside your own user folder (on Windows that
+includes your user's half of the registry, which desktop notifications write
+two keys to; see "Desktop notifications"). Windows gets the
 executable on its own; macOS gets a universal `perch.app` that runs on both
 Apple Silicon and Intel. `RUNNING.txt` inside each covers the things it cannot
 ship — streamlink, libmpv, and the Twitch Client ID you register yourself. The
@@ -557,6 +559,10 @@ every name after them down.
 
 When somebody you follow goes live, a notice says so in the corner; click it
 to watch them, or `+ Add` beside it to open them next to what is playing.
+While Perch isn't the window you're using (minimised, behind other windows,
+or while you work in another app), Windows says so too, in a notification of
+its own, for the channels you have pinned unless you choose otherwise; see
+"Desktop notifications".
 Notices wait while the pointer is on them, and stay at least a couple of
 seconds after it moves off, so one you are reading or reaching for does not
 go. A pane left on a channel that was off, or whose broadcast ended, starts by
@@ -765,6 +771,56 @@ in `history.json`.
 Volume is remembered per channel, because streamers are not consistent about
 how loud they run. Muting one is remembered too, and deliberately never becomes
 the default for a channel you have not opened before.
+
+### Desktop notifications
+
+When a channel you follow goes live while Perch isn't the window you're using
+(minimised, behind other windows, or while you work in another app, even with
+Perch in view on another monitor), Windows shows a notification: who went live, what they are playing
+and the stream's title. Click it and Perch comes forward with the channel open
+beside whatever is playing, or starts on it if Perch has since been closed.
+**Desktop notifications** in Settings says who for: **Off**, **Pinned only**
+(the channels pinned to the top of the rail, and the default) or **All
+followed**. With Perch's window in front there is no notification, since the
+notice in the corner is already saying it; nor for anyone already live when
+Perch starts, and never twice for one broadcast, even if it drops out of the
+follows list for a minute and comes back. A poll shows three at most: when
+more went live at once, after the PC wakes from sleep say, the third names
+the rest and opens the first of them. Windows' own notification settings,
+and Do not disturb, apply as they do to any app; Perch is listed there as
+`perch` once it has shown one. The follows are asked about once a minute, so
+a notification can come up to a minute after the stream starts.
+
+Windows shows a notification only from an app it knows by name, and a portable
+`.exe` has no installer to introduce it. So the first notification of each
+session makes sure of three things, writing only what is not already so:
+
+| Where | What | Why |
+|---|---|---|
+| `HKCU\Software\Classes\AppUserModelId\puckzxz.perch` | `DisplayName` = `perch`, `IconUri` = the icon below | the name and picture at the top of the notification |
+| `HKCU\Software\Classes\perch` | a `perch:` link type that runs `"<path to perch.exe>" "%1"` | what a click on the notification opens: `perch://watch/<channel>`, which Perch reads as that channel and nothing else |
+| `%LOCALAPPDATA%\perch\perch.png` | the app's icon | Windows wants a picture file, not the one inside the `.exe` |
+
+Nothing is written while the setting is Off, or before there is a notification
+to show. Turning it **Off** in Settings takes all three back out (the link type
+only if it still runs a `perch.exe`). To remove them by hand — after deleting
+Perch with notifications still on, say — in a Command Prompt:
+
+```
+reg delete HKCU\Software\Classes\AppUserModelId\puckzxz.perch /f
+reg delete HKCU\Software\Classes\perch /f
+del "%LOCALAPPDATA%\perch\perch.png"
+```
+
+A click opens a link rather than reaching Perch directly because the direct
+way needs a COM server registered for the notification and started by Windows,
+which only an installed app is set up for; a link goes through the same
+hand-over as launching `perch.exe` again. Once the link type is registered,
+anything that can open links on your machine can open a `perch:` one —
+a web page, after your browser asks — and all one can do is open a channel,
+as a twitch.tv link can. Moving or renaming `perch.exe` leaves the link
+pointing at the old place until the next notification puts it right. Not on
+macOS yet: there the notice in the corner is the only one.
 
 ### The two Twitch tokens
 
