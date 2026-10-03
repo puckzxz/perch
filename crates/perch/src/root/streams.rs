@@ -6,7 +6,8 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use gpui::{prelude::*, App, Context, Focusable, SharedString, Window};
+use futures::channel::mpsc::UnboundedReceiver;
+use gpui::{prelude::*, App, Context, Focusable, SharedString, Task, Window};
 use settings::QualityPreference;
 use streamlink::{Playlist, StreamEvent, StreamOptions, StreamSupervisor};
 use twitch_api::{LiveStream, Video, VideoKind};
@@ -52,7 +53,7 @@ pub(super) enum How {
 static GENERATIONS: AtomicU64 = AtomicU64::new(0);
 
 /// The next start's number. Never zero, which is a slot that has had none.
-fn next_generation() -> u64 {
+pub(super) fn next_generation() -> u64 {
     GENERATIONS.fetch_add(1, Ordering::Relaxed) + 1
 }
 
@@ -456,6 +457,14 @@ impl RootView {
     /// the number, so each reaches the start it came from — the pane's
     /// stream, or the one resolving beside it — and none reaches a pane that
     /// has moved on from it ([`apply_stream_event`](Self::apply_stream_event)).
+    ///
+    /// A start beside a live pane's picture names its rendition itself, from
+    /// what the pane's menu offers ([`beside_rendition`](Self::beside_rendition)),
+    /// so streamlink skips its probe (`StreamOptions::offered`); and takes
+    /// the streamlink started ahead for that rendition when the menu opened,
+    /// if there is one still good (`warm`). A cold start lets every one of
+    /// those go: it is a restart for new settings or a new credential, which
+    /// they were started without.
     pub(super) fn start_stream(
         &mut self,
         key: String,
@@ -468,49 +477,35 @@ impl RootView {
         };
         let channel = self.slots[index].channel.clone();
 
-        let quality = self.slots[index]
-            .quality_override
-            .clone()
-            .or(match &self.settings.quality {
-                QualityPreference::Auto => None,
-                QualityPreference::Fixed(name) => Some(name.clone()),
-            });
-        let options = StreamOptions {
-            quality,
-            auth_token: self.settings.credentials.auth_token.clone(),
-        };
-
         // Quality targets the pane this stream will actually render into.
         let pane_height = self.pane_height_for(&key, window);
 
+        let known = match &how {
+            How::Beside(_) => self.beside_rendition(index, pane_height, cx),
+            How::Cold => None,
+        };
+        if let (How::Beside(reason), Some((name, _))) = (&how, &known) {
+            if let Some(warm) = self.take_warm(index, name) {
+                return self.adopt_warm(index, warm, pane_height, reason.clone(), cx);
+            }
+        }
+
+        let rendition = known.as_ref().map(|(name, _)| name.clone());
+        let options = match known {
+            Some((name, offered)) => self.stream_options(Some(name), Some(offered)),
+            None => self.stream_options(self.preference(index), None),
+        };
+
         // A recording is only resolved: streamlink names the playlist and
         // retires, and the player opens it itself. See the streamlink crate.
-        let (supervisor, mut events) = match &self.slots[index].source {
+        let (supervisor, events) = match &self.slots[index].source {
             Source::Live => StreamSupervisor::start(channel.clone(), pane_height, options),
             Source::Video { video, .. } => {
                 StreamSupervisor::start_video(video.id.clone(), pane_height, options)
             }
         };
-        // Read once, here, and frozen into the pump: the pane it belongs to
-        // may not start for several seconds, and adjusting a *different* pane
-        // in the meantime must not follow it in.
-        let volume = self
-            .volume_override
-            .unwrap_or_else(|| self.settings.volume_for(&channel));
-
         let generation = next_generation();
-        let pump = cx.spawn_in(window, async move |this, cx| {
-            use futures::StreamExt as _;
-            while let Some(event) = events.next().await {
-                let key = key.clone();
-                let ok = this.update_in(cx, |this: &mut RootView, window, cx| {
-                    this.apply_stream_event(&key, generation, event, volume, window, cx)
-                });
-                if ok.is_err() {
-                    break;
-                }
-            }
-        });
+        let pump = self.pump(key, &channel, generation, events, window, cx);
 
         match how {
             How::Cold => {
@@ -518,6 +513,8 @@ impl RootView {
                 slot.supervisor = Some(supervisor);
                 slot.pump = Some(pump);
                 slot.generation = generation;
+                slot.warm.clear();
+                slot.cooling = None;
                 self.set_pending(index, None, cx);
                 if let Some(view) = self.slots[index].video() {
                     view.update(cx, |view, _| view.cancel_swap());
@@ -534,17 +531,85 @@ impl RootView {
                     generation,
                     for_height: pane_height,
                     reason,
+                    rendition,
                 };
                 self.set_pending(index, Some(pending), cx);
             }
         }
     }
 
+    /// The quality pane `index` asks streamlink for when streamlink is to
+    /// choose: the rendition picked from the pane's menu, or the settings'
+    /// fixed choice, or nothing for `Auto`, which streamlink matches to the
+    /// pane's height.
+    fn preference(&self, index: usize) -> Option<String> {
+        self.slots[index]
+            .quality_override
+            .clone()
+            .or(match &self.settings.quality {
+                QualityPreference::Auto => None,
+                QualityPreference::Fixed(name) => Some(name.clone()),
+            })
+    }
+
+    /// How streamlink is asked for a pane's stream: at `quality`, a name or
+    /// a preference, with the account's credential, and from `offered`, the
+    /// renditions the pane already knows, when it does
+    /// (`StreamOptions::offered`). For every start, and for one started
+    /// ahead for the quality menu (`warm`).
+    pub(super) fn stream_options(
+        &self,
+        quality: Option<String>,
+        offered: Option<Vec<String>>,
+    ) -> StreamOptions {
+        StreamOptions {
+            quality,
+            auth_token: self.settings.credentials.auth_token.clone(),
+            offered,
+        }
+    }
+
+    /// The task that hands each of a start's streamlink `events` to the
+    /// root, under the pane's `key` and the start's `generation`
+    /// ([`apply_stream_event`](Self::apply_stream_event)).
+    ///
+    /// The pane's volume is read once, here, and frozen into the pump: the
+    /// pane it belongs to may not start for several seconds, and adjusting
+    /// a *different* pane in the meantime must not follow it in.
+    pub(super) fn pump(
+        &self,
+        key: String,
+        channel: &str,
+        generation: u64,
+        mut events: UnboundedReceiver<StreamEvent>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
+        let volume = self
+            .volume_override
+            .unwrap_or_else(|| self.settings.volume_for(channel));
+        cx.spawn_in(window, async move |this, cx| {
+            use futures::StreamExt as _;
+            while let Some(event) = events.next().await {
+                let key = key.clone();
+                let ok = this.update_in(cx, |this: &mut RootView, window, cx| {
+                    this.apply_stream_event(&key, generation, event, volume, window, cx)
+                });
+                if ok.is_err() {
+                    break;
+                }
+            }
+        })
+    }
+
     /// What streamlink said about the start `generation` of the pane `key`
     /// names. The pane's own stream's events change the pane; those of a
-    /// start resolving beside it are `renditions`'s (`pending_event`); and
-    /// those of a start the pane has moved on from go nowhere, by the rule
-    /// the player's frame wakes go by (`video_view::route`).
+    /// start resolving beside it are `renditions`'s (`pending_event`);
+    /// those of a streamlink started ahead for the pane's quality menu, which
+    /// is neither until a pick takes it, are kept for that pick
+    /// (`warm_event`); and those of a start the pane has moved on from go
+    /// nowhere, by the rule the player's frame wakes go by
+    /// (`video_view::route`).
     pub(super) fn apply_stream_event(
         &mut self,
         key: &str,
@@ -564,7 +629,7 @@ impl RootView {
         match video_view::route(generation, slot.generation, pending) {
             Wake::Current => {}
             Wake::Pending => return self.pending_event(index, event, cx),
-            Wake::Stale => return,
+            Wake::Stale => return self.warm_event(index, generation, event),
         }
 
         match event {

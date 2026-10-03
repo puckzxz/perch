@@ -332,8 +332,21 @@ impl VideoView {
                 return;
             }
         });
+        // For a pick, how long streamlink took to be ready from the press:
+        // the part of the wait a start ahead (`RootView::quality_menu`) and
+        // the skipped probe cut, apart from the player's open counted below.
+        let ready = self
+            .switching
+            .as_ref()
+            .map(|switching| {
+                format!(
+                    " (ready {} ms after the pick)",
+                    switching.since.elapsed().as_millis()
+                )
+            })
+            .unwrap_or_default();
         eprintln!(
-            "video: {} starting {} beside {}",
+            "video: {} starting {} beside {}{ready}",
             self.key, qualities.playing, self.qualities.playing
         );
         self.pending = Some(Pending {

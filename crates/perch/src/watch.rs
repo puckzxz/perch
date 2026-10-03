@@ -24,6 +24,7 @@ mod header;
 mod status;
 
 use std::path::PathBuf;
+use std::time::Instant;
 
 use chrono::{DateTime, Utc};
 use emotes::ImageCache;
@@ -32,7 +33,7 @@ use gpui::{
     MouseButton, MouseDownEvent, Pixels, SharedString, Task, Window,
 };
 use settings::history::Watched;
-use streamlink::StreamSupervisor;
+use streamlink::{StreamEvent, StreamSupervisor};
 
 use twitch_api::recommend::SimilarChannel;
 use twitch_api::{LiveStream, Video};
@@ -132,6 +133,12 @@ pub struct PendingStart {
     /// for no taller a pane does not start it again (`renditions`).
     pub for_height: u32,
     pub reason: Restart,
+    /// The rendition it serves, by streamlink's exact name, when perch named
+    /// it (`RootView::beside_rendition`), as every start beside a live
+    /// pane's picture does; `None` for a recording's, which streamlink
+    /// chooses. A quality menu opened while it resolves starts nothing
+    /// ahead for that one (`root::warm`): it is about to be what plays.
+    pub rendition: Option<String>,
 }
 
 impl PendingStart {
@@ -144,6 +151,25 @@ impl PendingStart {
             Restart::RePick => None,
         }
     }
+}
+
+/// A live pane's streamlink started ahead for one rendition its quality menu
+/// offers, serving nothing until a pick of that rendition hands it to a
+/// start beside the picture (`root::warm`); see [`Slot::warm`].
+pub struct WarmStart {
+    /// The rendition it serves, by streamlink's exact name.
+    pub quality: String,
+    pub supervisor: StreamSupervisor,
+    pub pump: Task<()>,
+    /// What its events carry, numbered as every start is; see
+    /// [`Slot::generation`]. Kept when it becomes the pane's pending start.
+    pub generation: u64,
+    /// When it was started, which a pick weighs against how long Twitch's
+    /// answer it holds stays good for (`root::warm::fresh`).
+    pub since: Instant,
+    /// Its `Ready`, once streamlink has said it, kept for the pick that
+    /// takes it: the event went by before anybody was waiting for it.
+    pub ready: Option<StreamEvent>,
 }
 
 /// One stream and everything that belongs to it.
@@ -196,6 +222,18 @@ pub struct Slot {
     /// a slot replaced whole (`RootView::replace_with_video`) or dropped
     /// takes its player with it, so neither has a player left to tell.
     pub pending: Option<PendingStart>,
+    /// Streamlink started ahead for renditions the pane's quality menu
+    /// offers, while it is open and for a moment after (`root::warm`), so a
+    /// pick of one of them starts beside the picture with the slow part —
+    /// streamlink starting and asking Twitch — already done. Idle until
+    /// then: streamlink fetches nothing before a player connects. Dropped
+    /// with the slot, which stops each one.
+    pub warm: Vec<WarmStart>,
+    /// The timer that lets `warm` go: all of it once the menu has been
+    /// closed a moment (`root::warm::WARM_GRACE`), and while the menu is
+    /// open, each one as it grows too old to take (`root::warm::WARM_FOR`).
+    /// Dropped, which calls it off, when the menu opens again.
+    pub cooling: Option<Task<()>>,
     /// Whether the pointer is over this pane's video, measured rather than
     /// reported — see `VideoView::hovered` for why that distinction matters.
     /// Two things follow it: the rising edge makes the pane the one the keys
@@ -396,6 +434,8 @@ impl Slot {
             pump: None,
             generation: 0,
             pending: None,
+            warm: Vec::new(),
+            cooling: None,
             hovered: false,
             header: motion::Fade::hidden(),
             revealed: false,
@@ -462,6 +502,13 @@ impl Slot {
         // Whatever comes next is no longer the stream that said it: a new
         // player's pre-roll is said after its picture is asked for.
         self.end_ad_break();
+        // Streamlink started ahead for the player's menu goes with the
+        // player: no close of the menu is heard from a player dropped with
+        // it open, so nothing else would let it go.
+        if !matches!(state, StreamState::Playing(_)) {
+            self.warm.clear();
+            self.cooling = None;
+        }
         self.stalled_at = match state {
             StreamState::Offline | StreamState::Ended | StreamState::Failed(_) => Some(Utc::now()),
             StreamState::Starting | StreamState::Playing(_) => None,

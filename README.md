@@ -828,11 +828,15 @@ Changing rendition keeps the picture. Streamlink cannot switch mid-stream, so
 the new rendition is started beside the one playing, silently, and takes over
 in place once it has a picture: at once on a live stream, and on a recording
 once it has caught up with where you are, so the seek bar and the chat replay
-carry on without a jump. Pause and volume carry over. A rendition you pick
-takes a few seconds to arrive, so meanwhile the pane's quality pill names it
-and breathes, its controls stay up, and its menu marks it, until it takes
-over; if it cannot, a note says so and the pill goes back to what plays. For
-those few seconds the pane is fetching and decoding two streams. A quality
+carry on without a jump. Pause and volume carry over. On a live pane, opening
+the quality menu gets streamlink ready for the renditions next to the one
+playing (up to four) while you choose, which takes it about two seconds, so a
+pick of one of them that is ready only has the new picture to wait for. Those
+waiting streamlinks fetch nothing until a pick, and stop a few seconds after
+the menu closes. Meanwhile the pane's quality pill names the rendition you
+picked and breathes, its controls stay up, and its menu marks it, until it
+takes over; if it cannot, a note says so and the pill goes back to what plays.
+For those moments the pane is fetching and decoding two streams. A quality
 change in the settings still starts every pane over, each saying it is
 starting until its new picture arrives.
 

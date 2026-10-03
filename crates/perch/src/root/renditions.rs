@@ -30,7 +30,7 @@
 
 use std::time::Instant;
 
-use gpui::{Context, SharedString, Window};
+use gpui::{App, Context, SharedString, Window};
 use settings::QualityPreference;
 use streamlink::{quality, StreamEvent};
 
@@ -105,6 +105,33 @@ impl RootView {
             QualityPreference::Auto => quality::select(available, pane_height),
             QualityPreference::Fixed(name) => quality::select_named(available, name, pane_height),
         }
+    }
+
+    /// The rendition a start beside pane `index`'s picture serves, for a
+    /// pane `pane_height` tall, and what the pane's menu offers, which it is
+    /// chosen from: the question streamlink would otherwise answer after a
+    /// probe of its own, a second streamlink resolving the channel again
+    /// (`StreamOptions::offered`), asked the way it would ask it — the
+    /// rendition picked by hand, or what the settings pick at that height.
+    /// The name is also what finds the streamlink started ahead for it
+    /// (`warm`). `None` for a recording, whose start needs the probe's
+    /// playlists, and for a pane whose player knows of no rendition.
+    pub(super) fn beside_rendition(
+        &self,
+        index: usize,
+        pane_height: u32,
+        cx: &App,
+    ) -> Option<(String, Vec<String>)> {
+        let slot = &self.slots[index];
+        if !slot.is_live() {
+            return None;
+        }
+        let available = slot.video()?.read(cx).available().to_vec();
+        let pick = match &slot.quality_override {
+            Some(name) => quality::select_named(&available, name, pane_height),
+            None => self.settings_pick(&available, pane_height),
+        }?;
+        Some((pick.name, available))
     }
 
     /// A quality chosen from pane `index`'s own menu: a rendition, which holds

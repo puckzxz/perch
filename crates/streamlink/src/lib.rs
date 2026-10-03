@@ -19,9 +19,10 @@
 //! it — and a seek bar is the whole point of a recording. The ad filter is not
 //! at stake either: Twitch stitches ads into *live* playlists only; a video's
 //! playlist is a plain list of segments on a CDN, checked tag by tag. So for a
-//! video streamlink is asked only to resolve the URL — the same JSON probe the
-//! live path runs first, which names every quality and the direct playlist
-//! for each — and the player opens that playlist itself. Nothing is left
+//! video streamlink is asked only to resolve the URL — the same JSON probe a
+//! live start runs first when it is not told the ladder
+//! (`StreamOptions::offered`), which names every quality and the direct
+//! playlist for each — and the player opens that playlist itself. Nothing is left
 //! running once it has answered.
 
 mod ads;
@@ -93,7 +94,41 @@ type ChildSlot = Arc<Mutex<Option<Child>>>;
 /// Locate the streamlink executable.
 ///
 /// `STREAMLINK_PATH` wins so a user with an unusual install is never stuck.
+///
+/// Probed once per session, not once per start. Each probe is a whole
+/// `streamlink --version` — the launcher, a Python interpreter and
+/// streamlink's imports — measured at about 460 ms, and every start paid it
+/// before anything else: a quality switch on a live pane, which is waited
+/// for with the menu just closed, spent a tenth of its time asking where
+/// streamlink is. Only a find is kept ([`FOUND`]); a miss is asked again at
+/// the next start, so streamlink installed while perch runs is found. A
+/// binary removed since it was found fails that one start at the spawn,
+/// which says so plainly, and is forgotten there ([`forget_if_missing`]), so
+/// the start after searches again and finds a reinstall wherever it went.
 fn find_binary(slot: &ChildSlot) -> Option<PathBuf> {
+    if let Some(found) = FOUND.lock().unwrap().clone() {
+        return Some(found);
+    }
+    let found = probe_binary(slot)?;
+    *FOUND.lock().unwrap() = Some(found.clone());
+    Some(found)
+}
+
+/// The executable [`find_binary`] found, once it has.
+static FOUND: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+/// Forget the executable [`find_binary`] kept when a spawn of it failed
+/// because it is no longer there, so the next start probes again rather than
+/// failing the same way for the rest of the session. Any other spawn error
+/// leaves it: the binary is still where it was.
+fn forget_if_missing(error: &std::io::Error) {
+    if error.kind() == std::io::ErrorKind::NotFound {
+        *FOUND.lock().unwrap() = None;
+    }
+}
+
+/// [`find_binary`]'s search, probing each candidate with `--version`.
+fn probe_binary(slot: &ChildSlot) -> Option<PathBuf> {
     if let Some(explicit) = std::env::var_os("STREAMLINK_PATH") {
         let path = PathBuf::from(explicit);
         return runs(&path, slot).then_some(path);
@@ -223,6 +258,20 @@ pub struct StreamOptions {
     /// suppresses ads. Comes from settings; `TWITCH_AUTH_TOKEN` is a fallback so
     /// it can be supplied without writing it to disk.
     pub auth_token: Option<String>,
+    /// What the channel was last seen to offer — the `available` of a
+    /// `Ready`, real resolutions highest first — when the caller has it. A
+    /// live start then chooses from this list and serves that rendition
+    /// straight away, without the `--json` probe ([`list_qualities`]),
+    /// which is a whole second streamlink resolving the same channel, about
+    /// 1.9 s of a quality switch's wait. `None` probes, as an opening must.
+    ///
+    /// For a start beside a picture that is playing, whose menu is this
+    /// list. A channel that went off since fails the serving run with
+    /// streamlink's "No playable streams", which still reads as `Offline`;
+    /// one whose ladder changed since fails it with the rendition not found,
+    /// a `Failed` the caller already handles. A video ignores it: its probe
+    /// is what names each rendition's playlist, which nothing else keeps.
+    pub offered: Option<Vec<String>>,
 }
 
 impl StreamOptions {
@@ -231,6 +280,13 @@ impl StreamOptions {
             .clone()
             .or_else(|| std::env::var("TWITCH_AUTH_TOKEN").ok())
             .filter(|token| !token.is_empty())
+    }
+
+    /// The renditions a live start chooses from without probing, if the
+    /// caller gave any; see [`offered`](Self::offered). An empty list is
+    /// none: a stream that offered nothing is not one to serve blind.
+    fn known_ladder(&self) -> Option<Vec<String>> {
+        self.offered.clone().filter(|offered| !offered.is_empty())
     }
 }
 
@@ -301,8 +357,10 @@ fn list_streams(
 
     let mut probe = command(binary);
     probe.args(&args);
-    let (stdout, _) =
-        run_tracked(probe, slot).map_err(|e| format!("could not run streamlink: {e}"))?;
+    let (stdout, _) = run_tracked(probe, slot).map_err(|e| {
+        forget_if_missing(&e);
+        format!("could not run streamlink: {e}")
+    })?;
 
     let json: serde_json::Value = serde_json::from_slice(&stdout)
         .map_err(|e| format!("streamlink returned unreadable JSON: {e}"))?;
@@ -488,12 +546,15 @@ fn run(
     let _ = tx.unbounded_send(StreamEvent::Resolving);
 
     let target = channel_target(&channel);
-    let available = match list_qualities(&binary, &target, &options, &child_slot) {
-        Ok(list) => list,
-        Err(reason) => {
-            let _ = tx.unbounded_send(StreamEvent::Failed { reason });
-            return;
-        }
+    let available = match options.known_ladder() {
+        Some(offered) => offered,
+        None => match list_qualities(&binary, &target, &options, &child_slot) {
+            Ok(list) => list,
+            Err(reason) => {
+                let _ = tx.unbounded_send(StreamEvent::Failed { reason });
+                return;
+            }
+        },
     };
     if stop.load(Ordering::Relaxed) {
         return;
@@ -543,6 +604,7 @@ fn run(
     let mut process = match spawned {
         Ok(process) => process,
         Err(e) => {
+            forget_if_missing(&e);
             let _ = tx.unbounded_send(StreamEvent::Failed {
                 reason: format!("could not start streamlink: {e}"),
             });
@@ -781,6 +843,46 @@ mod tests {
             streams_from_json(&other).unwrap_err(),
             "Unable to open URL: timeout"
         );
+    }
+
+    /// A start told what the channel offers serves the rendition named
+    /// from that list, the probe skipped; told nothing, or an empty list,
+    /// it probes.
+    #[test]
+    fn a_known_ladder_skips_the_probe_and_serves_the_rendition_named() {
+        let offered: Vec<String> = ["1080p60", "720p60", "480p", "160p"]
+            .iter()
+            .map(|name| name.to_string())
+            .collect();
+        let options = StreamOptions {
+            quality: Some("480p".into()),
+            offered: Some(offered.clone()),
+            ..StreamOptions::default()
+        };
+        let ladder = options.known_ladder().expect("a list was given");
+        assert_eq!(ladder, offered);
+        assert_eq!(playable_names(&ladder), offered, "already the menu's list");
+        assert_eq!(choose(&ladder, &options, 0).unwrap().name, "480p");
+
+        assert_eq!(StreamOptions::default().known_ladder(), None);
+        let empty = StreamOptions {
+            offered: Some(Vec::new()),
+            ..StreamOptions::default()
+        };
+        assert_eq!(empty.known_ladder(), None);
+    }
+
+    /// A kept binary that is gone is forgotten, so the next start searches
+    /// again; any other spawn error keeps it. The only test that touches
+    /// `FOUND`, so the shared static is safe to set here.
+    #[test]
+    fn a_vanished_binary_is_forgotten_and_others_are_kept() {
+        let kept = PathBuf::from("streamlink-kept-for-the-test");
+        *FOUND.lock().unwrap() = Some(kept.clone());
+        forget_if_missing(&std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        assert_eq!(FOUND.lock().unwrap().clone(), Some(kept));
+        forget_if_missing(&std::io::Error::from(std::io::ErrorKind::NotFound));
+        assert_eq!(FOUND.lock().unwrap().clone(), None);
     }
 
     #[test]

@@ -337,6 +337,8 @@ impl RootView {
                     self.request_quality(index, name.clone(), window, cx);
                 }
             }
+            // Streamlink started ahead for what the menu offers; see `warm`.
+            VideoEvent::QualityMenu(open) => self.quality_menu(owner, *open, window, cx),
             // Only ever about the stream on screen: a stream getting ready
             // beside it that stops is a swap that failed (`video_view::swap`).
             VideoEvent::Stopped(reason) => self.stream_stopped(owner, reason.clone(), cx),

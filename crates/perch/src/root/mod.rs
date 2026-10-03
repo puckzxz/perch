@@ -69,6 +69,7 @@ mod shared_chat;
 mod shortcuts;
 mod streams;
 mod title_bar;
+mod warm;
 
 pub(crate) use self::pop_out::offered_here as pop_out_offered;
 pub(crate) use self::title_bar::window_min_size;

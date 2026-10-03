@@ -82,6 +82,14 @@ pub enum VideoEvent {
     /// Switching means starting streamlink again, so the root handles it
     /// rather than the player.
     QualityRequested(Option<String>),
+    /// The quality menu opened (`true`) or closed (`false`), by whatever
+    /// opened or closed it — its pill, More's row, the palette, a press on
+    /// a row or elsewhere, `Esc`, the player changing place. The root starts
+    /// streamlink ahead for the renditions it offers while it is open, so a
+    /// pick finds the slow part done (`RootView::quality_menu`). Said by
+    /// `set_menu`, the one write of the open menu, so no way of closing it
+    /// leaves streamlink running for a menu nobody can see.
+    QualityMenu(bool),
     /// The stream stopped and will not resume. The root handles it because
     /// what is left to do - retire this player, take streamlink down with it,
     /// and say so in the pane - is all outside the player.
@@ -745,7 +753,7 @@ impl VideoView {
         }
         self.place = place;
         self.root_focus = focus;
-        self.let_go();
+        self.let_go(cx);
         // What holds the bar up without the pointer — a switch under way —
         // holds it up in the new place too, from a fade started over.
         self.sync_controls();
@@ -763,8 +771,8 @@ impl VideoView {
     /// came back with its history would replay its last flip from the start
     /// on the first frame in its new place: the bar flashing up and fading
     /// away over the picture.
-    fn let_go(&mut self) {
-        self.menu = None;
+    fn let_go(&mut self, cx: &mut Context<Self>) {
+        self.set_menu(None, cx);
         self.row_run = false;
         self.hovered = false;
         self.pointing = None;

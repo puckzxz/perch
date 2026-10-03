@@ -50,6 +50,14 @@ impl Menu {
     }
 }
 
+/// Whether going from `old` to `new` opens the quality menu (`Some(true)`),
+/// closes it (`Some(false)`), or leaves it as it was. More opening in its
+/// place closes it, and it opening in More's place opens it.
+pub(super) fn quality_menu_flip(old: Option<Menu>, new: Option<Menu>) -> Option<bool> {
+    let (was, is) = (old == Some(Menu::Quality), new == Some(Menu::Quality));
+    (was != is).then_some(is)
+}
+
 /// What pressing `which`'s button leaves open: the same menu again closes it,
 /// and any other menu opens in place of whatever was open.
 pub(super) fn toggled(open: Option<Menu>, which: Menu) -> Option<Menu> {
@@ -78,14 +86,14 @@ impl VideoView {
         if self.place != Place::Pane || !self.has_picture() || self.menu == Some(which) {
             return;
         }
-        self.menu = Some(which);
+        self.set_menu(Some(which), cx);
         self.sync_controls();
         cx.notify();
     }
 
     /// What a menu's own button does.
     pub(super) fn toggle_menu(&mut self, which: Menu, cx: &mut Context<Self>) {
-        self.menu = toggled(self.menu, which);
+        self.set_menu(toggled(self.menu, which), cx);
         self.sync_controls();
         cx.notify();
     }
@@ -93,12 +101,26 @@ impl VideoView {
     /// Close whichever menu is open, if one is. Returns whether one was, so
     /// `Esc` can take back the menu before it takes you off the page.
     pub fn close_menu(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.menu.take().is_none() {
+        if self.menu.is_none() {
             return false;
         }
+        self.set_menu(None, cx);
         self.sync_controls();
         cx.notify();
         true
+    }
+
+    /// The one write of which menu is open, a test below holds this file
+    /// and the view to it: it tells the root when the quality menu opens or
+    /// closes (`VideoEvent::QualityMenu`, [`quality_menu_flip`]), whichever
+    /// way that happened, so streamlink started ahead for it is never left
+    /// running behind a menu that has gone.
+    pub(super) fn set_menu(&mut self, menu: Option<Menu>, cx: &mut Context<Self>) {
+        let flip = quality_menu_flip(self.menu, menu);
+        self.menu = menu;
+        if let Some(open) = flip {
+            cx.emit(VideoEvent::QualityMenu(open));
+        }
     }
 
     /// Whether one of the bar's menus is open. The pane's header over the
@@ -638,5 +660,64 @@ mod tests {
             code.contains(".on_mouse_down(MouseButton::Left,"),
             "menu_row no longer acts on the press"
         );
+    }
+
+    /// The quality menu opening or closing is told, from either side of
+    /// More, and nothing else is.
+    #[test]
+    fn only_the_quality_menu_coming_or_going_is_told() {
+        assert_eq!(quality_menu_flip(None, Some(Menu::Quality)), Some(true));
+        assert_eq!(
+            quality_menu_flip(Some(Menu::More), Some(Menu::Quality)),
+            Some(true),
+            "More's quality row opens it in More's place"
+        );
+        assert_eq!(quality_menu_flip(Some(Menu::Quality), None), Some(false));
+        assert_eq!(
+            quality_menu_flip(Some(Menu::Quality), Some(Menu::More)),
+            Some(false)
+        );
+        assert_eq!(quality_menu_flip(None, Some(Menu::More)), None);
+        assert_eq!(quality_menu_flip(Some(Menu::More), None), None);
+        assert_eq!(
+            quality_menu_flip(Some(Menu::Quality), Some(Menu::Quality)),
+            None
+        );
+        assert_eq!(quality_menu_flip(None, None), None);
+    }
+
+    /// Every write of the open menu goes through `set_menu`, so none can
+    /// close the quality menu without the root hearing it and leave the
+    /// streamlink it started ahead running for nobody. Read from the view's
+    /// own sources, the facade and every file beside it.
+    #[test]
+    fn every_change_of_the_open_menu_goes_through_set_menu() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut sources: Vec<_> = std::fs::read_dir(dir.join("video_view"))
+            .expect("the view's sources are missing")
+            .map(|entry| entry.expect("an unreadable source").path())
+            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("rs"))
+            .collect();
+        sources.push(dir.join("video_view.rs"));
+        let mut writes = 0;
+        for path in sources {
+            let source = std::fs::read_to_string(&path).expect("an unreadable source");
+            let code = source
+                .split("#[cfg(test)]")
+                .next()
+                .expect("a file has code above its tests");
+            let code: String = code.split_whitespace().collect();
+            writes += code
+                .match_indices("self.menu")
+                .filter(|&(at, field)| {
+                    let after = &code[at + field.len()..];
+                    (after.starts_with('=') && !after.starts_with("=="))
+                        || [".take(", ".replace(", ".insert(", ".as_mut("]
+                            .iter()
+                            .any(|mutator| after.starts_with(mutator))
+                })
+                .count();
+        }
+        assert_eq!(writes, 1, "set_menu is the one write of the open menu");
     }
 }
