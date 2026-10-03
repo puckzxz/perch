@@ -223,6 +223,8 @@ same way.
 Each pane's header says who is on, how many are watching, how long they have
 been going, and what they are doing — the stream's title and its game, on a line
 of their own. Both are cut to fit; rest the pointer on them for the whole thing.
+A live pane has a red `LIVE` badge after its name, so a glance down the page
+says which panes are live; a recording says `replay` there instead.
 
 While a pane starts it shows the channel's latest picture — the one its card on
 the browse page shows, when a list there has the channel — dimmed under its
@@ -279,19 +281,22 @@ with the rail folded away too, while that tab is showing.
 
 Above the bar on a live pane is a timeline of the broadcast so far, from
 when it started up to now, with the thumb at the live edge: how long the
-stream has been going on its left and `LIVE` on its right. Point at it and
-it says the time under the pointer, as a recording's seek bar does. Click
-or drag back along it and let go, and the pane switches to the broadcast's
+stream has been going on its left and a red `LIVE` badge on its right, the
+same badge as beside the pane's name. Red `LIVE` only ever means the pane is
+watching live, now. Point at the timeline and it says the time under the
+pointer, as a recording's seek bar does. Click or drag back along it and
+let go, and the pane switches to the broadcast's
 recording at that moment — the one Twitch is still making — with a seek bar
 of its own and the chat replayed beside it, the way **Watch from the start**
 plays a stream that has ended. A press within half a minute of the edge does
 nothing, and the stream plays on.
 
 To come back, press `LIVE` at the right-hand end of the recording's seek
-bar: the pane opens the channel again at the live edge, with its live chat,
-and the history keeps where you were in the recording. Pressed in a pane's
-own window, it brings the pane back into the main window first, as
-**Bring back** does. `LIVE` is there on any recording of a broadcast that
+bar — the badge's shape, outlined rather than red, since the pane is not
+live until you press it: the pane opens the channel again at the live edge,
+with its live chat, and the history keeps where you were in the
+recording. Pressed in a pane's own window, it brings the pane back into
+the main window first, as **Bring back** does. `LIVE` is there on any recording of a broadcast that
 is still going on, however you opened it — from a rewind, a channel's page
 or the history — while Perch has the channel live and Twitch is still
 adding to the recording. Once the stream ends it goes at the next refresh
@@ -582,11 +587,11 @@ for all of it — Mute all (or Unmute all), on Windows **Pop out**, which does
 that for every stream there, Back to watching and Stop all. Mute all silences the streams without touching
 anyone's volume: it is never saved, it lasts until you change a stream's volume
 yourself, and Unmute all leaves a stream you had muted muted. Every list leaves
-room at its foot, so nothing is stuck under the player. Settings can turn it
-off, in which case leaving the watch page stops the streams instead — all but
-those popped out, which play on in their own windows — which is the cheaper
-answer if you go to Home to pick the next thing rather than to
-glance at the list.
+room at its foot, so nothing is stuck under the player. The **Mini player**
+switch in Settings turns it off, in which case leaving the watch page stops
+the streams instead — all but those popped out, which play on in their own
+windows — which is the cheaper answer if you go to Home to pick the next
+thing rather than to glance at the list.
 
 ### The rail
 

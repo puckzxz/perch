@@ -143,9 +143,10 @@ pub(super) fn pane_header<V: 'static>(
     // Both are absent for a channel opened by name that no list carries, and
     // the uptime for one only the rail's recommendations know, which do not
     // say when it began. The same shape as the browse card's overlay,
-    // "358 · 8h 20m", and for the same reason: the live dot beside it already
-    // says what the first number counts, and a header 340px wide has no room
-    // to say it again in words once `muted` has to fit too.
+    // "358 · 8h 20m", and for the same reason: the `LIVE` badge before it
+    // already says what the first number counts, as the card's dot does, and
+    // a header 340px wide has no room to say it again in words once `muted`
+    // has to fit too.
     let meta = info
         .into_iter()
         .flat_map(|live| {
@@ -194,8 +195,8 @@ pub(super) fn pane_header<V: 'static>(
     // Whether this pane is showing a picture, which is not the same as whether
     // it exists: an offline or failed pane used to draw the app's only
     // saturated red beside its name while the video underneath said the channel
-    // was not streaming. A recording never gets the dot: nothing about it is
-    // happening now.
+    // was not streaming. A recording never gets the `LIVE` badge: nothing about
+    // it is happening now.
     let playing = matches!(slot.state, StreamState::Playing(_)) && slot.is_live();
     // A stream that has finished takes its live numbers with it. They come
     // from a list that will not know for up to a minute, and an uptime that
@@ -434,19 +435,23 @@ pub(super) fn pane_header<V: 'static>(
                 .flex_row()
                 .items_center()
                 .gap(px(theme::GAP_TIGHT))
-                .when(playing, |header| {
-                    // The same dot the browse cards use, for the same reason:
-                    // it says the numbers beside it are live rather than a
-                    // playback position.
-                    header.child(controls::live_dot())
-                })
                 .child(
                     // The channel on twitch.tv, one click from its name: the
                     // site's chat and everything else the app does not do.
                     // A message can be sent from the chat's own composer.
+                    // It gives way, with `meta` and the ad-break tag, when the
+                    // row runs out: a live pane that is muted and paused has
+                    // the red badge and two tags beside its name, and at the
+                    // chat's narrower widths a long name held flex_none pushed
+                    // the pop-out icon and the × past the edge. The tooltip
+                    // still names the channel in full. The meta's pattern,
+                    // which cuts the line rather than wrapping it.
                     div()
                         .id(pane_id(&slot.key, "open"))
-                        .flex_none()
+                        .flex_shrink()
+                        .min_w_0()
+                        .text_ellipsis()
+                        .line_clamp(1)
                         .text_size(px(theme::TEXT_BODY))
                         .font_weight(theme::weight_title())
                         .text_color(theme::text())
@@ -469,6 +474,13 @@ pub(super) fn pane_header<V: 'static>(
                 .when_some(recording, |header, video| {
                     header.child(controls::tag(channel_page::kind_tag(video.kind)))
                 })
+                // And a live pane says so in the same place, in the red
+                // badge its timeline ends in, where it used to have the
+                // browse cards' dot in front of its name: the header is up at
+                // rest on chat, so this is where a glance down a page of panes
+                // tells live from `replay`. It still says the numbers after
+                // it are live rather than a playback position.
+                .when(playing, |header| header.child(controls::live_badge()))
                 .when(!ended && !meta.is_empty(), |header| {
                     header.child(
                         // `text_ellipsis` plus `line_clamp`, not `truncate`:

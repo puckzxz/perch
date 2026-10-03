@@ -310,11 +310,31 @@ pub fn accent_dim() -> Hsla {
     rgba((ACCENT << 8) | 0x33).into()
 }
 
-/// The live dot. The only saturated red in the app, so it reads as status
-/// rather than decoration — with one exception, [`caption_close`], which is
-/// the platform's red rather than the app's and only shows under the pointer.
+/// Live: the dot beside a number of people watching now, and the fill of the
+/// `LIVE` badge on a pane watching the live edge (`controls::live_badge`).
+/// The only saturated red in the app, so it reads as status rather than
+/// decoration — with one exception, [`caption_close`], which is the
+/// platform's red rather than the app's and only shows under the pointer.
+///
+/// One red for both, so red means one thing wherever it is: this is live,
+/// now. A recording of a broadcast still going on never wears it; its way
+/// back to live is the badge's shape in the bar's quiet colours
+/// (`controls::back_to_live`), so red is never "press to go live".
+///
+/// The red players and Twitch itself use for the badge, rather than the
+/// softer coral the dot used to be: a badge has to read as one at a glance,
+/// and a dot beside it in another red would be two reds for one fact. White
+/// on it measures about 4.6:1, which `the_live_badge_reads_on_its_red` holds
+/// it to.
 pub fn live() -> Hsla {
-    rgb(0xe5534b).into()
+    rgb(0xeb0400).into()
+}
+
+/// The word on the [`live`] badge. White, not [`text`]: the app's off-white
+/// measures about 3.7:1 on the red, under [`MIN_CONTRAST`], and white clears
+/// it — the same reason [`caption_close_glyph`] is white.
+pub fn live_text() -> Hsla {
+    rgb(0xffffff).into()
 }
 
 pub fn danger() -> Hsla {
@@ -357,7 +377,10 @@ pub fn caption_close_glyph() -> Hsla {
 // There were five. `TEXT_MICRO` and `weight_shout` existed for one element, the
 // `LIVE` badge on a browse card, and went when it did - a card in a live-only
 // list was wearing a badge that said the same thing on every card in every
-// list. A role nothing plays is not a role.
+// list. A role nothing plays is not a role. `weight_shout` is back for a badge
+// that does say something: `LIVE` on a pane watching the live edge, where a
+// recording's header says `replay` (`controls::live_badge`). The size stayed
+// gone; the badge is at `TEXT_META`, as a tag is.
 
 /// Page and panel titles.
 pub const TEXT_TITLE: f32 = 15.0;
@@ -384,6 +407,13 @@ pub fn weight_title() -> FontWeight {
 /// with a title.
 pub fn weight_label() -> FontWeight {
     FontWeight::MEDIUM
+}
+
+/// The one element that genuinely has to shout: the `LIVE` badge, read at a
+/// glance across a watch page of panes (`controls::live_badge`). Bold, the
+/// weight [`weight_title`] leaves for it.
+pub fn weight_shout() -> FontWeight {
+    FontWeight::BOLD
 }
 
 // ── Spacing ──────────────────────────────────────────────────────────
@@ -817,8 +847,8 @@ mod tests {
     /// things it is ever drawn on — at rest it is an ordinary muted glyph.
     ///
     /// The app's own `text()` is deliberately not the glyph, nor `live()` the
-    /// red: `text()` measures about 3.7:1 on the hover red and about 3.0:1 on
-    /// `live()`, both under the bar.
+    /// red: `text()` measures about 3.7:1 on the hover red and on `live()`,
+    /// both under the bar.
     #[test]
     fn the_caption_close_glyph_reads_on_its_red() {
         for (state, red) in [
@@ -831,6 +861,25 @@ mod tests {
                 "the close glyph reads {ratio:.2}:1 on its {state} red"
             );
         }
+    }
+
+    /// The `LIVE` badge is white words on the live red. It is drawn on the
+    /// chat panel, on a pane header's band over the picture and on the
+    /// control bar, but its words only ever sit on its own solid fill, so the
+    /// red is the one thing they are measured against. The red has to stay
+    /// dark enough for white to read on it; and while `text()` does not, the
+    /// word stays white.
+    #[test]
+    fn the_live_badge_reads_on_its_red() {
+        let ratio = contrast(live_text(), live());
+        assert!(
+            ratio >= MIN_CONTRAST,
+            "LIVE reads {ratio:.2}:1 on its red, under AA"
+        );
+        assert!(
+            contrast(text(), live()) < MIN_CONTRAST,
+            "text() reads on the live red now, so the badge needs no white of its own"
+        );
     }
 
     /// [`SCROLLBAR_WIDTH`] copies a number gpui-component keeps private, so

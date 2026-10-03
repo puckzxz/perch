@@ -428,8 +428,8 @@ impl Render for SettingsPanel {
                         Select::new(&self.quality),
                     ))
                     .child(Self::field(
-                        "Keep playing while browsing",
-                        "What you are watching carries on in a small player in the corner while you browse, with its sound; Mute all there silences it without changing anyone's volume. Turned off, leaving the watch page stops the stream — which is the cheaper answer if you go there to pick the next thing rather than to glance at the list.",
+                        "Mini player",
+                        "Keeps what you are watching playing in a small player in the corner while you browse, with its sound; Mute all there silences it without changing anyone's volume. Turned off, leaving the watch page stops the streams in this window — the cheaper answer if you go there to pick the next thing rather than to glance at the list.",
                         Switch::new("miniplayer")
                             .checked(self.miniplayer)
                             .label(if self.miniplayer { "On" } else { "Off" })

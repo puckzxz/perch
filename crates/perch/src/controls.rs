@@ -233,6 +233,9 @@ const CAPTION_GROUP: &str = "caption-button";
 /// The group a fold's chevron watches; see [`fold`].
 const FOLD_GROUP: &str = "fold";
 
+/// The group the way back to live's drawn badge watches; see [`back_to_live`].
+const BACK_TO_LIVE_GROUP: &str = "back-to-live";
+
 /// A control, styled and ready for `.on_click(..)`.
 ///
 /// Returns the `Stateful<Div>` rather than a finished element so callers can
@@ -598,10 +601,12 @@ pub fn badge() -> gpui::Div {
 
 /// The dot that says "this number is of people watching right now".
 ///
-/// One function rather than three copies: it sits beside the viewer count on
-/// a browse card, in a rail row and in a pane header, and it was drawn by
-/// hand in each — the same six pixels in the same red, three times, which is
-/// exactly the drift `theme.rs` opens by warning about.
+/// One function rather than copies: it sits beside the viewer count on a
+/// browse card, in a rail row and in the rail's preview, and in front of the
+/// channel page's in-progress card. It used to be drawn by hand in each — the
+/// same six pixels in the same red, three times, which is exactly the drift
+/// `theme.rs` opens by warning about. A pane header had it too, until the red
+/// `LIVE` badge took its place there.
 pub fn live_dot() -> gpui::Div {
     div()
         .flex_none()
@@ -609,6 +614,85 @@ pub fn live_dot() -> gpui::Div {
         .h(px(theme::LIVE_DOT))
         .rounded_full()
         .bg(theme::live())
+}
+
+/// The badge word, in its conventional capitals, rather than a tag's
+/// lowercase: it is the one word players and Twitch alike write this way,
+/// and the shape people look for.
+const LIVE_WORD: &str = "LIVE";
+
+/// The shape [`live_badge`] and [`back_to_live`] share, so the way back to
+/// live is recognisably the badge it takes you to, only not red: a [`tag`]'s
+/// slim box, so it never makes a header row taller than the channel's name,
+/// with a border — the badge's in its own red, unseen, and the way back's in
+/// its words' colour — so the two come out the same size, and the word in
+/// [`theme::weight_shout`].
+fn live_shape() -> Div {
+    div()
+        .flex_none()
+        .px(px(theme::GAP_TIGHT))
+        .py(px(theme::TAG_PAD_Y))
+        .rounded(px(theme::RADIUS))
+        .border_1()
+        .text_size(px(theme::TEXT_META))
+        .font_weight(theme::weight_shout())
+        .line_height(px(theme::LINE_TIGHT))
+}
+
+/// `LIVE`, white on the live red: this pane is playing the live edge, now.
+/// At the right-hand end of a live pane's timeline (`seek_bar::End::Live`)
+/// and in front of a live pane's name in its header, where a recording's
+/// says `replay`. Not a control — no pointer, no hover — since it states
+/// where the pane is rather than offering to change it.
+///
+/// Red means only this. A recording of a broadcast still going on gets
+/// [`back_to_live`] instead, the same shape in the bar's quiet colours, so
+/// red is never "press to go live" and a glance at a pane says which it is.
+pub fn live_badge() -> Div {
+    live_shape()
+        .bg(theme::live())
+        .border_color(theme::live())
+        .text_color(theme::live_text())
+        .child(LIVE_WORD)
+}
+
+/// `LIVE` as a control, at the end of a recording's seek row on the archive
+/// of a broadcast still going on: [`live_badge`]'s shape, outlined in the
+/// bar's on-video colours rather than filled with red, since this pane is
+/// not live and red would say it was. Rests quiet and lifts to full text,
+/// border and all, under the pointer, as every on-video control does, so its
+/// colours are `Variant::OnVideo`'s and that variant's contrast tests measure
+/// them. Ready for a tooltip and `.on_click(..)`, as [`pill`] is.
+///
+/// What takes the pointer is a clear box a little larger than the badge
+/// drawn in it, about the size of the pill this replaced: the badge is a
+/// tag's slim box, and a target that small is a hard one to land with the
+/// mouse, which is how this app is used. The drawn badge lifts through
+/// `group_hover`, the way [`icon_button`]'s glyph does, so it brightens as
+/// soon as the pointer is in the box rather than only on the badge itself.
+pub fn back_to_live(id: impl Into<ElementId>) -> Stateful<Div> {
+    let variant = Variant::OnVideo;
+    let rest = variant.foreground();
+    let lifted = variant.hover_foreground();
+    let hover_fill = variant.hover_background();
+    let pressed_fill = variant.pressed_background();
+    div()
+        .id(id.into())
+        .group(BACK_TO_LIVE_GROUP)
+        .flex_none()
+        .p(px(theme::GAP_WORD))
+        .cursor_pointer()
+        .child(
+            live_shape()
+                .id("live-shape")
+                .border_color(rest)
+                .text_color(rest)
+                .group_hover(BACK_TO_LIVE_GROUP, move |style| {
+                    style.bg(hover_fill).border_color(lifted).text_color(lifted)
+                })
+                .group_active(BACK_TO_LIVE_GROUP, move |style| style.bg(pressed_fill))
+                .child(LIVE_WORD),
+        )
 }
 
 /// A control that is not being offered right now: the Load more row while its

@@ -41,27 +41,30 @@
 //!
 //! A live stream's timeline is the recording's seek row, in its place above
 //! the buttons, spanning the broadcast from its start to now with the thumb
-//! at the live edge, the time there on its left and `LIVE` on its right.
-//! Pointing at it says the time under the pointer, as on a recording, and a
-//! press let go back along it opens the broadcast's recording at that moment
-//! in the pane's place (`crate::rewind`); one within half a minute of the
-//! edge does nothing. It grows as the bar redraws, which a live picture does
-//! at its frame rate: nothing ticks for it. It takes a row rather than room
-//! on the buttons', so [`fit`] gives nothing up for it; a pane too narrow
-//! for a track worth aiming along ([`timeline_fits`]) leaves it off.
+//! at the live edge, the time there on its left and the red `LIVE` badge on
+//! its right (`controls::live_badge`), which says at a glance that this pane
+//! is watching live. Pointing at it says the time under the pointer, as on a
+//! recording, and a press let go back along it opens the broadcast's
+//! recording at that moment in the pane's place (`crate::rewind`); one
+//! within half a minute of the edge does nothing. It grows as the bar
+//! redraws, which a live picture does at its frame rate: nothing ticks for
+//! it. It takes a row rather than room on the buttons', so [`fit`] gives
+//! nothing up for it; a pane too narrow for a track worth aiming along
+//! ([`timeline_fits`]) leaves it off.
 //!
 //! The way back is on the recording a rewind opened, or that archive opened
-//! any other way, while its broadcast is still going on: a `LIVE` pill at
-//! the right-hand end of its seek row, where the live timeline says `LIVE`,
+//! any other way, while its broadcast is still going on: `LIVE` at the
+//! right-hand end of its seek row, where the live timeline has its badge,
 //! that opens the channel again in the pane's place
-//! (`PaneAction::BackToLive`). The words are the badge word, in its
-//! conventional capitals; its tooltip says what a press does, and it has no
-//! key. It takes room from the seek track rather than from the buttons'
-//! row, so [`fit`] gives nothing up for it either. It goes at the next list
-//! that no longer carries the broadcast (`VideoView::back_to_live`), and
-//! once the recording stops growing (`seek_bar::Timeline::growing`), which
-//! is Twitch saying the archive is finished, whatever a list kept since
-//! says.
+//! (`PaneAction::BackToLive`). It is the badge's shape, outlined in the
+//! bar's quiet colours rather than filled with red (`controls::back_to_live`),
+//! since red says a pane is live and this one is not; its tooltip says what
+//! a press does, and it has no key. It takes room from the seek track rather
+//! than from the buttons' row, so [`fit`] gives nothing up for it either.
+//! It goes at the next list that no longer carries the broadcast
+//! (`VideoView::back_to_live`), and once the recording stops growing
+//! (`seek_bar::Timeline::growing`), which is Twitch saying the archive is
+//! finished, whatever a list kept since says.
 //!
 //! Guide raises the guide over the lower part of the watch page, or puts it
 //! away (`crate::guide`). It acts on the press, not the click, unlike its
@@ -261,7 +264,7 @@ impl VideoView {
             scrub: self.scrub,
             hover,
             position: seek_bar::timecode(shown).into(),
-            extent: seek_bar::timecode(extent).into(),
+            end: seek_bar::End::Length(seek_bar::timecode(extent).into()),
         };
         let seek = seek_bar::element(
             state,
@@ -272,12 +275,12 @@ impl VideoView {
         );
         // Only while the archive is still being made: the keeper re-reads
         // its playlist, and Twitch ends it once the broadcast is over, which
-        // takes the pill away whichever list still carries the channel.
+        // takes the way back away whichever list still carries the channel.
         if !(self.back_to_live && timeline.growing) {
             return Some(seek.into_any_element());
         }
-        // The seek bar shrinks for the pill; the track it reports is the one
-        // laid out, so a scrub still lands where the pointer is.
+        // The seek bar shrinks for the way back; the track it reports is the
+        // one laid out, so a scrub still lands where the pointer is.
         Some(
             div()
                 .w_full()
@@ -321,8 +324,9 @@ impl VideoView {
             scrub: self.scrub,
             hover,
             position: seek_bar::timecode(shown).into(),
-            // The badge word, in its conventional capitals.
-            extent: "LIVE".into(),
+            // The red badge: this pane is at the live edge, which is the
+            // one thing red says anywhere (`controls::live_badge`).
+            end: seek_bar::End::Live,
         };
         Some(
             seek_bar::element(
@@ -655,15 +659,15 @@ impl VideoView {
 
 /// `LIVE` at the end of a recording's seek row, on the archive of a broadcast
 /// still going on: a press opens the channel again in the pane's place, at
-/// the live edge (`PaneAction::BackToLive`). Words, as the quality pill is,
-/// in the badge word's conventional capitals and the bar's on-video dress,
+/// the live edge (`PaneAction::BackToLive`). The live badge's shape, outlined
+/// in the bar's on-video colours rather than red (`controls::back_to_live`),
 /// with a tooltip that says what a press does while the pointer is in the
 /// window. Its id names the one thing it ever offers, so it needs no keying
 /// on a state. It closes any menu open first, as [`act_button`] does.
 fn back_to_live(window: &Window, cx: &mut Context<VideoView>) -> impl IntoElement {
-    controls::pill("bar-back-to-live", "LIVE", Variant::OnVideo)
-        .when(window.is_window_hovered(), |pill| {
-            pill.tooltip(controls::tip("Back to live"))
+    controls::back_to_live("bar-back-to-live")
+        .when(window.is_window_hovered(), |control| {
+            control.tooltip(controls::tip("Back to live"))
         })
         .on_click(cx.listener(|this, _event, _window, cx| {
             this.close_menu(cx);

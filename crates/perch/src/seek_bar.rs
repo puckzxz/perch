@@ -132,8 +132,18 @@ pub struct State {
     pub hover: Option<Hover>,
     /// The time under the thumb, written out.
     pub position: SharedString,
+    /// What the right-hand end says.
+    pub end: End,
+}
+
+/// What the right-hand end of the bar says: how long a recording is, or, on
+/// a live pane's timeline, that the thumb at that end is now.
+pub enum End {
     /// The length, written out.
-    pub extent: SharedString,
+    Length(SharedString),
+    /// The live badge (`controls::live_badge`), in the room a length takes,
+    /// so the track is as wide as [`width_with_track`] says either way.
+    Live,
 }
 
 /// The bar, wired to whatever owns it.
@@ -290,6 +300,16 @@ pub fn element<V: 'static>(
             .child(text)
     };
 
+    let end = match state.end {
+        End::Length(length) => time(length).text_right(),
+        End::Live => div()
+            .flex_none()
+            .min_w(px(TIME_WIDTH))
+            .flex()
+            .justify_end()
+            .child(controls::live_badge()),
+    };
+
     div()
         .w_full()
         .flex()
@@ -298,7 +318,7 @@ pub fn element<V: 'static>(
         .gap(px(theme::GAP_TIGHT))
         .child(time(state.position))
         .child(track)
-        .child(time(state.extent).text_right())
+        .child(end)
 }
 
 #[cfg(test)]

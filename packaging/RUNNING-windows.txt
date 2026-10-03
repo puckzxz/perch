@@ -129,7 +129,8 @@ of the broadcast to now. Click or drag back along it and let go to watch
 the broadcast's recording from that moment in the same pane, if the
 channel keeps its past broadcasts; you need to be signed in. While the
 stream is still on, LIVE at the end of the recording's seek bar takes the
-pane back to the live stream.
+pane back to the live stream. Red LIVE, at the end of a live pane's
+timeline and beside its name, means that pane is watching live now.
 
 P, or the icon beside a pane's ×, moves its picture into a small window of
 its own that stays on top of other apps; its chat stays put. P again, or

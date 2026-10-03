@@ -93,7 +93,7 @@ App modules:
 | `guide.rs` | the guide over the watch page, worked out and drawn: its tabs and what each shows (`Guide::shows`, `Shows`), the requests that fill them — the browse page's own, by the same keys (`Shows::first_page`, `Guide::first_page_due`, `Guide::next_page`) — where a card's Watch and `+ Add` play (`opening`) and whether the guide closes after (`closes_after`), how big the panel is (`panel`: two rows of cards, never more than half the page), a recommendation as a card (`as_stream`), and the panel's contents from the browse page's cards, rows and Load more (pure parts tested) |
 | `veil.rs` | what an overlay on the watch page covers, so the panes' measured hover leaves the pointer alone there: the guide's probe writes its bounds (`cover`), the root lifts it on every frame the guide is not drawn (`lift`), and every pane probe — the pane's, the player's, the chat's hold — asks `pointer_over` (`reaches`, tested) |
 | `watch.rs` | the grid of panes; `Slot` lives here, made by `Slot::new`, with `PendingStart`, a start of its stream resolving beside the picture, and `PaneAction`, everything a pane asks of the root; the band a header rides over the picture on, and when it is up (`Slot::point`, `band_wanted`, tested); the layer a dragged header is dropped on (`drop_layer`, `PaneDrag`) |
-| `watch/header.rs` | a pane's header — name, numbers, what is on, `muted`/`paused` and an ad break's tag, the chat options icon on a header that sits on chat, the pop-out icon that turns into Bring back, and the × — each icon naming its key — the handle a pane is dragged by onto another, and `Placement`, the one rule for where it goes: the chat panel, or over the picture with no chat on screen (tested) |
+| `watch/header.rs` | a pane's header — name, the red `LIVE` badge on a live pane, numbers, what is on, `muted`/`paused` and an ad break's tag, the chat options icon on a header that sits on chat, the pop-out icon that turns into Bring back, and the × — each icon naming its key — the handle a pane is dragged by onto another, and `Placement`, the one rule for where it goes: the chat panel, or over the picture with no chat on screen (tested) |
 | `watch/chat_menu.rs` | a pane's chat options menu, hung over its chat: the text sizes and `Time on every message` (with its state in words), which pane's is open (`toggled`, one at a time), rows that act on the press (tested) |
 | `watch/status.rs` | a pane with no picture: `Showing`, the one reading of its state that the pane's sentence and the mini player's word both come from, and the screen drawn from it under the player — a starting pane's poster, a stopped one's next steps and what room it has for them (`next_up_room`), and `Elsewhere`, a pane whose picture is in a window of its own, with `Bring back` (tested) |
 | `layout.rs` | derives grid shape from window aspect, as `Grid::of`, the one grid the watch page, the divider drag and each pane's quality read; `quality_height`, the height a pane asks a rendition for; the page's `Body`, the title bar's height and drag edge, and the mini player's tiles, how far in it floats clear of the scrollbar, and the `Room` a browse list leaves for it; where a pop-out opens, stacked clear of where the open ones really are (`pop_out_bounds`) (pure, tested) |
@@ -104,7 +104,7 @@ App modules:
 | `loudness.rs` | one pane's level and the Mute all hush over it: what mpv hears, and the only level ever reported to be remembered; what More offers about hearing one pane alone, worked out from the panes' hushes (`HearOnly`, `hear_only`) (pure, tested) |
 | `wheel.rs` | `Alt` and the wheel over a picture, turned into volume steps: one per click of a notched wheel, a click's worth at a time for a touchpad or trackpad (`Wheel`) (pure, tested) |
 | `ad_break.rs` | a pane's ad-break notice: what its header tag says (`ad break · 0:25`), when it ticks, and when it is over — its length run out, or the picture moving again after standing still (`frames_resumed`) (pure, tested) |
-| `seek_bar.rs` | the bar on a recording, and on a live pane its timeline, and the arithmetic behind it |
+| `seek_bar.rs` | the bar on a recording, and on a live pane its timeline, ending in its length or the live badge (`End`), and the arithmetic behind it |
 | `rewind.rs` | rewinding a live pane, worked out: whether a timeline is offered (`span`), where a press lands (`pressed_at`, never within `EDGE_SECS` of the edge), the archive of the broadcast going on now (`archive_for`), where in it a moment is (`position_in`), the ask and the press waiting on it (`Rewind`), and whether a recording is the archive of the broadcast on now (`live_now`), weighed against what the pane knows of where it came from (`Origin`), which offers the way back to live (`back_to_live`) (pure, tested) |
 | `video.rs` | render thread; owns the mpv `Player` |
 | `vod.rs` | positions a recording by rewriting its playlist; the keeper for one still growing |
@@ -129,7 +129,7 @@ App modules:
 | `shared_chat.rs` | Shared Chat labels worked out: which partner ids to ask about (`SourceRooms::wants`, once each a session), what an answer comes to (`answered`), and whether and what a line is labelled (`label`, `Label::of`) (pure, tested) |
 | `recommended.rs` | the rail's Recommended group worked out: the seeds (`seeds`), when to ask (`Recommended::next_ask`), and what the answers come to (`suggestions`, `reason`) (pure, tested) |
 | `palette.rs` | the command palette, and what it can run |
-| `controls.rs` | the one button, the variants it comes in, the tags (`tag`, and `quiet_tag` for a Shared Chat copy's channel), the icon button, the heading that folds (`fold`) and the plain one it sits among (`group_heading`), the window's caption buttons, the picture a pop-out is dragged by (`drag_layer`), and the two tooltip builders (`tip`, `full_text`) |
+| `controls.rs` | the one button, the variants it comes in, the tags (`tag`, and `quiet_tag` for a Shared Chat copy's channel), the live dot, the red `LIVE` badge (`live_badge`) and its outlined way back from a recording (`back_to_live`), the icon button, the heading that folds (`fold`) and the plain one it sits among (`group_heading`), the window's caption buttons, the picture a pop-out is dragged by (`drag_layer`), and the two tooltip builders (`tip`, `full_text`) |
 | `widget_theme.rs` | hands `theme.rs` to `gpui-component`'s own palette |
 | `assets.rs` | the icons: the ones `gpui-component` asks the host for, and Perch's own, typed as `assets::Icon` |
 | `motion.rs` | the four animation shapes, and the state one of them needs |
@@ -740,12 +740,18 @@ and tested; the root's side is `root/rewind.rs`; the drawing is
 
 **And `LIVE` on the recording goes back to the live edge.** A pane playing
 the archive of a broadcast that is still going on — rewound into, or opened
-from a channel's page or the history — has a `LIVE` pill at the right-hand
-end of its seek row, where the live timeline says `LIVE`
-(`video_view::bar::back_to_live`). A press replaces the pane with the
-channel, cold, as opening a channel is (`PaneAction::BackToLive`,
-`RootView::back_to_live`, `replace_with_channel`), so it lands at the live
-edge with the live chat. What took deciding:
+from a channel's page or the history — has `LIVE` at the right-hand end of
+its seek row, where the live timeline has its red badge
+(`video_view::bar::back_to_live`): the badge's shape, outlined in the bar's
+on-video colours rather than filled (`controls::back_to_live`), so red only
+ever says a pane is live and never "press to go live". The badge drawn is a
+tag's slim box, but what takes the pointer is a clear box `GAP_WORD` larger
+all round, about the size of the pill it replaced, with the badge lifting
+through `group_hover`: a mouse-first target should not shrink for a look. A
+press replaces the pane with the channel, cold, as opening a channel is
+(`PaneAction::BackToLive`, `RootView::back_to_live`,
+`replace_with_channel`), so it lands at the live edge with the live chat.
+What took deciding:
 
 - **Still live is read off the lists, never asked.** The channel is in a
   live list (`stream_info`: the follows, popular, a category, a search),
@@ -1878,7 +1884,11 @@ unconsidered.
   `variants!` so the contrast test measures it the moment it exists. The same
   file owns
   the things that are not buttons but were drawn by hand in three places each:
-  `live_dot`; `tag`, the passive `muted` / `paused` word in a pane header;
+  `live_dot`; `live_badge`, white `LIVE` on the live red, the one meaning of
+  red: this pane is watching live, now (a live pane's timeline and header),
+  and `back_to_live`, its shape outlined in `Variant::OnVideo`'s colours for
+  the way back from a recording, which is never red because that pane is not
+  live; `tag`, the passive `muted` / `paused` word in a pane header;
   `quiet_tag`, the passive word naming the channel a Shared Chat line was
   copied from, a solid `surface_raised` chip in `text_dim` (see "Chat"); and
   `badge`, a fact drawn on a picture — a thumbnail's viewers, a recording's
@@ -1992,7 +2002,14 @@ unconsidered.
 - **Type** — four roles (`TEXT_TITLE/BODY/LABEL/META`). Label and meta share
   a size but differ in weight, so a thing you can click never looks like a thing
   you can only read. There were five: `TEXT_MICRO` and `weight_shout()` existed
-  for the `LIVE` badge alone and went when it did.
+  for the browse card's `LIVE` badge alone and went when it did.
+  `weight_shout()` came back, without the size, for a badge that does say
+  something: `controls::live_badge` on a pane watching live, where a
+  recording's header says `replay`. Its red is `theme::live()`, the dot's
+  too — one red for one fact, a Twitch-like `#eb0400` — and its word is
+  white (`theme::live_text`), since the app's off-white reads about 3.7:1
+  on it; `the_live_badge_reads_on_its_red` holds white to the bar, at
+  about 4.6:1.
 - **Contrast is measured, not judged.** `MIN_CONTRAST` is AA for the sizes this
   app uses, `theme::contrast` computes it, and `every_text_tier_is_legible`
   holds every text token to it on every surface it lands on. `text_dim` used to
@@ -2070,9 +2087,12 @@ key that has just chosen the pane. A pane with no picture — starting,
 offline, ended, a player before its first frame — is not a picture, and its
 header rests over it. The split:
 
-- **Pane header**, one per pane (`watch/header.rs`): a live dot *when the pane
-  is actually showing a picture*, the channel name — which opens twitch.tv,
-  for the site's chat and whatever else the app does not do — viewer count, uptime,
+- **Pane header**, one per pane (`watch/header.rs`): the channel name — which
+  opens twitch.tv, for the site's chat and whatever else the app does not do —
+  then the red `LIVE` badge *when the pane is actually showing a live
+  picture*, where a recording's says `replay` (it was the browse cards' live
+  dot in front of the name, until the badge, which says at a glance which
+  panes are live, replaced it), viewer count, uptime,
   `muted` and `paused`, and at the end of a right-hand cluster its icons. On a
   header sitting on a chat panel, and nowhere else, first the chat options
   (`Icon::ChatOptions`, a large T and a small one), which open the menu that
@@ -2309,10 +2329,12 @@ header rests over it. The split:
   bar's fade over from hidden, and `RootView::restage` does the same for each
   pane's band, so coming back never replays a fade (see Motion). A pane in a
   window of its own is not in the mini player at all (`mini_slots`): it is on
-  screen already. With the mini player off, leaving the watch page stops
-  every pane but those, and so does turning it off while browsing — one rule
-  for both, `RootView::retire_homeless`, since nothing draws a pane at home
-  there. A pane that comes home from its window while browsing so is stopped
+  screen already. With the mini player off (the settings sheet's `Mini
+  player` switch, `Settings::miniplayer`; it was `Keep playing while
+  browsing`, a name nobody looking for the mini player's off switch found),
+  leaving the watch page stops every pane but those, and so does turning it
+  off while browsing — one rule for both, `RootView::retire_homeless`,
+  since nothing draws a pane at home there. A pane that comes home from its window while browsing so is stopped
   by the same rule (`restage`), as it would have been had it been home when
   the page was left, or it would play its sound with nothing drawing it;
   Bring back is the exception, and brings the watch page up with it
@@ -2463,7 +2485,7 @@ landed under a centred nav.
 
 Follows are **two lists that never merge**. `LiveStream` means *is live*, and
 three things read it that way — the went-live toasts, the card's viewer count,
-and the pane header's live dot — so an offline channel sitting in that vec
+and the pane header's `LIVE` badge — so an offline channel sitting in that vec
 would be wrong in all three at once. Offline follows are `Channel`s, and they are
 drawn as names rather than cards: a card is mostly a picture, and an offline
 channel has none worth showing — a thumbnail stale by hours, or a profile
@@ -2946,7 +2968,10 @@ uptime sit on the thumbnail behind an `overlay()` wash, where broadcast UIs have
 put them for decades. That corner used to hold a `LIVE` badge, which said the
 same thing on every card in every list — all three lists are live-only, since
 offline follows are names under their own heading — in the app's only saturated
-red, while the number that actually varies sat in grey underneath.
+red, while the number that actually varies sat in grey underneath. The badge
+is on the watch page now, where it is not the same on every pane: a pane's
+header and its timeline say `LIVE` in that red, and a recording says
+`replay` (see "Where controls live"). Don't put it back on the cards.
 
 ### Chat
 
@@ -3606,11 +3631,16 @@ With chat hidden they are again — the header is on the band over the picture,
 which shows only while the pane is pointed at — and that is accepted under
 "nothing static on the picture": the bar's speaker and play glyphs say the
 same on the same hover. The quality is deliberately not there — it is on the
-control bar, and a 340px header with a name, a count, an uptime, a tag and the
-× in it has no room for a fifth thing; the count reads `358 · 8h 20m` beside
-the live dot, the card's shape, for the same reason. The shortcut list lives
-in the settings sheet and is read from `keys::SHORTCUTS`, beside the
-bindings, so a documented key is a bound one. The README's keyboard table is held to the same list:
+control bar, and a 340px header with a name, the red `LIVE` badge, a count,
+an uptime, a tag or two and the icons in it has no room for anything more;
+the count reads `358 · 8h 20m` beside the badge, the card's shape, for the
+same reason. Even that is more than a narrow header holds with a long name,
+so the name gives way first, with the meta line and the ad-break tag, and
+ellipsises (its tooltip still names the channel): the right-hand cluster is
+`flex_none` and must never be pushed past the edge, since it carries the ×.
+The shortcut list lives in the settings sheet and is read from
+`keys::SHORTCUTS`, beside the bindings, so a documented key is a bound one.
+The README's keyboard table is held to the same list:
 `the_readme_lists_every_shortcut` wants a row in it for each label the sheet
 shows, the label verbatim and in backticks as the row's first cell. It looks
 for the cell, `` | `Esc` | ``, rather than the label, because most labels are
