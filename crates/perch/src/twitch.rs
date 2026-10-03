@@ -81,7 +81,9 @@ pub enum Request {
         kind: VideoKind,
         after: Option<String>,
     },
-    /// One recording, by the id a link carries.
+    /// One recording, by its id: the one a link carries, or one a pane has
+    /// opened without word of its muted stretches (`root::muted`), which
+    /// shares the answer and takes it first while it is asking.
     Video { id: String },
     /// A channel's newest few past broadcasts, for a live pane that has
     /// stopped: the last one, to offer when the channel is off, and the one
@@ -178,7 +180,8 @@ pub enum ListKey {
 impl Request {
     /// The browse list this fills, or `None` for the eight that fill none:
     /// the follows poll, whose lists are not the browse page's, a recording
-    /// looked up for a link, whose failure is a toast, a pane's past
+    /// looked up for a link or a pane's muted stretches, whose failure is a
+    /// toast or a line in the log, a pane's past
     /// broadcasts, which are the pane's, the rail's recommendations, which
     /// are the rail's, when the offline follows were last live, which is
     /// words on names already on screen, and the names of Shared Chat
@@ -282,9 +285,11 @@ pub enum TwitchEvent {
         kind: VideoKind,
         videos: Listing<Video>,
     },
-    /// The recording a link named, or why it could not be had. Its own
-    /// event rather than a `BrowseError`, because the link was not a browse
-    /// page's question and its failure belongs in a toast, not on the page.
+    /// The recording a link named, or a pane asked about for its muted
+    /// stretches, or why it could not be had. Its own event rather than a
+    /// `BrowseError`, because neither was a browse page's question: a link's
+    /// failure belongs in a toast, not on the page, and a pane's question's,
+    /// which `root::muted` takes first while one is out, only in the log.
     Video {
         id: String,
         result: Result<Video, String>,

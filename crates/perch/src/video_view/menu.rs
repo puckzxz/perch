@@ -1,9 +1,10 @@
 //! The menus the player's control bar opens: which one is open, the box it
 //! opens in, and its rows.
 //!
-//! Two of them: the quality, and More — what else there is to do with the
+//! Three of them: the quality; More — what else there is to do with the
 //! pane, which also carries the quality and the maximize control when the
-//! bar is too narrow for them. Hand-rolled rather than gpui-component's `DropdownMenu`, which
+//! bar is too narrow for them; and a recording's speeds, which open in
+//! More's place from its speed row. Hand-rolled rather than gpui-component's `DropdownMenu`, which
 //! serves only that library's own `Button`. One is open at a time, all of
 //! them open from the bar's right-hand cluster (`bar::button_row`), and `Esc`
 //! closes whichever it is, through `RootView::on_go_browse`. The rows act on
@@ -22,6 +23,7 @@ use gpui::{
 use super::{bar, Switching, VideoEvent, VideoView};
 use crate::motion;
 use crate::seek_bar;
+use crate::speed::Speed;
 use crate::stage::Place;
 use crate::target;
 use crate::theme;
@@ -32,10 +34,13 @@ use crate::watch::PaneAction;
 pub enum Menu {
     /// The renditions this stream offers, under the settings' choice.
     Quality,
-    /// The rest: hear this pane alone or every pane again, pop the pane
-    /// out, open it on twitch.tv, copy its link — and the quality and the
-    /// maximize control, while the bar has no room for them.
+    /// The rest: hear this pane alone or every pane again, a recording's
+    /// speed, pop the pane out, open it on twitch.tv, copy its link — and the
+    /// quality and the maximize control, while the bar has no room for them.
     More,
+    /// A recording's speeds (`crate::speed`), opened in More's place from
+    /// its speed row, or from the speed on the seek row.
+    Speed,
 }
 
 impl Menu {
@@ -46,6 +51,7 @@ impl Menu {
         match self {
             Menu::Quality => "quality-menu",
             Menu::More => "more-menu",
+            Menu::Speed => "speed-menu",
         }
     }
 }
@@ -70,7 +76,9 @@ pub(super) fn toggled(open: Option<Menu>, which: Menu) -> Option<Menu> {
 
 impl VideoView {
     /// Open `which` over the bar: the palette's keyboard path to it, and
-    /// More's quality row, which opens the quality menu in More's place. An
+    /// More's quality and speed rows, which open their menus in More's
+    /// place. (The seek row's speed tag toggles the speed menu, as a menu's
+    /// own button does, through [`toggle_menu`](Self::toggle_menu).) An
     /// open menu holds the bar up (`sync_controls`), so the bar comes up with
     /// it, wherever the pointer is.
     ///
@@ -136,6 +144,7 @@ impl VideoView {
         let rows = match which {
             Menu::Quality => self.quality_rows(cx),
             Menu::More => self.more_rows(cx),
+            Menu::Speed => self.speed_rows(cx),
         };
 
         div()
@@ -207,13 +216,35 @@ impl VideoView {
         rows
     }
 
+    /// The speed menu: every speed a recording can play at, slowest first,
+    /// the one it plays at marked as the quality menu marks its choice. A
+    /// press plays the pane at it from the next frame (`set_speed`); the
+    /// one already chosen changes nothing.
+    fn speed_rows(&self, cx: &mut Context<Self>) -> Vec<Stateful<Div>> {
+        let current = self.stream.speed();
+        Speed::CHOICES
+            .into_iter()
+            .enumerate()
+            .map(|(index, speed)| {
+                menu_row(
+                    ("speed-option", index),
+                    speed.label().into(),
+                    speed == current,
+                    move |this, _window, cx| this.set_speed(speed, cx),
+                    cx,
+                )
+            })
+            .collect()
+    }
+
     /// More: what the bar has folded away first — the quality while its
     /// pill has, then the maximize control once it has too — ruled off from
     /// the rest; then, with two panes or more, `Only this one` or `Hear all
-    /// again`; then `Pop out`, then the pane's way out to twitch.tv and its
-    /// link. All but the quality are the root's to do — it knows the panes,
-    /// its windows, and the clipboard and the browser are the app's — so they
-    /// go up as `VideoEvent::Pane`.
+    /// again`; then a recording's `Playback speed · 1x`, which opens the
+    /// speeds in its place; then `Pop out`, then the pane's way out to
+    /// twitch.tv and its link. All but the quality and the speed are the
+    /// root's to do — it knows the panes, its windows, and the clipboard and
+    /// the browser are the app's — so they go up as `VideoEvent::Pane`.
     ///
     /// A recording opens and copies at the moment it is at, and says so:
     /// `Copy link at 1:02:03`, from its first whole second on, by the rule
@@ -265,6 +296,18 @@ impl VideoView {
                 words.into(),
                 false,
                 |_this, _window, cx| cx.emit(VideoEvent::Pane(PaneAction::HearOnly)),
+                cx,
+            ));
+        }
+        // A recording's speed, saying what it is, which opens the speeds in
+        // this menu's place, as the folded quality row opens the qualities.
+        // Nothing on a live stream, which plays at the speed it is made.
+        if self.stream.timeline().is_some() {
+            rows.push(menu_row(
+                "more-speed",
+                speed_row(self.stream.speed()),
+                false,
+                |this, _window, cx| this.open_menu(Menu::Speed, cx),
                 cx,
             ));
         }
@@ -404,6 +447,12 @@ pub(super) fn folded_quality(
         Some(switching) => format!("Quality · switching to {}", switching.to).into(),
         None => format!("Quality · {playing}").into(),
     }
+}
+
+/// More's speed row: the speed a recording plays at, in the words the speed
+/// menu and the seek row write it in.
+pub(super) fn speed_row(speed: Speed) -> SharedString {
+    format!("Playback speed · {}", speed.label()).into()
 }
 
 /// How a row of the quality menu is marked: not at all, as the one chosen,
@@ -583,6 +632,17 @@ mod tests {
         assert_eq!(
             folded_quality(&playing, Some(&switching("480p30", false))).as_ref(),
             "Quality · switching to 480p30"
+        );
+    }
+
+    /// More's speed row says the speed the recording plays at, in the
+    /// speed menu's own words.
+    #[test]
+    fn mores_speed_row_says_the_speed() {
+        assert_eq!(speed_row(Speed::NORMAL).as_ref(), "Playback speed · 1x");
+        assert_eq!(
+            speed_row(Speed::from_hundredths(175)).as_ref(),
+            "Playback speed · 1.75x"
         );
     }
 

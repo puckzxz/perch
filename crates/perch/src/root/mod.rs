@@ -27,6 +27,7 @@
 //! | `pane_actions` | what a pane asks for, by its key: its controls, and its player's requests; the header a pane key reveals; `run_guard`, which swallows the rest of a double-click whose first press took a player from under the pointer |
 //! | `launches` | what the command line named, at startup and from later launches |
 //! | `history` | what has been watched: noting where each recording got to, resuming there |
+//! | `muted` | a recording's muted stretches: heard from every Helix answer that lists videos, given to a pane that opens one without them, asked for once when nothing has been heard, and taken onto every pane playing it and its player's seek bar |
 //! | `prefs` | the settings sheet, the divider drag, how every chat is drawn, the rail folding and what is pinned to it |
 //! | `recommended` | the rail's Recommended group: when to ask the worker, and what its answer becomes |
 //! | `shared_chat` | the chats' Shared Chat labels: hearing an unnamed partner, asking its name, handing it to every chat; and `watch_chat`, which listens to every chat made |
@@ -56,6 +57,7 @@ mod history;
 mod last_live;
 mod launches;
 mod mini_player;
+mod muted;
 mod navigation;
 mod pages;
 mod pane_actions;
@@ -405,6 +407,9 @@ pub(crate) struct RootView {
 
     /// Recordings opened by link that are still to be looked up.
     linked_videos: Vec<LinkedVideo>,
+    /// What Helix has said of recordings' muted stretches this session, and
+    /// which a pane is asking about; see `muted`.
+    muted: muted::Muted,
     /// Opens what later launches hand over; see `launches`. Dropping it is
     /// what tells `instance` there is no window left to hand to.
     _launch_pump: Task<()>,
@@ -588,6 +593,7 @@ impl RootView {
             toasts_held: false,
             _cache_pump: cache_pump,
             linked_videos: Vec::new(),
+            muted: muted::Muted::default(),
             _launch_pump: Self::pump_launches(launches, window, cx),
             save_epoch: 0,
             resize_epoch: 0,

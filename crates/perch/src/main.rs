@@ -49,6 +49,7 @@ mod seek_bar;
 mod settings_view;
 mod shared_chat;
 mod sidebar;
+mod speed;
 mod stage;
 mod target;
 mod theme;

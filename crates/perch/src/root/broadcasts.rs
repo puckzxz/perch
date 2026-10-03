@@ -106,6 +106,7 @@ impl RootView {
         let answer = match result {
             Ok(videos) => {
                 self.refresh_history(&videos, cx);
+                self.hear_muted(&videos);
                 Some(videos)
             }
             Err(reason) => {

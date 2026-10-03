@@ -33,7 +33,7 @@ use std::time::{Duration, SystemTime};
 use futures::channel::mpsc;
 pub use history::is_login;
 pub use message::{Badge, ChatMessage, ChatNotice, IrcMessage, NoticeKind, Reply};
-pub use replay::Replay;
+pub use replay::{Playhead, Replay};
 pub use room::{ModeChange, ModeUpdate, RoomModes};
 
 const HOST: &str = "irc.chat.twitch.tv";

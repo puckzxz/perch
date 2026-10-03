@@ -22,8 +22,11 @@
 //! A seek is a discontinuity: the position moved further than time did. The
 //! buffer is thrown away and the fetch starts over at the new offset, with
 //! the [`PREFILL`] seconds before it delivered first so the pane lands in a
-//! conversation rather than blank. A pause simply stops the position. Speed
-//! is always one.
+//! conversation rather than blank. A pause simply stops the position. A
+//! recording played faster or slower moves its position faster or slower,
+//! and the lines follow it, since they are due by position and not by the
+//! clock; only telling a seek from playback reads the clock, so it is handed
+//! the speed with the position ([`Playhead`]) and allows for it.
 //!
 //! Three facts about the endpoint that cost time to find:
 //!
@@ -92,8 +95,9 @@ const PROBE: Duration = Duration::from_secs(10);
 /// The position never goes backwards on its own, so a step back beyond this
 /// is a seek; the slack is for the moment a reposition lands a little short.
 const BACK_SLACK: f64 = 1.0;
-/// A step forward beyond the time that passed, plus this, is a seek. The slack
-/// covers the poll interval and the player reporting in bursts.
+/// A step forward beyond the time that passed, at the speed it was playing,
+/// plus this, is a seek. The slack covers the poll interval and the player
+/// reporting in bursts.
 const FORWARD_SLACK: f64 = 2.0;
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 
@@ -123,15 +127,26 @@ pub enum Error {
     Transient(String),
 }
 
+/// Where a recording is and how fast it is playing, as the replay reads it a
+/// few times a second.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Playhead {
+    /// Seconds into the recording the picture is showing.
+    pub position: f64,
+    /// How many seconds of the recording play in one second: one, or what
+    /// somebody chose from the pane's speeds.
+    pub speed: f64,
+}
+
 /// A replay running against one recording. Dropping it stops the thread.
 pub struct Replay {
     stop: Arc<AtomicBool>,
 }
 
 impl Replay {
-    /// Replay `video_id`'s chat against `position`, which answers with the
-    /// seconds into the recording the picture is showing — read a few times a
-    /// second, from whatever thread this one is.
+    /// Replay `video_id`'s chat against `playhead`, which answers with the
+    /// seconds into the recording the picture is showing and how fast it
+    /// plays — read a few times a second, from whatever thread this one is.
     ///
     /// `room_id` is the channel's numeric id, announced first so third-party
     /// emote sets load the way they do for a live pane; `channel` is the
@@ -140,7 +155,7 @@ impl Replay {
         video_id: String,
         channel: String,
         room_id: String,
-        position: impl Fn() -> f64 + Send + 'static,
+        playhead: impl Fn() -> Playhead + Send + 'static,
     ) -> (Self, mpsc::UnboundedReceiver<ChatEvent>) {
         let (tx, rx) = mpsc::unbounded();
         let stop = Arc::new(AtomicBool::new(false));
@@ -148,7 +163,7 @@ impl Replay {
             .name("chat-replay".into())
             .spawn({
                 let stop = stop.clone();
-                move || run(video_id, channel, room_id, position, tx, stop)
+                move || run(video_id, channel, room_id, playhead, tx, stop)
             });
         if let Err(e) = spawned {
             eprintln!("chat replay: could not start: {e}");
@@ -171,7 +186,7 @@ fn run(
     video_id: String,
     channel: String,
     room_id: String,
-    position: impl Fn() -> f64,
+    playhead: impl Fn() -> Playhead,
     tx: mpsc::UnboundedSender<ChatEvent>,
     stop: Arc<AtomicBool>,
 ) {
@@ -186,10 +201,10 @@ fn run(
 
     let mut source = Source::new(video_id);
     let mut schedule = Schedule::default();
-    // The position last seen and when, for telling a seek from playback.
-    let mut last: Option<(Instant, f64)> = None;
+    // The playhead last seen and when, for telling a seek from playback.
+    let mut last: Option<(Instant, Playhead)> = None;
     // Where the buffer was last aligned to, and whether it needs to be again.
-    let mut aligned = position();
+    let mut aligned = playhead().position;
     let mut load_needed = true;
     let mut first_load = true;
     // Failures: said once per streak, retried with a growing wait.
@@ -201,14 +216,20 @@ fn run(
 
     while !stop.load(Ordering::Relaxed) {
         let now = Instant::now();
-        let at = position();
+        let head = playhead();
+        let at = head.position;
         if let Some((then, before)) = last {
-            if is_seek(before, now.duration_since(then), at) {
+            // The faster of the two speeds: one changed between the reads may
+            // have played the whole stretch at the faster, and a stretch read
+            // across a slow request is long enough for the difference to
+            // pass for a jump.
+            let speed = before.speed.max(head.speed);
+            if is_seek(before.position, now.duration_since(then), at, speed) {
                 load_needed = true;
                 aligned = at;
             }
         }
-        last = Some((now, at));
+        last = Some((now, head));
 
         if load_needed && now >= retry_after {
             match load(&mut source, &mut schedule, aligned) {
@@ -353,10 +374,18 @@ fn load(source: &mut Source, schedule: &mut Schedule, target: f64) -> Result<Vec
     Ok(schedule.due(target))
 }
 
-/// Whether the position moved further than time did: a seek, rather than
-/// playback or a pause.
-fn is_seek(before: f64, elapsed: Duration, after: f64) -> bool {
-    after < before - BACK_SLACK || after > before + elapsed.as_secs_f64() + FORWARD_SLACK
+/// Whether the position moved further than time did at `speed`: a seek,
+/// rather than playback or a pause.
+///
+/// At one speed a second of the clock is a second of the recording. At two,
+/// it is two: the poll's tenth of a second is far inside the slack either
+/// way, but the loop also waits on Twitch between reads, and three seconds
+/// of a slow request at double speed is six seconds of recording, which read
+/// against the clock alone was a jump forward, and reloaded the chat for
+/// nothing.
+fn is_seek(before: f64, elapsed: Duration, after: f64, speed: f64) -> bool {
+    let played = elapsed.as_secs_f64() * speed.max(0.0);
+    after < before - BACK_SLACK || after > before + played + FORWARD_SLACK
 }
 
 /// One video's comments, a page at a time.
@@ -977,24 +1006,76 @@ mod tests {
     #[test]
     fn playback_and_a_pause_are_not_seeks() {
         let tick = Duration::from_millis(100);
-        assert!(!is_seek(50.0, tick, 50.1));
-        assert!(!is_seek(50.0, tick, 50.0), "paused");
+        assert!(!is_seek(50.0, tick, 50.1, 1.0));
+        assert!(!is_seek(50.0, tick, 50.0, 1.0), "paused");
         assert!(
-            !is_seek(50.0, Duration::from_secs(30), 50.0),
+            !is_seek(50.0, Duration::from_secs(30), 50.0, 1.0),
             "paused a while"
         );
         // The player reports in bursts; a little ahead of the clock is fine.
-        assert!(!is_seek(50.0, tick, 51.5));
+        assert!(!is_seek(50.0, tick, 51.5, 1.0));
         // A reposition landing a hair short of where it was is not one either.
-        assert!(!is_seek(50.0, tick, 49.5));
+        assert!(!is_seek(50.0, tick, 49.5, 1.0));
     }
 
     #[test]
     fn a_jump_either_way_is_a_seek() {
         let tick = Duration::from_millis(100);
-        assert!(is_seek(50.0, tick, 60.0), "the arrow key");
-        assert!(is_seek(50.0, tick, 40.0));
-        assert!(is_seek(50.0, tick, 0.0), "watch again");
-        assert!(is_seek(50.0, Duration::from_secs(5), 3000.0), "the bar");
+        assert!(is_seek(50.0, tick, 60.0, 1.0), "the arrow key");
+        assert!(is_seek(50.0, tick, 40.0, 1.0));
+        assert!(is_seek(50.0, tick, 0.0, 1.0), "watch again");
+        assert!(
+            is_seek(50.0, Duration::from_secs(5), 3000.0, 1.0),
+            "the bar"
+        );
+    }
+
+    /// Played faster, the position outruns the clock by the speed, and that
+    /// is playback: across a three-second wait on Twitch at double speed it
+    /// moves six seconds, which against the clock alone was a jump. Played
+    /// slower it lags the clock, which never looked like one. A real jump is
+    /// still one at any speed, either way.
+    #[test]
+    fn playback_at_another_speed_is_not_a_seek() {
+        let wait = Duration::from_secs(3);
+        assert!(!is_seek(50.0, wait, 56.0, 2.0), "double speed");
+        assert!(!is_seek(50.0, wait, 54.5, 1.5));
+        assert!(!is_seek(50.0, wait, 52.25, 0.75), "slower");
+        assert!(
+            is_seek(50.0, wait, 56.0, 1.0),
+            "the same stretch at one speed is a jump"
+        );
+
+        let tick = Duration::from_millis(100);
+        assert!(!is_seek(50.0, tick, 50.2, 2.0));
+        assert!(is_seek(50.0, tick, 60.0, 2.0), "the arrow key at speed");
+        assert!(is_seek(50.0, tick, 40.0, 2.0));
+        assert!(is_seek(50.0, wait, 70.0, 2.0), "the bar at speed");
+    }
+
+    /// The lines are due by position, so at double speed a stretch of the
+    /// recording's chat comes out as the position passes it, in half the
+    /// time, and a busy second is still spread across that second of the
+    /// recording rather than bunched.
+    #[test]
+    fn lines_follow_the_position_at_any_speed() {
+        let mut schedule = Schedule::default();
+        schedule.push(vec![
+            line("a", 10, 1),
+            line("b", 10, 2),
+            line("c", 11, 3),
+            line("d", 12, 4),
+        ]);
+        // Ten polls at a tenth of a second each, at double speed from 10.0:
+        // the position moves 0.2 a poll.
+        let mut said: Vec<String> = Vec::new();
+        for poll in 0..=10 {
+            let position = 10.0 + 0.2 * poll as f64;
+            said.extend(schedule.due(position).into_iter().map(|c| c.id));
+            if position < 10.5 {
+                assert_eq!(said, ["a"], "b is due half way through second 10");
+            }
+        }
+        assert_eq!(said, ["a", "b", "c", "d"], "all of 10 to 12 in one second");
     }
 }

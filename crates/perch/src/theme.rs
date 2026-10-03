@@ -253,6 +253,18 @@ pub fn seek_hover() -> Hsla {
     rgba(0xffffff80).into()
 }
 
+/// A recording's muted stretch, as the band behind the seek bar's rail
+/// (`seek_bar::muted_spans`). A dull amber: a hue nothing else on the bar
+/// wears, so it reads as a fact about the recording rather than as more of
+/// the rail or of the played teal, and quiet, since it sits on a bar that
+/// is up whenever the pointer is on the picture. What shows of it is its
+/// edges above and below the rail, on [`video_chrome`]; held there to the
+/// three-to-one a part of a control needs, over a white frame and a black
+/// one, by `the_muted_band_reads_on_the_bar`.
+pub fn seek_muted() -> Hsla {
+    rgb(0x9a7430).into()
+}
+
 /// Hairlines within a pane, e.g. between chat messages. Deliberately fainter
 /// than `border`, since separating peers needs less weight than separating
 /// regions.
@@ -661,6 +673,13 @@ pub const SEEK_RAIL: f32 = 4.0;
 pub const SEEK_THUMB: f32 = 12.0;
 pub const SEEK_HIT: f32 = 18.0;
 
+/// The band behind the rail that marks a muted stretch: two pixels taller
+/// than the rail above and below it, so it shows past the played fill; and
+/// the least width one is drawn at, so a short stretch of a long recording
+/// is a mark and not a fraction of a pixel.
+pub const SEEK_MUTED_BAND: f32 = SEEK_RAIL + 4.0;
+pub const SEEK_MUTED_MIN: f32 = 2.0;
+
 /// The player's menus (`video_view::menu`): the least width one takes,
 /// however short its rows; where it rests above the bar's right-hand
 /// cluster, an icon button's height and a word's gap up from the cluster's
@@ -880,6 +899,30 @@ mod tests {
             contrast(text(), live()) < MIN_CONTRAST,
             "text() reads on the live red now, so the badge needs no white of its own"
         );
+    }
+
+    /// The muted band shows as its edges above and below the seek rail, on
+    /// the control bar's wash, so that is what it is measured on: over the
+    /// brightest picture and the darkest, at the three-to-one WCAG asks of
+    /// a part of a control (1.4.11), which is what a mark on a bar is. And
+    /// it is no colour the bar already means something by — the played
+    /// teal, the live red — or a band would read as more of the fill.
+    #[test]
+    fn the_muted_band_reads_on_the_bar() {
+        const NON_TEXT_CONTRAST: f32 = 3.0;
+        let black: Hsla = rgb(0x000000).into();
+        for (frame, under) in [
+            ("a white frame", over_white(video_chrome())),
+            ("a black frame", black.blend(video_chrome())),
+        ] {
+            let ratio = contrast(seek_muted(), under);
+            assert!(
+                ratio >= NON_TEXT_CONTRAST,
+                "the muted band reads {ratio:.2}:1 on the bar over {frame}"
+            );
+        }
+        assert_ne!(seek_muted(), accent());
+        assert_ne!(seek_muted(), live());
     }
 
     /// [`SCROLLBAR_WIDTH`] copies a number gpui-component keeps private, so

@@ -52,7 +52,18 @@ use crate::video::{Stopped, VideoStream};
 /// so comes out at about this lead whenever the lead was enough, however
 /// quickly the player opened. Too small, and swaps reseek; too large, and
 /// two players run side by side for longer.
+///
+/// Seconds of the clock, which is what opening a player takes; a pane
+/// playing at another speed covers this times its speed of the recording
+/// meanwhile, so that is the lead in the recording ([`lead`]).
 pub const SWAP_LEAD: f64 = 4.0;
+
+/// [`SWAP_LEAD`] as seconds of a recording playing at `speed`: twice as far
+/// at double speed, where the pane gets there in the same four seconds of
+/// the clock, and less at a slower one.
+pub fn lead(speed: f64) -> f64 {
+    SWAP_LEAD * speed
+}
 
 /// How long a swap may take, from its player starting, before it is given up
 /// and the pane keeps what it plays: a session Twitch never serves, or a
@@ -144,6 +155,9 @@ struct AlignInput {
     new_pos: f64,
     /// How many times the new one has been sent somewhere else.
     attempts: u8,
+    /// How fast the pane plays, which both players follow (`crate::speed`):
+    /// what the lead comes to in seconds of the recording ([`lead`]).
+    speed: f64,
 }
 
 /// What to do with the new player now.
@@ -203,8 +217,11 @@ fn align(i: AlignInput) -> Align {
             reseek(i.old_pos)
         };
     }
+    // In seconds of the recording, at the pane's speed: the clock's four
+    // seconds of opening are eight of a recording at double speed.
+    let lead = lead(i.speed);
     if ahead < -0.5 {
-        return reseek(i.old_pos + SWAP_LEAD * f64::from(i.attempts + 1));
+        return reseek(i.old_pos + lead * f64::from(i.attempts + 1));
     }
     if ahead <= 0.1 {
         return Align::Promote;
@@ -212,9 +229,9 @@ fn align(i: AlignInput) -> Align {
     // The furthest ahead a send of this swap's own may have put it: the lead
     // grows with each send after falling behind, and a player sent there is
     // waited for rather than sent back.
-    let furthest = SWAP_LEAD * f64::from(i.attempts.max(1)) + 2.0;
+    let furthest = lead * f64::from(i.attempts.max(1)) + 2.0;
     if ahead > furthest {
-        reseek(i.old_pos + SWAP_LEAD)
+        reseek(i.old_pos + lead)
     } else {
         Align::Hold
     }
@@ -411,6 +428,7 @@ impl VideoView {
             old_paused: self.stream.is_paused(),
             new_pos,
             attempts: pending.attempts,
+            speed: self.stream.speed().factor(),
         };
         match align(input) {
             Align::Wait => {}
@@ -551,6 +569,7 @@ mod tests {
             old_paused: false,
             new_pos: 604.0,
             attempts: 0,
+            speed: 1.0,
         }
     }
 
@@ -654,6 +673,51 @@ mod tests {
                 ..behind
             }),
             Align::Reseek(608.0)
+        );
+    }
+
+    /// At double speed the pane covers twice the recording while a player
+    /// opens, so the lead is twice as far: a new player started eight
+    /// seconds ahead is held rather than taken for a seek back, and one the
+    /// pane overtook is sent eight on, then sixteen. At a slower speed the
+    /// lead shrinks with it.
+    #[test]
+    fn the_lead_follows_the_panes_speed() {
+        assert_eq!(lead(1.0), SWAP_LEAD);
+        assert_eq!(lead(2.0), 2.0 * SWAP_LEAD);
+        assert_eq!(lead(0.75), 0.75 * SWAP_LEAD);
+
+        let fast = AlignInput {
+            speed: 2.0,
+            new_pos: 608.0,
+            ..recording()
+        };
+        assert_eq!(align(fast), Align::Hold);
+        assert_eq!(
+            align(AlignInput { speed: 1.0, ..fast }),
+            Align::Reseek(604.0),
+            "at one speed, eight ahead is past any lead it was given"
+        );
+
+        let behind = AlignInput {
+            new_pos: 598.0,
+            ..fast
+        };
+        assert_eq!(align(behind), Align::Reseek(608.0));
+        assert_eq!(
+            align(AlignInput {
+                attempts: 1,
+                ..behind
+            }),
+            Align::Reseek(616.0)
+        );
+        assert_eq!(
+            align(AlignInput {
+                new_pos: 600.05,
+                ..fast
+            }),
+            Align::Promote,
+            "caught up is caught up at any speed"
         );
     }
 

@@ -47,7 +47,7 @@ mod swap;
 
 pub(crate) use menu::rest_of_row_run;
 pub use menu::Menu;
-pub use swap::{route, Wake, SWAP_LEAD};
+pub use swap::{lead, route, Wake};
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -59,6 +59,7 @@ use gpui::{
     RenderImage, ScrollWheelEvent, SharedString, Stateful, Subscription, Task, Window,
 };
 use gpui_component::slider::{SliderEvent, SliderState};
+use twitch_api::MutedSegment;
 
 use crate::ad_break;
 use crate::controls;
@@ -67,6 +68,7 @@ use crate::loudness::{HearOnly, Loudness};
 use crate::motion;
 use crate::rewind;
 use crate::seek_bar;
+use crate::speed::Speed;
 use crate::stage::{MaximizeButton, Place};
 use crate::theme;
 use crate::veil;
@@ -330,6 +332,17 @@ pub struct VideoView {
     /// that says so; and the bar draws it only while the archive is still
     /// growing, the player's own word that the broadcast goes on.
     back_to_live: bool,
+    /// The stretches of the recording on screen whose sound Twitch has
+    /// muted, which the seek bar marks and its time under the pointer names
+    /// (`seek_bar::muted_spans`, `seek_bar::muted_at`); none on a live
+    /// stream.
+    ///
+    /// A mirror, on [`ChatButton`]'s pattern, of the pane's video, which is
+    /// the root's: written in exactly two places — [`Start::muted`] when the
+    /// player is made, and [`set_muted`](Self::set_muted), which only
+    /// `RootView::take_muted` calls, when the root's own look at the video
+    /// answers after the pane has its player.
+    muted: Vec<MutedSegment>,
     /// Whether the pointer is over this player, measured from the pane's own
     /// bounds rather than taken from GPUI's `on_hover`.
     ///
@@ -415,6 +428,9 @@ pub struct Start {
     /// Whether a recording's broadcast is still going on, for its way back
     /// to live; see `VideoView::back_to_live`.
     pub back_to_live: bool,
+    /// A recording's muted stretches, as far as the root knows them; see
+    /// `VideoView::muted`.
+    pub muted: Vec<MutedSegment>,
     /// What More offers about hearing one pane alone at the start; see
     /// `VideoView::hear_only`.
     pub hear_only: HearOnly,
@@ -510,6 +526,7 @@ impl VideoView {
             timeline_fits: true,
             live_since: start.live_since,
             back_to_live: start.back_to_live,
+            muted: start.muted,
             hovered: false,
             controls: motion::Fade::hidden(),
             place: start.place,
@@ -874,6 +891,26 @@ impl VideoView {
         cx.notify();
     }
 
+    /// How fast the recording on screen plays: the normal speed on a live
+    /// stream. What the speed menu marks, what the seek row says when it is
+    /// not normal, and what a rendition started beside this one is started
+    /// ahead by (`RootView::pending_event`).
+    pub fn speed(&self) -> Speed {
+        self.stream.speed()
+    }
+
+    /// Play the recording at `speed`: the speed menu's rows. The pane's, so
+    /// a rendition getting ready beside this one plays at it too and keeps
+    /// it once it takes over; see `crate::speed`.
+    fn set_speed(&mut self, speed: Speed, cx: &mut Context<Self>) {
+        if speed == self.stream.speed() {
+            return;
+        }
+        eprintln!("video: {} plays at {}", self.key, speed.label());
+        self.stream.set_speed(speed);
+        cx.notify();
+    }
+
     /// What the pane header says about this player. Muted and paused are the
     /// two states that used to be invisible until you hovered the video - a
     /// stream saved muted opened silent with nothing on screen to say why.
@@ -970,6 +1007,16 @@ impl VideoView {
     pub fn set_back_to_live(&mut self, back_to_live: bool, cx: &mut Context<Self>) {
         if self.back_to_live != back_to_live {
             self.back_to_live = back_to_live;
+            cx.notify();
+        }
+    }
+
+    /// The recording's muted stretches, from `RootView::take_muted`; see
+    /// `VideoView::muted` for why nothing else calls this. Repaints only on
+    /// a change.
+    pub fn set_muted(&mut self, muted: Vec<MutedSegment>, cx: &mut Context<Self>) {
+        if self.muted != muted {
+            self.muted = muted;
             cx.notify();
         }
     }

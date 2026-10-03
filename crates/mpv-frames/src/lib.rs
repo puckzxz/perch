@@ -456,6 +456,19 @@ impl Player {
         self.set_property_async("volume", &percent.min(100).to_string())
     }
 
+    /// Play `speed` seconds of the source in one second: mpv's `speed`
+    /// property. Queued, like [`set_paused`](Self::set_paused).
+    ///
+    /// A player property rather than a file's, so it holds across
+    /// [`load`](Self::load). The pitch stays where it was: mpv's
+    /// `audio-pitch-correction` is on by default, and at any speed but one
+    /// stretches the audio through a scaletempo filter rather than
+    /// resampling it, so faster speech is faster and not higher. Nothing
+    /// here turns it off.
+    pub fn set_speed(&self, speed: f64) -> Result<(), Error> {
+        self.set_property_async("speed", &format!("{speed:.2}"))
+    }
+
     /// Queue a property write. The only kind of write a render thread may do.
     fn set_property_async(&self, name: &str, value: &str) -> Result<(), Error> {
         let c_name = CString::new(name).map_err(|_| Error::InteriorNul)?;

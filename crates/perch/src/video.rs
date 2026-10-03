@@ -12,7 +12,7 @@
 //! worth showing, and an unbounded queue of 3.5 MB frames is a memory leak with
 //! extra steps.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -24,6 +24,7 @@ use smallvec::smallvec;
 use streamlink::Playlist;
 
 use crate::seek_bar::Timeline;
+use crate::speed::Speed;
 use crate::vod::{self, Extent, Recording};
 
 /// Upper bound on render size. 1440p is the highest Twitch tier, so anything
@@ -221,8 +222,25 @@ impl SizeHandle {
 /// beside the one on screen, moves none of them. Whole
 /// milliseconds inside: an atomic cannot hold an `f64`, and nothing reads
 /// finer.
+///
+/// It also holds how fast the pane plays (`crate::speed`), for the same
+/// reasons it holds where: a speed is the pane's, not one player's, so every
+/// player the pane starts reads it here and a swapped-in rendition plays at
+/// it from its first pass; the replay reads it beside the position to tell
+/// playback from a seek; and a pane that plays something else is a new pane
+/// with a new handle, at one again. Unlike the position it is written by the
+/// pane's controls (`VideoStream::set_speed`), never by a player.
 #[derive(Clone, Default)]
-pub struct PositionHandle(Arc<AtomicU64>);
+pub struct PositionHandle(Arc<Playhead>);
+
+/// What a [`PositionHandle`] shares.
+#[derive(Default)]
+struct Playhead {
+    millis: AtomicU64,
+    /// In hundredths, as [`Speed`] holds it; zero, never written, is the
+    /// normal speed (`Speed::from_hundredths`).
+    speed: AtomicU16,
+}
 
 impl PositionHandle {
     pub fn new() -> Self {
@@ -242,11 +260,30 @@ impl PositionHandle {
 
     /// Seconds into the recording. Zero until a player has said otherwise.
     pub fn get(&self) -> f64 {
-        from_millis(self.0.load(Ordering::Relaxed))
+        from_millis(self.0.millis.load(Ordering::Relaxed))
     }
 
     fn set(&self, secs: f64) {
-        self.0.store(to_millis(secs), Ordering::Relaxed);
+        self.0.millis.store(to_millis(secs), Ordering::Relaxed);
+    }
+
+    /// How fast the pane plays: the normal speed until somebody chooses
+    /// another.
+    pub fn speed(&self) -> Speed {
+        Speed::from_hundredths(self.0.speed.load(Ordering::Relaxed))
+    }
+
+    fn set_speed(&self, speed: Speed) {
+        self.0.speed.store(speed.hundredths(), Ordering::Relaxed);
+    }
+
+    /// Where the pane is and how fast it plays, as the chat replay reads
+    /// them.
+    pub fn playhead(&self) -> twitch_chat::replay::Playhead {
+        twitch_chat::replay::Playhead {
+            position: self.get(),
+            speed: self.speed().factor(),
+        }
     }
 }
 
@@ -320,6 +357,14 @@ impl Positions {
     /// Where this player is, published or not.
     fn get(&self) -> f64 {
         self.own.get()
+    }
+
+    /// How fast the pane plays, which every player of it follows, published
+    /// or not: a player started beside the one on screen has to be playing
+    /// at the pane's speed by the time it takes over, or the swap would
+    /// never line it up.
+    fn speed(&self) -> Speed {
+        self.shared.speed()
     }
 }
 
@@ -573,6 +618,10 @@ impl VideoStream {
                     let (mut source_w, mut source_h) = (None, None);
                     let (mut current_w, mut current_h) = target.get();
                     let mut applied_volume = volume;
+                    // mpv opens at the normal speed, so a player started
+                    // for a pane already playing faster — a quality swapped
+                    // in place — differs from this on its first pass.
+                    let mut applied_speed = Speed::NORMAL;
                     // mpv opens playing, so a stream started paused differs
                     // from this on the first pass, which pauses it before
                     // it waits for a frame.
@@ -817,6 +866,19 @@ impl VideoStream {
                             applied_volume = wanted;
                         }
 
+                        // The pane's speed, a recording's only; see
+                        // `crate::speed`. A player property, so it holds
+                        // across every reposition this player makes.
+                        if recording.is_some() {
+                            let wanted = positions.speed();
+                            if wanted != applied_speed {
+                                if let Err(e) = player.set_speed(wanted.factor()) {
+                                    eprintln!("video: could not set speed: {e}");
+                                }
+                                applied_speed = wanted;
+                            }
+                        }
+
                         // A paused player that has changed size draws what
                         // it holds again, at the new size, rather than wait
                         // for a frame it will not send; see `redraw_now`.
@@ -925,6 +987,26 @@ impl VideoStream {
             return;
         }
         *self.seek.lock().unwrap() = Some(secs.max(0.0));
+    }
+
+    /// How fast the pane plays: the normal speed on a live stream, which has
+    /// no other.
+    pub fn speed(&self) -> Speed {
+        if self.live {
+            return Speed::NORMAL;
+        }
+        self.positions.speed()
+    }
+
+    /// Play the pane at `speed` from the next frame on. Written to the
+    /// pane's handle, not to this player, so a player getting ready beside
+    /// this one follows it too, and the chat replay allows for it; see
+    /// `crate::speed`. Ignored on a live stream.
+    pub fn set_speed(&self, speed: Speed) {
+        if self.live {
+            return;
+        }
+        self.positions.shared.set_speed(speed);
     }
 
     /// Take back a seek the render thread has not applied yet, if there is
@@ -1090,6 +1172,28 @@ mod tests {
         player.report(104.25);
         player.publish();
         assert_eq!(pane.get(), 104.25);
+    }
+
+    /// A pane opens at the normal speed, and a speed chosen on it reaches
+    /// every player of it, a second one getting ready unpublished beside the
+    /// first included, and the replay's playhead; a new pane's handle, for
+    /// something else played, is at the normal speed again.
+    #[test]
+    fn a_speed_is_the_panes_and_every_player_follows_it() {
+        let (pane, first) = unpublished();
+        let beside = Positions::new(pane.clone());
+        first.report(104.0);
+        first.publish();
+        assert_eq!(first.speed(), Speed::NORMAL);
+
+        let faster = Speed::from_hundredths(150);
+        pane.set_speed(faster);
+        assert_eq!(first.speed(), faster);
+        assert_eq!(beside.speed(), faster, "unpublished, and still at it");
+        assert_eq!(pane.playhead().speed, 1.5);
+        assert_eq!(pane.playhead().position, 104.0);
+
+        assert_eq!(PositionHandle::starting_at(100.0).speed(), Speed::NORMAL);
     }
 
     /// Once published, every report reaches the pane, a step back included.

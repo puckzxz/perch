@@ -149,6 +149,9 @@ impl RootView {
                 self.fill_guide();
                 self.request_linked_videos();
                 self.ask_missing();
+                // And the muted stretches of the recordings opened before
+                // it; see `root::muted`.
+                self.ask_muted_for_open();
                 // And the names of the Shared Chat partners those panes met,
                 // and the badges for their chats.
                 self.ask_met_channel_names();
@@ -291,6 +294,9 @@ impl RootView {
                 // Whatever the history holds of these, this is the newer
                 // word on it, wherever the user has got to since.
                 self.refresh_history(&videos.items, cx);
+                // And what it says of their muted stretches, for a pane that
+                // opens one from the history; see `root::muted`.
+                self.hear_muted(&videos.items);
                 // Same guard as a category: a reply for a channel the user
                 // has already left must not repopulate the page behind them.
                 if let Some(page) = self
@@ -519,7 +525,14 @@ impl RootView {
         }
     }
 
-    /// The worker's answer for a linked recording: the video, or why not.
+    /// The worker's answer about one recording: a pane's question about
+    /// its muted stretches (`root::muted`), or a link's, which is the video
+    /// to open, or why not. The worker answers in order, so while a pane's
+    /// question about the id is out, the answer is that one's, and any link
+    /// sent after it waits for its own. A pane's answer goes onto every pane
+    /// playing the recording, and its failure only goes to the log: the
+    /// seek bar marks nothing, which is all it could have done. A link's
+    /// answer brings the stretches too, heard before the pane opens.
     fn on_linked_video(
         &mut self,
         id: String,
@@ -527,6 +540,20 @@ impl RootView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.claim_muted(&id) {
+            match &result {
+                Ok(video) => self.take_muted(video, cx),
+                Err(reason) => {
+                    eprintln!(
+                        "twitch: could not look up recording {id}'s muted stretches: {reason}"
+                    )
+                }
+            }
+            return;
+        }
+        if let Ok(video) = &result {
+            self.take_muted(video, cx);
+        }
         let Some(index) = self.linked_videos.iter().position(|linked| linked.id == id) else {
             return;
         };

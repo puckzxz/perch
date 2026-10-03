@@ -66,6 +66,16 @@
 //! (`seek_bar::Timeline::growing`), which is Twitch saying the archive is
 //! finished, whatever a list kept since says.
 //!
+//! A recording playing at other than the normal speed says so after its
+//! length on the seek row, `1.5x`, before any way back to live
+//! (`VideoView::speed_tag`). On a pane it is an on-video pill whose press
+//! opens the speed menu or closes it, as the quality pill does its own, and
+//! like Guide it acts on the press in the capture phase and stops it there,
+//! or the menus' press outside would close the menu for the click to open
+//! it again. It takes room from the seek track, as the way back does, so
+//! [`fit`] gives nothing up for it either. A pop-out has no menus, so there
+//! it is only a label.
+//!
 //! Guide raises the guide over the lower part of the watch page, or puts it
 //! away (`crate::guide`). It acts on the press, not the click, unlike its
 //! neighbours: the guide closes on a press anywhere outside it, heard in the
@@ -102,6 +112,7 @@ use crate::keys::Hint;
 use crate::motion;
 use crate::rewind;
 use crate::seek_bar;
+use crate::speed::Speed;
 use crate::stage::{MaximizeButton, Place};
 use crate::theme;
 use crate::watch::PaneAction;
@@ -235,9 +246,10 @@ pub(super) fn timeline_fits(width: f32) -> bool {
 }
 
 impl VideoView {
-    /// The seek row: a recording's seek bar, with the way back to live
-    /// after it while its broadcast goes on ([`back_to_live`]), or a live
-    /// stream's timeline ([`live_row`](Self::live_row)).
+    /// The seek row: a recording's seek bar, with its speed after it while
+    /// that is not the normal one ([`speed_tag`](Self::speed_tag)) and the
+    /// way back to live while its broadcast goes on ([`back_to_live`]), or a
+    /// live stream's timeline ([`live_row`](Self::live_row)).
     fn seek_row(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let Some(timeline) = self.stream.timeline() else {
             return self.live_row(cx);
@@ -251,20 +263,22 @@ impl VideoView {
             .map(|fraction| fraction as f64 * extent)
             .unwrap_or(position);
         // Mid-scrub the label rides the thumb, whatever the pointer has since
-        // wandered over: the time being chosen is the one worth reading.
-        let hover = self
-            .scrub
-            .or(self.pointing)
-            .map(|fraction| seek_bar::Hover {
+        // wandered over: the time being chosen is the one worth reading. It
+        // says `muted` over a stretch Twitch muted.
+        let hover = self.scrub.or(self.pointing).map(|fraction| {
+            let secs = fraction as f64 * extent;
+            seek_bar::Hover {
                 fraction,
-                time: seek_bar::timecode(fraction as f64 * extent).into(),
-            });
+                time: seek_bar::hover_label(secs, seek_bar::muted_at(&self.muted, secs)).into(),
+            }
+        });
         let state = seek_bar::State {
             played: (position / extent) as f32,
             scrub: self.scrub,
             hover,
             position: seek_bar::timecode(shown).into(),
             end: seek_bar::End::Length(seek_bar::timecode(extent).into()),
+            muted: seek_bar::muted_spans(&self.muted, extent),
         };
         let seek = seek_bar::element(
             state,
@@ -273,14 +287,19 @@ impl VideoView {
             |this: &mut Self, bounds| this.track = Some(bounds),
             cx,
         );
-        // Only while the archive is still being made: the keeper re-reads
-        // its playlist, and Twitch ends it once the broadcast is over, which
-        // takes the way back away whichever list still carries the channel.
-        if !(self.back_to_live && timeline.growing) {
+        // The speed, while it is not the normal one ([`speed_tag`]); and
+        // only while the archive is still being made, the way back to live:
+        // the keeper re-reads its playlist, and Twitch ends it once the
+        // broadcast is over, which takes the way back away whichever list
+        // still carries the channel.
+        let speed = self.stream.speed();
+        let speed = (!speed.is_normal()).then(|| self.speed_tag(speed, window, cx));
+        let back = (self.back_to_live && timeline.growing).then(|| back_to_live(window, cx));
+        if speed.is_none() && back.is_none() {
             return Some(seek.into_any_element());
         }
-        // The seek bar shrinks for the way back; the track it reports is the
-        // one laid out, so a scrub still lands where the pointer is.
+        // The seek bar shrinks for what follows it; the track it reports is
+        // the one laid out, so a scrub still lands where the pointer is.
         Some(
             div()
                 .w_full()
@@ -289,9 +308,50 @@ impl VideoView {
                 .items_center()
                 .gap(px(theme::GAP_TIGHT))
                 .child(div().flex_1().min_w_0().child(seek))
-                .child(back_to_live(window, cx))
+                .children(speed)
+                .children(back)
                 .into_any_element(),
         )
+    }
+
+    /// The speed a recording plays at, after its length on the seek row,
+    /// while it is not the normal one: `1.5x`, at the length's size, so a
+    /// pane playing fast says so wherever the pointer is on it and the time
+    /// beside it is read for what it is.
+    ///
+    /// On a pane it is a control like the bar's others: an on-video pill
+    /// that lifts under the pointer, with a tooltip, whose press opens the
+    /// speeds as More's speed row does, or closes them, as the quality pill
+    /// toggles its menu. On the press, in the capture phase, and the press
+    /// stops here, as Guide's does (see the module): the seek row paints
+    /// before the menus' anchor, so the anchor's press outside, which would
+    /// close the menu for the click to open it again, never hears it. Only
+    /// the first press of a run, so a quick second press is not a second
+    /// toggle. A pop-out, which has no menus, only says it, as a label.
+    fn speed_tag(&self, speed: Speed, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        let label = SharedString::from(speed.label());
+        if self.place != Place::Pane {
+            return div()
+                .flex_none()
+                .text_size(px(theme::TEXT_META))
+                .line_height(px(theme::LINE_TIGHT))
+                .text_color(theme::text())
+                .child(label)
+                .into_any_element();
+        }
+        controls::pill("bar-speed", label, Variant::OnVideo)
+            .text_size(px(theme::TEXT_META))
+            .when(window.is_window_hovered(), |tag| {
+                tag.tooltip(controls::tip("Change playback speed"))
+            })
+            .capture_any_mouse_down(cx.listener(|this, event: &MouseDownEvent, _window, cx| {
+                if event.button != MouseButton::Left || event.click_count > 1 {
+                    return;
+                }
+                cx.stop_propagation();
+                this.toggle_menu(Menu::Speed, cx);
+            }))
+            .into_any_element()
     }
 
     /// A live stream's timeline: the broadcast from its start to now, the
@@ -327,6 +387,8 @@ impl VideoView {
             // The red badge: this pane is at the live edge, which is the
             // one thing red says anywhere (`controls::live_badge`).
             end: seek_bar::End::Live,
+            // A broadcast as it happens has no muted stretches to mark.
+            muted: Vec::new(),
         };
         Some(
             seek_bar::element(

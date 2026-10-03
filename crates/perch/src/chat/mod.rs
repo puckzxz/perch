@@ -339,7 +339,7 @@ impl ChatView {
                 position,
             } => {
                 let (replay, events) =
-                    Replay::start(video_id, channel, room_id, move || position.get());
+                    Replay::start(video_id, channel, room_id, move || position.playhead());
                 let waiting = "loading chat replay…".to_string();
                 (
                     Link::Replay { _replay: replay },

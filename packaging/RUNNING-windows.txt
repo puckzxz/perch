@@ -114,8 +114,11 @@ Point at a picture and its controls come up along the bottom of it: pause,
 the speaker and the volume, then the quality, with two panes or more the
 maximize, then chat, the guide, fullscreen and More, which with two panes
 or more can silence every other pane (Only this one, then Hear all again),
-pops the pane out, opens what it is playing on twitch.tv or copies a link
-to it (a recording's link is at the moment it has reached). Those a key
+plays a recording faster or slower (Playback speed, 0.75x to 2x, written
+on its seek bar while it is not 1x), pops the pane out, opens what it is
+playing on twitch.tv or copies a link to it (a recording's link is at the
+moment it has reached). A recording's seek bar also marks, in amber, the
+stretches Twitch muted for music. Those a key
 also works name the key in their tooltips; the quality, the guide and More
 have none. Alt and the mouse wheel over a picture change its volume (the
 wheel alone does not), and a middle click mutes or unmutes it. While Twitch

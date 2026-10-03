@@ -40,7 +40,7 @@ use crate::layout;
 use crate::settings_view;
 use crate::stage::Place;
 use crate::video::{StartOptions, VideoStream};
-use crate::video_view::{Switching, SWAP_LEAD};
+use crate::video_view::{lead, Switching};
 use crate::watch::{PendingStart, Restart, Slot, StreamState};
 
 impl RootView {
@@ -412,12 +412,13 @@ impl RootView {
             return self.drop_pending(index, "there is no picture to take over from", cx);
         };
         let (generation, picked) = (pending.generation, pending.reason.is_pick());
-        let (playing, position, paused, size) = {
+        let (playing, position, paused, speed, size) = {
             let view = view.read(cx);
             (
                 view.quality().to_string(),
                 view.position(),
                 view.is_paused(),
+                view.speed().factor(),
                 view.size_handle(),
             )
         };
@@ -429,7 +430,7 @@ impl RootView {
             self.set_pending(index, None, cx);
             return;
         }
-        let start_at = swap_start_at(position, paused);
+        let start_at = swap_start_at(position, paused, speed);
         let Some(playback) = streams::playback(&slot.source, url, &quality, playlist, start_at)
         else {
             return self.drop_pending(index, NO_PLAYLIST, cx);
@@ -569,14 +570,16 @@ fn restart_how(covered: bool, reason: Restart) -> How {
     }
 }
 
-/// Where a recording's new player opens, given where the pane is: there, if
-/// it is paused, and [`SWAP_LEAD`] seconds on if it is playing, so the new
-/// player has a picture just before the pane reaches it.
-fn swap_start_at(position: f64, paused: bool) -> f64 {
+/// Where a recording's new player opens, given where the pane is and how
+/// fast it plays: there, if it is paused, and the swap's lead on if it is
+/// playing (`video_view::lead`: four seconds of the clock, twice as far
+/// into the recording at double speed), so the new player has a picture
+/// just before the pane reaches it.
+fn swap_start_at(position: f64, paused: bool, speed: f64) -> f64 {
     if paused {
         position
     } else {
-        position + SWAP_LEAD
+        position + lead(speed)
     }
 }
 
@@ -700,8 +703,14 @@ mod tests {
     /// reached; a paused one's opens where the pane is waiting.
     #[test]
     fn a_recording_swap_starts_ahead_unless_paused() {
-        assert_eq!(swap_start_at(600.0, false), 600.0 + SWAP_LEAD);
-        assert_eq!(swap_start_at(600.0, true), 600.0);
+        assert_eq!(swap_start_at(600.0, false, 1.0), 600.0 + lead(1.0));
+        assert_eq!(swap_start_at(600.0, true, 1.0), 600.0);
+        assert_eq!(
+            swap_start_at(600.0, false, 2.0),
+            600.0 + 2.0 * lead(1.0),
+            "twice as far into a recording playing twice as fast"
+        );
+        assert_eq!(swap_start_at(600.0, true, 2.0), 600.0);
     }
 
     /// A re-pick that wants no sharper a rendition than the one resolving

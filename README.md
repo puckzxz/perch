@@ -158,8 +158,8 @@ The bar over a playing pane has play, the speaker — crossed out whenever the
 pane is silent, Mute all included — and the volume at the left, and at the
 right the quality, with two panes or more the maximize, then chat, the guide
 (see below), fullscreen and **More**, which has **Only this one** with two
-panes or more, **Pop out** on Windows, **Open on twitch.tv** and **Copy
-link**. **Only this one** silences every other pane the way Mute all does,
+panes or more, **Playback speed** on a recording, **Pop out** on Windows,
+**Open on twitch.tv** and **Copy link**. **Only this one** silences every other pane the way Mute all does,
 without touching anyone's volume; until you change a silenced pane's volume,
 every pane's More then says **Hear all again**, which brings them all back. A
 narrow pane drops the volume's figure first, then its slider, then folds the
@@ -698,6 +698,15 @@ bar's **More**, **Copy link** reads `Copy link at 1:02:03` and copies a link
 to the moment you are at, which pasted back into Perch opens there, and
 **Open on twitch.tv** opens it at that moment. A channel's
 live stream and one of its recordings can be open side by side.
+
+Where Twitch muted a recording's sound for music it matched, the seek bar
+marks the stretch with a dull amber band around the bar, and pointing there
+says `muted` after the time. **Playback speed** under **More** plays a
+recording at 0.75x up to 2x, in quarter steps, with voices kept at their own
+pitch; while it is not 1x the speed is written after the length on the seek
+bar, and clicking it opens the speeds again. It belongs to the pane: a
+quality change keeps it, nothing saves it, and whatever the pane plays next
+starts at 1x. The chat replay keeps pace.
 
 Every recording you open is kept on the **History** tab, newest first: the ones
 you are part-way through under *Continue watching*, each saying where you left

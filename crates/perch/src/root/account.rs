@@ -48,6 +48,8 @@ impl RootView {
         // And the panes' asks about past broadcasts, whose answers die with
         // the old worker; the new one's sign-in asks again.
         self.forget_asks();
+        // And the panes' asks about muted stretches, for the same reason.
+        self.muted.forget_asks();
     }
 
     /// Start the worker over from what `settings.json` says: a new client

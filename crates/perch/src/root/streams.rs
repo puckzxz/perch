@@ -264,6 +264,9 @@ impl RootView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Slot {
+        // Its muted stretches, for the seek bar, if it came without them:
+        // from the history, which does not keep them. See `root::muted`.
+        let video = self.with_muted(video);
         self.note_opened(&video, start_at, cx);
 
         let channel = video.user_login.clone();
@@ -701,6 +704,13 @@ impl RootView {
                     // Whether a recording's broadcast is still on, for its
                     // way back to live; kept up by `sync_back_to_live`.
                     back_to_live,
+                    // A recording's muted stretches as far as the root
+                    // knows them; its own look, if one is out, reaches the
+                    // player through `take_muted`.
+                    muted: self.slots[index]
+                        .recording()
+                        .map(|video| video.muted_segments.clone())
+                        .unwrap_or_default(),
                     // What More offers about hearing one pane alone; kept
                     // up by `sync_hear_only`.
                     hear_only: self.hear_only_now(),

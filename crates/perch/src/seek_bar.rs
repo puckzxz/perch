@@ -22,6 +22,16 @@
 //! owner measures where the pointer is, the way it measures everything else
 //! about the pointer (see `VideoView::hovered` for why that is not
 //! `on_hover`'s job), and hands the answer back in [`State::hover`].
+//!
+//! A recording's muted stretches — the parts whose sound Twitch took out
+//! for music it matched, Helix's `muted_segments` — are marked along the
+//! track as a band behind the rail, a little taller than it
+//! ([`muted_spans`], [`theme::seek_muted`]). Behind rather than over: the
+//! played fill is opaque and the rail a wash, and no one colour drawn over
+//! both measures apart from each, whereas the band's edges above and below
+//! the rail sit on the bar's own dark wash whatever has been played. The
+//! label under the pointer says `muted` over one ([`hover_label`]), so a
+//! silence is known for Twitch's before it is taken for the player's.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -31,6 +41,7 @@ use gpui::{
     canvas, div, prelude::*, px, Bounds, Context, DefiniteLength, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Window,
 };
+use twitch_api::MutedSegment;
 
 use crate::controls;
 use crate::theme;
@@ -112,6 +123,59 @@ pub fn hover_at(bounds: &Bounds<Pixels>, pointer: Point<Pixels>) -> Option<f32> 
         .then(|| fraction_at(bounds, pointer.x))
 }
 
+/// A stretch of the track, as fractions of the extent, start before end.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Span {
+    pub start: f32,
+    pub end: f32,
+}
+
+/// Where a recording's muted stretches lie along a bar whose right-hand end
+/// is `extent` seconds, as fractions of it, in the order Twitch listed them.
+///
+/// Clamped to the bar, so a stretch running past a length listed short
+/// stops at the end rather than drawing off it; one that starts past the
+/// end, or lasts no time, is left out. A recording still being made has a
+/// growing extent, so its stretches move left as it grows, which is where
+/// they are.
+pub fn muted_spans(segments: &[MutedSegment], extent: f64) -> Vec<Span> {
+    if extent <= 0.0 {
+        return Vec::new();
+    }
+    segments
+        .iter()
+        .filter_map(|segment| {
+            let start = segment.offset_secs as f64 / extent;
+            let end = (segment.offset_secs + segment.duration_secs) as f64 / extent;
+            (segment.duration_secs > 0 && start < 1.0).then(|| Span {
+                start: start.clamp(0.0, 1.0) as f32,
+                end: end.clamp(0.0, 1.0) as f32,
+            })
+        })
+        .collect()
+}
+
+/// Whether `secs` into the recording falls in one of its muted stretches:
+/// from a stretch's first second up to, not including, the second after
+/// its last.
+pub fn muted_at(segments: &[MutedSegment], secs: f64) -> bool {
+    segments.iter().any(|segment| {
+        let start = segment.offset_secs as f64;
+        (start..start + segment.duration_secs as f64).contains(&secs)
+    })
+}
+
+/// What the label under the pointer says about `secs`: the time, and
+/// `muted` after it where Twitch muted the sound, lowercase as a pane
+/// header's tags are.
+pub fn hover_label(secs: f64, muted: bool) -> String {
+    if muted {
+        format!("{} · muted", timecode(secs))
+    } else {
+        timecode(secs)
+    }
+}
+
 /// The time a press would go to, and where along the bar that is.
 pub struct Hover {
     /// A fraction of the extent.
@@ -134,6 +198,9 @@ pub struct State {
     pub position: SharedString,
     /// What the right-hand end says.
     pub end: End,
+    /// The recording's muted stretches, marked along the track
+    /// ([`muted_spans`]); none on a live pane's timeline.
+    pub muted: Vec<Span>,
 }
 
 /// What the right-hand end of the bar says: how long a recording is, or, on
@@ -185,6 +252,24 @@ pub fn element<V: 'static>(
     )
     .absolute()
     .size_full();
+
+    // Behind the rail and a little taller than it, so the edges above and
+    // below it show on the bar's wash whether or not the stretch has been
+    // played; see the module docs. A least width, so a minute muted in a
+    // twelve-hour recording is still a mark rather than a fraction of a
+    // pixel.
+    let band_top = (theme::SEEK_HIT - theme::SEEK_MUTED_BAND) / 2.0;
+    let bands = state.muted.iter().map(|span| {
+        div()
+            .absolute()
+            .top(px(band_top))
+            .h(px(theme::SEEK_MUTED_BAND))
+            .left(DefiniteLength::Fraction(span.start))
+            .w(DefiniteLength::Fraction(span.end - span.start))
+            .min_w(px(theme::SEEK_MUTED_MIN))
+            .rounded(px(theme::SEEK_MUTED_BAND / 2.0))
+            .bg(theme::seek_muted())
+    });
 
     let rail_top = (theme::SEEK_HIT - theme::SEEK_RAIL) / 2.0;
     let rail = div()
@@ -286,6 +371,7 @@ pub fn element<V: 'static>(
             cx.listener(move |view, _: &MouseUpEvent, window, cx| on_release(view, window, cx)),
         )
         .child(measure)
+        .children(bands)
         .child(rail)
         .child(thumb)
         .children(label);
@@ -375,6 +461,62 @@ mod tests {
         assert_eq!(hover_at(&track, point(px(300.), px(490.))), None, "above");
         assert_eq!(hover_at(&track, point(px(300.), px(530.))), None, "below");
         assert_eq!(hover_at(&track, point(px(60.), px(509.))), None, "beside");
+    }
+
+    fn muted(offset_secs: u64, duration_secs: u64) -> MutedSegment {
+        MutedSegment {
+            offset_secs,
+            duration_secs,
+        }
+    }
+
+    /// Each muted stretch lands where it is along the bar, as a fraction of
+    /// the extent; one running past the end stops at it, and one past the
+    /// end or lasting no time is not drawn at all.
+    #[test]
+    fn muted_stretches_map_to_fractions_of_the_bar() {
+        let segments = [muted(3240, 180), muted(0, 360), muted(7000, 400)];
+        assert_eq!(
+            muted_spans(&segments, 7200.0),
+            [
+                Span {
+                    start: 0.45,
+                    end: 0.475
+                },
+                Span {
+                    start: 0.0,
+                    end: 0.05
+                },
+                Span {
+                    start: 7000.0 / 7200.0,
+                    end: 1.0
+                },
+            ],
+            "the last runs past a length listed short, and stops at the end"
+        );
+        assert!(
+            muted_spans(&[muted(8000, 60)], 7200.0).is_empty(),
+            "past it"
+        );
+        assert!(muted_spans(&[muted(100, 0)], 7200.0).is_empty(), "no time");
+        assert!(muted_spans(&segments, 0.0).is_empty(), "no bar");
+        assert!(muted_spans(&[], 7200.0).is_empty());
+    }
+
+    /// A stretch is muted from its first second up to the second after its
+    /// last, and the label under the pointer says so there and nowhere
+    /// else.
+    #[test]
+    fn the_time_under_the_pointer_says_muted_inside_a_stretch() {
+        let segments = [muted(3240, 180)];
+        assert!(!muted_at(&segments, 3239.9));
+        assert!(muted_at(&segments, 3240.0));
+        assert!(muted_at(&segments, 3419.5));
+        assert!(!muted_at(&segments, 3420.0), "the second after its last");
+        assert!(!muted_at(&[], 10.0));
+
+        assert_eq!(hover_label(3300.0, true), "55:00 · muted");
+        assert_eq!(hover_label(3300.0, false), "55:00");
     }
 
     /// The extent is Twitch's length, grown by the clock while a broadcast is
