@@ -511,7 +511,33 @@
              current_cursor,
 --- a/gpui/src/window.rs
 +++ b/gpui/src/window.rs
-@@ -3194,6 +3194,40 @@
+@@ -2062,7 +2062,24 @@
+             tooltip_element = self.prepaint_tooltip(cx);
+         }
+ 
+-        self.mouse_hit_test = self.next_frame.hit_test(self.mouse_position);
++        // PERCH PATCH: nothing is under a pointer that has left the window.
++        // Windows reports the leave (WM_MOUSELEAVE) only as `hovered` going
++        // false, with no mouse event, so `mouse_position` stays where the
++        // pointer crossed the edge and every `.hover()` / `group_hover` style
++        // there stayed lit until the pointer came back. The leave refreshes
++        // the window, so this frame clears them; the next mouse event
++        // re-tests from its own position (`dispatch_mouse_event`). Only where
++        // `hovered` is tracked: on macOS `is_window_hovered` means active.
++        let pointer_left = cfg!(any(
++            target_os = "windows",
++            target_os = "linux",
++            target_os = "freebsd"
++        )) && !self.hovered.get();
++        self.mouse_hit_test = if pointer_left {
++            HitTest::default()
++        } else {
++            self.next_frame.hit_test(self.mouse_position)
++        };
+ 
+         // Now actually paint the elements.
+         self.invalidator.set_phase(DrawPhase::Paint);
+@@ -3194,6 +3211,40 @@
          });
      }
  

@@ -214,6 +214,8 @@ needs src/platform/windows/directx_atlas.rs 'skipping upload to avoid a driver o
   "refuses an upload the source slice cannot cover"
 needs src/window.rs 'pub fn update_image(' \
   "exposes the in-place image update to callers"
+needs src/window.rs 'self.mouse_hit_test = if pointer_left {' \
+  "hit-tests nothing under a pointer that has left the window"
 
 needs src/platform/windows/directx_renderer.rs 'self.skip_draws = true;' \
   "stops drawing when the device is replaced"

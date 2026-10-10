@@ -62,8 +62,8 @@ ureq = { version = "3", features = ["json"] }
 # 54% of the machine's entire commit charge, against a 5.6 GB working set that
 # made it look like a 6 GB problem in Task Manager.
 #
-# Six fixes, every hunk tagged `PERCH PATCH`. The first two are the leak; the
-# rest were found while proving it fixed.
+# Seven fixes, every hunk tagged `PERCH PATCH`. The first two are the leak; the
+# next four were found while proving it fixed; the last is a hover fix.
 #
 #  1. A texture created oversized is marked dedicated to the one image it was
 #     sized for, and skipped when scanning for room. That is the 43.7 GB.
@@ -94,6 +94,10 @@ ureq = { version = "3", features = ["json"] }
 #     render target view to be present, so a failed resize cannot strand the
 #     window black, and `pre_draw` returns an error rather than unwrapping one
 #     that is missing.
+#  7. A frame drawn after the pointer has left the window hit-tests nothing.
+#     Windows reports the leave only as the window's `hovered` flag, with no
+#     mouse event, so the last position stayed hit and a sidebar row (or any
+#     `.hover()` style) stayed lit until the pointer came back. Not upstream.
 #
 # `scripts/verify-vendor.sh` re-downloads the crate from crates.io and proves
 # the tree differs from it in exactly the seven files it expects, and that each
