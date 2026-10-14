@@ -144,6 +144,14 @@ pub fn first_message_wash() -> Hsla {
     rgba(0x5b8def10).into()
 }
 
+/// Behind a message addressed to the signed-in user: it names them, or
+/// answers one of theirs (`chat_tint::addressed_to`). Rose, the hue Twitch
+/// and Chatterino mark a mention with, and none of the other washes uses;
+/// as strong as legibility allows (`every_chat_wash_keeps_its_text_legible`).
+pub fn mention_wash() -> Hsla {
+    rgba(0xe0566e24).into()
+}
+
 /// Behind a message sent with Highlight My Message, the channel-points
 /// reward: paid for to be seen, so warmer and stronger than the first
 /// message's, and a hue no event uses. As strong as a wash can be with a
@@ -958,10 +966,11 @@ mod tests {
     /// are full-strength text, which reads.
     #[test]
     fn every_chat_wash_keeps_its_text_legible() {
-        let washes: [(&str, Hsla); 8] = [
+        let washes: [(&str, Hsla); 9] = [
             ("stripe", stripe()),
             ("event_wash", event_wash()),
             ("first_message_wash", first_message_wash()),
+            ("mention_wash", mention_wash()),
             ("highlight_wash", highlight_wash()),
             ("announcement_wash_blue", announcement_wash_blue()),
             ("announcement_wash_green", announcement_wash_green()),

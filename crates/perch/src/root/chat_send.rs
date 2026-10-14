@@ -36,10 +36,15 @@ impl RootView {
             self.follows_complete,
             found,
         );
+        let login = match &self.sign_in {
+            SignIn::SignedIn(login) => Some(login.to_string()),
+            _ => None,
+        };
         Access {
             account: Account::of(&self.sign_in, self.chat_scope),
             own_channel,
             follows,
+            login,
         }
     }
 

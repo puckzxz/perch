@@ -119,11 +119,15 @@ impl RowKind {
     /// enumerating Twitch's `msg-id` values is a losing game, and the sentence
     /// in the row already says which event it was. A message is washed only
     /// when Twitch marks it, as highlighted or as someone's first.
-    fn wash(&self) -> Option<gpui::Hsla> {
+    ///
+    /// `me` is the signed-in login, for the lines addressed to the reader.
+    /// Read as the row is drawn rather than kept on it, so a sign-in after
+    /// the line arrived still marks it.
+    fn wash(&self, me: Option<&str>) -> Option<gpui::Hsla> {
         match self {
             RowKind::Event(notice) => Some(chat_tint::event_wash(notice).color()),
             RowKind::Message(message) => {
-                chat_tint::message_wash(message).map(chat_tint::Wash::color)
+                chat_tint::message_wash(message, me).map(chat_tint::Wash::color)
             }
             RowKind::Notice(_) => None,
         }
@@ -797,8 +801,8 @@ impl ChatView {
     ///
     /// Its padding above and below follows the text size, so an emote's
     /// overhang always has room ([`Metrics::row_pad_y`]).
-    fn row_frame(row: &Row, metrics: &Metrics) -> gpui::Div {
-        let wash = row.kind.wash();
+    fn row_frame(row: &Row, metrics: &Metrics, me: Option<&str>) -> gpui::Div {
+        let wash = row.kind.wash(me);
         div()
             .w_full()
             .flex()
@@ -884,7 +888,7 @@ impl ChatView {
         let body = match &row.kind {
             // The time beside the words rather than in them: a notice is one
             // run of text, not a line of words to wrap with.
-            RowKind::Notice(text) => Self::row_frame(row, &metrics)
+            RowKind::Notice(text) => Self::row_frame(row, &metrics, self.me())
                 .when_some(time, |frame, time| {
                     frame.gap(px(theme::GAP_WORD)).child(time)
                 })
@@ -901,7 +905,7 @@ impl ChatView {
             RowKind::Message(message) => {
                 let source = shared_chat::label(message.source_room.as_deref(), &self.rooms);
                 let line = self.message_line(row, message, time, source, &metrics, cx);
-                let frame = Self::row_frame(row, &metrics);
+                let frame = Self::row_frame(row, &metrics, self.me());
                 match &message.reply {
                     None => frame.child(line),
                     // The line it answers above it, and the message in a
@@ -1029,7 +1033,7 @@ impl ChatView {
             )));
         }
 
-        Self::row_frame(row, metrics)
+        Self::row_frame(row, metrics, self.me())
             .child(column)
             .into_any_element()
     }

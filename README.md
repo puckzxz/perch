@@ -428,7 +428,9 @@ whenever another app is in front, which is the one thing a pop-out is for.
 Read over anonymous IRC — no account, no token. Messages carry their
 emotes (Twitch, FFZ, BTTV and 7TV), links are clickable, `@mentions` are drawn
 in the colour of whoever is being addressed, and subs, gifts, raids and
-announcements appear as their own rows rather than being dropped. A past
+announcements appear as their own rows rather than being dropped. Signed in, a
+line that names you — with an `@` or without, in any case — or replies to one
+of yours sits on a rose wash, so it stands out in a fast chat. A past
 broadcast gets the same pane, replaying what was said as the picture reaches
 it — see [Past broadcasts](#past-broadcasts).
 

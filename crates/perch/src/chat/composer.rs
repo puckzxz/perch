@@ -112,6 +112,9 @@ pub struct Access {
     /// Whether the user follows this channel: `None` until a follows list
     /// has come back, or signed out.
     pub follows: Option<bool>,
+    /// The signed-in user's login, for washing the lines addressed to them
+    /// (`chat_tint::addressed_to`); `None` signed out.
+    pub login: Option<String>,
 }
 
 /// [`Access::follows`] from the follows list: `None` until one has come
@@ -135,6 +138,7 @@ impl Default for Access {
             account: Account::Connecting,
             own_channel: false,
             follows: None,
+            login: None,
         }
     }
 }
@@ -378,6 +382,12 @@ impl ChatView {
         self.channel.as_deref()
     }
 
+    /// The signed-in user's login, if this is a live chat and someone is
+    /// signed in: whose mentions it marks (`chat_tint::addressed_to`).
+    pub(super) fn me(&self) -> Option<&str> {
+        self.composer.as_ref()?.access.login.as_deref()
+    }
+
     /// What became of a message this chat sent, said as a notice row when
     /// it did not reach the room (`RootView::on_chat_sent`).
     pub fn sent(&mut self, notice: Option<String>, cx: &mut Context<Self>) {
@@ -495,6 +505,7 @@ mod tests {
             account: Account::Ready,
             own_channel: false,
             follows: Some(true),
+            login: Some("viewer".into()),
         }
     }
 

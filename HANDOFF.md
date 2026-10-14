@@ -3837,7 +3837,13 @@ there rather than handing the keys to the root (see the GPUI trap "A press on
 a pane takes the keys"). Out of scope for now: an emote picker, replying to a
 message, moderation commands and whispers.
 
-**A few messages wear a wash.** `chat_tint` picks it: `first-msg=1` gets
+**A few messages wear a wash.** `chat_tint` picks it: a line addressed to the
+signed-in user gets `theme::mention_wash`, a rose, ahead of everything else —
+it names them as a word of its own, `@` or not, in any case, or replies to
+one of theirs (`chat_tint::addressed_to`), never their own line — read as
+the row is drawn from the login the composer's `Access` carries
+(`ChatView::me`), so a sign-in after the line arrived still marks it, and a
+replay, which has no composer, marks nothing; `first-msg=1` gets
 `theme::first_message_wash` and a quiet `First message` tag at the end of the
 line, `msg-id=highlighted-message` gets `highlight_wash` (it wins over a first
 message), and an announcement's `msg-param-color`
