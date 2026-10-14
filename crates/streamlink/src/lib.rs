@@ -29,6 +29,7 @@ mod ads;
 mod job;
 pub mod playlist;
 pub mod quality;
+mod version;
 
 use std::io::{BufRead, BufReader, Read};
 use std::net::TcpListener;
@@ -105,14 +106,20 @@ type ChildSlot = Arc<Mutex<Option<Child>>>;
 /// binary removed since it was found fails that one start at the spawn,
 /// which says so plainly, and is forgotten there ([`forget_if_missing`]), so
 /// the start after searches again and finds a reinstall wherever it went.
-fn find_binary(slot: &ChildSlot) -> Option<PathBuf> {
+///
+/// The error is the sentence a pane shows: none found, or only ones too old
+/// for the arguments perch passes ([`version`]).
+fn find_binary(slot: &ChildSlot) -> Result<PathBuf, String> {
     if let Some(found) = FOUND.lock().unwrap().clone() {
-        return Some(found);
+        return Ok(found);
     }
     let found = probe_binary(slot)?;
     *FOUND.lock().unwrap() = Some(found.clone());
-    Some(found)
+    Ok(found)
 }
+
+/// What a pane says when no streamlink runs at all.
+const NOT_FOUND: &str = "streamlink not found. Install it, or set STREAMLINK_PATH.";
 
 /// The executable [`find_binary`] found, once it has.
 static FOUND: Mutex<Option<PathBuf>> = Mutex::new(None);
@@ -127,11 +134,18 @@ fn forget_if_missing(error: &std::io::Error) {
     }
 }
 
-/// [`find_binary`]'s search, probing each candidate with `--version`.
-fn probe_binary(slot: &ChildSlot) -> Option<PathBuf> {
+/// [`find_binary`]'s search, probing each candidate with `--version`: the
+/// first one new enough, or why there is none. One too old is passed over
+/// for the next, so an old copy on `PATH` does not hide a current install,
+/// and is named if nothing better turns up.
+fn probe_binary(slot: &ChildSlot) -> Result<PathBuf, String> {
     if let Some(explicit) = std::env::var_os("STREAMLINK_PATH") {
         let path = PathBuf::from(explicit);
-        return runs(&path, slot).then_some(path);
+        let printed = runs(&path, slot).ok_or_else(|| NOT_FOUND.to_string())?;
+        return match version::too_old(&printed) {
+            Some(why) => Err(why),
+            None => Ok(path),
+        };
     }
 
     let mut candidates = vec![PathBuf::from("streamlink")];
@@ -147,7 +161,17 @@ fn probe_binary(slot: &ChildSlot) -> Option<PathBuf> {
         candidates.push(PathBuf::from("/usr/local/bin/streamlink"));
         candidates.push(PathBuf::from("/opt/homebrew/bin/streamlink"));
     }
-    candidates.into_iter().find(|path| runs(path, slot))
+    let mut old = None;
+    for path in candidates {
+        let Some(printed) = runs(&path, slot) else {
+            continue;
+        };
+        match version::too_old(&printed) {
+            Some(why) => old = old.or(Some(why)),
+            None => return Ok(path),
+        }
+    }
+    Err(old.unwrap_or_else(|| NOT_FOUND.to_string()))
 }
 
 /// Build a command that does not open a console window.
@@ -173,11 +197,15 @@ fn command(binary: impl AsRef<std::ffi::OsStr>) -> Command {
     command
 }
 
-/// A bare name relies on PATH lookup, which is exactly what we want to test.
-fn runs(path: &PathBuf, slot: &ChildSlot) -> bool {
+/// What `path --version` printed, if it ran and exited cleanly. A bare name
+/// relies on PATH lookup, which is exactly what we want to test.
+fn runs(path: &PathBuf, slot: &ChildSlot) -> Option<String> {
     let mut probe = command(path);
     probe.arg("--version");
-    matches!(run_tracked(probe, slot), Ok((_, true)))
+    match run_tracked(probe, slot) {
+        Ok((printed, true)) => Some(String::from_utf8_lossy(&printed).into_owned()),
+        _ => None,
+    }
 }
 
 /// Run a command to completion with its handle parked in `slot`, so a teardown
@@ -361,10 +389,34 @@ fn list_streams(
         forget_if_missing(&e);
         format!("could not run streamlink: {e}")
     })?;
+    streams_from_answer(&stdout)
+}
 
-    let json: serde_json::Value = serde_json::from_slice(&stdout)
+/// What a `--json` probe printed, read: [`streams_from_json`] of it, or why
+/// there is nothing to read. Nothing at all is what a streamlink that
+/// refused its arguments prints, its complaint going to stderr.
+fn streams_from_answer(stdout: &[u8]) -> Result<Vec<(String, String)>, String> {
+    if stdout.iter().all(u8::is_ascii_whitespace) {
+        return Err("streamlink exited without an answer".into());
+    }
+    let json: serde_json::Value = serde_json::from_slice(stdout)
         .map_err(|e| format!("streamlink returned unreadable JSON: {e}"))?;
     streams_from_json(&json)
+}
+
+/// `reason`, with what to do about it when it is the kind of failure an
+/// update of streamlink is the fix for: Twitch retiring a query streamlink
+/// asks for (`PersistedQueryNotFound`, which broke every release before
+/// 8.0.0 in November 2025), or asking for a client-integrity token it
+/// cannot get. Read here, where the other words of streamlink's are, so
+/// nothing in the app matches on them.
+fn with_advice(reason: String) -> String {
+    let lower = reason.to_ascii_lowercase();
+    if lower.contains("persistedquerynotfound") || lower.contains("integrity") {
+        format!("{reason}. Twitch has likely changed under streamlink: update it.")
+    } else {
+        reason
+    }
 }
 
 /// The `streams` map of a `--json` answer, or the error it carries instead.
@@ -375,7 +427,7 @@ fn streams_from_json(json: &serde_json::Value) -> Result<Vec<(String, String)>, 
         if error.contains("No playable streams") {
             return Ok(Vec::new());
         }
-        return Err(error.to_string());
+        return Err(with_advice(error.to_string()));
     }
 
     Ok(json
@@ -529,11 +581,12 @@ fn run(
     stop: Arc<AtomicBool>,
     child_slot: ChildSlot,
 ) {
-    let Some(binary) = find_binary(&child_slot) else {
-        let _ = tx.unbounded_send(StreamEvent::Failed {
-            reason: "streamlink not found. Install it, or set STREAMLINK_PATH.".into(),
-        });
-        return;
+    let binary = match find_binary(&child_slot) {
+        Ok(binary) => binary,
+        Err(reason) => {
+            let _ = tx.unbounded_send(StreamEvent::Failed { reason });
+            return;
+        }
     };
     // `stop` is checked between every phase, not only inside the serving loop.
     // Teardown no longer joins this thread, so nothing outside is waiting for
@@ -591,6 +644,13 @@ fn run(
         "--player-external-http-interface".to_string(),
         "127.0.0.1".to_string(),
         "--twitch-low-latency".to_string(),
+        // Said, not assumed: `Starting server`, which `Ready` waits on, is
+        // logged at info, and so are the ad notices (`ads`). A `loglevel`
+        // above that in streamlink's own config file would leave the pane
+        // starting for ever; the command line is read after the file, so
+        // this wins.
+        "--loglevel".to_string(),
+        "info".to_string(),
     ];
     args.extend(twitch_args(&target, &options));
     args.push(chosen.name.clone());
@@ -671,9 +731,8 @@ fn run(
             } else if let Some(secs) = ads::ad_break(&line) {
                 // The same log, read line by line as it comes, so an ad is
                 // heard as streamlink says it, never after it. Streamlink is
-                // run at its default log level, info, which these are at; a
-                // configuration that raises it means no notice, and nothing
-                // else changes.
+                // run at info, which these are at, whatever its own config
+                // file says.
                 let _ = tx.unbounded_send(StreamEvent::AdBreak { secs });
             }
         }
@@ -696,7 +755,9 @@ fn run(
     if reason.contains("No playable streams") {
         let _ = tx.unbounded_send(StreamEvent::Offline);
     } else {
-        let _ = tx.unbounded_send(StreamEvent::Failed { reason });
+        let _ = tx.unbounded_send(StreamEvent::Failed {
+            reason: with_advice(reason),
+        });
     }
 }
 
@@ -710,11 +771,12 @@ fn resolve_video(
     stop: Arc<AtomicBool>,
     child_slot: ChildSlot,
 ) {
-    let Some(binary) = find_binary(&child_slot) else {
-        let _ = tx.unbounded_send(StreamEvent::Failed {
-            reason: "streamlink not found. Install it, or set STREAMLINK_PATH.".into(),
-        });
-        return;
+    let binary = match find_binary(&child_slot) {
+        Ok(binary) => binary,
+        Err(reason) => {
+            let _ = tx.unbounded_send(StreamEvent::Failed { reason });
+            return;
+        }
     };
     if stop.load(Ordering::Relaxed) {
         return;
@@ -842,6 +904,41 @@ mod tests {
         assert_eq!(
             streams_from_json(&other).unwrap_err(),
             "Unable to open URL: timeout"
+        );
+    }
+
+    /// A streamlink that refused its arguments prints nothing on stdout,
+    /// and that is said as nothing, not as JSON that could not be read.
+    #[test]
+    fn an_empty_answer_is_said_plainly() {
+        assert_eq!(
+            streams_from_answer(b"").unwrap_err(),
+            "streamlink exited without an answer"
+        );
+        assert_eq!(
+            streams_from_answer(b" \r\n").unwrap_err(),
+            "streamlink exited without an answer"
+        );
+        assert!(streams_from_answer(b"{not json")
+            .unwrap_err()
+            .starts_with("streamlink returned unreadable JSON"));
+        assert_eq!(streams_from_answer(VIDEO.as_bytes()).unwrap().len(), 6);
+    }
+
+    /// Twitch retiring a query streamlink asks for is the update's to fix,
+    /// and the pane says so; any other failure is left in its own words.
+    #[test]
+    fn a_failure_an_update_fixes_says_so() {
+        let retired: serde_json::Value = serde_json::from_str(
+            r#"{"error": "Unable to open URL: https://gql.twitch.tv/gql (Error: PersistedQueryNotFound)"}"#,
+        )
+        .unwrap();
+        assert!(streams_from_json(&retired)
+            .unwrap_err()
+            .ends_with("Twitch has likely changed under streamlink: update it."));
+        assert_eq!(
+            with_advice("error: Unable to open URL: timeout".into()),
+            "error: Unable to open URL: timeout"
         );
     }
 

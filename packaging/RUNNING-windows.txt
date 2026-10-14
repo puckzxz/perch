@@ -21,7 +21,12 @@ The Windows installer is the easy answer. Anything that puts `streamlink` on
 your PATH works, and if yours lives somewhere unusual, set STREAMLINK_PATH to
 the full path of the executable.
 
-Without it: a pane opens and says "streamlink not found".
+It has to be 8.0 or later; 8.6.2 or later is the one to have, for its
+security fixes. When Twitch changes something under streamlink, a newer
+streamlink is nearly always the fix.
+
+Without it: a pane opens and says "streamlink not found", or that the one it
+found is too old.
 
 
 2. libmpv-2.dll — required

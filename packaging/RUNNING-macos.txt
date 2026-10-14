@@ -47,8 +47,12 @@ fallback search covers /usr/local/lib and /usr/lib and nothing else, so on an
 Apple Silicon Mac — where Homebrew installs to /opt/homebrew — the ordinary
 install would be the one case that could not be found.
 
-Without them: a pane opens and says which one is missing, and for libmpv it
-lists every directory it looked in.
+streamlink has to be 8.0 or later; 8.6.2 or later is the one to have, for its
+security fixes, and `brew upgrade streamlink` is nearly always the fix when
+Twitch changes something under it.
+
+Without them: a pane opens and says which one is missing, or that streamlink
+is too old, and for libmpv it lists every directory it looked in.
 
 
 2. A Twitch Client ID — required to see who you follow

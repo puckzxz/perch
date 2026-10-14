@@ -397,7 +397,9 @@ whenever another app is in front, which is the one thing a pop-out is for.
 
 ### Requirements
 
-- **streamlink** on `PATH`, or `STREAMLINK_PATH` pointing at it.
+- **streamlink** 8.0 or later, on `PATH` or with `STREAMLINK_PATH` pointing
+  at it. An older one is passed over, and a pane says it is too old. 8.6.2 or
+  later is the one to have, for its security fixes.
 - **libmpv**, which is a different errand on each platform:
 
   On **macOS**, `brew install mpv streamlink` is both requirements at once —

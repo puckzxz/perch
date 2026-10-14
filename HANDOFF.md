@@ -1176,8 +1176,11 @@ pre-roll ads to finish, be patient` and `Detected advertisement break of N
 seconds` at info (`src/streamlink/plugins/twitch.py`, read 2 October 2026),
 once per break, and nothing when it ends. Its log goes to stdout unless
 stdout carries the stream, which with `--player-external-http` it does
-not, and its default level is `info`; perch passes no `--loglevel`, so a
-streamlink config that raises the level only takes the notice away.
+not. The serving run passes `--loglevel info`: `Starting server`, which a
+start waits on to say it is ready, is logged at info too, so a streamlink
+config raising the level used to leave a pane starting for ever, not merely
+without the notice. The command line is read after the config file, so it
+wins.
 `streamlink::ads` matches the lines loosely, in the same loop that waits
 for `Starting server`, and sends `StreamEvent::AdBreak { secs }`. The end
 has to be inferred: the header's tag goes when the length runs out or when
@@ -1191,6 +1194,23 @@ own ad lines, and a swap ends the notice.
 **`--twitch-supported-codecs h264,h265,av1` is required** or Twitch's higher tiers
 (1440p, 4K) are silently absent from the quality list — they ride on HEVC/AV1 and
 streamlink filters to h264 by default.
+
+**streamlink 8.0 is the oldest that runs.** 8.0.0 (11 November 2025) added
+`--twitch-supported-codecs`, which every run passes, and fixed the access
+token after Twitch retired the persisted query older releases asked for. An
+older one refuses the flag on stderr, which nothing reads during the probe,
+and the pane used to say `streamlink returned unreadable JSON`. Finding the
+binary already runs `--version`; `streamlink::version` reads what it prints,
+passes over a candidate below 8.0 for the next one (so an old copy on `PATH`
+does not hide a current install) and, if none will do, says `streamlink
+7.5.0 is too old. Update it to 8.0 or later.` A version it cannot read is
+let through. A probe that prints nothing says so, and a failure an update
+is the fix for — `PersistedQueryNotFound`, or a client-integrity token
+asked for — ends with `Twitch has likely changed under streamlink: update
+it.` (`streamlink::with_advice`), read in the streamlink crate where its
+other words are, so nothing in the app matches on them. README and the
+RUNNING files recommend 8.6.2 or later, for the security fixes in 8.4.0,
+8.6.0 and 8.6.2 (the streamlink changelog, read 14 October 2026).
 
 **streamlink does not exit when the stream ends.**
 `--player-external-http-continuous` defaults to `yes`, so when a broadcast
