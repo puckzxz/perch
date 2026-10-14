@@ -42,9 +42,10 @@ const SHORTCUT_KEY: f32 = 56.0;
 /// Stored by height rather than by exact streamlink name: channels name the
 /// same rendition differently (`480p` vs `480p30`, or `936p60` on a stream with
 /// an unusual aspect), so an exact name would silently stop matching.
-const QUALITY_OPTIONS: [(&str, &str); 8] = [
+const QUALITY_OPTIONS: [(&str, &str); 9] = [
     ("Auto (matches the video pane)", "auto"),
     ("Best available", "best"),
+    ("2160p", "2160p"),
     ("1440p", "1440p"),
     ("1080p", "1080p"),
     ("720p", "720p"),

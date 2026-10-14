@@ -28,11 +28,18 @@ use crate::seek_bar::Timeline;
 use crate::speed::Speed;
 use crate::vod::{self, Extent, Recording};
 
-/// Upper bound on render size. 1440p is the highest Twitch tier, so anything
-/// beyond this is scaling up, which measured as the single most expensive thing
-/// this pipeline can do.
-pub const MAX_RENDER_WIDTH: u32 = 2560;
-pub const MAX_RENDER_HEIGHT: u32 = 1440;
+/// Upper bound on render size: 2160p, the highest tier Twitch serves
+/// (Enhanced Broadcasting's 4K, which `--twitch-supported-codecs` lets
+/// streamlink offer), so anything beyond this is scaling up, which measured
+/// as the single most expensive thing this pipeline can do.
+///
+/// It was 1440p, which stretched a 4K stream filling a 4K display from a
+/// 1440p render: a CPU saving paid for in picture, which the user turned
+/// down in October 2026 (HANDOFF, "Product decisions"). The render is never
+/// above the source either (`source` in the render loop), so only a stream
+/// above 1440p in a pane taller than that pays the 33 MB a frame.
+pub const MAX_RENDER_WIDTH: u32 = 3840;
+pub const MAX_RENDER_HEIGHT: u32 = 2160;
 
 /// Whether to ask mpv to decode on the GPU. On, now that it has been measured.
 ///
@@ -203,9 +210,10 @@ impl SizeHandle {
 
     /// Ask for a new render size in physical pixels.
     ///
-    /// Capped so that maximising onto a 4K display does not quietly start
-    /// pushing 33 MB per frame through the CPU; the element scales the last
-    /// stretch, which is far cheaper than rendering it.
+    /// Capped at the highest tier Twitch serves ([`MAX_RENDER_HEIGHT`]), so
+    /// a display past 4K does not push more than any stream has through the
+    /// CPU; the element scales the last stretch, which is far cheaper than
+    /// rendering it.
     pub fn request(&self, width: u32, height: u32) {
         let width = width.clamp(160, MAX_RENDER_WIDTH);
         let height = height.clamp(90, MAX_RENDER_HEIGHT);

@@ -70,8 +70,10 @@ monitor at 100% scale with a vertical one beside it, and the mouse first —
 - **Picture quality over CPU.** A CPU saving paid for in picture quality is
   not taken; find the part of it that costs no quality instead (see the
   Performance trap and "Things not to redo"). It is why a pop-out's quality
-  follows its window upwards only, and why panes maximized away keep their
-  rendition.
+  follows its window upwards only, why panes maximized away keep their
+  rendition, and why the render cap is 2160p rather than 1440p
+  (`video::MAX_RENDER_HEIGHT`): the user chose a 4K stream drawn at its size
+  on their 4K monitor over the CPU a 1440p render saved (14 October 2026).
 - **No UI scale setting, and no list for hiding channels.** Both were offered
   in October 2026 and declined: the app looks right at 100% to the person who
   uses it, and nobody asked to hide anyone.

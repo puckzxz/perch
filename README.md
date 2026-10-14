@@ -891,7 +891,8 @@ Note row three: an arbitrary downscale costs *more* than rendering at native
 size, despite producing fewer pixels. So selection prefers 1:1, then exact
 fractions, and never upscales while a larger source exists. Render size is also
 clamped to the source resolution — mpv never scales up, the GPU stretches the
-last bit instead, which is effectively free.
+last bit instead, which is effectively free — and to 2160p, the highest tier
+Twitch serves, so a 4K stream filling a 4K screen is drawn at its own size.
 
 A live pane whose picture stops for more than a second while it waits on the
 network says `buffering` in its header, beside `muted` and `paused`, until the
