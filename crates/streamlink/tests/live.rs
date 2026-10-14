@@ -12,15 +12,40 @@
 //! cargo test -p streamlink --test live -- --ignored --nocapture
 //! ```
 //!
-//! `PERCH_LIVE_CHANNEL` names the channel; without it, the first of a few big
-//! ones that is live. `STREAMLINK_PATH` names the binary, as in the app.
+//! `PERCH_LIVE_CHANNEL` names the channel; without it, the first of the
+//! channels at the top of Twitch's directory right now, asked anonymously, so
+//! the check does not depend on who happens to be live at the hour it is run.
+//! `STREAMLINK_PATH` names the binary, as in the app.
 
 use std::process::Command;
 
 use serde_json::Value;
 use streamlink::quality;
 
-const CHANNELS: [&str; 5] = ["xqc", "kaicenat", "shroud", "summit1g", "lirik"];
+/// The website's Client-ID, which the directory query below answers on
+/// anonymously, as `twitch_api::recommend` asks its own.
+const WEB_CLIENT_ID: &str = "kimne78kx3ncx6brgo4mv6wki5h1ko";
+
+/// The logins at the top of Twitch's live directory, most watched first.
+fn live_now() -> Vec<String> {
+    let query = "query { streams(first: 5) { edges { node { broadcaster { login } } } } }";
+    let Ok(mut response) = ureq::post("https://gql.twitch.tv/gql")
+        .header("Client-ID", WEB_CLIENT_ID)
+        .send_json(serde_json::json!({ "query": query }))
+    else {
+        return Vec::new();
+    };
+    let Ok(body) = response.body_mut().read_json::<Value>() else {
+        return Vec::new();
+    };
+    body.pointer("/data/streams/edges")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|edge| edge.pointer("/node/broadcaster/login")?.as_str())
+        .map(str::to_string)
+        .collect()
+}
 
 /// What `streamlink --json` names for `channel`, or `None` when it is off.
 fn renditions(channel: &str) -> Option<Vec<String>> {
@@ -40,12 +65,12 @@ fn renditions(channel: &str) -> Option<Vec<String>> {
 fn every_rendition_streamlink_names_is_understood() {
     let channels: Vec<String> = match std::env::var("PERCH_LIVE_CHANNEL") {
         Ok(channel) => vec![channel],
-        Err(_) => CHANNELS.iter().map(|c| c.to_string()).collect(),
+        Err(_) => live_now(),
     };
     let (channel, names) = channels
         .iter()
         .find_map(|channel| renditions(channel).map(|names| (channel, names)))
-        .expect("none of the channels is live: set PERCH_LIVE_CHANNEL");
+        .expect("no live channel answered streamlink: set PERCH_LIVE_CHANNEL");
     println!("{channel}: {names:?}");
     let left_out =
         |name: &str| matches!(name, "best" | "worst" | "audio_only") || name.ends_with("_portrait");
