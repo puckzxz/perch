@@ -4,7 +4,7 @@ For whoever picks this up next. `README.md` covers *using* it; this covers
 *working on* it — the architecture, the traps, and the things that cost real
 time to discover and would cost the same again.
 
-Roughly 45,000 lines across seven crates. `cargo test --workspace`,
+Roughly 65,000 lines across seven crates, tests included. `cargo test --workspace`,
 `cargo clippy --workspace --all-targets` and `cargo fmt --all --check` are all
 expected to pass; if one does not, that is the change you are looking at, not
 the baseline.
@@ -1703,9 +1703,20 @@ fails silently, and each was read out of gpui 0.2.2's source:
   maximises but never restores (windows/window.rs:790-798), or
   `remove_window`, which skips `on_window_should_close` and so never saves the
   window's place.
+- **A frame drawn after the pointer left the window hit-tests nothing**, on
+  Windows and Linux: vendored gpui fix 7 (05a8a87, `window.rs`, a `PERCH
+  PATCH` `scripts/verify-vendor.sh` knows about). gpui hears the leave as the
+  window's `hovered` flag and a repaint, never a move (events.rs:318-327), so
+  the frame after it used to hit-test the last position it saw, and a rail
+  row, or any `.hover()` style on the edge the pointer left by, stayed lit
+  until it came back. Not on macOS, where `is_window_hovered` means active.
+  It does not make the gates below unnecessary: a tooltip's prepaint still
+  tests `source_bounds.contains(window.mouse_position())` (div.rs:2293-2301),
+  and a press dragged off the window is the platform's, not a hit test's.
 - **Caption buttons light only while `window.is_window_hovered()`.** gpui
   hears the pointer leave the window as a flag and a repaint, never a move
-  (events.rs:318-327), so the next frame hit-tests the last position it saw.
+  (events.rs:318-327), so before fix 7 the next frame hit-tested the last
+  position it saw, and on macOS it still does.
   The buttons sit in the corner the pointer usually leaves by, so Close would
   stay red with the pointer off the window. A press is worse: a press on a
   caption button is non-client, gpui captures nothing for it
@@ -4637,8 +4648,20 @@ at the foot of each live chat, sent through Helix with the new
 `user:write:chat` scope, Twitch's refusals said in the chat, and a one-press
 `Sign in again` for a sign-in from before the scope (see "A live chat can
 send" under Chat). And Sign out, in the settings sheet (see "The second
-scope, and signing out" under "The two Twitch tokens"). Left for later: an
-emote picker, replying to a message, moderation commands and whispers.
+scope, and signing out" under "The two Twitch tokens"). Left for later:
+replying to a message. An emote picker, moderation commands and whispers
+stay out (see "Product decisions").
+
+So is the round of 14 October 2026, picked by the user from a ranked list
+of thirty: chat lines that name or answer the signed-in user wear a wash of
+their own; a live picture waiting on the network says `buffering`; `Reset
+pane sizes` in the chat options menu; previews for recommended channels; a
+2160p render cap; and the reliability half — held chat rows capped,
+streamlink's age and Twitch's changes named in the pane, render loops and
+the Twitch worker that no longer die without a word, a crash file, a
+sign-in that survives a Sign out race, a failed save and a power cut, one
+go-live toast per broadcast, an ended pane that tries once more when its
+broadcast is still listed, and an emote cache that keeps what is drawn.
 
 Left over from phase 1, smallest first:
 
@@ -4723,8 +4746,10 @@ Ranked by what would be noticed, roughly:
    that is *not* playing: `Start when they go live` waits on the follows
    poll, so the switch stays hidden for a channel you do not follow, and
    such a channel gets no starting poster and an ended pane no broadcast
-   id. Asking for those too is a standing request per stopped pane, which
-   is why it stayed out.
+   id. Asking for those too would not be a request per pane, as was once
+   thought: `Request::PaneStreams` already asks for every login it is
+   given in one call (`streams_by_login` takes up to a hundred), so a
+   stopped pane is one more login in the same ask.
 4. **Highlight rules** that wash the row background rather than colouring a
    word. The washes already exist for events and for Twitch's own marks
    (`chat_tint`); badges and reply lines are built (see "Names wear their
@@ -4755,7 +4780,7 @@ Ranked by what would be noticed, roughly:
   each needs a scope of its own (`moderator:manage:*`, `user:manage:whispers`)
   and a UI. Sending a message, once in this list because the user had ruled
   it out, is built (see "A live chat can send" under Chat); the emote picker
-  is left for later.
+  stays out (see "Product decisions").
 - **Text selection across a message.** Every word is its own element and GPUI
   has no cross-element text selection, so there is no contiguous run to select.
   Links being clickable is currently the only way to get a URL out of the pane.
@@ -5061,6 +5086,16 @@ None of these is being worked on; all of them are real.
       still under the pointer, `Alt` + wheel, middle-click, `Only this
       one`, the ad-break notice, badges, reply lines, the guide, the rail's
       preview cards, right-click copy and sending chat.
+    - the round of 14 October 2026, signed-in parts: the mention wash on
+      a real chat, recommended previews on the rail's and the guide's
+      cards and under a starting pane, an ended pane's one try while its
+      broadcast is still listed, the sign-in toast for a failed save, the
+      2160p render on a 4K stream, and a render loop's own exit offering
+      `Try again`. Seen working in a scratch copy, through a stand-in
+      streamlink serving a local file (`STREAMLINK_PATH` at a script):
+      the `buffering` tag up through a six-second stall and gone after it,
+      `Reset pane sizes` putting a 520px chat back to 340 and saving it,
+      and the pane's `streamlink 7.5.0 is too old` line.
 
 ## Things not to redo
 
