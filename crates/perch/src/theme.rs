@@ -54,7 +54,7 @@ pub const MIN_CONTRAST: f32 = 4.5;
 
 /// sRGB relative luminance, per WCAG 2.
 ///
-/// Here rather than in the tests because [`readable`] needs it at runtime: a
+/// Here rather than in the tests because [`readable_on`] needs it at runtime: a
 /// username is lifted until it *measures* legible, not until it reaches a
 /// lightness that usually is.
 fn luminance(color: Hsla) -> f32 {

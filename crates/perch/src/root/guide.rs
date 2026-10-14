@@ -270,13 +270,14 @@ impl RootView {
             .collect()
     }
 
-    /// What the guide leaves behind on a frame it is not drawn: no veil over
-    /// the panes, and no hold on the follows from a probe that is not
+    /// What the guide leaves behind on a frame it is not drawn: no cover of
+    /// its own in the veil over the panes (a card's is its chat's to lift),
+    /// and no hold on the follows from a probe that is not
     /// painted and so cannot let go itself. From the root's render on every
     /// frame of the browse page, and from [`guide_panel`](Self::guide_panel)
     /// while it is put away.
     pub(super) fn guide_not_drawn(&mut self, cx: &mut Context<Self>) {
-        veil::lift(cx);
+        veil::lift(veil::Cover::Guide, cx);
         self.hold_live(LiveList::Guide, false, cx);
     }
 
@@ -356,7 +357,7 @@ impl RootView {
         // for none (HANDOFF.md, "A notify from a probe asks for no frame").
         let probe = canvas(
             move |bounds, window, cx| {
-                if veil::cover(bounds, window, cx) {
+                if veil::cover(veil::Cover::Guide, bounds, window, cx) {
                     window.request_animation_frame();
                 }
             },

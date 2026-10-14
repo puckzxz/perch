@@ -11,8 +11,9 @@
 //! pointer is in the window; and, until the picture is on disk, the word's
 //! prefix in its place, dim, as an emote's name stands in for an emote. The
 //! amount follows it in bold, in the tier's colour, lifted as far as it must
-//! be to read on the row's own paint (`theme::readable_on`,
-//! `ChatView::row_ground`). The two are one piece of the line, so they never
+//! be to read on what the line is drawn on (`theme::readable_on`): the row's
+//! own paint in the list (`ChatView::row_ground`), the bare surface in a
+//! viewer card's well. The two are one piece of the line, so they never
 //! wrap apart. Nothing in it says what a right press landed on, so the press
 //! opens the row's copy menu as on the row's words: a cheer has no name to
 //! copy that the message's text does not already carry.

@@ -533,10 +533,11 @@ and **twitch.tv** opens their channel in your browser. With the **Mini
 player** switch off, leaving the watch page stops the streams on it, so there
 **Channel page** asks first — **Stop streams and open?** — and goes only on a
 second click; a click anywhere else, or a few seconds, puts it back. Signed
-out the card has their names and messages, without the picture, the date or
-**Channel page**, which needs you signed in. A click anywhere else, the ×,
-their name again or `Esc` closes the card; right-click one of their messages
-on it to copy it. It has no hide, ignore or moderation buttons.
+out, nobody new is looked up, so a card has only their names and messages
+unless you opened theirs signed in since Perch started; and **Channel
+page**, which needs you signed in, is not offered. A click anywhere else, the
+×, their name again or `Esc` closes the card; right-click one of their
+messages on it to copy it. It has no hide, ignore or moderation buttons.
 
 While you are signed in, names wear their Twitch badges in front of them —
 broadcaster, moderator, VIP, the channel's own subscriber and bits badges —

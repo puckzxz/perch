@@ -19,7 +19,8 @@
 //! The account is the root's to ask for: Helix, once per login a session,
 //! and the open card is told what is known ([`CardFacts`],
 //! [`ChatView::set_card_facts`]; `chat_profiles`). Signed out nothing is
-//! asked, and the card has what the chat already has, the names and lines.
+//! asked, and the card for someone not asked about while signed in has what
+//! the chat already has, the names and lines; an answer outlives a sign-out.
 //!
 //! The card is a plain absolute child of the chat's list box, not deferred
 //! as the copy menu is, so the palette, the settings sheet and the guide all
@@ -32,7 +33,18 @@
 //! at the press, so it stays put while the row it came from scrolls away,
 //! held inside the box if the box shrinks under it. It holds no rows of its
 //! own, and the pointer on it holds the chat's as the pointer anywhere on
-//! the chat does (`sync_hold`).
+//! the chat does (`sync_hold`), risen out of the box or not.
+//!
+//! Risen, it is over what the panes' probes measure, and a probe sees
+//! through it, so it writes where it is into the veil every frame
+//! (`crate::veil`, `Cover::Card`, from a probe of its own) and wakes them as
+//! the pointer comes onto it or leaves. The pane above is then not made the
+//! active one by the pointer on the card, and no player's bar comes up
+//! behind it, its own pane's included. Two probes leave it out: its own
+//! pane's hover, since the card is part of the pane, and its chat's hold,
+//! which counts the pointer on the card as on the chat. Its cover is lifted
+//! as it closes ([`ChatView::close_card`]), on every render of the chat with
+//! no card open, and as the chat goes.
 //!
 //! It closes on a press anywhere outside it, heard in the capture phase so
 //! that the press still lands (a press on another name moves it to that
@@ -71,8 +83,8 @@
 
 use chrono::Utc;
 use gpui::{
-    div, img, prelude::*, px, Animation, AnimationExt, AnyElement, App, Context, MouseButton,
-    MouseDownEvent, Pixels, Point, ScrollHandle, SharedString, Task, Window,
+    canvas, div, img, prelude::*, px, Animation, AnimationExt, AnyElement, App, Context,
+    MouseButton, MouseDownEvent, Pixels, Point, ScrollHandle, SharedString, Task, Window,
 };
 use twitch_chat::ChatMessage;
 
@@ -84,6 +96,7 @@ use crate::chat_profiles::{self, Lookup};
 use crate::controls::{self, Variant};
 use crate::shared_chat;
 use crate::theme;
+use crate::veil;
 
 /// How many of a person's lines their card shows, the newest. Enough to
 /// see what they are about; every repaint of an open card lays them out,
@@ -402,8 +415,11 @@ impl ChatView {
     }
 
     /// Close the card, if one is open. Returns whether one was, so `Esc`
-    /// can take back the card before it takes you off the page.
+    /// can take back the card before it takes you off the page. Its cover
+    /// goes with it, here and not only at the next render, which a chat put
+    /// off the screen (`let_go_hold`) does not have.
     pub fn close_card(&mut self, cx: &mut Context<Self>) -> bool {
+        veil::lift(veil::Cover::Card(cx.entity_id()), cx);
         if !self.cards.close() {
             return false;
         }
@@ -479,6 +495,22 @@ impl ChatView {
         let well = self.card_lines(&lines, card, metrics, cx);
         let foot = self.card_foot(login, &name, card, cx);
 
+        // Where it is, written into the veil every frame, so the panes it
+        // rises over leave the pointer on it alone, as they do the guide's
+        // (`crate::veil`); a move asks for the frame that the probes run
+        // before this one read it in, as the guide's does.
+        let cover = veil::Cover::Card(cx.entity_id());
+        let probe = canvas(
+            move |bounds, window, cx| {
+                if veil::cover(cover, bounds, window, cx) {
+                    window.request_animation_frame();
+                }
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_full();
+
         let opened = card.opened as usize;
         Some(
             div()
@@ -500,6 +532,12 @@ impl ChatView {
                 // Over the rows and the pills at their foot, whose links and
                 // names would otherwise hear a press on it too.
                 .occlude()
+                // Occluding, it hides the pointer from the listeners under
+                // it that wake the probes, so it wakes them itself as the
+                // pointer comes onto it or leaves it, as an occluder over a
+                // probed area must (HANDOFF, "Neither `group_hover` nor
+                // `on_hover` means ...").
+                .on_hover(cx.listener(|_, _: &bool, _window, cx| cx.notify()))
                 // Every press on it, before anything on it acts: the root's
                 // own focus never hears one, and what an earlier press closed
                 // is forgotten, as the chat's listener does for a press
@@ -516,6 +554,7 @@ impl ChatView {
                         cx.notify();
                     }
                 }))
+                .child(probe)
                 .child(head)
                 .children(badges)
                 .child(well)

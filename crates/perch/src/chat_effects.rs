@@ -10,19 +10,21 @@
 //!
 //! A `RenderImage` that has been drawn holds atlas tiles, one per frame,
 //! which gpui gives back only when told (`App::drop_image`), exactly as the
-//! pane's plain emotes do (`ChatView::emote_images`). So the book is bounded
-//! ([`LIMIT`]): past it, the picture drawn longest ago goes, and is handed
-//! back to be released at the start of the pane's next frame
-//! ([`Pictures::start_frame`]); and when the pane goes, everything is
-//! ([`Pictures::take_all`]). Never one the frame being drawn has used: its
+//! pane's plain emotes do (`ChatView::emote_images`), and its frames, which
+//! it keeps as well. So the book is bounded, by count ([`LIMIT`]) and by
+//! what its frames cost ([`BYTES`]): past either, the picture drawn longest
+//! ago goes, and is handed back to be released at the start of the pane's
+//! next frame ([`Pictures::start_frame`]); and when the pane goes, everything
+//! is ([`Pictures::take_all`]). Never one the frame being drawn has used: its
 //! tiles would be freed under a scene that still names them, so a frame that
-//! asks for more than the bound overruns it, until an ask in a later frame
-//! lets the extra go. The frame that does is usually the list's measuring
-//! pass, which lays out every row of the backlog at once (when the pane first
-//! measures, and when a new text size, times setting or Shared Chat label
-//! resets the list while it follows live): every distinct emote and effects
-//! in the backlog is made then, which costs memory and background work but
-//! no atlas tiles, since nothing measured is painted.
+//! asks for more than the bound overruns it, until an ask, or a picture
+//! landing, in a later frame lets the extra go. The frame that does is
+//! usually the list's measuring pass, which lays out every row of the
+//! backlog at once (when the pane first measures, and when a new text size,
+//! times setting or Shared Chat label resets the list while it follows
+//! live): every distinct emote and effects in the backlog is made then,
+//! which costs memory and background work but no atlas tiles, since nothing
+//! measured is painted.
 
 use std::sync::Arc;
 
@@ -36,6 +38,20 @@ use smallvec::SmallVec;
 /// an effect is on a few of them; past this, a picture made has not been
 /// drawn for a while.
 pub const LIMIT: usize = 64;
+
+/// How many bytes of frames a pane keeps made, all told. Party and shake run
+/// an animated emote's loop again until it ends with their period, up to
+/// 4 MiB of frames for one picture (`emotes::effects`), so [`LIMIT`] alone
+/// would let a pane keep 256 MiB of them. This holds eight of the largest,
+/// more than a pane shows at once, and a flip, turn or cursed is only the
+/// emote's own frames, a few hundred KiB for most.
+pub const BYTES: usize = 32 << 20;
+
+/// What a kept picture costs, which the book holds to [`BYTES`].
+pub trait Weight {
+    /// The bytes of its frames.
+    fn bytes(&self) -> usize;
+}
 
 /// What there is of one picture.
 #[derive(Debug, Clone, PartialEq)]
@@ -53,6 +69,8 @@ struct Entry<T> {
     url: String,
     effects: Effects,
     picture: Picture<T>,
+    /// What its frames cost: nothing until it is made, or if it could not be.
+    bytes: usize,
     /// The frame that last asked for it.
     drawn: u64,
 }
@@ -78,7 +96,7 @@ impl<T> Default for Pictures<T> {
     }
 }
 
-impl<T: Clone> Pictures<T> {
+impl<T: Clone + Weight> Pictures<T> {
     /// A new frame is being drawn: what the last one let go, to be released
     /// now that no scene being built can name it.
     pub fn start_frame(&mut self) -> Vec<T> {
@@ -101,12 +119,48 @@ impl<T: Clone> Pictures<T> {
     /// Note `url` with `effects` as being made, letting the picture drawn
     /// longest ago go when the book is full.
     pub fn start(&mut self, url: &str, effects: Effects) {
-        while self.entries.len() >= LIMIT {
+        self.let_go(1);
+        self.entries.push(Entry {
+            url: url.to_string(),
+            effects,
+            picture: Picture::Making,
+            bytes: 0,
+            drawn: self.frame,
+        });
+    }
+
+    /// `url` with `effects` is made, or could not be. Kept only where it is
+    /// still being made: one let go meanwhile, or made twice, is dropped,
+    /// which costs nothing, since a picture never drawn has no tiles. Its
+    /// frames can take the book past [`BYTES`], so it lets go of what it must.
+    pub fn land(&mut self, url: &str, effects: Effects, made: Option<T>) {
+        let making = self.entries.iter_mut().find(|entry| {
+            entry.url == url && entry.effects == effects && matches!(entry.picture, Picture::Making)
+        });
+        if let Some(entry) = making {
+            entry.bytes = made.as_ref().map_or(0, Weight::bytes);
+            entry.picture = made.map_or(Picture::Failed, Picture::Ready);
+        }
+        self.let_go(0);
+    }
+
+    /// Let the pictures drawn longest ago go, never one the frame being drawn
+    /// used, until there is room for `room` more under [`LIMIT`] and the
+    /// frames kept are within [`BYTES`]. Past the bytes alone, only a picture
+    /// that holds frames goes: one being made, or that could not be, costs
+    /// nothing, and letting it go would only have it asked for again.
+    fn let_go(&mut self, room: usize) {
+        loop {
+            let crowded = self.entries.len() + room > LIMIT;
+            let heavy = self.entries.iter().map(|entry| entry.bytes).sum::<usize>() > BYTES;
+            if !crowded && !heavy {
+                break;
+            }
             let oldest = self
                 .entries
                 .iter()
                 .enumerate()
-                .filter(|(_, entry)| entry.drawn < self.frame)
+                .filter(|(_, entry)| entry.drawn < self.frame && (crowded || entry.bytes > 0))
                 .min_by_key(|(_, entry)| entry.drawn)
                 .map(|(index, _)| index);
             let Some(index) = oldest else {
@@ -115,24 +169,6 @@ impl<T: Clone> Pictures<T> {
             if let Picture::Ready(made) = self.entries.swap_remove(index).picture {
                 self.gone.push(made);
             }
-        }
-        self.entries.push(Entry {
-            url: url.to_string(),
-            effects,
-            picture: Picture::Making,
-            drawn: self.frame,
-        });
-    }
-
-    /// `url` with `effects` is made, or could not be. Kept only where it is
-    /// still being made: one let go meanwhile, or made twice, is dropped,
-    /// which costs nothing, since a picture never drawn has no tiles.
-    pub fn land(&mut self, url: &str, effects: Effects, made: Option<T>) {
-        let making = self.entries.iter_mut().find(|entry| {
-            entry.url == url && entry.effects == effects && matches!(entry.picture, Picture::Making)
-        });
-        if let Some(entry) = making {
-            entry.picture = made.map_or(Picture::Failed, Picture::Ready);
         }
     }
 
@@ -157,6 +193,15 @@ impl<T: Clone> Pictures<T> {
 pub struct Made {
     pub image: Arc<RenderImage>,
     pub placement: Placement,
+}
+
+impl Weight for Made {
+    fn bytes(&self) -> usize {
+        (0..self.image.frame_count())
+            .filter_map(|frame| self.image.as_bytes(frame))
+            .map(<[u8]>::len)
+            .sum()
+    }
 }
 
 /// Make what `effects` make of an emote whose file is `bytes`. The slow
@@ -187,6 +232,13 @@ mod tests {
     use image::{ImageEncoder, Rgba, RgbaImage};
 
     use super::*;
+
+    /// A picture in these tests is a number, which is also what it costs.
+    impl Weight for u32 {
+        fn bytes(&self) -> usize {
+            *self as usize
+        }
+    }
 
     fn effects(names: &[&str]) -> Effects {
         names
@@ -278,6 +330,38 @@ mod tests {
         book.start("one more", flip);
         assert_eq!(book.entries.len(), LIMIT);
         assert_eq!(book.start_frame().len(), 2);
+    }
+
+    /// Past [`BYTES`], the picture drawn longest ago goes as a heavy one
+    /// lands, while one still being made, which costs nothing yet, stays;
+    /// and nothing the frame being drawn has used goes, even past the bound.
+    #[test]
+    fn past_its_bytes_the_one_drawn_longest_ago_goes() {
+        let mut book = Pictures::<u32>::default();
+        let party = effects(&["p!"]);
+        let half = (BYTES / 2) as u32;
+        book.start_frame();
+        book.start("making", party);
+        for url in ["a", "b"] {
+            book.start_frame();
+            book.start(url, party);
+            book.land(url, party, Some(half));
+        }
+        // Exactly at the bound, all of it is kept.
+        assert_eq!(book.entries.len(), 3);
+        book.start_frame();
+        book.start("c", party);
+        book.land("c", party, Some(1));
+        assert_eq!(book.get("a", party), None);
+        assert_eq!(book.get("making", party), Some(Picture::Making));
+        assert_eq!(book.start_frame(), [half]);
+
+        assert_eq!(book.get("b", party), Some(Picture::Ready(half)));
+        assert_eq!(book.get("c", party), Some(Picture::Ready(1)));
+        book.start("d", party);
+        book.land("d", party, Some(half));
+        assert_eq!(book.entries.len(), 4);
+        assert_eq!(book.start_frame(), Vec::<u32>::new());
     }
 
     #[test]

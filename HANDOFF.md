@@ -154,11 +154,12 @@ header's passive tags stay lowercase (`muted`, `paused`, `buffering`,
   `Channel page` asks for a second press where leaving the watch page would
   stop streams (the mini player off, which is how the user runs), and
   `twitch.tv` opens the browser. The question is in the accent, as the user
-  asked for where the app has no warning colour. The user's call was that
-  all three work signed out, on the reading that none needs the token; the
-  channel page's lists do, and signed out it says only that, so `Channel
-  page` is offered only signed in. That last was settled in review and has
-  not been put to the user yet.
+  asked for where the app has no warning colour. The user's first call was
+  that all three work signed out, on the reading that none needs the token;
+  the channel page's lists do, and signed out it says only that. Asked again
+  on 14 October 2026, the user chose to hide `Channel page` signed out: it is
+  offered only signed in (`CardFacts::channel_page`), and `Watch` and
+  `twitch.tv` work either way.
 
 ---
 
@@ -217,7 +218,7 @@ App modules:
 | `history_page.rs` | the history tab, its entry card and its test for unfinished (both reused by Home), and the one translation between a video and a history entry |
 | `home.rs` | Home, the tab the app opens on: live follows, Continue watching (one row of the history), offline follows by when last watched, each saying when it was last live; the filter over all three, and the counts on the headings after it (`counted`) |
 | `guide.rs` | the guide over the watch page, worked out and drawn: its tabs and what each shows (`Guide::shows`, `Shows`), the requests that fill them — the browse page's own, by the same keys (`Shows::first_page`, `Guide::first_page_due`, `Guide::next_page`) — where a card's Watch and `+ Add` play (`opening`) and whether the guide closes after (`closes_after`), how big the panel is (`panel`: two rows of cards, never more than half the page), a recommendation as a card (`as_stream`), and the panel's contents from the browse page's cards, rows and Load more (pure parts tested) |
-| `veil.rs` | what an overlay on the watch page covers, so the panes' measured hover leaves the pointer alone there: the guide's probe writes its bounds (`cover`), the root lifts it on every frame the guide is not drawn (`lift`), and every pane probe — the pane's, the player's, the chat's hold — asks `pointer_over` (`reaches`, tested) |
+| `veil.rs` | what the overlays on the watch page cover, so the panes' measured hover leaves the pointer alone there, each under its own `Cover`: the guide's probe and an open viewer card's write their bounds (`cover`), the root lifts the guide's on every frame it is not drawn and a chat its card's on every render without one, as it closes and as the chat goes (`lift`), and every pane probe — the pane's, the player's, the chat's hold — asks `pointer_over`, the pane's hover and the chat's hold leaving their own card out (`reaches`, tested) |
 | `watch.rs` | the grid of panes; `Slot` lives here, made by `Slot::new`, with `PendingStart`, a start of its stream resolving beside the picture, and `WarmStart`, a streamlink started ahead for the pane's quality menu (`Slot::warm`), and `PaneAction`, everything a pane asks of the root; the band a header rides over the picture on, and when it is up (`Slot::point`, `band_wanted`, tested); the layer a dragged header is dropped on (`drop_layer`, `PaneDrag`) |
 | `watch/header.rs` | a pane's header — name, the red `LIVE` badge on a live pane, numbers, what is on, `muted`/`paused` and an ad break's tag, the chat options icon on a header that sits on chat, the pop-out icon that turns into Bring back, and the × — each icon naming its key — the handle a pane is dragged by onto another, and `Placement`, the one rule for where it goes: the chat panel, or over the picture with no chat on screen (tested) |
 | `watch/chat_menu.rs` | a pane's chat options menu, hung over its chat: the text sizes and `Time on every message` (with its state in words), which pane's is open (`toggled`, one at a time), rows that act on the press (tested) |
@@ -241,12 +242,12 @@ App modules:
 | `chat/emote.rs` | an emote in a line: its picture, or the one its effects make (asked of the pane's `chat_effects::Pictures`, made on a background task, placed where `emotes::effects::Placement` says), the overlays stacked on it (which ones is `emotes::stack`'s), its tooltip (`EmoteTooltip`, a line per picture and effect, in words from `chat_words::emote_tip`) and its right press, which copies the stack as written |
 | `chat/room.rs` | what the room says, as the chat pane keeps it: `ROOMSTATE`'s modes merged (`room_state`, which also loads the third-party emotes for a new room or a full line) with their line at the foot (`modes_line`), and a timeout or ban greying its person's rows (`clear_person`) |
 | `chat/badges.rs` | the chat pane's badges: the books the root hands it (`set_badges`) and the group before a name (`badge_group`) |
-| `chat/cheers.rs` | the chat pane's cheers: the book the root hands a live chat (`set_cheers`) and a cheer in a line (`cheer_piece`): the cheermote overhanging as an emote does, its tooltip in `EmoteTooltip` with words from `chat_words::cheer_tip`, and the amount in the tier's colour lifted against the row's paint |
+| `chat/cheers.rs` | the chat pane's cheers: the book the root hands a live chat (`set_cheers`) and a cheer in a line (`cheer_piece`): the cheermote overhanging as an emote does, its tooltip in `EmoteTooltip` with words from `chat_words::cheer_tip`, and the amount in the tier's colour lifted against what its line is drawn on (the row's paint in the list, the bare surface in a card's well) |
 | `chat/reply.rs` | a reply's line above it (`reply_line`), and whether its first word is the `@parent` that line already says (`skips_leading_mention`, pure, tested) |
 | `chat/copy_menu.rs` | a chat row's right-click menu: what each entry copies from a row (`entries`, pure, tested), which link or emote the press was on (`press_target`), opening it at the pointer (`row_menu`), and the menu, deferred and anchored, with rows that act on the press (tested) |
-| `chat/viewer_card.rs` | a person's card, opened by a press on a name or an `@mention`: which card is open and the same-name toggle (`Cards`), their lines found by login (`recent`), where it goes in the list box (`place`), all pure and tested; what the root tells it (`CardFacts`, `set_card_facts`), and the card — picture, names, account line, badges in words, their lines drawn by `message_words`, and `Watch`, `Channel page` (signed in only; asking for a second press where the root says leaving would stop streams, `confirm_leaving`) and `twitch.tv`, all acting on the press (tested); the least card holds its head and foot whole (tested) |
+| `chat/viewer_card.rs` | a person's card, opened by a press on a name or an `@mention`: which card is open and the same-name toggle (`Cards`), their lines found by login (`recent`), where it goes in the list box (`place`), all pure and tested; what the root tells it (`CardFacts`, `set_card_facts`), and the card — picture, names, account line, badges in words, their lines drawn by `message_words`, its probe into the veil (`veil::Cover::Card`), and `Watch`, `Channel page` (signed in only; asking for a second press where the root says leaving would stop streams, `confirm_leaving`) and `twitch.tv`, all acting on the press (tested); the least card holds its head and foot whole (tested) |
 | `chat/composer.rs` | the box at the foot of a live chat that sends a message: whether it is open and why not (`state`, from `Access`, which the root mirrors in with `set_access`), what a message may be (`message`, `fit`), and the notice an answer leaves (`outcome_notice`, `failure_notice`), all pure and tested; the box itself, its `Enter`, and the line that stands in for it (`composer_bar`) |
-| `chat_effects.rs` | the pictures emote effects make, as a pane keeps them: `make` (an emote's file to one `RenderImage`, through `emotes::effects`, off the UI thread) and `Pictures`, by URL and effects, bounded at `LIMIT` with the one drawn longest ago let go, never one the frame being drawn used, and everything handed back to be released from the atlas (pure, tested) |
+| `chat_effects.rs` | the pictures emote effects make, as a pane keeps them: `make` (an emote's file to one `RenderImage`, through `emotes::effects`, off the UI thread) and `Pictures`, by URL and effects, bounded at `LIMIT` and at `BYTES` of frames (`Weight`) with the one drawn longest ago let go, never one the frame being drawn used, and everything handed back to be released from the atlas (pure, tested) |
 | `chat_display.rs` | how every chat is drawn: `ChatDisplay`, the text-size steps, `Metrics::of` (line, emote, badge, padding and piece budget from the size) and `draws_time_break` (pure, tested) |
 | `chat_badges.rs` | chat badges worked out: Helix's answers as books by set and version, a channel's own picture over the global one (`ChatBadges::art`), the tooltip (`tooltip`, `Subscriber, 14 months`), and which books to ask for (`Library`, once each a session) (pure, tested) |
 | `chat_cheers.rs` | cheers worked out: Helix's cheermotes as a book by prefix (`book`, the first of a prefix winning), which picture and tier a word is (`ChatCheers::find`, Chatterino's rule), and which rooms to ask for (`Library`, once each a session) (pure, tested) |
@@ -2105,6 +2106,24 @@ never veiled by the main window's guide. An overlay added later over the
 panes writes the veil the same way, or brings the bug back. The guide's own
 wake-up is the hover listener on its hold probe (`RootView::holding`).
 
+A person's card was the second, found in review: in a short chat it rises
+out of its list box over the pane's header and picture, or over the pane
+above, and the pointer resting on its head made the pane above the active
+one (so `M` went to it), brought a player's bar up behind it, and let its
+own chat go on landing rows under it, since the hold measured only the list
+box.
+So the veil holds one cover per overlay, keyed by `veil::Cover` (the guide,
+or a card by its chat's entity), each written by its own probe and lifted by
+whoever draws it: the root lifts only the guide's, and a chat lifts its
+card's on every render with no card open, in `close_card` (a chat put off
+the screen is not rendered again to do it) and as it is released. A card is
+its pane's, so `pointer_over` takes the cover a probe leaves out: the pane's
+hover leaves its own chat's card out, and the chat's hold leaves it out and
+counts the pointer on the card's bounds (`veil::bounds_of`) as on the chat;
+the same pane's player does not, so its bar stays down under the card. The
+card wakes the probes with a hover listener of its own, as an occluder over
+a probed area must.
+
 **A view flowed into a flex item can be laid out at nothing, and stay that
 way.** A pane's chat used to be an in-flow block, `size_full`, inside the
 `flex_1` box under its header (`watch::pane`). With two panes side by side
@@ -2341,7 +2360,8 @@ switching channels gives it all back. That bounds emotes for panes that are
 *open*, which is the growth that compounds over an evening; it does not bound a
 single channel left open for hours, whose emote set saturates on its own. The
 pictures emote effects make (`chat_effects::Pictures`) are given back in the
-same hook, and are bounded besides, at 64 a pane; see "Effects are drawn as
+same hook, and are bounded besides, at 64 a pane and 32 MiB of their frames
+(one can be 4 MiB, so the count alone is no bound); see "Effects are drawn as
 BetterTTV draws them" under Chat.
 
 **A `list`'s scrollbar extent comes from *measured* items only.** gpui measures
@@ -2623,12 +2643,14 @@ unconsidered.
   washed chat row, is lifted against that row's paint
   (`readable_on(color, ChatView::row_ground(row))`), since a wash lightens
   the ground: a colour lifted to 4.5:1 on the surface reads 4.32:1 on the
-  stripe and 3.87:1 on the mention wash. A cheer's amount is lifted that
-  way (`a_cheer_amount_reads_on_every_chat_row`), and so are a speaker's
-  name and a mention's colour (`ChatView::speaker_colors`, `render_word`,
-  told the ground by `message_words`'s caller: the row's paint in the list,
-  the bare surface in a viewer card's well;
-  `a_name_reads_on_the_row_it_is_drawn_on`). Text on a picture is
+  stripe and 3.87:1 on the mention wash (a cheer's amount on every row's,
+  `a_cheer_amount_reads_on_every_chat_row`). A speaker's name, a mention's
+  colour and a cheer's amount are told the ground by `message_words`'s
+  caller rather than reading the row's again (`ChatView::speaker_colors`,
+  `render_word`, `ChatView::cheer_amount`): the row's paint in the list,
+  the bare surface in a viewer card's well
+  (`a_name_reads_on_the_row_it_is_drawn_on`,
+  `a_cheer_amount_is_lifted_against_its_lines_ground`). Text on a picture is
   held to the brightest picture there is, a white frame under its wash
   (`theme::over_white`), by
   `every_tier_drawn_on_a_picture_reads_over_a_white_frame`. Two washes, two
@@ -3731,17 +3753,18 @@ attached, or an announcement carrying a link, came out as a vertical stack of
 letters. Ordinary messages never showed it because they are already a row's
 only child. Anything else that renders a `message_line` needs the same wrapper.
 
-**Usernames go through `theme::readable`.** Twitch lets people pick any colour
-and its own fallback palette ships pure blue, firebrick and seagreen — all
-darker than the surface they land on. Lightness is lifted and hue kept, so
+**Usernames go through `theme::readable_on`.** Twitch lets people pick any
+colour and its own fallback palette ships pure blue, firebrick and seagreen —
+all darker than the surface they land on. Lightness is lifted and hue kept, so
 people stay recognisable by colour rather than being flattened to one, and the
 lift stops at a *measured* contrast rather than a fixed lightness: the two are
 not the same thing, and the flat floor this replaced left pure blue at 2.7:1.
 The test runs against `twitch_chat::message::DEFAULT_COLORS` itself so the two
-cannot drift. The lift is measured against what the name lands on
-(`theme::readable_on` takes the ground; `readable` is it on the bare
-surface), and a viewer card's name is held to the card's raised surface
-(`every_default_username_colour_clears_a_raised_card`).
+cannot drift. The lift is measured against what the name is drawn on, which
+`readable_on` takes: the row's paint in the list (`ChatView::row_ground`),
+the raised surface for a viewer card's name
+(`every_default_username_colour_clears_a_raised_card`), and the bare surface
+in a card's well.
 
 **Anything per-row belongs to the row, never to its index.** The backlog drains
 from the front once full, which shifts every surviving index. That inverted the
@@ -3895,7 +3918,22 @@ animated emote keeps its pace and its delays add up as they did, and one whose
 frames are 500 ms still shakes (taken whole, every frame started on the same
 offset and it sat still); a still emote is one frame held a whole period, cut
 the same way: 24 frames over party's 1.5 s, shake's ten, and with both shake's
-steps over 1.5 s with the hue taken at each. Until it lands the emote's name
+steps over 1.5 s with the hue taken at each. The made loop is what gpui
+repeats, so it has to end where the period does (1.5 s with party, 500 ms for
+shake alone), and an animated emote's own loop rarely does: made over one run
+of it, a 120 ms loop with party reached 22 degrees and snapped back, and with
+shake showed two of the ten offsets. So the loop is run again, each frame the
+emote's own and the clock running on, to the least common multiple of the two
+(25 runs, 3 s, for that 120 ms loop), within `effects::MADE_BYTES`, 4 MiB of
+frames, each a whole RGBA picture and an atlas tile once drawn (256 of a 56 px
+emote shaken). A loop that meets the period only past that (990 ms meets 1.5 s
+at 49.5 s) is run the count of times, within it, whose end comes nearest a
+period's (`effects::loop_end`): three for 990 ms, the hue 7 degrees short as it
+comes round. A run that stops short of one whole period counts as off by all
+it leaves out, not by its length, so a 1.4 s loop past the budget is kept as
+it is, 100 ms short, rather than run twice, 200 ms short of two turns, and
+one whose budget is spent before a whole period is run as far round as it
+can go. Until it lands the emote's name
 stands in, as it does while the file downloads; a picture that cannot be made
 is logged (`emote effects: <url>: ...`) and the emote drawn plain. It is drawn
 with `img(ImageSource::Render)` where `effects::Placement` says, in emote
@@ -3931,22 +3969,27 @@ inside its box it would have to be drawn smaller than the emotes beside it,
 which BetterTTV's is not.
 
 Each made picture holds an atlas tile per frame, which gpui gives back only
-when told (`App::drop_image`), so `Pictures` keeps at most `LIMIT` (64) per
-pane and lets the one drawn longest ago go — never one the frame being drawn
-has asked for, so a frame asking for more overruns the bound until an ask in
-a later frame lets the extra go. The frame that does is usually the list's
+when told (`App::drop_image`), and its frames besides, so `Pictures` keeps at
+most `LIMIT` (64) per pane and `BYTES` (32 MiB) of frames, and past either
+lets the one drawn longest ago go. The count alone bounded the frames only
+while a picture was about the emote's own; run again to meet party's or
+shake's period, one can be 4 MiB, and 64 of those 256 MiB a pane. Past the
+bytes alone only a picture holding frames goes, never one still being made.
+Never one the frame being drawn has asked for, either, so a frame asking for
+more overruns the bound until an ask, or a picture landing, in a later frame
+lets the extra go. The frame that does is usually the list's
 measuring pass (`measure_all`), which lays out every row of the backlog at
 once: when the pane first measures, and again whenever `remeasure` resets the
 list while following live (a new text size or times setting, a Shared Chat
 label arriving). Every distinct emote and effects in up to `MAX_MESSAGES`
-rows is then asked for and made, and held until later asks let it go; it
-costs memory and background work, not atlas tiles, since nothing measured is
-painted. What goes is handed back at the start of the
-pane's next `render`, before any row is drawn, so no scene being built names
-a freed tile, and everything goes in the same `on_release_in` that clears the
-pane's `RetainAllImageCache`, from every window, since a pane can be drawn in
-a pop-out. A picture landing for an ask let go meanwhile is dropped: never
-drawn, it has no tiles.
+rows is then asked for and made, and held until later asks, or the bytes of
+those landing, let it go; it costs memory and background work, not atlas
+tiles, since nothing measured is painted. What goes is handed back at the
+start of the pane's next `render`, before any row is drawn, so no scene
+being built names a freed tile, and everything goes in the same
+`on_release_in` that clears the pane's `RetainAllImageCache`, from every
+window, since a pane can be drawn in a pop-out. A picture landing for an ask
+let go meanwhile is dropped: never drawn, it has no tiles.
 
 FrankerFaceZ's global answer is cut to the sets named in its `default_sets`.
 The rest belong to the logins listed under `users`: merged whole, as they
@@ -4073,8 +4116,8 @@ on the press, as every menu's does, and asks the root to copy
 takes the rest of the press's run, so a double-click cannot open the link the
 closed menu leaves under the pointer. It occludes, so a press on it reaches
 nothing under it; the panes' probes still see through it, as they see through
-everything but the guide (`crate::veil`), so a menu reaching over the next
-pane can bring that pane's bar up under the pointer.
+everything but the guide and a person's card (`crate::veil`), so a menu
+reaching over the next pane can bring that pane's bar up under the pointer.
 
 **A name opens its person's card.** A left press on a speaker's name in a
 line, a resub note's included, or on an `@mention` that is a login
@@ -4137,7 +4180,10 @@ never leaves the card hanging past its foot. Its lines are a block in a well
 that shrinks and scrolls (`flex_shrink`, `min_h_0`) when the card has less
 room than they take, opened at the newest. The badges row and the foot wrap,
 each inside a `flex_row` (see "Things not to redo"). The pointer on it holds
-the chat's rows, as anywhere on the chat.
+the chat's rows, as anywhere on the chat, risen out of the list box or not,
+and the panes it rises over leave the pointer on it alone: it writes itself
+into the veil every frame (see "A probe sees through an overlay too" under
+the GPUI traps).
 
 It closes on a press anywhere outside it, heard in the capture phase so that
 press still lands (another name moves it), on the same name pressed again (see
@@ -4301,9 +4347,10 @@ gone; the image cache tries again every half minute) still reads as sent,
 at the cost of the amount moving once when the picture lands; then the
 amount in
 `weight_title`, in the tier's colour lifted only as far as it must be to
-read on the row's own paint (`theme::readable_on` against
-`ChatView::row_ground`, the surface under `row_paint`, which is what
-`row_frame` paints), and `text_dim` on a deleted row. Its id is the word and
+read on what the line is drawn on (`theme::readable_on` against
+`message_words`' `ground`: in the list `ChatView::row_ground`, the surface
+under `row_paint`, which is what `row_frame` paints; in a viewer card's well
+the bare surface), and `text_dim` on a deleted row. Its id is the word and
 the picture behind `cheer `, sharing the line's emote count: `Cheer100` and
 `Cheer150` are one picture, and a tooltip keeps its first words for as long
 as its id lasts. The tooltip is the emote's look (`EmoteTooltip`), from
@@ -5770,10 +5817,21 @@ None of these is being worked on; all of them are real.
     it. FrankerFaceZ's `margins` and `offset` on a modifier, and its global
     sets given to named users, are ignored. Effects follow BetterTTV's
     stylesheet, not FrankerFaceZ's own drawing, so `ffzX ffzY` is upside
-    down only, as BetterTTV draws it. Party and shake are made into one
-    loop of an animated emote's own, so where that loop does not divide 1.5 s
-    or 500 ms the hue or offset jumps as it comes round, and a frame held long
-    costs a frame of memory for every step it is cut into. A turn's box is a square at the emote height where BetterTTV's
+    down only, as BetterTTV draws it. Party and shake run an animated
+    emote's loop again until it ends with their period (1.5 s, or 500 ms for
+    shake alone), so a made picture can be many times the emote's own frames,
+    up to `effects::MADE_BYTES` (4 MiB) of them, and a frame held long costs
+    a frame of memory for every step it is cut into. A pane keeps 32 MiB of
+    made frames at most (`chat_effects::BYTES`), so in a channel heavy with
+    `p!` and `s!` on animated emotes, ones scrolled past are let go and made
+    again, off the UI thread, when they come back into view, their names
+    standing in meanwhile. A loop that meets the period only past the
+    budget is run as many times as ends nearest it, a run short of one whole
+    period counting as off by all it leaves out, and its hue or offset jumps
+    by what is left over as it comes round (7 degrees for a 990 ms loop, 24
+    for a 56 px emote of 35 frames of 40 ms); a loop shorter than the period whose budget is
+    spent first shows only its share of the wheel or the shake, as much of
+    it as fits. A turn's box is a square at the emote height where BetterTTV's
     is the picture's own width, at most 28 px: the turned picture is the
     same either way, and a narrow emote's box a little wider. As of 14
     October 2026 none of it had been seen on screen: the overlay's box is
@@ -5819,7 +5877,10 @@ None of these is being worked on; all of them are real.
     1600x920 a name in the middle of a chat opens the 260-tall card on the
     chat's foot with its head and foot whole; at the narrowest chat the card
     is 248 wide and its pills wrap; a short chat's card stands on its foot
-    and rises over the header and the picture; with a card open, adding a
+    and rises over the header and the picture, and with the pointer resting
+    on the part that rose, the pane above is not made the active one, no
+    player's bar comes up behind it, and the chat holds its rows (`Chat
+    paused` once one arrives); with a card open, adding a
     third pane from the palette (`Ctrl+K`) shrinks the chat and the card
     stays inside it; while the account is asked for, the unseen account line
     keeps the room the answer's takes (one line or two); the badges row and
@@ -5827,8 +5888,9 @@ None of these is being worked on; all of them are real.
     well shrinks and scrolls rather than collapsing to nothing or spilling
     out of the card (if it collapses, see "A view flowed into a flex item");
     the same name closes it, another moves it, `Esc` and the × close it, and
-    a double-click on a name leaves it open; signed out, the picture and the
-    age go with no gap, and `Channel page` is not offered; a lookup that
+    a double-click on a name leaves it open; signed out, a card for someone
+    not looked up this session has no picture or age and no gap for them,
+    and `Channel page` is not offered; a lookup that
     failed (the network off) asks again when the card is opened again;
     `Channel page` with the mini player off asks first (`Stop streams and
     open?`, in the accent) and goes on the second press, and with it on goes

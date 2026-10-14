@@ -68,6 +68,17 @@ const PARTY_STEP: u64 = PARTY_PERIOD / 24;
 /// How long shake holds each offset, in µs.
 const SHAKE_STEP: u64 = 50_000;
 
+/// One run of shake through its ten offsets, in µs: 500 ms.
+const SHAKE_PERIOD: u64 = SHAKE_STEP * SHAKE.len() as u64;
+
+/// How many bytes of frames party or shake may make of an animated emote by
+/// running its loop again ([`timeline`]). Every frame made is a whole RGBA
+/// picture, and an atlas tile once drawn, so this is what one emote's repeat
+/// may cost: 256 frames of a 56 px emote shaken, its canvas 64 px square. It
+/// bounds one picture only; the chat pane that keeps them holds all of its
+/// made pictures to a total of its own.
+const MADE_BYTES: u64 = 4 << 20;
+
 /// Shake's offsets in turn, in px, each held for [`SHAKE_STEP`]: the
 /// keyframes at 10% to 100% of BetterTTV's. Its timing is `step-start`,
 /// which gives each step the value of the keyframe that ends it, so the one
@@ -296,7 +307,13 @@ pub fn apply(frames: Vec<Frame>, effects: Effects) -> Changed {
     let shake = effects
         .shake
         .then(|| Shake::of(placement.picture, width, height));
-    let made = timeline(&frames, effects)
+    // What one frame made costs, its canvas widened by the shake's margin.
+    let (made_width, made_height) = shake.map_or((width, height), |shake| {
+        (width + 2 * shake.margin.0, height + 2 * shake.margin.1)
+    });
+    let frame_bytes = u64::from(made_width) * u64::from(made_height) * 4;
+    let budget = (MADE_BYTES / frame_bytes.max(1)) as usize;
+    let made = timeline(&frames, effects, budget)
         .into_iter()
         .map(|(source, start, delay)| {
             let mut buffer = frames[source].buffer().clone();
@@ -352,17 +369,30 @@ fn turned(frame: Frame, turn: Option<Turn>) -> Frame {
 /// its next step is cut there, into pieces that show the same picture: at
 /// shake's 50 ms steps, or with party alone its 62.5 ms ones. An animated
 /// emote so keeps its own pace, its delays adding up as they did, and a slow
-/// one still shakes and turns colour; where its loop does not divide the
-/// period, the hue or offset jumps as the loop comes round. A still one is a
-/// frame held for a whole period, cut the same way: party's 1.5 s into 24
-/// frames, shake's 500 ms into its ten, and with both, shake's steps over
-/// party's 1.5 s, the hue taken at each.
-fn timeline(frames: &[Frame], effects: Effects) -> Vec<(usize, u64, Delay)> {
+/// one still shakes and turns colour. A still one is a frame held for a
+/// whole period, cut the same way: party's 1.5 s into 24 frames, shake's
+/// 500 ms into its ten, and with both, shake's steps over party's 1.5 s, the
+/// hue taken at each.
+///
+/// The made loop is what gpui repeats, so it has to end where the period
+/// does, or the hue or offset jumps back as it comes round; and an animated
+/// emote's own loop rarely does. Made over one run of it, a 120 ms loop with
+/// party reached 22 degrees and snapped back, and with shake showed two of
+/// the ten offsets. So the emote's loop is run again, each frame still the
+/// emote's own and the clock running on, until the two end together, at
+/// their least common multiple: 25 runs of 120 ms with party, 3 s, two turns
+/// of the wheel. Within `budget` frames that can be out of reach (a 990 ms
+/// loop meets 1.5 s only at 49.5 s), and then the runs stop at the count, of
+/// those within the budget, whose end comes nearest a period's, a loop
+/// shorter than one period counting as short by all it leaves out
+/// ([`loop_end`]); the hue or offset jumps by what is left over: for that
+/// 990 ms loop, three runs, 30 ms of the wheel short, 7 degrees.
+fn timeline(frames: &[Frame], effects: Effects, budget: usize) -> Vec<(usize, u64, Delay)> {
     let party = effects.tint == Some(Tint::Party);
-    let step = if effects.shake {
-        SHAKE_STEP
+    let (step, period) = if effects.shake {
+        (SHAKE_STEP, if party { PARTY_PERIOD } else { SHAKE_PERIOD })
     } else if party {
-        PARTY_STEP
+        (PARTY_STEP, PARTY_PERIOD)
     } else {
         // Nothing runs on a clock: the frames as they are.
         return frames
@@ -371,31 +401,90 @@ fn timeline(frames: &[Frame], effects: Effects) -> Vec<(usize, u64, Delay)> {
             .map(|(index, frame)| (index, 0, frame.delay()))
             .collect();
     };
-    let still = frames.len() == 1;
+    let lengths: Vec<u64> = match frames {
+        [_] => vec![period],
+        _ => frames
+            .iter()
+            .map(|frame| Duration::from(frame.delay()).as_micros() as u64)
+            .collect(),
+    };
+
     let mut made = Vec::new();
     let mut start = 0;
-    for (index, frame) in frames.iter().enumerate() {
-        let length = match (still, party) {
-            (true, true) => PARTY_PERIOD,
-            (true, false) => SHAKE_STEP * SHAKE.len() as u64,
-            (false, _) => Duration::from(frame.delay()).as_micros() as u64,
-        };
-        let end = start + length;
-        if length <= step {
-            made.push((index, start, frame.delay()));
-        } else {
-            let mut at = start;
-            while at < end {
-                let cut = (at / step + 1) * step;
-                let piece = cut.min(end) - at;
-                // A piece is at most a step, so its µs fit.
-                made.push((index, at, Delay::from_numer_denom_ms(piece as u32, 1_000)));
-                at += piece;
-            }
+    // Where the made loop could end, after each run of the emote's: how long
+    // it is then, and how many frames it has.
+    let mut ends = Vec::new();
+    loop {
+        for (index, (&length, frame)) in lengths.iter().zip(frames).enumerate() {
+            cut(&mut made, index, start, length, frame.delay(), step);
+            start += length;
         }
-        start = end;
+        ends.push((start, made.len()));
+        // Ended with the period, which a still frame always does, as does a
+        // loop with no length; or past the budget, where no later end is
+        // kept. Every run adds a frame, so one of the two comes.
+        if start % period == 0 || made.len() > budget {
+            break;
+        }
     }
+    made.truncate(loop_end(&ends, period, budget));
     made
+}
+
+/// Push the piece or pieces of a frame `length` µs long starting `start` µs
+/// in, which shows decoded frame `index` and is `delay` long: whole where it
+/// holds no longer than a `step`, else cut at every step it would hold past.
+fn cut(
+    made: &mut Vec<(usize, u64, Delay)>,
+    index: usize,
+    start: u64,
+    length: u64,
+    delay: Delay,
+    step: u64,
+) {
+    if length <= step {
+        made.push((index, start, delay));
+        return;
+    }
+    let end = start + length;
+    let mut at = start;
+    while at < end {
+        let next = (at / step + 1) * step;
+        let piece = next.min(end) - at;
+        // A piece is at most a step, so its µs fit.
+        made.push((index, at, Delay::from_numer_denom_ms(piece as u32, 1_000)));
+        at += piece;
+    }
+}
+
+/// How many frames the made loop keeps, of `ends`, the length and frame
+/// count after each run of the emote's loop, in order. The first run always,
+/// as the emote's own loop is never cut short; then only runs within
+/// `budget` frames. Of those, the one whose end comes nearest the end of a
+/// `period`, the fewest runs on a tie. A loop shorter than one period is as
+/// far off as all of the period it leaves out, not as its length: one that
+/// stops at 120 ms of 1.5 s is only 120 ms from the period's start, but it
+/// never shows the rest of the wheel. So with no run long enough for a whole
+/// period, the longest is kept; and a 1.4 s loop is kept as it is, 100 ms
+/// short, rather than run twice to 2.8 s, 200 ms short.
+fn loop_end(ends: &[(u64, usize)], period: u64, budget: usize) -> usize {
+    let within = ends
+        .iter()
+        .take_while(|(_, count)| *count <= budget)
+        .count()
+        .max(1)
+        .min(ends.len());
+    let off = |length: u64| {
+        if length < period {
+            return period - length;
+        }
+        let over = length % period;
+        over.min(period - over)
+    };
+    ends[..within]
+        .iter()
+        .min_by_key(|(length, _)| off(*length))
+        .map_or(0, |(_, count)| *count)
 }
 
 /// How far round party's colour wheel it is `start` µs in, in degrees.
@@ -770,18 +859,136 @@ mod tests {
             .collect()
     }
 
+    /// How long `frames` run, all told.
+    fn total(frames: &[Frame]) -> Duration {
+        frames.iter().map(|frame| ms(frame.delay())).sum()
+    }
+
     /// An animated emote keeps its own frames and delays where none holds
-    /// past a step; each takes shake's offset from when it starts.
+    /// past a step; each takes shake's offset from when it starts. Its
+    /// 120 ms loop is run until it ends with shake's 500 ms, 25 times, so
+    /// every offset is shown and the loop comes round on the first.
     #[test]
     fn an_animated_emote_takes_the_shake_by_its_time() {
         let shaken = apply(animated(&[30, 30, 30, 30]), settled(&["s!"]));
-        assert_eq!(shaken.frames.len(), 4);
-        // They start at 0, 30, 60 and 90 ms: steps 0, 0, 1 and 1.
-        for (n, (frame, step)) in shaken.frames.iter().zip([0, 0, 1, 1]).enumerate() {
+        assert_eq!(shaken.frames.len(), 100);
+        assert_eq!(total(&shaken.frames), Duration::from_millis(3_000));
+        // They start at 0, 30, 60 and 90 ms: steps 0, 0, 1 and 1; and so on,
+        // each the emote's frame in turn, the clock running on.
+        for (k, frame) in shaken.frames.iter().enumerate() {
             assert_eq!(ms(frame.delay()), Duration::from_millis(30));
-            let (dx, dy) = SHAKE[step];
-            assert_eq!(red_at(frame), ((2 + n as i32 + dx) as u32, (2 + dy) as u32));
+            let (dx, dy) = SHAKE[k * 30 / 50 % 10];
+            let n = (k % 4) as i32;
+            assert_eq!(red_at(frame), ((2 + n + dx) as u32, (2 + dy) as u32), "{k}");
         }
+        let steps: std::collections::HashSet<_> =
+            (0..100).map(|k: usize| k * 30 / 50 % 10).collect();
+        assert_eq!(steps.len(), SHAKE.len());
+    }
+
+    /// Party on a loop shorter than its 1.5 s goes all the way round the
+    /// wheel: the loop run until the two end together, 3 s, the hue taken
+    /// where each frame starts, so the 26th frame, 750 ms in, is half way.
+    #[test]
+    fn party_takes_a_short_loop_all_the_way_round() {
+        let colours = [
+            [200, 60, 30, 255],
+            [40, 180, 90, 255],
+            [30, 70, 210, 255],
+            [180, 160, 40, 255],
+        ];
+        let frames = colours
+            .map(|colour| {
+                Frame::from_parts(
+                    RgbaImage::from_pixel(1, 1, Rgba(colour)),
+                    0,
+                    0,
+                    Delay::from_numer_denom_ms(30, 1),
+                )
+            })
+            .to_vec();
+        let party = apply(frames, settled(&["p!"]));
+        assert_eq!(party.frames.len(), 100);
+        assert_eq!(total(&party.frames), Duration::from_millis(3_000));
+        let mut half = RgbaImage::from_pixel(1, 1, Rgba(colours[25 % 4]));
+        Filter::party(180.0).apply(&mut half);
+        assert_eq!(
+            party.frames[25].buffer().get_pixel(0, 0),
+            half.get_pixel(0, 0)
+        );
+    }
+
+    /// Frames `ms` long, as `timeline` reads them.
+    fn delays(ms: &[u32]) -> Vec<Frame> {
+        ms.iter()
+            .map(|&ms| {
+                Frame::from_parts(
+                    RgbaImage::new(1, 1),
+                    0,
+                    0,
+                    Delay::from_numer_denom_ms(ms, 1),
+                )
+            })
+            .collect()
+    }
+
+    /// Where `timeline` ends the made loop: how many frames, and how long.
+    fn made_loop(frames: &[Frame], names: &[&str], budget: usize) -> (usize, u64) {
+        let made = timeline(frames, settled(names), budget);
+        let length = made
+            .iter()
+            .map(|(_, _, delay)| ms(*delay).as_micros() as u64);
+        (made.len(), length.sum())
+    }
+
+    /// A loop that meets the period only far out is run as many times as
+    /// the budget allows and ends nearest a period's end: 30 frames of
+    /// 33 ms, 990 ms, meets 1.5 s at 49.5 s, so at 256 frames it is run three
+    /// times, 2.97 s, the wheel 30 ms short as it comes round, where twice
+    /// would be 480 ms short. A budget under two runs keeps the one, and
+    /// under one still keeps the emote's own loop whole.
+    #[test]
+    fn past_the_budget_the_loop_ends_nearest_the_period() {
+        let frames = delays(&[33; 30]);
+        assert_eq!(made_loop(&frames, &["p!"], 256), (90, 2_970_000));
+        assert_eq!(made_loop(&frames, &["p!"], 40), (30, 990_000));
+        assert_eq!(made_loop(&frames, &["p!"], 10), (30, 990_000));
+        // Within the budget it runs to where the two end together.
+        assert_eq!(made_loop(&frames, &["p!"], 2_000), (1_500, 49_500_000));
+    }
+
+    /// A loop shorter than the period is as far off as all it leaves out.
+    /// 35 frames of 40 ms, 1.4 s, meets 1.5 s only at 21 s, past 334 frames
+    /// (a 56 px emote's with party), so it is kept as it is, 100 ms short,
+    /// rather than run twice, 200 ms short of 3 s. And where the budget is
+    /// spent before a whole period, the most of the wheel it can show: a
+    /// 120 ms loop in 20 frames is run five times, 600 ms, not once, which is
+    /// only 120 ms from the period's start but never shows the rest.
+    #[test]
+    fn a_short_loop_is_off_by_what_it_leaves_out() {
+        assert_eq!(made_loop(&delays(&[40; 35]), &["p!"], 334), (35, 1_400_000));
+        assert_eq!(made_loop(&delays(&[30; 4]), &["p!"], 20), (20, 600_000));
+    }
+
+    /// A loop longer than the period that is not a multiple of it is run
+    /// again too: 2 s with party meets 1.5 s at 6 s, each 1 s frame cut at
+    /// party's 62.5 ms steps. One that is a multiple, or a still, is made
+    /// once.
+    #[test]
+    fn a_loop_ends_with_the_period() {
+        assert_eq!(
+            made_loop(&delays(&[1_000, 1_000]), &["p!"], 1_000),
+            (96, 6_000_000)
+        );
+        assert_eq!(
+            made_loop(&delays(&[250, 250]), &["s!"], 1_000),
+            (10, 500_000)
+        );
+        assert_eq!(
+            made_loop(&delays(&[40]), &["p!", "s!"], 1_000),
+            (30, 1_500_000)
+        );
+        assert_eq!(made_loop(&delays(&[0, 0]), &["p!"], 1_000), (2, 0));
     }
 
     /// A frame that holds past shake's next step is cut there, each piece
@@ -797,11 +1004,13 @@ mod tests {
             let n = (k / 10) as i32;
             assert_eq!(red_at(frame), ((2 + n + dx) as u32, (2 + dy) as u32), "{k}");
         }
-        // Off the steps: 30 ms, then 100 ms from 30 cut at 50 and 100.
+        // Off the steps: 30 ms, then 100 ms from 30 cut at 50 and 100; the
+        // first run of the loop, which goes on to meet 500 ms.
         let shaken = apply(animated(&[30, 100]), settled(&["s!"]));
         let pieces: Vec<_> = shaken
             .frames
             .iter()
+            .take(4)
             .map(|frame| (ms(frame.delay()).as_millis(), red_at(frame)))
             .collect();
         let at = |n: i32, step: usize| {
@@ -822,7 +1031,8 @@ mod tests {
     /// Party on an animated emote: each frame takes its hue from when it
     /// starts, cut at party's 62.5 ms steps, so three frames of 375 ms are
     /// six pieces each, and each frame's first piece is 0, 90 and 180
-    /// degrees round.
+    /// degrees round. Their 1.125 s loop is run four times, to 4.5 s, where
+    /// it ends with the wheel.
     #[test]
     fn an_animated_emote_takes_party_hue_by_its_time() {
         let colours = [[200, 60, 30, 255], [40, 180, 90, 255], [30, 70, 210, 255]];
@@ -837,7 +1047,8 @@ mod tests {
             })
             .to_vec();
         let party = apply(frames, settled(&["p!"]));
-        assert_eq!(party.frames.len(), 18);
+        assert_eq!(party.frames.len(), 72);
+        assert_eq!(total(&party.frames), Duration::from_millis(4_500));
         for frame in &party.frames {
             assert_eq!(ms(frame.delay()), Duration::from_micros(62_500));
         }

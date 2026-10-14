@@ -1314,10 +1314,11 @@ impl Render for VideoView {
                 stream_size.request(width, height);
 
                 let pointer = window.mouse_position();
-                // Not while the pointer is on the guide over the picture: its
-                // bar would come up behind the guide, and its seek label
-                // follow a pointer working in it; see `crate::veil`.
-                let inside = veil::pointer_over(bounds, window, cx);
+                // Not while the pointer is on the guide over the picture, or
+                // on a person's card risen over it, its own pane's included:
+                // its bar would come up behind the overlay, and its seek
+                // label follow a pointer working in it; see `crate::veil`.
+                let inside = veil::pointer_over(bounds, None, window, cx);
                 // In logical pixels, the bar's own: the bar spans the pane.
                 let fit = bar::fit(f32::from(bounds.size.width), cluster);
                 let timeline_fits = bar::timeline_fits(f32::from(bounds.size.width));

@@ -341,9 +341,9 @@ pub(super) fn screen<V: 'static>(
         )
     });
 
-    // Where the follows poll can start the pane by itself, it says so, and
-    // can be told not to. A setting rather than something being waited for,
-    // so it never breathes.
+    // Where a list of who is live can start the pane by itself
+    // (`RootView::start_offered`), it says so, and can be told not to. A
+    // setting rather than something being waited for, so it never breathes.
     let switch = pane.start_offered.then(|| {
         let key = slot.key.clone();
         let on_pane = on_pane.clone();

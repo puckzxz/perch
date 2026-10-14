@@ -730,9 +730,10 @@ pub struct PaneInfo<'a> {
     /// Whether the pane's ask for that is still out, which an ended pane
     /// says with a waiting control rather than nothing.
     pub looking: bool,
-    /// Whether `Start when they go live` is offered: only where it can fire,
-    /// for a channel the follows poll watches — see
-    /// `RootView::start_offered`.
+    /// Whether `Start when they go live` is offered: only where one of the
+    /// two lists of who is live can fire it — the follows poll for a
+    /// followed channel, the ask about channels nobody follows
+    /// (`root::pane_streams`) otherwise; see `RootView::start_offered`.
     pub start_offered: bool,
     /// Whether the pop-out is offered on this platform at all
     /// (`root::pop_out_offered`): where it is not, the header offers
@@ -1152,11 +1153,17 @@ fn pane<V: 'static>(
     // to wake a repaint so this runs again.
     let owner = cx.entity().downgrade();
     let hovered_key = slot.key.clone();
+    // Its own chat's card is part of the pane, so the pointer on it, risen
+    // over the picture, is still the pane's.
+    let own_card = slot
+        .chat
+        .as_ref()
+        .map(|chat| veil::Cover::Card(chat.entity_id()));
     let hover_probe = canvas(
         move |bounds, window, cx| {
-            // Not while the pointer is on the guide over the pane; see
-            // `crate::veil`.
-            let inside = veil::pointer_over(bounds, window, cx);
+            // Not while the pointer is on the guide over the pane, or on
+            // another pane's card risen over it; see `crate::veil`.
+            let inside = veil::pointer_over(bounds, own_card, window, cx);
             owner
                 .update(cx, |view, cx| on_hover(view, &hovered_key, inside, cx))
                 .ok();

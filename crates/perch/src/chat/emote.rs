@@ -176,9 +176,11 @@ impl ChatView {
         // frame number. Each overlay is keyed on its own URL,
         // which `stack` keeps distinct within one stack, behind an `over `
         // that no `id_key` can start with. These ids are the pane's, not the
-        // row's (nothing between `chat-pane` and a picture has an id), so the
-        // same picture standing alone at the same index in another row would
-        // otherwise share the overlay's state; and an element with no tooltip
+        // row's (nothing between `chat-pane` and a list row's pictures has an
+        // id; a viewer card's lines sit under the card's own ids, so they
+        // keep state apart from the list's), so the same picture standing
+        // alone at the same index in another row would otherwise share the
+        // overlay's state; and an element with no tooltip
         // builder takes down whatever tooltip it finds in its state
         // (`div.rs`), so the overlay would put out the lone emote's.
         let height = metrics.emote;

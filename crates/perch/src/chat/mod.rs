@@ -486,7 +486,9 @@ impl ChatView {
         // `Window`, which `Drop` does not have. Same shape as `VideoView`'s
         // frame release, and for the same reason. The pictures effects made
         // go the same way, from every window, since a pane can be drawn in a
-        // pop-out.
+        // pop-out. A card open as the pane goes leaves no cover behind for
+        // the panes still there (`crate::veil`).
+        let card = veil::Cover::Card(cx.entity_id());
         let release = cx.on_release_in(window, {
             let emote_images = emote_images.clone();
             move |this: &mut Self, window, cx| {
@@ -494,6 +496,7 @@ impl ChatView {
                 for made in this.effect_pictures.get_mut().take_all() {
                     cx.drop_image(made.image, Some(window));
                 }
+                veil::lift(card, cx);
             }
         });
 
@@ -772,9 +775,10 @@ impl ChatView {
     /// reader, and rows can land below it without moving anything.
     ///
     /// `over` is measured, not reported, like every hover in this app: the
-    /// list's bounds from the last layout against the pointer now, so a
-    /// pointer that left the window without a move event still releases the
-    /// rows at the next repaint.
+    /// list's bounds from the last layout, and the open card's where it rose
+    /// out of them, against the pointer now, so a pointer that left the
+    /// window without a move event still releases the rows at the next
+    /// repaint.
     ///
     /// The copy menu holds the rows too, for as long as it is open, wherever
     /// the pointer is — on the menu, past the chat's edge, or off the window
@@ -900,10 +904,13 @@ impl ChatView {
             .or_else(|| row.striped.then(theme::stripe))
     }
 
-    /// The colour a row's words actually land on: the surface, with the
-    /// row's paint over it. What a colour that is not the theme's own, a
-    /// cheer's amount, is lifted against (`theme::readable_on`), since a
-    /// wash lightens the surface it lies on.
+    /// The colour a row's words actually land on in the list: the surface,
+    /// with the row's paint over it. The list's `ground` for
+    /// [`message_words`](Self::message_words), which lifts every colour that
+    /// is not the theme's own against it (`theme::readable_on`), a speaker's
+    /// or a cheer's amount, since a wash lightens the surface it lies on. A
+    /// card draws the same line on its own ground, so nothing in the line
+    /// reads this itself.
     fn row_ground(&self, row: &Row) -> gpui::Hsla {
         Self::row_paint(row, self.me())
             .map_or_else(theme::surface, |paint| theme::surface().blend(paint))
@@ -1390,6 +1397,19 @@ impl ChatView {
         (name, words)
     }
 
+    /// The colour a cheer's amount, its tier's `color`, is drawn in on
+    /// `row`: greyed with the rest of a deleted row; otherwise the tier's
+    /// colour, as far as `ground`, what the line is drawn on, needs it
+    /// lifted. Given the ground rather than reading the row's paint, which a
+    /// card's line is not drawn on.
+    fn cheer_amount(row: &Row, color: u32, ground: gpui::Hsla) -> gpui::Hsla {
+        if row.deleted {
+            theme::text_dim()
+        } else {
+            theme::readable_on(color, ground)
+        }
+    }
+
     /// A line that wraps between its children, which is why every word,
     /// emote and tag in it is one: a message's (`message_line`) and a card
     /// line's (`viewer_card`). Laid in a `flex_row`, never straight in a
@@ -1421,8 +1441,9 @@ impl ChatView {
     /// `First message` tag, which says why the row is tinted.
     ///
     /// `ground` is what the line is drawn on, which the speaker's and the
-    /// mentioned people's colours are lifted against: the row's paint in the
-    /// list, the chat's surface in a card's well.
+    /// mentioned people's colours and a cheer's amount are lifted against:
+    /// the row's paint in the list (`row_ground`), the chat's surface in a
+    /// card's well, which paints no row's wash or stripe.
     #[allow(clippy::too_many_arguments)]
     fn message_words(
         &self,
@@ -1487,13 +1508,7 @@ impl ChatView {
                     emote_index += 1;
                 }
                 Token::Cheer(cheer) => {
-                    // Greyed with the rest of a deleted row; otherwise the
-                    // tier's colour, as far as the row's paint needs it lifted.
-                    let amount = if row.deleted {
-                        theme::text_dim()
-                    } else {
-                        theme::readable_on(cheer.color, self.row_ground(row))
-                    };
+                    let amount = Self::cheer_amount(row, cheer.color, ground);
                     line = line.child(self.cheer_piece(cheer, emote_index, amount, metrics));
                     emote_index += 1;
                 }
@@ -1524,10 +1539,19 @@ impl Render for ChatView {
         // Where the pointer is, against where the list was last laid out.
         // Before `at_live` is read: releasing held rows changes it.
         // Not while the pointer is on the guide over the chat, which would
-        // otherwise hold its rows for as long as the guide was being read;
-        // see `crate::veil`.
+        // otherwise hold its rows for as long as the guide was being read,
+        // or on another pane's card; see `crate::veil`. This chat's own card
+        // is the chat's, risen out of the list box or not, so the pointer on
+        // it holds the rows its lines are found among. With no card open,
+        // its cover goes before any probe reads it.
         self.window_hovered = window.is_window_hovered();
-        let over = veil::pointer_over(self.list.viewport_bounds(), window, cx);
+        let card = veil::Cover::Card(cx.entity_id());
+        if self.cards.open().is_none() {
+            veil::lift(card, cx);
+        }
+        let over = veil::pointer_over(self.list.viewport_bounds(), Some(card), window, cx)
+            || veil::bounds_of(card, window, cx)
+                .is_some_and(|bounds| veil::pointer_over(bounds, Some(card), window, cx));
         self.sync_hold(over);
         let at_live = self.at_live();
         let holding = !self.held.is_empty();
@@ -1709,6 +1733,33 @@ mod tests {
                 "{color:06x} reads {ratio:.2}:1 on the mention wash"
             );
         }
+    }
+
+    /// A cheer's amount is lifted against the ground its line is given, as
+    /// the speaker's name is: in the list a washed row's paint, on a card's
+    /// well the bare surface, where the same row's amount takes no more lift
+    /// than the surface needs and still reads.
+    #[test]
+    fn a_cheer_amount_is_lifted_against_its_lines_ground() {
+        let row = |deleted: bool| Row {
+            kind: RowKind::Notice("".into()),
+            striped: true,
+            stamp: "".into(),
+            seq: 0,
+            deleted,
+        };
+        let blue = 0x0000ff;
+        let washed = theme::surface().blend(theme::mention_wash());
+        let in_list = ChatView::cheer_amount(&row(false), blue, washed);
+        let on_card = ChatView::cheer_amount(&row(false), blue, theme::surface());
+        assert_eq!(in_list, theme::readable_on(blue, washed));
+        assert_eq!(on_card, theme::readable_on(blue, theme::surface()));
+        assert!(on_card.l < in_list.l, "{on_card:?} against {in_list:?}");
+        assert!(theme::contrast(on_card, theme::surface()) >= theme::MIN_CONTRAST);
+        assert_eq!(
+            ChatView::cheer_amount(&row(true), blue, washed),
+            theme::text_dim()
+        );
     }
 
     /// The backlog and the rows held under the pointer keep the newest, in
