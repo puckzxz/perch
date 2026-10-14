@@ -4789,10 +4789,16 @@ None of these is being worked on; all of them are real.
    animated emotes are GIF and animate correctly.
 6. **`ImageCache::new` is still on the pre-window UI thread.** It is now
    bounded rather than unbounded — `scan_and_prune` trims the permanent
-   directory to 256MB oldest-first and deletes `.part` debris in the same pass
-   it indexes, so startup no longer gets slower with every run — but it is one
-   `read_dir` plus a stat per file, done synchronously in `RootView::new`.
-   Deleting `%LOCALAPPDATA%/perch/images` is always safe.
+   directory to 256MB, least recently drawn first, and deletes `.part`
+   debris in the same pass it indexes, so startup no longer gets slower with
+   every run — but it is one `read_dir` plus a stat per file, done
+   synchronously in `RootView::new`. The budget was thought to take a very
+   long time to reach; a cache in daily use reached it in about six weeks,
+   which is why a file from a previous run is touched (its mtime, on the
+   download pool, `Work::Touch`) the first time a run draws it: by download
+   date alone the first to go were the global and followed channels'
+   emotes, fetched first and drawn every day. Deleting
+   `%LOCALAPPDATA%/perch/images` is always safe.
 7. **Orphaned streamlink on a hard crash, on macOS.** Windows ties every
    child to a job object (`streamlink::job`) that the kernel closes with the
    process, however it died; nothing equivalent is wired up on macOS.

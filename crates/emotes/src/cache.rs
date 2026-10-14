@@ -82,6 +82,15 @@ struct Job {
     replaces: Option<PathBuf>,
 }
 
+/// What the pool does: a download, or marking a file from a previous run as
+/// used in this one ([`touch`]). Both go to the pool rather than happen on
+/// the caller's thread, which is the UI's, drawing a chat full of emotes
+/// it has never asked for in this run.
+enum Work {
+    Fetch(Job),
+    Touch(PathBuf),
+}
+
 pub struct ImageCache {
     dir: PathBuf,
     volatile_dir: PathBuf,
@@ -101,7 +110,7 @@ pub struct ImageCache {
     /// refresh is queued: until the new bytes exist, the old path is exactly
     /// what the UI is still drawing.
     retired: Arc<Mutex<Vec<PathBuf>>>,
-    queue: mpsc::Sender<Job>,
+    queue: mpsc::Sender<Work>,
     _workers: Vec<std::thread::JoinHandle<()>>,
 }
 
@@ -138,9 +147,10 @@ fn extension_for(content_type: Option<&str>) -> &'static str {
 }
 
 /// How much of the permanent cache to keep. Emotes and box art are a few KB
-/// each, so this is thousands of images — reached only by an install that has
-/// been running for a very long time, which is exactly the case that had no
-/// bound at all before.
+/// each, so this is thousands of images. Thought at first to be reached only
+/// by an install running a very long time; one in daily use filled it in
+/// about six weeks, which is why what goes is what has not been drawn for
+/// longest.
 const BUDGET_BYTES: u64 = 256 * 1024 * 1024;
 
 /// Index whatever is already cached from previous runs, keyed by URL hash,
@@ -195,9 +205,11 @@ fn prune_to(dir: &Path, budget: u64) -> HashMap<String, PathBuf> {
     }
 
     if total > budget {
-        // Oldest first. Least-recently-*modified* rather than least-recently-
-        // used: nothing here records reads, and for content that never changes
-        // at its address, age is the closest honest proxy.
+        // Least recently used first, to the run: a file is written when it
+        // is downloaded and touched again the first time a later run draws
+        // it (`ImageCache::lookup`). By download date alone, the first to go
+        // were the oldest — the global and followed channels' emotes,
+        // fetched first and drawn every day — only to be fetched again.
         files.sort_by_key(|(_, _, modified)| *modified);
         let mut index = 0;
         while total > budget && index < files.len() {
@@ -237,7 +249,7 @@ impl ImageCache {
         let inflight = Arc::new(Mutex::new(HashSet::new()));
         let attempted = Arc::new(Mutex::new(HashMap::new()));
         let retired = Arc::new(Mutex::new(Vec::new()));
-        let (queue, rx) = mpsc::channel::<Job>();
+        let (queue, rx) = mpsc::channel::<Work>();
         let (notify, notify_rx) = futures_mpsc::unbounded();
 
         // One receiver shared by the pool; workers take whichever job is next.
@@ -264,11 +276,18 @@ impl ImageCache {
                 std::thread::Builder::new()
                     .name(format!("image-cache-{index}"))
                     .spawn(move || loop {
-                        let Ok(job) = ({
+                        let Ok(work) = ({
                             let guard = rx.lock().unwrap();
                             guard.recv()
                         }) else {
                             return; // sender dropped; cache is going away
+                        };
+                        let job = match work {
+                            Work::Fetch(job) => job,
+                            Work::Touch(path) => {
+                                touch(&path);
+                                continue;
+                            }
                         };
 
                         let volatile = job.lifetime == Lifetime::Volatile;
@@ -410,6 +429,9 @@ impl ImageCache {
         let stem = format!("stem:{}", hash_url(url));
         let entry = ready.get(&stem).cloned()?;
         ready.insert(url.to_string(), entry.clone());
+        // Used again, so kept again: once a run, since from here on the URL
+        // is found above. See `prune_to`.
+        let _ = self.queue.send(Work::Touch(entry.path.clone()));
         Some(entry)
     }
 
@@ -429,11 +451,11 @@ impl ImageCache {
         if !self.inflight.lock().unwrap().insert(url.to_string()) {
             return;
         }
-        let _ = self.queue.send(Job {
+        let _ = self.queue.send(Work::Fetch(Job {
             url: url.to_string(),
             lifetime,
             replaces,
-        });
+        }));
     }
 
     pub fn dir(&self) -> &Path {
@@ -443,6 +465,15 @@ impl ImageCache {
     /// Where volatile images land. Emptied on startup.
     pub fn volatile_dir(&self) -> &Path {
         &self.volatile_dir
+    }
+}
+
+/// Mark `path` as used now, by its modification time, which is what
+/// [`prune_to`] keeps by. Best effort: a file that cannot be touched is
+/// pruned as if it had not been used, and fetched again if it is wanted.
+fn touch(path: &Path) {
+    if let Ok(file) = std::fs::OpenOptions::new().write(true).open(path) {
+        let _ = file.set_modified(SystemTime::now());
     }
 }
 
@@ -724,6 +755,36 @@ mod tests {
             Some(path),
             "a stale copy should still be shown while it refreshes"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A file from a previous run that this one draws is marked as used, so
+    /// the next prune keeps it ahead of files nobody has drawn since.
+    #[test]
+    fn drawing_a_file_from_a_previous_run_keeps_it() {
+        let dir = scratch("touch");
+        std::fs::create_dir_all(&dir).unwrap();
+        let url = "https://example.invalid/emote.png";
+        let path = dir.join(format!("{}.png", hash_url(url)));
+        std::fs::write(&path, b"an emote").unwrap();
+        let long_ago = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(long_ago)
+            .unwrap();
+
+        let (cache, _ready) = ImageCache::new(dir.clone()).unwrap();
+        assert_eq!(cache.get_or_request(url), Some(path.clone()));
+
+        // On the pool, so not at once.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let modified = || std::fs::metadata(&path).unwrap().modified().unwrap();
+        while modified() == long_ago && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(modified() > long_ago, "the file was not marked as used");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
