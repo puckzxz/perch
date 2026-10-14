@@ -492,6 +492,19 @@ pub fn thumbnail(template: &str, width: u32, height: u32) -> String {
         .replace("{height}", &height.to_string())
 }
 
+/// The template of a live channel's preview, for a channel known to be live
+/// from an answer that carries no picture: the rail's recommendations. The
+/// same address Helix's `/streams` hands out as `thumbnail_url` for every
+/// live channel, by its login, so [`thumbnail`] fills it in as it does
+/// those. For a channel that is not live Twitch answers it with its own
+/// offline placeholder, which is why this is only for one known to be on.
+pub fn live_thumbnail_template(login: &str) -> String {
+    format!(
+        "https://static-cdn.jtvnw.net/previews-ttv/live_user_{}-{{width}}x{{height}}.jpg",
+        login.to_ascii_lowercase()
+    )
+}
+
 /// Every Helix list answers as `{"data": [...]}`. This is the one place that
 /// knows so; each parser below says only what one entry means.
 fn entries(json: &Value) -> impl Iterator<Item = &Value> {

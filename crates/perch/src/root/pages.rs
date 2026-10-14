@@ -338,18 +338,22 @@ impl RootView {
     /// an old broadcast of a channel that is on now would otherwise open
     /// over a picture of what the channel is doing tonight.
     ///
-    /// Only for a channel in a Helix list the app has fetched: nothing has
-    /// ever fetched a preview for one opened by name, nor for one opened from
-    /// the rail's recommendations, whose answers carry none, and a pane with
+    /// Only for a channel in a Helix list the app has fetched, or in the
+    /// rail's recommendations, which are live when they are listed and whose
+    /// preview is at the address any live channel's is (`guide::as_stream`).
+    /// Nothing has fetched a preview for one opened by name, and a pane with
     /// none waits on black, as before.
     fn poster(&self, slot: &Slot) -> Option<PathBuf> {
         match slot.recording() {
             Some(video) if channel_page::poster_url(video).is_some() => {
                 channel_page::video_preview(&self.cache, video)
             }
-            _ => self
-                .stream_info(&slot.channel)
-                .and_then(|stream| browse::stream_preview(&self.cache, stream)),
+            _ => match self.stream_info(&slot.channel) {
+                Some(stream) => browse::stream_preview(&self.cache, stream),
+                None => self.recommended.channel(&slot.channel).and_then(|channel| {
+                    browse::stream_preview(&self.cache, &crate::guide::as_stream(channel))
+                }),
+            },
         }
     }
 

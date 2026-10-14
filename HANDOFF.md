@@ -4890,8 +4890,10 @@ None of these is being worked on; all of them are real.
     seed is one request on the worker, so a full ask of six holds the browse
     requests behind it for as long as six requests take. And the reason
     takes the game's place on the row, so what a recommended channel is
-    playing is on its preview card (`crate::rail_preview`), not on the row,
-    and the card has no picture: the answer carries none. When the offline
+    playing is on its preview card (`crate::rail_preview`), not on the row.
+    The answer carries no picture; the card, the guide's card and a pane
+    opened from one take the preview every live channel has at the address
+    Helix would have named (`twitch_api::live_thumbnail_template`). When the offline
     follows were last live comes from the same endpoint
     (`twitch_api::recommend::last_broadcasts`); it breaks the same quiet way,
     the names losing their "Live 3 hours ago" (except those the polls saw
@@ -4935,9 +4937,9 @@ None of these is being worked on; all of them are real.
     few pixels past a pane right at the edge of fitting.
 25. **Posters exist only for channels in a list.** A starting live pane shows
     its channel's preview only when a Helix list the app has fetched carries
-    the channel; one opened by name waits on black, and so does one opened
-    from the rail's recommendations, whose answers carry no preview. The
-    preview is a snapshot, minutes old at most.
+    the channel, or the rail's recommendations do (`RootView::poster`, from
+    the preview template a live channel always has); one opened by name
+    waits on black. The preview is a snapshot, minutes old at most.
 26. **`Start when they go live` is only for channels you follow, signed
     in.** The follows poll is what starts a pane, and it lists only followed
     channels; a pane on any other channel has no switch. A poll of the open

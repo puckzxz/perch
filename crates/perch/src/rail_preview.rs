@@ -208,8 +208,9 @@ impl Preview {
 /// shows, laid out the way it lays it out, without the controls — nothing
 /// on it takes a press. The picture is the cached preview the cards draw
 /// (`browse::stream_preview`), with the viewers and the uptime on it in the
-/// same badge; a stream with no picture to fetch, a recommendation's, has
-/// the badge's words in a line under the game instead. Raised and ruled
+/// same badge; a stream with no picture to fetch has the badge's words in a
+/// line under the game instead. A recommendation's has one now, at the
+/// address every live channel's preview is (`guide::as_stream`). Raised and ruled
 /// like a menu, since it floats over the page as one does.
 pub fn card(stream: &LiveStream, note: Option<&str>, cache: &ImageCache) -> AnyElement {
     let watching = [

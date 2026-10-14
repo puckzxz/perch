@@ -425,10 +425,11 @@ pub fn panel(body: Body) -> Panel {
 }
 
 /// A live channel from the rail's recommendations as the cards draw one:
-/// what the answer said of it, and no preview, which those answers do not
-/// carry — the card waits on its placeholder rather than asking for one.
-/// Only for a channel no list of streams has; one that is in a list is
-/// drawn from there, picture and all.
+/// what the answer said of it, and the preview every live channel has at
+/// the address Helix would have named, which the answer itself does not
+/// carry (`twitch_api::live_thumbnail_template`). Only for a channel no
+/// list of streams has; one that is in a list is drawn from there, picture
+/// and all.
 pub fn as_stream(channel: &SimilarChannel) -> LiveStream {
     LiveStream {
         id: channel.stream_id.clone(),
@@ -438,7 +439,7 @@ pub fn as_stream(channel: &SimilarChannel) -> LiveStream {
         title: channel.title.clone(),
         game_name: channel.game_name.clone(),
         viewer_count: channel.viewer_count,
-        thumbnail_url: String::new(),
+        thumbnail_url: twitch_api::live_thumbnail_template(&channel.login),
         started_at: String::new(),
     }
 }
@@ -1185,6 +1186,9 @@ mod tests {
         let stream = as_stream(&channel);
         assert_eq!(stream.user_login, "zackrawrr");
         assert_eq!(stream.viewer_count, 41_000);
-        assert!(stream.thumbnail_url.is_empty());
+        assert_eq!(
+            twitch_api::thumbnail(&stream.thumbnail_url, 440, 248),
+            "https://static-cdn.jtvnw.net/previews-ttv/live_user_zackrawrr-440x248.jpg"
+        );
     }
 }
