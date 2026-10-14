@@ -891,6 +891,33 @@ mod tests {
 
     /// The same words for an expired video as for a channel that is off, so
     /// the caller has to know which it asked about.
+    /// streamlink 8.6.0 renamed a recording's audio `audio_only` and gave a
+    /// channel's portrait renditions names of their own (PR 7087). Neither
+    /// is a picture for the menu, and a portrait one must never be `best`:
+    /// on a channel streaming both shapes it is the tallest rendition there
+    /// is. The fixture above keeps the older `audio`.
+    #[test]
+    fn newer_rendition_names_stay_out_of_the_menu() {
+        let available: Vec<String> = [
+            "audio_only",
+            "160p30",
+            "720p60",
+            "1080p60",
+            "1920p60_portrait",
+            "best",
+            "worst",
+        ]
+        .iter()
+        .map(|name| name.to_string())
+        .collect();
+        assert_eq!(playable_names(&available), ["1080p60", "720p60", "160p30"]);
+        let best = StreamOptions {
+            quality: Some("best".into()),
+            ..StreamOptions::default()
+        };
+        assert_eq!(choose(&available, &best, 2160).unwrap().name, "1080p60");
+    }
+
     #[test]
     fn nothing_playable_is_empty_not_an_error() {
         let json: serde_json::Value = serde_json::from_str(

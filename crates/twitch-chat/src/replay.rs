@@ -493,6 +493,13 @@ impl Source {
     }
 }
 
+/// The page of `video_id`'s chat that holds `offset` seconds, asked once, as
+/// a replay asks it. For the hand-run check that the query still answers
+/// (`tests/live.rs`); a replay itself pages through [`Replay`].
+pub fn page_at(video_id: &str, offset: u64) -> Result<Page, Error> {
+    Source::new(video_id.to_string()).at(offset)
+}
+
 /// What one answer means. Public so the shape can be tested against a page
 /// as Twitch actually sends one.
 pub fn parse_page(body: &Value) -> Result<Page, Error> {

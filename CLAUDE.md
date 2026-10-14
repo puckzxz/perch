@@ -31,6 +31,10 @@ cargo test --workspace --locked
 bash scripts/verify-vendor.sh
 ```
 
+Before a release, `bash scripts/live-check.sh` asks every service perch rides
+without a contract (unpublished GQL, the history service, the emote providers,
+streamlink's rendition names) once; it is kept out of CI on purpose.
+
 `verify-vendor.sh` proves `vendor/gpui` is crates.io's gpui plus exactly the
 hunks tagged `PERCH PATCH`; a new patch goes in the root `Cargo.toml`'s list
 and in the script. The two `float_literal_f32_fallback` warnings from

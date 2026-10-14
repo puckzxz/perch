@@ -4564,6 +4564,18 @@ pages say where to get both, and on macOS that is one `brew install` for the
 pair. Neither is a silent failure: each surfaces in the pane, naming itself and
 the environment variable that overrides the search.
 
+**Before a release, run `scripts/live-check.sh`.** Everything perch rides
+without a contract fails quietly by design — the Recommended group goes, a
+replay says one notice row, emotes stay words, a renamed rendition never
+plays — so nothing a user sees says a query was retired. The script runs each
+crate's ignored `tests/live.rs`, which asks once: SideNav, last broadcasts and
+channel names (anonymous GQL), the chat replay query on the mobile Client-ID,
+the recent-messages service, the FFZ, BTTV and 7TV global sets, and every
+rendition the installed streamlink names for a live channel, read by
+`streamlink::quality`. It sends no token, and stays out of CI: anonymous GQL
+from a shared runner's address invites blocks and flaky failures. All of it
+answered on 14 October 2026.
+
 ## What to build next
 
 Nothing here is agreed. The four items that were, plus chat backfill, the
