@@ -3502,7 +3502,12 @@ it names rather than removing it, keyed on the `id` tag `ChatMessage` carries.
 The copy menu holds the rows too while it is open, wherever the pointer goes,
 and gives the hold back to the pointer when it closes, so `Chat paused` stays
 up under a pointer still on the chat rather than the rows landing on the
-close.
+close. What is held is capped at `MAX_MESSAGES`, as the list is
+(`chat::trim_front`): a pointer left resting on a busy chat used to hold
+everything said for as long as it rested, all but the newest thousand bound
+for the drain the moment it landed, and the release pushed them one at a
+time, draining the front and splicing the list twice for each row past the
+cap. Now it lands in one splice and one drain (`ChatView::push_all`).
 
 **A right-click on a row offers to copy it.** gpui's text cannot be
 drag-selected, and a message is a row of separate words and pictures besides,

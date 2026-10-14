@@ -78,6 +78,13 @@ impl Render for EmoteTooltip {
 /// ever laid out.
 const MAX_MESSAGES: usize = 1_000;
 
+/// Drop the oldest of `items` past `cap`, and say how many went.
+fn trim_front<T>(items: &mut Vec<T>, cap: usize) -> usize {
+    let excess = items.len().saturating_sub(cap);
+    items.drain(..excess);
+    excess
+}
+
 /// Wall-clock time for a row, formatted once on arrival.
 ///
 /// Twitch's `tmi-sent-ts` is when the *server* saw the message, which is what
@@ -629,33 +636,52 @@ impl ChatView {
     }
 
     /// Append one row, trimming the backlog, keeping `ListState` in step.
+    fn push(&mut self, kind: RowKind, sent_at: Option<u64>) {
+        self.push_all(std::iter::once((kind, sent_at)));
+    }
+
+    /// Append rows in order, then trim the backlog once.
     ///
     /// `ListState` tracks item count separately from our Vec, so every mutation
-    /// here needs a matching splice or the list renders the wrong indices.
-    fn push(&mut self, kind: RowKind, sent_at: Option<u64>) {
-        self.striped = !self.striped;
-        self.next_seq += 1;
-        self.rows.push(Row {
-            kind,
-            striped: self.striped,
-            stamp: clock(sent_at),
-            seq: self.next_seq,
-            deleted: false,
-        });
-        let count = self.rows.len();
-        self.list.splice(count - 1..count - 1, 1);
+    /// here needs a matching splice or the list renders the wrong indices. One
+    /// splice for the lot, and one drain: a release of held rows row by row
+    /// drained the front of the Vec and spliced the list twice for every row
+    /// past the cap.
+    fn push_all(&mut self, arrivals: impl IntoIterator<Item = (RowKind, Option<u64>)>) {
+        let start = self.rows.len();
+        for (kind, sent_at) in arrivals {
+            self.striped = !self.striped;
+            self.next_seq += 1;
+            self.rows.push(Row {
+                kind,
+                striped: self.striped,
+                stamp: clock(sent_at),
+                seq: self.next_seq,
+                deleted: false,
+            });
+        }
+        let added = self.rows.len() - start;
+        if added == 0 {
+            return;
+        }
+        self.list.splice(start..start, added);
 
-        if self.rows.len() > MAX_MESSAGES {
-            let excess = self.rows.len() - MAX_MESSAGES;
-            self.rows.drain(0..excess);
+        let excess = trim_front(&mut self.rows, MAX_MESSAGES);
+        if excess > 0 {
             self.list.splice(0..excess, 0);
         }
     }
 
     /// Add a row, or hold it back while the pointer is over the pane.
+    ///
+    /// Held rows are capped as the list is: a pointer left resting on a busy
+    /// chat would otherwise hold everything said for as long as it rested,
+    /// all but the newest `MAX_MESSAGES` of it bound for the drain the
+    /// moment it landed.
     fn append(&mut self, kind: RowKind, sent_at: Option<u64>) {
         if self.hold {
             self.held.push((kind, sent_at));
+            trim_front(&mut self.held, MAX_MESSAGES);
         } else {
             self.push(kind, sent_at);
         }
@@ -686,9 +712,8 @@ impl ChatView {
     fn sync_hold(&mut self, over: bool) {
         let hold = (over || self.menu.is_some()) && self.at_live();
         if !hold && !self.held.is_empty() {
-            for (kind, sent_at) in std::mem::take(&mut self.held) {
-                self.push(kind, sent_at);
-            }
+            let held = std::mem::take(&mut self.held);
+            self.push_all(held);
         }
         self.hold = hold;
     }
@@ -699,8 +724,9 @@ impl ChatView {
     ///
     /// The hold is let go only by [`sync_hold`](Self::sync_hold), and that
     /// runs only when the chat is drawn. Without this, a chat put away with
-    /// the pointer over it would go on holding every row that arrived, past
-    /// the cap that bounds the rows on screen, for as long as it was away.
+    /// the pointer over it would go on holding what arrived, up to the cap
+    /// in `append`, for as long as it was away, and say `Chat paused` when
+    /// it came back.
     /// Nothing for a chat holding nothing back, which is most of them, so
     /// telling one on every restage costs nothing. A copy menu open over a
     /// chat that has gone off the screen goes with it, as it would hold the
@@ -1484,8 +1510,21 @@ impl Render for ChatView {
 
 #[cfg(test)]
 mod tests {
+    use super::trim_front;
     use emotes::{tokenize, Token};
     use twitch_chat::replay::parse_page;
+
+    /// The backlog and the rows held under the pointer keep the newest, in
+    /// order, and say how many went so the list can be spliced to match.
+    #[test]
+    fn trimming_keeps_the_newest_and_counts_the_rest() {
+        let mut items: Vec<u32> = (1..=5).collect();
+        assert_eq!(trim_front(&mut items, 3), 2);
+        assert_eq!(items, [3, 4, 5]);
+        assert_eq!(trim_front(&mut items, 3), 0);
+        assert_eq!(trim_front(&mut items, 10), 0);
+        assert_eq!(items, [3, 4, 5]);
+    }
 
     /// The tag a replay builds is read by the tokenizer the live pane uses,
     /// and the two have to agree on what an index counts: characters. The
