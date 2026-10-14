@@ -101,8 +101,8 @@ click away.
 
 **Voice.** The user left it to the developer: every word on a control is
 sentence case, notices, toasts and tooltips read as sentences, and a pane
-header's passive tags stay lowercase (`muted`, `paused`, `replay`, `ad
-break`). The rule and its open corners are under "Casing".
+header's passive tags stay lowercase (`muted`, `paused`, `buffering`,
+`replay`, `ad break`). The rule and its open corners are under "Casing".
 
 **Features whose standing changed, and why.**
 
@@ -374,6 +374,20 @@ it the same way unless the loop was asked to stop or an end of file has
 already been said (whose wake may have been read already, which leaves the
 slot empty again, so a local `reported` is what tells). They used to end the
 thread without a word, leaving the last frame up as if paused.
+
+**A live picture waiting on the network says `buffering`.** mpv's
+`paused-for-cache` goes up when its cache runs dry and down when there is
+enough to play; the render thread observes it on a live player (a
+recording's jumps are reopens that wait a second each by design, and its
+stalls have `vod::stalled`), and once it has been up for
+`video::BUFFERING_AFTER` (a second) after the first frame, not paused,
+publishes `VideoStream::buffering` with a wake of its own, since a picture
+that is waiting sends no frame to carry the news. The view tells the root
+with `VideoEvent::Buffering` only when it changes, and skips noting a frame
+on the wake that says it began, which would put the ad notice's sense of
+when the picture last moved (`VideoView::resumed_at`) late. The pane's
+header says `buffering` beside `muted` and `paused`, and not during an ad
+break, which freezes the picture too and says why.
 
 **`mpv_render_context_render` blocks until the frame's display time**, up to
 `video-timing-offset` (50 ms default). That wait is what keeps video timed to
@@ -4655,8 +4669,9 @@ Left over from phase 2, smallest first:
   for now.
 - `Start when they go live` lasts for the session and is per pane. Keeping
   it per channel would be a setting.
-- A `Buffering…` word for a pane waiting on its stream; today nothing on
-  screen says so.
+- A word for a pane waiting on its stream is built: a live pane's header
+  says `buffering` (see "A live picture waiting on the network says
+  `buffering`" under Video).
 
 Left over from phase 3, smallest first:
 
@@ -4686,9 +4701,14 @@ Ranked by what would be noticed, roughly:
    rewind's mapping (`rewind::archive_for`, `position_in`) with
    `Slot::rewind`'s archive, once found. Getting back to live from a rewind
    is built (`LIVE` on the recording; see "Rewinding a live pane").
-2. **Buffered range on the seek bar**, from `demuxer-cache-time`. The
-   muted stretches are marked already, from Helix (see "A recording's muted
-   stretches are marked on its seek bar").
+2. **Not the buffered range on the seek bar.** It was here, from
+   `demuxer-cache-time`, but a recording's demuxer is only about a second
+   ahead (see "A recording paused for a while can come back to a dead
+   connection" under Recordings) and every jump is a reopen (Known limits,
+   item 16), so the range would be a sliver that says nothing. What a
+   viewer wondering about a stall wanted, the `buffering` tag, is built.
+   The muted stretches are marked already, from Helix (see "A recording's
+   muted stretches are marked on its seek bar").
 3. **Watch the channels in none of the lists, offline too.** A *playing*
    live pane that no fetched list carries — opened by name, from a link or
    from the rail's Recommended group — is now asked about by itself

@@ -211,14 +211,14 @@ pub(super) fn pane_header<V: 'static>(
     // here — in a panel always; over the picture, with the rest of the
     // header, while it is up. The quality does not: it is on the control bar,
     // and the header has no room for a fourth thing.
-    let (muted, paused) = pane
+    let (muted, paused, buffering) = pane
         .player
         .as_ref()
         .map(|view| {
             let player = view.read(cx);
-            (player.is_muted(), player.is_paused())
+            (player.is_muted(), player.is_paused(), player.is_buffering())
         })
-        .unwrap_or((false, false));
+        .unwrap_or((false, false, false));
     // An ad streamlink is filtering out, which holds the picture still with
     // nothing on it to say why: said here, off the picture, beside `muted`
     // and `paused`, counting down when streamlink gave a length
@@ -498,6 +498,12 @@ pub(super) fn pane_header<V: 'static>(
                 })
                 .when(muted, |header| header.child(controls::tag("muted")))
                 .when(paused, |header| header.child(controls::tag("paused")))
+                // A live picture standing still on the network, said so it
+                // does not read as a player that has hung. Not during an ad
+                // break, which holds the picture still too and says why.
+                .when(buffering && ad_break.is_none(), |header| {
+                    header.child(controls::tag("buffering"))
+                })
                 // The one tag that gives way, with `meta`, when the row runs
                 // out: a narrow header on chat that is muted or paused as
                 // well has no room for it beside the icons, and flex_none it

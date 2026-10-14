@@ -892,6 +892,10 @@ fractions, and never upscales while a larger source exists. Render size is also
 clamped to the source resolution — mpv never scales up, the GPU stretches the
 last bit instead, which is effectively free.
 
+A live pane whose picture stops for more than a second while it waits on the
+network says `buffering` in its header, beside `muted` and `paused`, until the
+picture moves again.
+
 The choice is made again whenever a pane changes size — another pane opening
 or closing, the rail folding, the window resizing or going fullscreen, a pane
 given the whole window or every pane shown again, a popped-out pane's own

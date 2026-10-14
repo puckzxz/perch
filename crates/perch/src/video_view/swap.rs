@@ -302,7 +302,23 @@ impl VideoView {
                 if let Some(reason) = self.stream.take_stopped() {
                     cx.emit(VideoEvent::Stopped(reason));
                 } else {
-                    self.note_frame();
+                    let buffering = self.stream.is_buffering();
+                    let news = buffering != self.buffering;
+                    self.buffering = buffering;
+                    if news {
+                        cx.emit(VideoEvent::Buffering);
+                    }
+                    // A wake that says the waiting began or ended may carry
+                    // no frame at all: it ends when the picture moves, but
+                    // also at a pause, with the picture as still as before.
+                    // Noting a frame then would tell the ad notice the
+                    // picture had moved again (`resumed_at`) and take it
+                    // down mid-break. Frames that do follow note themselves
+                    // on their own wakes; one folded into this wake waits
+                    // for the next, a frame later.
+                    if !news {
+                        self.note_frame();
+                    }
                     self.pending_tick(cx);
                 }
                 cx.notify();
@@ -507,6 +523,8 @@ impl VideoView {
         let (from_pos, to_pos) = (self.stream.position(), stream.position());
         let old = std::mem::replace(&mut self.stream, stream);
         let from = std::mem::replace(&mut self.qualities, qualities).playing;
+        // The old player's wait, if it had one, went with it.
+        self.buffering = self.stream.is_buffering();
         self.generation = generation;
         self._pump = pump;
         drop(old);

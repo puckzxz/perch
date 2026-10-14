@@ -92,6 +92,10 @@ pub enum VideoEvent {
     /// `set_menu`, the one write of the open menu, so no way of closing it
     /// leaves streamlink running for a menu nobody can see.
     QualityMenu(bool),
+    /// The live picture started or stopped waiting on the network
+    /// ([`VideoView::is_buffering`]). The root repaints, since the word is
+    /// in the pane's header, which is the root's to draw.
+    Buffering,
     /// The stream stopped and will not resume. The root handles it because
     /// what is left to do - retire this player, take streamlink down with it,
     /// and say so in the pane - is all outside the player.
@@ -247,6 +251,10 @@ pub struct VideoView {
     /// measured against to say whether the picture has moved again after
     /// standing still (`ad_break::frames_resumed`).
     last_frame: Option<Instant>,
+    /// Whether the stream on screen was waiting on the network at its last
+    /// wake ([`is_buffering`](Self::is_buffering)): kept so the root is told
+    /// only when that changes.
+    buffering: bool,
     /// When the picture last moved again after standing still, its first
     /// frame included: what ends a pane's ad-break notice
     /// (`ad_break::AdBreak::over`), read by the root as it ticks.
@@ -510,6 +518,7 @@ impl VideoView {
             volume_linger: None,
             hear_only: start.hear_only,
             last_frame: None,
+            buffering: false,
             resumed_at: None,
             qualities,
             menu: None,
@@ -921,6 +930,13 @@ impl VideoView {
 
     pub fn is_paused(&self) -> bool {
         self.stream.is_paused()
+    }
+
+    /// Whether the live picture on screen has stood still for a moment
+    /// waiting on the network (`VideoStream::is_buffering`), as last heard
+    /// on a wake.
+    pub fn is_buffering(&self) -> bool {
+        self.buffering
     }
 
     /// The qualities this stream offers, highest first, and the one playing:

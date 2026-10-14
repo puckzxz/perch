@@ -441,10 +441,22 @@ pub struct VideoStream {
     seek: Arc<Mutex<Option<f64>>>,
     /// Whether this is a broadcast as it happens.
     live: bool,
+    /// Whether a live picture has stood still for [`BUFFERING_AFTER`]
+    /// waiting on the network: mpv's `paused-for-cache`, which it sets when
+    /// its cache runs dry and clears when it has enough to play again. Said
+    /// by the render thread with a wake of its own, since a picture that is
+    /// waiting sends no frames to carry it; read by the pane's header.
+    buffering: Arc<AtomicBool>,
     /// A recording's length, for the seek bar; `None` on a live stream.
     extent: Option<Extent>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
+
+/// How long a live picture waits on the network before its pane says
+/// `buffering`. A stream starting or swapping in waits a moment as a matter
+/// of course, and a word that flashed up for each of those would say
+/// nothing; a stall longer than this is one a viewer is wondering about.
+const BUFFERING_AFTER: Duration = Duration::from_secs(1);
 
 impl VideoStream {
     /// Start playing `playback`, as `options` say: at the size its handle
@@ -472,6 +484,7 @@ impl VideoStream {
         let stop = Arc::new(AtomicBool::new(false));
         let volume_level = Arc::new(AtomicU8::new(volume));
         let paused = Arc::new(AtomicBool::new(start_paused));
+        let buffering = Arc::new(AtomicBool::new(false));
         let source_size = Arc::new(AtomicU64::new(0));
         let stopped: Arc<Mutex<Option<Stopped>>> = Arc::new(Mutex::new(None));
         let positions = match &playback {
@@ -522,6 +535,7 @@ impl VideoStream {
                 let volume_level = volume_level.clone();
                 let target = target.clone();
                 let paused = paused.clone();
+                let buffering = buffering.clone();
                 let source_size = source_size.clone();
                 let stopped = stopped.clone();
                 let positions = positions.clone();
@@ -611,6 +625,14 @@ impl VideoStream {
                             eprintln!("video: could not observe {name}: {e}");
                         }
                     }
+                    // Only a live picture says `buffering`: a recording's
+                    // jumps are reopens that wait a second each by design,
+                    // and its stalls have their own remedy (`vod::stalled`).
+                    if live {
+                        if let Err(e) = player.observe_property("paused-for-cache") {
+                            eprintln!("video: could not observe paused-for-cache: {e}");
+                        }
+                    }
                     // Only a recording has a position worth the traffic:
                     // `time-pos` changes on every frame, and a live pane
                     // would pay for sixty strings a second to learn nothing.
@@ -668,6 +690,9 @@ impl VideoStream {
                     // rather than at `stop`; see the report after it.
                     let mut failure: Option<String> = None;
                     let mut reported = false;
+                    // Since when mpv has been waiting on its cache, while it
+                    // is; see `buffering`.
+                    let mut starved_since: Option<Instant> = None;
 
                     'frames: while !stop.load(Ordering::Relaxed) {
                         for event in player.poll_events() {
@@ -689,6 +714,14 @@ impl VideoStream {
                                                 has_moved = true;
                                             }
                                         }
+                                    }
+                                    "paused-for-cache" => {
+                                        let starved = value.as_deref() == Some("yes");
+                                        starved_since = match (starved, starved_since) {
+                                            (true, Some(since)) => Some(since),
+                                            (true, None) => Some(Instant::now()),
+                                            (false, _) => None,
+                                        };
                                     }
                                     "path" => {
                                         if let (Some(path), Some(recording)) =
@@ -779,6 +812,18 @@ impl VideoStream {
                                     eprintln!("video: source is {w}x{h}");
                                 }
                             }
+                        }
+
+                        // Said once each way, with a wake: a picture that is
+                        // waiting sends no frame to carry the news. Not while
+                        // paused on purpose, which is not waiting, and not
+                        // before the first frame, which the starting screen
+                        // is already saying it waits for.
+                        let waiting = !paused.load(Ordering::Relaxed)
+                            && rendered.is_some()
+                            && starved_since.is_some_and(|since| since.elapsed() >= BUFFERING_AFTER);
+                        if buffering.swap(waiting, Ordering::Relaxed) != waiting {
+                            let _ = tx.try_send(());
                         }
 
                         // Resize between frames. mpv scales to whatever size
@@ -1018,6 +1063,7 @@ impl VideoStream {
                 positions,
                 seek,
                 live,
+                buffering,
                 extent,
                 thread: Some(thread),
             },
@@ -1109,6 +1155,12 @@ impl VideoStream {
 
     pub fn is_paused(&self) -> bool {
         self.paused.load(Ordering::Relaxed)
+    }
+
+    /// Whether the live picture is waiting on the network; see
+    /// [`buffering`](Self::buffering).
+    pub fn is_buffering(&self) -> bool {
+        self.buffering.load(Ordering::Relaxed)
     }
 
     /// Change playback volume (0-100). Takes effect on the next frame.

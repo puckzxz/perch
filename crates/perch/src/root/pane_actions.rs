@@ -344,6 +344,8 @@ impl RootView {
             // Only ever about the stream on screen: a stream getting ready
             // beside it that stops is a swap that failed (`video_view::swap`).
             VideoEvent::Stopped(reason) => self.stream_stopped(owner, reason.clone(), cx),
+            // The header says it, and the header is drawn here.
+            VideoEvent::Buffering => cx.notify(),
             // The bar's own: the same route as the pane's header and the
             // palette, by the key the player was subscribed with.
             VideoEvent::Pane(action) => {
