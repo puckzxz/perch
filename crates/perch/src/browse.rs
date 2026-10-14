@@ -472,8 +472,10 @@ pub enum Action {
     SignIn,
     /// Fetch the next page of whichever list is on screen.
     LoadMore,
-    /// Pin this channel to the top of the rail, or take it off. From the
-    /// rail's rows only, for now, so only channels you follow.
+    /// Pin this channel to the top of the rail, or take it off: the rail's
+    /// own pin, on a followed channel's row or a pinned one's, and the pin on
+    /// a channel's page, followed or not. A pane's More does the same through
+    /// `watch::PaneAction::Pin`, and both end in `RootView::set_pinned`.
     SetPinned {
         login: String,
         pinned: bool,
@@ -1555,7 +1557,8 @@ pub(crate) fn list_placeholder<V: 'static>(
 }
 
 /// The whole page, in the `room` it has: the width its cards divide, and what
-/// every list leaves free at its foot for the mini player.
+/// every list leaves free at its foot for the mini player. `standing` is what
+/// a channel's page, while one is open, says of it beside its name.
 #[allow(clippy::too_many_arguments)]
 pub fn page<V: 'static>(
     follows: &[LiveStream],
@@ -1571,8 +1574,7 @@ pub fn page<V: 'static>(
     cache: &Arc<ImageCache>,
     can_add: bool,
     scrolls: &Scrolls,
-    channel_live: bool,
-    channel_next: Option<String>,
+    standing: channel_page::Standing,
     on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + Clone + 'static,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
@@ -1584,8 +1586,7 @@ pub fn page<V: 'static>(
             discovery,
             sign_in,
             history,
-            channel_live,
-            channel_next,
+            standing,
             room,
             cache,
             can_add,

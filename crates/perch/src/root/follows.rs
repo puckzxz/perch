@@ -5,7 +5,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use gpui::{Context, Task, Window};
 use settings::history::History;
 use twitch_api::{Channel, LiveStream, Video};
@@ -183,6 +183,10 @@ impl RootView {
                 self.refreshing = false;
                 self.follows_loaded = true;
                 self.follows_complete = complete;
+                // Who is followed and off is known now, so a stopped pane
+                // or a pin on a channel nobody follows can be told apart and
+                // asked about, at the end of this event (`root::pane_streams`).
+                self.followed_loaded = true;
                 // A channel followed since is no recommendation.
                 self.update_recommended();
                 // And when the offline ones were last live: everyone on the
@@ -347,9 +351,12 @@ impl RootView {
             // A line on a channel's page or an offline pane, and no list's
             // either; see `root::schedule`.
             TwitchEvent::Schedule { login, result } => self.on_schedule(login, result, cx),
-            // A live pane's channel that no list carries; see
+            // A channel nothing else asks about: a live pane's that no list
+            // carries, a stopped pane's or a pin's that nobody follows; see
             // `root::pane_streams`.
-            TwitchEvent::PaneStreams { logins, result } => self.on_pane_streams(logins, result, cx),
+            TwitchEvent::PaneStreams { logins, result } => {
+                self.on_pane_streams(logins, result, window, cx)
+            }
             // Said on the list that failed, which may not be the one on
             // screen by now; see `Discovery::shown_error`.
             TwitchEvent::BrowseError {
@@ -366,7 +373,10 @@ impl RootView {
         // Any answer may have brought a list that says when a live pane's
         // broadcast began, which its timeline runs from, or that a rewound
         // recording's broadcast is still on, or no longer; see `rewind`. A
-        // live pane no list carries is asked about by itself, when due.
+        // channel nothing else asks about — a live pane's no list carries, a
+        // stopped pane's or a pin's nobody follows — is asked about by
+        // itself, when due; and one a list now carries, or that is now
+        // followed, is let go (`root::pane_streams`).
         self.ask_pane_streams();
         self.sync_live_since(cx);
         self.sync_back_to_live(cx);
@@ -425,33 +435,6 @@ impl RootView {
         );
         notifications::show(notifications::batch(&told));
 
-        // A pane that found nothing to play, whose channel this poll lists as
-        // broadcasting, tries again by itself when `Start when they go live`
-        // says so: the channel was opened before the stream started, the
-        // broadcast dropped and came back, or the pane's connection dropped
-        // and the broadcast never stopped. Which broadcasts count is the
-        // pane's to say (`Slot::due_to_start`), from when this one started;
-        // a try at one already going is noted on it, so it is made once.
-        let now = Utc::now();
-        let resumed: Vec<(String, DateTime<Utc>)> = self
-            .slots
-            .iter()
-            .filter_map(|slot| {
-                let stream = streams.iter().find(|s| s.user_login == slot.channel)?;
-                let started = DateTime::parse_from_rfc3339(&stream.started_at)
-                    .ok()?
-                    .with_timezone(&Utc);
-                slot.due_to_start(started, now)
-                    .then(|| (slot.key.clone(), started))
-            })
-            .collect();
-        for (key, started) in resumed {
-            if let Some(index) = self.slot_index(&key) {
-                self.slots[index].retried_for = Some(started);
-            }
-            self.retry_stream(&key, window, cx);
-        }
-
         // Anyone who just went live is no longer offline. The offline list
         // arrives from its own request moments later and will agree, but not
         // before a repaint that would show them in both lists.
@@ -473,6 +456,18 @@ impl RootView {
             streams
         };
         self.follows_loaded = true;
+
+        // A pane that found nothing to play, whose channel this poll lists as
+        // broadcasting, tries again by itself when `Start when they go live`
+        // says so; see `start_due`, which the ask about channels nobody
+        // follows starts its panes by too (`root::pane_streams`). Once this
+        // list is the follows, not before: a pane it starts then reads its
+        // channel as listed, so its start's `restage` asks Helix nothing by
+        // login (`ask_pane_streams`) that this list has just said, for an
+        // answer let go at the end of this event.
+        let live = self.follows.clone();
+        self.start_due(&live, window, cx);
+
         // Who is followed may have changed, and a minute has gone by: the
         // recommendations are ranked against the new list, and asked for
         // again if their interval is up — which it is once in five polls,
@@ -489,6 +484,16 @@ impl RootView {
     /// one for the rail alone.
     pub(super) fn live_held(&self) -> bool {
         self.rail_pointed || self.home_pointed || self.guide_pointed
+    }
+
+    /// Whether `login` is followed, live or not, as the two lists of follows
+    /// say. Only as good as they are: before the list of everyone followed
+    /// has come back (`followed_loaded`) a follow that is off is in neither,
+    /// and so is one whose stream has just ended, for the moment between
+    /// the live list and that one.
+    pub(super) fn followed(&self, login: &str) -> bool {
+        self.follows.iter().any(|stream| stream.user_login == login)
+            || self.offline.iter().any(|channel| channel.login == login)
     }
 
     /// Note whether the pointer is over one of the lists of follows, from

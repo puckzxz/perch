@@ -21,9 +21,10 @@ use crate::twitch::{SignInStart, TwitchService};
 impl RootView {
     /// Stop the worker, with nothing in its place, and forget everything it
     /// fed: the follows, the browse lists fetched with its token and the
-    /// trail through them, the panes' asks, whether its token may send, and
-    /// the messages it was sending, each of which says so in its chat. What
-    /// signing out leaves, and what every restart begins with.
+    /// trail through them, the panes' and the pins' asks, whether its token
+    /// may send, and the messages it was sending, each of which says so in
+    /// its chat. What signing out leaves, and what every restart begins
+    /// with.
     fn stop_twitch(&mut self, cx: &mut Context<Self>) {
         self.twitch = TwitchService::stopped();
         self._twitch_pump = Task::ready(());
@@ -40,6 +41,13 @@ impl RootView {
         self.avatars.clear();
         self.follows_loaded = false;
         self.follows_complete = false;
+        self.followed_loaded = false;
+        // And what Helix said of the channels nothing else asks about, by
+        // login: a pin's answer is let go of by no change of a pane, and
+        // would go on saying it is live; and an ask the old worker was
+        // answering dies with it, so the new one asks at once
+        // (`root::pane_streams`).
+        self.pane_streams = Default::default();
         self.refreshing = false;
         // Browsing was fetched with the old token, so it goes with it — and
         // so does the trail through it, whose places were read from what

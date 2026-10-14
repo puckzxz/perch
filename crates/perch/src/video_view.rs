@@ -299,6 +299,15 @@ pub struct VideoView {
     /// `RootView::sync_guide_buttons` calls, every time the guide comes up,
     /// moves or goes.
     guide_from_here: bool,
+    /// Whether the pane's channel is pinned to the rail, which More's pin
+    /// row says the other of and keys its id on: `Pin to the rail` or
+    /// `Unpin from the rail` (`menu::pin_row`).
+    ///
+    /// A mirror, on [`ChatButton`]'s pattern: the pins are the root's, in
+    /// the settings. Written in exactly two places — [`Start::pinned`] when
+    /// the player is made, and [`set_pinned`](Self::set_pinned), which only
+    /// `RootView::sync_pins` calls, after every change of a pin.
+    pinned: bool,
     /// The quality change somebody picked, while it is under way: the pill
     /// names it and breathes, the menu marks its row, and the bar stays up
     /// (`sync_controls`). See [`Switching`] for why it is a mirror, and why
@@ -445,6 +454,9 @@ pub struct Start {
     /// Whether the guide is up from this pane as the player is made; see
     /// `VideoView::guide_from_here`.
     pub guide_from_here: bool,
+    /// Whether the pane's channel is pinned as the player is made; see
+    /// `VideoView::pinned`.
+    pub pinned: bool,
 }
 
 impl VideoView {
@@ -530,6 +542,7 @@ impl VideoView {
             chat: start.chat,
             maximize: start.maximize,
             guide_from_here: start.guide_from_here,
+            pinned: start.pinned,
             switching: start.switching,
             linger: None,
             // Until the probe has measured the pane: the bar is hidden on
@@ -1050,6 +1063,16 @@ impl VideoView {
     pub fn set_guide_from_here(&mut self, here: bool, cx: &mut Context<Self>) {
         if self.guide_from_here != here {
             self.guide_from_here = here;
+            cx.notify();
+        }
+    }
+
+    /// Whether the pane's channel is pinned now, from `RootView::sync_pins`;
+    /// see `VideoView::pinned` for why nothing else calls this. Repaints
+    /// only on a change.
+    pub fn set_pinned(&mut self, pinned: bool, cx: &mut Context<Self>) {
+        if self.pinned != pinned {
+            self.pinned = pinned;
             cx.notify();
         }
     }

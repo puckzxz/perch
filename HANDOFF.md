@@ -209,10 +209,10 @@ App modules:
 | `trail.rs` | back and forward: the places behind and ahead, what a step passes over, and forgetting a place that is gone (pure, tested) |
 | `stage.rs` | where each pane is drawn — a pane, a mini-player tile, a window of its own, or nowhere while another pane has the watch page (`Place`) — which panes are popped out and which one is maximized (`Stage`), the cells the watch grid draws (`cells`) and what a pane's maximize control offers (`MaximizeButton`): the one owner of the answer both windows ask before drawing a player; and where a pane moved one place along the order goes (`moved`) (pure, tested) |
 | `os_window.rs` | what Perch asks of a window that gpui does not: its platform handle (`hwnd`, the one place a gpui window is asked for it — `instance::bring_forward` comes forward on it rather than looking it up itself), and keeping a pop-out above every other app (`keep_on_top`, Windows only) |
-| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `account` (the sign-in as the user drives it: the settings sheet's Sign out, Sign in, Sign in again for the chat scope, and `restart_twitch`, the worker started over, which a new client id does too), `chat_send` (sending chat: what each live chat's composer is told about the user, `sync_chat_access`, a message handed to the worker under a number of the root's, `send_chat`, and its answer handed back to the chat it came from, `on_chat_sent`), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams` (opening, restarting, closing, and `replace_with_video` and `replace_with_channel`, a recording swapped in for a live pane in place and the channel back in a recording's, both through `replace_slot`), `renditions` (what each pane plays, and when it restarts: the quality chosen against each pane's own height, `pane_height_for`, the upward re-pick when the grid changes, `sync_quality`, a pick from the pane's own menu, and how each changes what plays, `change_rendition` — beside a picture that covers the pane, to take over in place, and cold otherwise; and the root's half of that swap: what a start resolving beside a pane does with its events, `pending_event`, and what the pane keeps once its player has taken over or been given up on, `on_swapped` and `on_swap_failed`; and `set_pending`, the only write of a pane's pending start, which tells its player what a pick is switching it to and which a test holds the root to; and `beside_rendition`, the rendition a start beside a live picture names from the pane's menu, so streamlink skips its probe; tested), `warm` (streamlink started ahead for a live pane's quality menu: `quality_menu` on `VideoEvent::QualityMenu`, up to four renditions nearest what plays, `to_warm`, tested, each a `watch::WarmStart` on the slot whose `Ready` is kept until a pick takes it, `take_warm` and `adopt_warm` from `start_stream`, let go a grace after the menu closes, at its age while the menu stays open (`expire_warm`), with the player, or by a cold start; none for what a pick is already starting), `panes` (where each pane is drawn, applied: `restage`, the one funnel every change of a pane's state, of which panes there are, of the page, of what is popped out and of what is maximized ends in; `set_slot_state`, the only write of a pane's state, which a test holds the root to; `video_in_main`, the only way the main window reaches a player, which a test holds the mini player and the pages to; and the maximize as the root drives it, `toggle_maximize`, `show_all_panes`, and `choose`, which takes it to the pane chosen; and `move_pane`, two panes swapping places in the order, from a header dropped on a pane or `Shift+←`/`Shift+→`), `pop_out` (a pane's picture in a window of its own, on top of other apps: the `PopOut` view, opening and closing it through `cx.defer`, `to_root`, the only way back to the root from it, and `offered`, Windows only), `broadcasts` (what a stopped live pane asks about its channel's past broadcasts, and whether it may offer to start by itself), `rewind` (a live pane's timeline: when each live player's broadcast began, `sync_live_since`, a press on it carried out at once or when the ask for the archive is answered, and the archive opened in the pane's place; and the way back: whether each recording's broadcast is still on, `still_live` and `sync_back_to_live`, and `LIVE` pressed, `back_to_live`), `hearing` (which panes are heard: More's `Only this one` and `Hear all again` through Mute all's hush, and `sync_hear_only`, the one writer of every player's `HearOnly` mirror after `Start`; and More's `Audio compressor`, every pane's at once, `toggle_compressor`), `ad_breaks` (a pane's ad-break notice: begun on `StreamEvent::AdBreak`, ticked once a second by a timer the slot owns, taken down when it is over), `guide` (the guide over the watch page as the root runs it: `toggle_guide` from a pane's Guide button, which opens, moves or closes it, `close_guide`, `sync_guide_buttons`, the one writer of every player's `guide_from_here` mirror after `Start`, `fill_guide` through `fetch`, a card's Watch in place of the pane the guide was opened from — `replace_with_channel` — or `+ Add` through `Action::Add`, a category opened inside it, and the panel's shell: where it sits, the press outside that closes it, its probe into the veil), `pane_actions` (what a pane asks for, by its key: a press on it or one of its controls, which takes the keys back for the root first, and its player's requests; the moment a pane key brings a pane's header up over its picture; `copy`, the one place the clipboard is written; and `run_guard`, which swallows the rest of a double-click whose first press took a player out from under the pointer — More's `Pop out`, the mini player's — where the player's own guard cannot follow), `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `muted` (a recording's muted stretches: heard from every Helix answer that lists videos, `hear_muted`, given to a pane that opens one without them, as the history's do, `with_muted`, asked for once through `Request::Video` only when nothing was heard, also when sign-in lands, `ask_muted_for_open`, an answer claimed by a pane's question before a link's, `Muted::claim`, tested, and taken onto every pane playing it and its player's seek bar, `take_muted`), `prefs`, `recommended` (the rail's Recommended group: when to ask the worker, what its answer becomes, and the hooks that call it), `last_live` (when the offline follows were last live: when to ask the worker, and what its answer does), `shared_chat` (Shared Chat labels: each chat watched as it is made, live or a replay (`watch_chat`), its word about a partner it cannot name turned into one ask per id, and the names handed to every chat), `badges` (chat badges: a chat's word about its room answered with the badges known for it, the global and per-room books asked for once each, and every answer handed to the chats it is for), `cheers` (cheers: a live chat's word about its room answered with the cheermotes known for it, each room asked for once a session, and the answer handed to the live chats in that room; a replay is never asked for), `viewer_cards` (a chat's viewer card as the root runs it: the account of the person on it asked for when it opens, `on_card_opened`, and every open card told what is known, `tell_card` and `sync_viewer_cards`, after every worker event and every `restage`; its `Watch`, through `Action::Add`, and its `Channel page`, which asks the card to ask for a second press where leaving would stop streams, `leaving_stops_panes`), `pane_streams` (the stream of a playing live pane that no fetched list carries — opened by name, from a link or from Recommended — asked of Helix by login when it starts and every two minutes while still uncovered, `ask_pane_streams`, so it has a timeline and a header; the answers are the last list `stream_info` reads, and `listed_stream` is every list but them; tested), `schedule` (when an offline channel says it is on next: `ask_schedule`, called while drawing an offline channel's page and a pane that found its channel off, once a channel a session, and `on_schedule`), `chrome` (pills, toasts, the rail, and its preview cards' state and timer, `point_rail_row`), `mini_player` (what plays on while you browse, in the corner of the page), `title_bar` (the bar Perch draws across the top of the window — the rail button, Home, back and forward, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`) |
+| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `account` (the sign-in as the user drives it: the settings sheet's Sign out, Sign in, Sign in again for the chat scope, and `restart_twitch`, the worker started over, which a new client id does too), `chat_send` (sending chat: what each live chat's composer is told about the user, `sync_chat_access`, a message handed to the worker under a number of the root's, `send_chat`, and its answer handed back to the chat it came from, `on_chat_sent`), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams` (opening, restarting, closing, and `replace_with_video` and `replace_with_channel`, a recording swapped in for a live pane in place and the channel back in a recording's, both through `replace_slot`), `renditions` (what each pane plays, and when it restarts: the quality chosen against each pane's own height, `pane_height_for`, the upward re-pick when the grid changes, `sync_quality`, a pick from the pane's own menu, and how each changes what plays, `change_rendition` — beside a picture that covers the pane, to take over in place, and cold otherwise; and the root's half of that swap: what a start resolving beside a pane does with its events, `pending_event`, and what the pane keeps once its player has taken over or been given up on, `on_swapped` and `on_swap_failed`; and `set_pending`, the only write of a pane's pending start, which tells its player what a pick is switching it to and which a test holds the root to; and `beside_rendition`, the rendition a start beside a live picture names from the pane's menu, so streamlink skips its probe; tested), `warm` (streamlink started ahead for a live pane's quality menu: `quality_menu` on `VideoEvent::QualityMenu`, up to four renditions nearest what plays, `to_warm`, tested, each a `watch::WarmStart` on the slot whose `Ready` is kept until a pick takes it, `take_warm` and `adopt_warm` from `start_stream`, let go a grace after the menu closes, at its age while the menu stays open (`expire_warm`), with the player, or by a cold start; none for what a pick is already starting), `panes` (where each pane is drawn, applied: `restage`, the one funnel every change of a pane's state, of which panes there are, of the page, of what is popped out and of what is maximized ends in; `set_slot_state`, the only write of a pane's state, which a test holds the root to; `video_in_main`, the only way the main window reaches a player, which a test holds the mini player and the pages to; and the maximize as the root drives it, `toggle_maximize`, `show_all_panes`, and `choose`, which takes it to the pane chosen; and `move_pane`, two panes swapping places in the order, from a header dropped on a pane or `Shift+←`/`Shift+→`), `pop_out` (a pane's picture in a window of its own, on top of other apps: the `PopOut` view, opening and closing it through `cx.defer`, `to_root`, the only way back to the root from it, and `offered`, Windows only), `broadcasts` (what a stopped live pane asks about its channel's past broadcasts, whether it may offer to start by itself, `start_offered`, and `start_due`, the one step by which a list of who is live starts the stopped panes it carries, the follows poll's and the ask about channels nobody follows alike, over `due_to_start`, tested), `rewind` (a live pane's timeline: when each live player's broadcast began, `sync_live_since`, a press on it carried out at once or when the ask for the archive is answered, and the archive opened in the pane's place; and the way back: whether each recording's broadcast is still on, `still_live` and `sync_back_to_live`, and `LIVE` pressed, `back_to_live`), `hearing` (which panes are heard: More's `Only this one` and `Hear all again` through Mute all's hush, and `sync_hear_only`, the one writer of every player's `HearOnly` mirror after `Start`; and More's `Audio compressor`, every pane's at once, `toggle_compressor`), `ad_breaks` (a pane's ad-break notice: begun on `StreamEvent::AdBreak`, ticked once a second by a timer the slot owns, taken down when it is over), `guide` (the guide over the watch page as the root runs it: `toggle_guide` from a pane's Guide button, which opens, moves or closes it, `close_guide`, `sync_guide_buttons`, the one writer of every player's `guide_from_here` mirror after `Start`, `fill_guide` through `fetch`, a card's Watch in place of the pane the guide was opened from — `replace_with_channel` — or `+ Add` through `Action::Add`, a category opened inside it, and the panel's shell: where it sits, the press outside that closes it, its probe into the veil), `pane_actions` (what a pane asks for, by its key: a press on it or one of its controls, which takes the keys back for the root first, and its player's requests; the moment a pane key brings a pane's header up over its picture; `copy`, the one place the clipboard is written; and `run_guard`, which swallows the rest of a double-click whose first press took a player out from under the pointer — More's `Pop out`, the mini player's — where the player's own guard cannot follow), `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `muted` (a recording's muted stretches: heard from every Helix answer that lists videos, `hear_muted`, given to a pane that opens one without them, as the history's do, `with_muted`, asked for once through `Request::Video` only when nothing was heard, also when sign-in lands, `ask_muted_for_open`, an answer claimed by a pane's question before a link's, `Muted::claim`, tested, and taken onto every pane playing it and its player's seek bar, `take_muted`), `prefs`, `recommended` (the rail's Recommended group: when to ask the worker, what its answer becomes, and the hooks that call it), `last_live` (when the offline follows were last live: when to ask the worker, and what its answer does), `shared_chat` (Shared Chat labels: each chat watched as it is made, live or a replay (`watch_chat`), its word about a partner it cannot name turned into one ask per id, and the names handed to every chat), `badges` (chat badges: a chat's word about its room answered with the badges known for it, the global and per-room books asked for once each, and every answer handed to the chats it is for), `cheers` (cheers: a live chat's word about its room answered with the cheermotes known for it, each room asked for once a session, and the answer handed to the live chats in that room; a replay is never asked for), `viewer_cards` (a chat's viewer card as the root runs it: the account of the person on it asked for when it opens, `on_card_opened`, and every open card told what is known, `tell_card` and `sync_viewer_cards`, after every worker event and every `restage`; its `Watch`, through `Action::Add`, and its `Channel page`, which asks the card to ask for a second press where leaving would stop streams, `leaving_stops_panes`), `pane_streams` (what the channels nothing else asks about are doing, in one Helix ask by login for all of them, `ask_pane_streams`: a live pane playing a channel no fetched list carries, or starting one nobody is known to follow — opened by name, from a link or from Recommended — so it has a timeline, a header and a poster, held while a list comes to carry it (`PaneStreams::keep`); a stopped live pane on a channel nobody follows, so it starts when the channel does, through `start_due`, and an ended one keeps its broadcast's id; and a pin nobody follows, so its rail row says it is live. Which channels, `covered`, panes before pins under Helix's hundred, and when, `PaneStreams::due`, all of them together every two minutes and at once for one newly wanted, are tested; the answers are kept there alone, never in the follows, and are the last list `stream_info` reads, and `listed_stream` is every list but them), `schedule` (when an offline channel says it is on next: `ask_schedule`, called while drawing an offline channel's page and a pane that found its channel off, once a channel a session, and `on_schedule`), `chrome` (pills, toasts, the rail, and its preview cards' state and timer, `point_rail_row`), `mini_player` (what plays on while you browse, in the corner of the page), `title_bar` (the bar Perch draws across the top of the window — the rail button, Home, back and forward, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`) |
 | `target.rs` | what a typed or pasted thing means: a login, or a twitch.tv link to a channel or a recording; `link`, its inverse and the one place a twitch.tv URL is written, and `moment`, the second a link to a recording starts at; and perch's own `perch://watch/<login>` link, written by `app_link` for a notification to open and read back by `parse_app_link` (pure, tested) |
 | `browse.rs` | the picker page: home, popular, categories, search; which of them is on screen (`Discovery::place`) and which lists are still being waited on (`is_loading`, and by key for the guide, `is_pending` and `error_for`); the stream card both the page and the guide draw (`card`, offering what `CardOffers` says) |
-| `channel_page.rs` | one channel's past broadcasts, and when each was; the recording card both pages use, and a stopped pane too; a recording's poster, and `archive_of`, which finds the recording of a broadcast that just ended (tested) |
+| `channel_page.rs` | one channel's past broadcasts, and when each was; its bar's pin to the rail, followed or not, and what the bar says of the channel now (`Standing`); the recording card both pages use, and a stopped pane too; a recording's poster, and `archive_of`, which finds the recording of a broadcast that just ended (tested) |
 | `history_page.rs` | the history tab, its entry card and its test for unfinished (both reused by Home), and the one translation between a video and a history entry |
 | `home.rs` | Home, the tab the app opens on: live follows, Continue watching (one row of the history), offline follows by when last watched, each saying when it was last live; the filter over all three, and the counts on the headings after it (`counted`) |
 | `guide.rs` | the guide over the watch page, worked out and drawn: its tabs and what each shows (`Guide::shows`, `Shows`), the requests that fill them — the browse page's own, by the same keys (`Shows::first_page`, `Guide::first_page_due`, `Guide::next_page`) — where a card's Watch and `+ Add` play (`opening`) and whether the guide closes after (`closes_after`), how big the panel is (`panel`: two rows of cards, never more than half the page), a recommendation as a card (`as_stream`), and the panel's contents from the browse page's cards, rows and Load more (pure parts tested) |
@@ -225,7 +225,7 @@ App modules:
 | `video_view.rs` | the player element: its sound, its hover, the picture and the gestures on it (`Alt` and the wheel, a middle press), and when the picture last moved again after standing still (`resumed_at`); drawn as a pane, a mini-player tile, in a pop-out or not at all while another pane is maximized (`stage::Place`), moved between them only by `set_place`, and belonging to no window |
 | `video_view/swap.rs` | a rendition swapped in place: the new stream started beside the one on screen inside the same view, held to it by `align` (tested) and promoted once it has a picture and, on a recording, has caught up; `route`, the one rule a stream's frame wakes and its streamlink events reach the right start by (tested) |
 | `video_view/bar.rs` | the control bar over a playing picture: the seek row on a recording, or a live broadcast's timeline where the pane is wide enough for it (`timeline_fits`, tested), the icons and their key-naming tooltips, Guide (which acts on the press, in the capture phase, `guide_button`), the quality pill (`pill_face`, tested — what plays, or a pick under way, breathing), the maximize control (`maximize_control`), what fits at the pane's width (`fit`, tested — the maximize folds into More after the quality pill), the one anchor menus open from; a recording's speed after its length while it is not `1x` (`speed_tag`, which on a pane toggles the speeds on the press, as Guide acts); a pop-out's own right-hand end, Bring back and Close |
-| `video_view/menu.rs` | the bar's menus, the quality, More (with the maximize once the bar has folded it, `Only this one` or `Hear all again` with two panes or more, `Audio compressor · Off` or `· On`, a recording's `Playback speed · 1x`, and `Pop out` where the pop-out is offered) and a recording's speeds, opened in More's place (`speed_row`, tested): which is open (`Menu`, one at a time), the box, rows that act on the press (tested), and `run_guard`, which swallows the rest of a double-click a row took (tested); `set_menu`, the one write of the open menu (a test counts them), which says the quality menu opening or closing to the root (`quality_menu_flip`, tested) — after `Pop out`, which takes the player out of the window, the root's `run_guard` does |
+| `video_view/menu.rs` | the bar's menus, the quality, More (with the maximize once the bar has folded it, `Only this one` or `Hear all again` with two panes or more, `Audio compressor · Off` or `· On`, a recording's `Playback speed · 1x`, `Pop out` where the pop-out is offered, and `Pin to the rail` or `Unpin from the rail`, `pin_row`, tested) and a recording's speeds, opened in More's place (`speed_row`, tested): which is open (`Menu`, one at a time), the box, rows that act on the press (tested), and `run_guard`, which swallows the rest of a double-click a row took (tested); `set_menu`, the one write of the open menu (a test counts them), which says the quality menu opening or closing to the root (`quality_menu_flip`, tested) — after `Pop out`, which takes the player out of the window, the root's `run_guard` does |
 | `loudness.rs` | one pane's level and the Mute all hush over it: what mpv hears, and the only level ever reported to be remembered; what More offers about hearing one pane alone, worked out from the panes' hushes (`HearOnly`, `hear_only`) (pure, tested) |
 | `compressor.rs` | the audio compressor, every pane's at once: the mpv `af` chain (`chain`: ffmpeg's `sidechaincompress` listening 6 ms ahead, fitted to what FrankerFaceZ's compressor puts out in Chrome — tested against Chrome's curve and makeup — and hearing each pane at its volume, as FFZ's hears the player's, `drive`), what each player's render loop still owes its chain, new words or the volume told by command (`Applied`, tested), the process-wide flag every player's render thread reads between frames as it reads its volume (`set`, `on`), and More's row (`row`) (pure, tested) |
 | `wheel.rs` | `Alt` and the wheel over a picture, turned into volume steps: one per click of a notched wheel, a click's worth at a time for a touchpad or trackpad (`Wheel`) (pure, tested) |
@@ -257,7 +257,7 @@ App modules:
 | `twitch.rs` | the worker: sign-in, follows polling, browse requests, a stopped pane's ask for its channel's past broadcasts (which a live pane's rewind rides too), the rail's anonymous ask for channels like the ones watched (`Request::Recommend`), the anonymous ask for when the offline follows were last live (`Request::LastLive`), and the anonymous ask for Shared Chat partners' names (`Request::ChannelNames`), all three answered ahead of the session's upkeep, the chats' badges from Helix (`Request::Badges`), a live chat's cheermotes from Helix (`Request::Cheermotes`), a chatter's account from Helix for a viewer card (`Request::Profile`), a channel's stream schedule from Helix (`Request::Schedule`, a 404 read as no schedule), a chat message sent (`Request::SendChat`), and the token validated at the first poll and hourly, saying whether it may send (`TwitchEvent::ChatScope`) |
 | `keys.rs` | the keymap: actions, bindings, contexts, the listing, and the keys a tooltip may name (`Hint`) |
 | `theme.rs` | **all** colour, spacing, type and motion tokens |
-| `sidebar.rs` | the follows rail down the left, beside both pages: Pinned, Live, Recommended, then Offline folded under a count, each offline row saying when it was last live where a live row says what is on (`groups`, pure, tested); each live row's probe for its preview card, and the card hung beside the row (`preview_probe`, `preview`) |
+| `sidebar.rs` | the follows rail down the left, beside both pages: Pinned, Live, Recommended, then Offline folded under a count, each offline row saying when it was last live where a live row says what is on, and a pin nobody follows live when the ask about it says so (`groups`, pure, tested); `pin_words`, what a pin away from the rail says; each live row's probe for its preview card, and the card hung beside the row (`preview_probe`, `preview`) |
 | `rail_preview.rs` | a live rail row's preview card: when it comes up and goes (`Preview`: the wait, the warm hand-on to the next row, a press putting it away, pure, tested) and the card itself (`card`: the cached preview, viewers and uptime, title, game) |
 | `last_live.rs` | when each offline follow was last live, worked out: when to ask (`LastLive::next_ask`), what is kept, and the words ("Live 3 hours ago", `wording`, reusing `channel_page::when` past a day) (pure, tested) |
 | `schedule.rs` | when an offline channel says it is on next, worked out: the asks and answers (`Schedules`, once a channel a session), the next broadcast going ahead or the break that is on (`next`), and the line ("Next stream: Tue 7:00 PM · Title · Game", "On a break until 12 Oct", `wording`) (pure, tested) |
@@ -2704,7 +2704,13 @@ header rests over it. The split:
   maximize control, then chat, Guide, fullscreen and More. Chat is crossed
   out while hidden, and drawn still, with a `No chat replay` tooltip, for a
   recording that has none, so the cluster keeps its shape. More pops the pane
-  out where the pop-out is offered, opens the pane on twitch.tv and copies its
+  out where the pop-out is offered, pins the pane's channel to the rail or
+  takes it off — `Pin to the rail` or `Unpin from the rail`, a live pane's
+  channel or a recording's, followed or not (`menu::pin_row`, its words
+  `sidebar::pin_words`, keyed on `VideoView::pinned`, a mirror only `Start`
+  and `RootView::sync_pins` write; the press says which it was offered as,
+  `PaneAction::Pin`, so a row a frame stale pins what is pinned rather than
+  taking it off) — opens the pane on twitch.tv and copies its
   link, a recording's at the moment it is at (`Copy link at 1:02:03`). With
   two panes or more it also has `Only this one`, which hushes every other
   pane through Mute all's hush, and once one pane alone is heard every pane's
@@ -2742,9 +2748,9 @@ header rests over it. The split:
   narrows the bar sooner — Guide joined it, which took the fourth square —
   and never a pop-out, which is the header's and More's, since this cluster
   has no room and never drops a button. What is the pane's rather than the
-  player's — chat, the link, popping out — goes up as `VideoEvent::Pane` and
-  is resolved by key in `root/pane_actions.rs`, the route the header's close
-  takes; the clipboard is written there and nowhere else. The maximize control
+  player's — chat, the link, popping out, the pin — goes up as
+  `VideoEvent::Pane` and is resolved by key in `root/pane_actions.rs`, the
+  route the header's close takes; the clipboard is written there and nowhere else. The maximize control
   reads `VideoView::maximize`, a mirror of `stage::MaximizeButton` that only
   `Start` and `RootView::restage` write. The chat glyph reads
   `video_view::ChatButton`, a mirror of the slot's `chat_hidden` that only
@@ -2860,7 +2866,10 @@ header rests over it. The split:
   a live row while something plays and there is room beside it. Both stop
   propagation, or the row under them would fire as well. A recommended row
   has no pin, so with no room for `+` its count stays put rather than
-  giving way to nothing. The offline group's heading is `controls::fold`,
+  giving way to nothing: pinned from there, a live row would land in Pinned
+  as a bare login until the ask about it came back, so a channel nobody
+  follows is pinned from its pane's More or its page instead (see
+  "Browsing"). The offline group's heading is `controls::fold`,
   which unfolds it for the session. A live row the pointer rests on for
   `rail_preview::PREVIEW_DELAY` brings up its stream's card beside the rail
   (see "Browsing"), never over the row's own controls.
@@ -3005,9 +3014,11 @@ which would be the same walk four times over. The same record gives a starting
 pane its poster — the preview its browse card shows — and an ended one the id
 of the broadcast it was showing (`LiveStream::id`, kept as `Slot::broadcast`).
 A channel opened purely by name —
-the palette, the command line — appears in none of those lists, and the header
-correctly shows the name alone. Filling *that* gap needs a
-`GET /helix/streams?user_login=…` per channel.
+the palette, the command line — appears in none of those lists, so it asks
+after its own stream: `root::pane_streams`, one Helix ask by login for every
+such channel at once, from the moment the pane starts, whose answers are the
+last list `stream_info` reads; signed out the header shows the name alone (see
+"Pins from anywhere" under Browsing).
 
 **There is no chatter count to be had.** The old
 `tmi.twitch.tv/group/user/<channel>/chatters` was shut down on 3 April 2023 and
@@ -3337,9 +3348,14 @@ a pane that stalled — streamlink said the channel was off, or the broadcast
 ended — is retried by `on_streams` when a poll lists the channel live and the
 pane says it is due (`Slot::due_to_start`, tested). That is the pane's `Start
 when they go live` switch, made visible on its status screen: on by default,
-per pane, for the session, and offered only signed in for a channel you follow
-(`RootView::start_offered`), because the follows poll is the only thing that
-can fire it. A `started_at` later than `Slot::stalled_at` is a broadcast the
+per pane, for the session, and offered signed in (`RootView::start_offered`)
+wherever something can fire it — the follows poll for a channel you follow
+from its first list, and for any other the ask about channels nobody follows
+(`root::pane_streams`) once the list of everyone followed has come back to
+say it is one. That ask's answer starts a pane by the same step
+(`RootView::start_due`, over `due_to_start`, tested), so everything below
+holds for it, `retried_for` included; it comes every two minutes rather than
+every minute. A `started_at` later than `Slot::stalled_at` is a broadcast the
 pane has not tried. The timestamp is the whole trick: the list is up to a
 minute behind the pane, so a stream that has just ended is still on it, and a
 retry keyed on presence alone would find it gone and turn "ended" into
@@ -3520,11 +3536,12 @@ pointer with the next row sliding up for a double-click's second press to
 land on. A recommended row is a live row with the reason in the accent where
 the game would be — `recommended::reason`, "Like forsen", "Like forsen and
 nymn", "Like forsen and 2 more", by the name a seed writes itself as when a
-list knows it — a click that watches and a `+` that adds, and no pin: a pin
-for a channel nobody follows is a bare login that cannot say whether it is
-live (see "Known limits"). A pane opened from the group is on a channel no
-Helix list has, so what it says about it — the name in its header, status
-line, mini player and palette row, and the title, game and viewers — comes
+list knows it — a click that watches and a `+` that adds, and no pin:
+pinned from the row, a live channel would land in Pinned as a bare login
+until the ask about it came back (see "Pins from anywhere"). A pane opened
+from the group is on a channel no Helix list has, so what it says about
+it — the name in its header, status line, mini player and palette row, and
+the title, game and viewers — comes
 from `Recommended::channel`, every channel the answers have named this
 session, through `RootView::live_info` and `channel_name`; the reasons that
 later name it as a seed use the same name. A recommendation knows no start
@@ -3532,6 +3549,74 @@ time and carries no preview, so that pane has no uptime and starts on black.
 Nothing is saved, and the palette does not offer recommendations yet; the
 guide draws them as cards (see "Where controls live"), with no picture
 unless a list of streams has the channel.
+
+**Pins from anywhere.** A pin used to be made only from a followed channel's
+rail row, and one on a channel nobody follows — written by hand in
+`settings.json` — was a bare login, live or not, since the worker asks
+Twitch about follows only. Now a pane's More pins its channel, a live
+pane's or a recording's (`Pin to the rail`, `PaneAction::Pin`, which says
+which it was offered as), and a channel's page has the rail's own pin in
+its bar (`channel_page::Standing`, its id keyed on the state, its words
+`sidebar::pin_words`, which More's row shares). Both end where the rail's
+pin does, `RootView::set_pinned`, which asks about a new pin at once and
+tells every player's More (`sync_pins`). A pin on a recommended row was
+left out: it would land in Pinned as a bare login for the second the ask
+takes. So were the palette's (see "Left over from phase 1") and Home's.
+
+A pin nobody follows is asked about in the ask a playing pane no list
+carries already made, `root::pane_streams`: Helix's `/streams` by login, a
+hundred to a call (`twitch_api::MAX_LOGINS_PER_REQUEST`, public so the
+root caps its list there). It covers three kinds now (`covered`, tested): a
+live pane playing a channel no fetched list carries, as before, and one
+starting such a channel that nobody is known to follow, so a pane opened by
+name has a poster if the answer beats its picture and its broadcast id when
+its picture comes (a followed channel's pane starting is left to the follows
+poll: not listed, it is off, and each `Try again` on it would be an ask for
+nothing); a stopped live pane — off, ended or failed — on a channel nobody
+follows, whatever list carries it, since only a list asked again can notice
+a channel come on and the follows poll lists follows alone; and a pin nobody
+follows. The last two wait for the list of everyone followed
+(`RootView::followed_loaded`, set by `FollowedChannels`; `follows_loaded` is
+set by the live list too, seconds earlier, when every follow that is off
+reads as not followed). Panes come before pins under the cap, so every
+stopped pane nobody follows is in the ask, which is what lets
+`start_offered` offer the switch on one by the rule the ask covers it by
+(`asks_after_stopped`, over `pane_streams::unfollowed`, tested against
+`covered`) without checking the cut.
+
+It stays one call a round (`PaneStreams::due`, tested). Whenever anything
+wanted is due — never asked about, or asked about two minutes ago — the
+whole list goes, and is noted as asked together, so it comes due together:
+asked one by one as each came due, a pin made a minute after a pane opened
+would be a second call every round. A login no longer wanted is forgotten,
+answer and ask (`PaneStreams::keep`), so a pin or a stopped pane's channel
+that has come to be followed is read from the follows. A pane starting or
+playing a channel holds both while a list carries it, as a playing pane
+always did: let go, a search closed or a category left over the pane would
+cost an ask at once, and so would its next cold restart.
+The follows poll starts its panes once its list is the follows
+(`on_streams`), so a pane it starts reads as listed and asks nothing by
+login. Signing out or restarting the worker forgets every answer and ask
+(`stop_twitch`): a pin's answer is let go of by no change of a pane.
+
+One cost is accepted: at each poll a follow whose stream has just ended is
+in neither list of follows, between the live list and the list of everyone
+followed, so a pin or a stopped pane on it is wanted for that moment and
+costs one call, answered after that list (the worker takes asks in turn)
+and let go as it lands — once each time a stream ends, while that list
+comes back. While it fails to come back (`FollowsError`), such a channel
+stays wanted and is asked about every two minutes until it does.
+
+The answers are kept in `PaneStreams` and nowhere else — never in
+`follows`, which three things read as who is live. The rail's
+`sidebar::groups` reads them for a pin the follows lists lack (`Rail::asked`),
+`stream_info` reads them after every list the app fetches for its own sake,
+and an answer's own streams start the stopped panes it finds on through
+`RootView::start_due`, the follows poll's step, extracted rather than
+copied (`due_to_start`, tested), `retried_for` and all. An ended pane nobody
+follows learns its broadcast's id as a followed one does: at the end, from
+`stream_info`, which still has the stream it was playing, since a stopped
+pane is still wanted.
 
 **Card width is derived from the window**, by `browse::card_width`, and the row
 is filled rather than merely fitted. A fixed 300px card left 306px of gutter
@@ -5146,17 +5231,27 @@ card on a press on a name, with the person's picture, account age, badges
 and lines in that chat, and the ways to watch them, to their page in Perch
 and to twitch.tv (see "A name opens its person's card").
 
+So are pins from anywhere, picked by the user: `Pin to the rail` in a
+pane's More, for a live pane's channel or a recording's, and the rail's pin
+in a channel page's bar, for any channel, followed or not; and the one
+Helix ask a playing pane no list carries already made, widened to a stopped
+pane and a pin on a channel nobody follows, so such a pin is live in the
+rail when it is, such a pane offers `Start when they go live` and is started
+by the follows poll's own step, and an ended one knows its broadcast (see
+"Pins from anywhere" under Browsing). Pins on Home were asked about and the
+user was not sure, so they were left out.
+
 Left over from phase 1, smallest first:
 
 - The passive words the casing pass left alone — chat's notices, chat's
   `deleted`, the palette's kind column, and a failed pane's line, which is
   the failure in its own words; see "Casing". Phase 2 put the rest of a pane's status lines in sentence
   case.
-- Pin from a card, the channel page or the palette. `palette::entries` takes
-  seven positional arguments, its tests call it thirty-odd times, and it
-  wants an inputs struct before it takes an eighth. Pinning a channel you do
-  not follow needs the worker to poll it, since it asks Twitch about follows
-  only.
+- Pin from a card or the palette. A pane's More and the channel page pin
+  now, followed or not (see "Pins from anywhere" under Browsing).
+  `palette::entries` takes seven positional arguments, its tests call it
+  thirty-odd times, and it wants an inputs struct before it takes an eighth;
+  keyboard-first, so it waits.
 - A look at the title bar on a Mac: the traffic-light position, the room
   left for it and the bar's height are guesses. If dragging by AppKit's strip
   alone is not enough, porting Zed's `start_window_move` into the vendored
@@ -5219,20 +5314,17 @@ Ranked by what would be noticed, roughly:
    viewer wondering about a stall wanted, the `buffering` tag, is built.
    The muted stretches are marked already, from Helix (see "A recording's
    muted stretches are marked on its seek bar").
-3. **Watch the channels in none of the lists, offline too.** A *playing*
-   live pane that no fetched list carries — opened by name, from a link or
-   from the rail's Recommended group — is now asked about by itself
-   (`root::pane_streams`: Helix's `/streams` by login, when it starts
-   playing and every two minutes while nothing else carries it), which
-   gives it a timeline to rewind along and a header with its count, title
-   and game. Signed in only. What is still missing is the same for a pane
-   that is *not* playing: `Start when they go live` waits on the follows
-   poll, so the switch stays hidden for a channel you do not follow, and
-   such a channel gets no starting poster and an ended pane no broadcast
-   id. Asking for those too would not be a request per pane, as was once
-   thought: `Request::PaneStreams` already asks for every login it is
-   given in one call (`streams_by_login` takes up to a hundred), so a
-   stopped pane is one more login in the same ask.
+3. **What pins from anywhere left out.** Watching the channels in none of
+   the lists, offline too, is built: a stopped pane and a pin on a channel
+   nobody follows ride the one ask a playing pane no list carries made
+   (see "Pins from anywhere" under Browsing). What it left: a pin on a
+   recommended rail row, which would land in Pinned as a bare login for
+   the second the ask takes unless the suggestion's own row stood in
+   meanwhile; the palette's (see "Left over from phase 1") and Home's (the
+   user was not sure); a picture on a pin nobody follows, since the worker
+   looks up faces for follows alone (`twitch::unpictured`); and a toast or
+   desktop notification when such a pin comes on, since both read the
+   follows poll alone (`notifications::who`).
 4. **Highlight rules** that wash the row background rather than colouring a
    word. The washes already exist for events and for Twitch's own marks
    (`chat_tint`); badges and reply lines are built (see "Names wear their
@@ -5379,13 +5471,19 @@ None of these is being worked on; all of them are real.
     rows around the selection, so arrowing scrolls it; the wheel works and
     nothing says so. The settings sheet, the browse lists and the rail now draw
     gpui-component's `Scrollbar` over a tracked `ScrollHandle`.
-14. **Pins know only what the follows lists know.** A pin for a channel no
-    longer followed shows as its bare login, live or not: the worker reads
-    the settings once when it starts and asks Twitch about follows only, so
-    nothing polls such a channel. Pinning is from the rail only, and a
-    recommended row offers no pin for that reason, so a channel you do not
-    follow can be pinned only by hand in `settings.json`; and an offline row
-    has a picture only if this session saw the channel live.
+14. **A pin nobody follows says less than a followed one.** It is asked
+    about by itself (`root::pane_streams`), signed in, every two minutes
+    and when it is made, so it shows live up to two minutes after it comes
+    on, and stays live, count and preview card and all, up to two minutes
+    after it ends; and it is not asked about before the list of everyone
+    followed has come back after a sign-in. A stopped pane on such a channel
+    reads the same answer, so its page's `Watch live` can outlast the
+    stream as long. Off, it is its bare login, dim, with no picture and no "Live 3
+    hours ago": the worker looks up faces and last times for follows alone.
+    Nothing announces it coming on, toast or desktop notification, since
+    both read the follows poll. A recommended rail row offers no pin, so
+    such a channel is pinned from its pane's More or its page (see "Pins
+    from anywhere" under Browsing).
 15. **A recording's thumbnail is 320x180**, the one size Twitch serves for a
     video, scaled up onto a card that is wider than that — and over a whole
     pane, dimmed, while a recording opens. A live channel's preview is the
@@ -5461,13 +5559,19 @@ None of these is being worked on; all of them are real.
     few pixels past a pane right at the edge of fitting.
 25. **Posters exist only for channels in a list.** A starting live pane shows
     its channel's preview only when a Helix list the app has fetched carries
-    the channel, or the rail's recommendations do (`RootView::poster`, from
+    the channel, or the rail's recommendations do, or the ask about
+    channels no list carries has answered for it (`RootView::poster`, from
     the preview template a live channel always has); one opened by name
-    waits on black. The preview is a snapshot, minutes old at most.
-26. **`Start when they go live` is only for channels you follow, signed
-    in.** The follows poll is what starts a pane, and it lists only followed
-    channels; a pane on any other channel has no switch. A poll of the open
-    panes' channels would widen it — see "What to build next", item 3.
+    waits on black unless that answer, asked as it starts
+    (`root::pane_streams`), comes back before its picture. The preview is a
+    snapshot, minutes old at most.
+26. **`Start when they go live` is signed in only, and slower for a
+    channel you do not follow.** The follows poll starts a followed
+    channel's pane within a minute of its stream; any other's is started by
+    the ask about channels nobody follows (`root::pane_streams`), every two
+    minutes, so up to two minutes late, and a pane on one offers the switch
+    only once the list of everyone followed has come back after a sign-in,
+    which is what says it is one.
 27. **`Watch from the start` depends on Helix listing the archive.** A channel
     that does not keep past broadcasts offers nothing, and so does one whose
     archive Helix has not listed yet, or lists as ending more than ten minutes
@@ -5511,8 +5615,9 @@ None of these is being worked on; all of them are real.
     archive.** The timeline needs `started_at`, which only Helix's live
     answers carry. A pane opened by name, from a link or from the rail's
     recommendations, which no fetched list carries, asks for its stream by
-    itself once it is playing (`root::pane_streams`), so its timeline comes
-    up a moment after its picture; signed out it has none. A channel that keeps no past broadcasts, or whose
+    itself as it starts (`root::pane_streams`), so its timeline comes up
+    once that is answered, usually with its picture; signed out it has
+    none. A channel that keeps no past broadcasts, or whose
     archive Helix has not listed yet in a broadcast's first minutes, says so
     in a toast and stays live; so does the first press after a restart,
     until Helix lists the new broadcast's archive. A broadcast split by a
@@ -5527,9 +5632,10 @@ None of these is being worked on; all of them are real.
     ends the archive's playlist, so for that while after the stream ends a
     press opens a pane that says the channel is off. On a recording opened
     from a channel's page or the history of a channel no list carries —
-    opened by name, or from the recommendations — it never shows. And the
-    first part of a broadcast a reconnect split has a finished playlist, so
-    it never shows `LIVE` either.
+    opened by name, or from the recommendations — it never shows, unless
+    the channel is pinned, which the ask about channels nobody follows
+    covers. And the first part of a broadcast a reconnect split has a
+    finished playlist, so it never shows `LIVE` either.
 35. **Desktop notifications are Windows-only, and unproven on a desktop.**
     The registry AUMID, the toast and the protocol click were built from
     Microsoft's documentation and checked by compiling, not by watching one
@@ -5585,6 +5691,14 @@ None of these is being worked on; all of them are real.
       the `buffering` tag up through a six-second stall and gone after it,
       `Reset pane sizes` putting a 520px chat back to 340 and saving it,
       and the pane's `streamlink 7.5.0 is too old` line.
+    - pins from anywhere, signed in: More's `Pin to the rail` and
+      `Unpin from the rail` on a live pane and a recording, the channel
+      page's pin and its tooltip after a press, a pin nobody follows
+      turning live in the rail within two minutes of its stream, a stopped
+      pane nobody follows offering `Start when they go live` and starting
+      by itself, an ended one's `Watch from the start` finding its own
+      broadcast, and the one ask's cadence (a `pane streams:` line in the
+      log is a failed ask; the ask itself says nothing).
 37. **What emotes stacked together leave out stays out, and stacks and
     effects are seen only by their tests.** A wide overlay on a narrow emote
     is fitted into the emote's box rather than spilling over the words beside

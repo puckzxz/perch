@@ -82,6 +82,12 @@ impl RootView {
             PaneAction::HearOnly => self.hear_only(key, cx),
             // More's `Audio compressor`; every pane's, see `hearing`.
             PaneAction::ToggleCompressor => self.toggle_compressor(cx),
+            // More's `Pin to the rail` or `Unpin from the rail`: the pane's
+            // channel, live or recorded; see `prefs`.
+            PaneAction::Pin(pinned) => {
+                let channel = self.slots[index].channel.clone();
+                self.set_pinned(channel, pinned, cx);
+            }
             // The moment the pane is at, on a recording: More is where a
             // moment is offered, and the palette's row is More by name.
             PaneAction::OpenOnTwitch => cx.open_url(&self.slots[index].link(true)),

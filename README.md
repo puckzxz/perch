@@ -161,7 +161,10 @@ pane is silent, Mute all included — and the volume at the left, and at the
 right the quality, with two panes or more the maximize, then chat, the guide
 (see below), fullscreen and **More**, which has **Only this one** with two
 panes or more, **Audio compressor**, **Playback speed** on a recording,
-**Pop out** on Windows, **Open on twitch.tv** and **Copy link**.
+**Pop out** on Windows, **Pin to the rail**, **Open on twitch.tv** and
+**Copy link**. **Pin to the rail** pins the pane's channel to the top of the
+rail — a live pane's or a recording's, followed or not (see "The rail") —
+and says **Unpin from the rail** once it is.
 **Only this one** silences every other pane the way Mute all does, without
 touching anyone's volume; until you change a silenced pane's volume, every
 pane's More then says **Hear all again**, which brings them all back.
@@ -322,8 +325,8 @@ one that does not, or whose recording Twitch has not listed yet, says
 `No past broadcast to rewind into` and stays live. The timeline is there
 once the stream has been going for more than half a minute, and on a pane
 wide enough to aim along it. A channel you opened by name or from
-Recommended asks Twitch when its stream started, so its timeline comes up a
-moment after its picture.
+Recommended asks Twitch when its stream started as it opens, so its timeline
+comes up once Twitch has answered, usually by the time its picture does.
 
 ### Panes in another order
 
@@ -625,8 +628,11 @@ seconds after it moves off, so one you are reading or reaching for does not
 go. A pane left on a channel that was off, or whose broadcast ended, starts by
 itself when a later poll finds them on again — open a channel before they
 start and it begins without you. That is the pane's **Start when they go
-live** switch, on unless you turn it off, and it is there only for channels
-you follow, since the poll that notices is the follows poll.
+live** switch, on unless you turn it off, and it is there signed in for
+any channel. For one you follow, the minute's refresh notices; for one you do
+not, Perch asks Twitch about it by itself every two minutes, in the one
+request it makes for every such channel at once (see "The rail"), so such a
+pane starts up to two minutes after the stream does.
 
 The box at the top of Home filters all three as you type, live, unfinished and
 offline, by the same few-letters-of-a-name match the palette uses; a recording
@@ -699,10 +705,18 @@ the last list stays and is asked for again at the next five-minute refresh.
 Nothing about them is saved.
 
 The pin that appears on a row under the pointer pins that channel, and the
-same pin on a pinned row unpins it. A recommended row has no pin, since a pin
-is for a channel you follow. Pins are kept in `settings.json`, as `pinned`, so
-they can be written there by hand too; a pin for a channel you no longer
-follow shows as just its login, with nothing to say whether it is live.
+same pin on a pinned row unpins it. A channel you do not follow is pinned from
+its pane — **Pin to the rail** under the bar's **More**, live or a recording —
+or from the pin on its page (see [Past broadcasts](#past-broadcasts)); a
+recommended row has no pin. Pins are kept in `settings.json`, as `pinned`, so
+they can be written there by hand too. Perch asks Twitch about the pinned
+channels you do not follow by itself, signed in: when one is pinned, and every
+two minutes after, all of them in one request, which also covers the panes
+that nothing else asks about — one on a channel no list has, and one stopped
+on a channel you do not follow. A pinned channel that is live shows as a live
+row, with what it is playing and how many are watching; one that is not is
+its login, dimmed, with no picture, and nothing is said when it comes on.
+Either can be up to two minutes behind the stream starting or ending.
 
 It folds away with the rail button at the left of the title bar, or `B`, and
 stays folded — a window left on one stream for three hours should be able to
@@ -748,7 +762,10 @@ stream's card has its viewer count, and how long ago it was underneath. One
 still being recorded carries the live dot and says how long it has been going
 so far; it can be watched from the start while the stream is on. While the
 channel is off, the bar at the top says when it is on next, beside **Open
-chat**, if it has a schedule on Twitch, or that it is on a break.
+chat**, if it has a schedule on Twitch, or that it is on a break. The pin
+in that bar, just before **Watch live** or **Open chat**, pins the channel to
+the top of the rail, followed or not, as the pin on a rail row does; it is
+lit while the channel is pinned, and a press then takes it off.
 
 A switch at the top of the page turns it to the channel's **Highlights** or its
 **Uploads**, each a list of its own. They play the way a broadcast does, but as
@@ -839,8 +856,9 @@ Perch in view on another monitor), Windows shows a notification: who went live, 
 and the stream's title. Click it and Perch comes forward with the channel open
 beside whatever is playing, or starts on it if Perch has since been closed.
 **Desktop notifications** in Settings says who for: **Off**, **Pinned only**
-(the channels pinned to the top of the rail, and the default) or **All
-followed**. With Perch's window in front there is no notification, since the
+(the channels you follow that are pinned to the top of the rail, and the
+default) or **All followed**. A pinned channel you do not follow is never
+announced. With Perch's window in front there is no notification, since the
 notice in the corner is already saying it; nor for anyone already live when
 Perch starts, and never twice for one broadcast, even if it drops out of the
 follows list for a minute and comes back. A poll shows three at most: when

@@ -231,6 +231,7 @@ impl RootView {
             !sidebar::groups(
                 &self.follows,
                 &self.offline,
+                &self.pane_streams.streams,
                 &self.recommended.shown,
                 &self.settings.pinned,
                 self.follows_loaded,
@@ -257,6 +258,9 @@ impl RootView {
             sidebar::Rail {
                 follows: &self.follows,
                 offline: &self.offline,
+                // Never merged into `follows`, which three things read as
+                // who is live; the rail reads it for pins alone.
+                asked: &self.pane_streams.streams,
                 pinned: &self.settings.pinned,
                 recommended: &self.recommended.shown,
                 avatars: &self.avatars,

@@ -56,6 +56,17 @@ impl RootView {
             }
             _ => None,
         };
+        let standing = channel_page::Standing {
+            live: channel_live,
+            next: channel_next,
+            // And whether it is pinned, which its bar's pin says the other
+            // of; see `prefs::set_pinned`.
+            pinned: self
+                .discovery
+                .channel
+                .as_ref()
+                .is_some_and(|page| self.settings.is_pinned(&page.login)),
+        };
 
         let body = browse::page(
             &self.follows,
@@ -71,8 +82,7 @@ impl RootView {
             &self.cache,
             self.can_add(),
             &self.scrolls,
-            channel_live,
-            channel_next,
+            standing,
             |this: &mut RootView, action, window, cx| this.on_browse_action(action, window, cx),
             cx,
         );

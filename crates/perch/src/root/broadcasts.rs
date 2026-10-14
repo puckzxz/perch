@@ -1,7 +1,9 @@
 //! What a stopped live pane asks about its channel: its newest past
 //! broadcasts, for the pane to offer next — the last one, when the channel is
 //! off, and the one that just ended, from its start. And whether the pane can
-//! offer to start by itself when the channel comes back on.
+//! offer to start by itself when the channel comes back on, and its start
+//! when a list of who is live says it has (`start_due`, one step for both
+//! lists that can).
 //!
 //! Asked through the worker's own request for it (`Request::Broadcasts`),
 //! never a channel page's: a pane's answer must not land on a page's shelf,
@@ -10,13 +12,14 @@
 //! that asked to rewind, in its `Slot::rewind` (`root::rewind`), which rides
 //! the same request.
 
+use chrono::{DateTime, Utc};
 use gpui::{Context, Window};
-use twitch_api::Video;
+use twitch_api::{LiveStream, Video};
 
 use super::RootView;
 use crate::browse::SignIn;
 use crate::twitch::Request;
-use crate::watch::{Lookup, StreamState};
+use crate::watch::{Lookup, Slot, StreamState};
 
 impl RootView {
     /// Ask about the past broadcasts of the channel on the pane at `index`,
@@ -204,20 +207,157 @@ impl RootView {
     }
 
     /// Whether a pane on `channel` offers `Start when they go live`: only
-    /// where the offer can be kept. What starts a pane by itself is the
-    /// follows poll (`on_streams`), which runs only signed in and lists only
-    /// channels you follow; a switch on any other pane would promise what
-    /// nothing will do.
+    /// where the offer can be kept, which is signed in, by one of the two
+    /// answers that start a pane by itself ([`start_due`](Self::start_due)).
+    /// A channel you follow, the follows poll's (`on_streams`), from its
+    /// first list. Any other, the ask about channels nobody follows
+    /// (`root::pane_streams`), by the rule that ask covers a stopped pane by
+    /// (`asks_after_stopped`): once the list of everyone followed has come
+    /// back to say nobody follows it, and then always, since panes come
+    /// before pins under its cap. Before then a switch on it would promise
+    /// what nothing will do.
     pub(super) fn start_offered(&self, channel: &str) -> bool {
         matches!(self.sign_in, SignIn::SignedIn(_))
-            && self.follows_loaded
-            && (self
-                .follows
-                .iter()
-                .any(|stream| stream.user_login == channel)
-                || self
-                    .offline
-                    .iter()
-                    .any(|followed| followed.login == channel))
+            && ((self.follows_loaded && self.followed(channel)) || self.asks_after_stopped(channel))
+    }
+
+    /// Start every stopped pane `streams` says is due ([`due_to_start`]),
+    /// noting on each the broadcast it is trying (`Slot::retried_for`), so a
+    /// try at one already going is made once, however slow the list is to
+    /// let it go.
+    ///
+    /// The one step for both answers that can start a pane by itself, each
+    /// a list of who is live: the follows poll's (`on_streams`), and the
+    /// ask about the channels nobody follows (`root::pane_streams`). A pane
+    /// found nothing to play, and its channel is now listed as broadcasting:
+    /// it was opened before the stream started, the broadcast dropped and
+    /// came back, or the pane's connection dropped and the broadcast never
+    /// stopped. Which broadcasts count is the pane's to say
+    /// (`Slot::due_to_start`), from when this one started.
+    pub(super) fn start_due(
+        &mut self,
+        streams: &[LiveStream],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for (key, started) in due_to_start(&self.slots, streams, Utc::now()) {
+            if let Some(index) = self.slot_index(&key) {
+                self.slots[index].retried_for = Some(started);
+            }
+            self.retry_stream(&key, window, cx);
+        }
+    }
+}
+
+/// The panes a list of who is live, `streams`, should start by themselves at
+/// `now`: each by its key, with the broadcast it would be trying, by when
+/// that began. A pane on a channel the list carries whose own rule says so
+/// (`Slot::due_to_start`); a stream whose start does not read as a time
+/// starts nothing. See [`RootView::start_due`].
+fn due_to_start(
+    slots: &[Slot],
+    streams: &[LiveStream],
+    now: DateTime<Utc>,
+) -> Vec<(String, DateTime<Utc>)> {
+    slots
+        .iter()
+        .filter_map(|slot| {
+            let stream = streams.iter().find(|s| s.user_login == slot.channel)?;
+            let started = DateTime::parse_from_rfc3339(&stream.started_at)
+                .ok()?
+                .with_timezone(&Utc);
+            slot.due_to_start(started, now)
+                .then(|| (slot.key.clone(), started))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::watch::Source;
+
+    /// A moment, written the way Helix writes `started_at`.
+    fn at(rfc3339: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(rfc3339)
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
+    /// A live pane on `channel`, just asked for. No chat: nothing here reads
+    /// it, and a chat is an entity, which needs a window.
+    fn pane(channel: &str) -> Slot {
+        Slot::new(
+            channel.into(),
+            channel.into(),
+            Source::Live,
+            None,
+            0.0,
+            false,
+        )
+    }
+
+    /// A live pane on `channel` that found it off at `stalled`.
+    fn off(channel: &str, stalled: &str) -> Slot {
+        let mut slot = pane(channel);
+        slot.set_state(StreamState::Offline);
+        slot.stalled_at = Some(at(stalled));
+        slot
+    }
+
+    fn live(login: &str, started_at: &str) -> LiveStream {
+        LiveStream {
+            id: String::new(),
+            user_login: login.into(),
+            user_id: String::new(),
+            display_name: login.into(),
+            title: String::new(),
+            game_name: String::new(),
+            viewer_count: 0,
+            thumbnail_url: String::new(),
+            started_at: started_at.into(),
+        }
+    }
+
+    /// A stopped pane whose channel the list carries starts, with the
+    /// broadcast it tries; one on a channel the list leaves out does not,
+    /// nor one still starting, nor a stream whose start is not a time.
+    #[test]
+    fn a_list_starts_the_stopped_panes_it_carries() {
+        let slots = [
+            off("wren", "2026-10-01T18:00:00Z"),
+            off("kestrel", "2026-10-01T18:00:00Z"),
+            pane("owl"),
+            off("lark", "2026-10-01T18:00:00Z"),
+        ];
+        let streams = [
+            live("wren", "2026-10-01T18:05:00Z"),
+            live("owl", "2026-10-01T18:05:00Z"),
+            live("lark", "soon"),
+        ];
+        let due = due_to_start(&slots, &streams, at("2026-10-01T18:05:30Z"));
+        assert_eq!(due, [("wren".to_string(), at("2026-10-01T18:05:00Z"))]);
+    }
+
+    /// What `start_due` notes on a pane is what keeps the next list from
+    /// trying the same broadcast again, whichever answer the list came in:
+    /// a broadcast already going when the pane found the channel off is
+    /// tried once, and once it has found nothing again, no more.
+    #[test]
+    fn a_broadcast_is_tried_once_through_the_step() {
+        let started = "2026-10-01T17:00:00Z";
+        let streams = [live("wren", started)];
+        let mut slots = [off("wren", "2026-10-01T18:00:00Z")];
+
+        let due = due_to_start(&slots, &streams, at("2026-10-01T18:00:30Z"));
+        assert_eq!(due, [("wren".to_string(), at(started))]);
+        // Noted as `start_due` notes it, tried, and off again.
+        slots[0].retried_for = Some(due[0].1);
+        slots[0].set_state(StreamState::Starting);
+        slots[0].set_state(StreamState::Offline);
+        slots[0].stalled_at = Some(at("2026-10-01T18:00:40Z"));
+
+        let again = due_to_start(&slots, &streams, at("2026-10-01T18:02:30Z"));
+        assert!(again.is_empty(), "the same broadcast was tried again");
     }
 }

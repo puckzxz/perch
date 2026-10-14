@@ -717,6 +717,9 @@ impl RootView {
                     // Whether the guide is up from this pane, for the bar's
                     // Guide button; kept up by `sync_guide_buttons`.
                     guide_from_here: self.guide.up_from(key),
+                    // Whether its channel is pinned, for More's pin row;
+                    // kept up by `sync_pins`.
+                    pinned: self.settings.is_pinned(&self.slots[index].channel),
                 };
                 // The pane's one player: its own size until the pane is
                 // measured, playing, and its position heard by the pane —
@@ -810,9 +813,9 @@ impl RootView {
     }
 
     /// [`stream_info`](Self::stream_info) from the lists the app fetches for
-    /// their own sake alone, without the streams asked for an open pane that
-    /// none of them carries: which panes still need asking about
-    /// (`root::pane_streams`).
+    /// their own sake alone, without the streams asked for the channels none
+    /// of them carries, or nobody follows: which running panes still need
+    /// asking about (`root::pane_streams`).
     pub(super) fn listed_stream(&self, channel: &str) -> Option<&LiveStream> {
         let search = self
             .discovery
@@ -930,8 +933,12 @@ impl RootView {
         // A broadcast that ended has a recording to watch from its start,
         // if the channel keeps one: ask for it, knowing which broadcast this
         // was — read now if the live list did not have it when the picture
-        // came. The pane forgot any earlier answer when it began to play,
-        // so this always asks afresh; that answer predates this recording.
+        // came. For a channel no list carries, what it is read from is the
+        // answer about it (`root::pane_streams`), which the stop above kept
+        // if nobody follows the channel, since such a stopped pane is still
+        // asked about. The pane
+        // forgot any earlier answer when it began to play, so this always
+        // asks afresh; that answer predates this recording.
         if ended && self.slots[index].is_live() {
             if self.slots[index].broadcast.is_none() {
                 self.slots[index].broadcast = self

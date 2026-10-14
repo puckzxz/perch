@@ -537,7 +537,10 @@ impl Slot {
     }
 
     /// Whether a poll at `now` that lists this pane's channel as
-    /// broadcasting since `started` should start the pane by itself.
+    /// broadcasting since `started` should start the pane by itself: the
+    /// follows poll's list, or the answer about channels nobody follows,
+    /// asked every two minutes (`root::pane_streams`), both through
+    /// `RootView::start_due`.
     ///
     /// Only a live pane that has stopped, and only with `Start when they go
     /// live` on. Then a broadcast that began after the pane stopped is one it
@@ -849,6 +852,12 @@ pub enum PaneAction {
     /// `Audio compressor` row. See `crate::compressor` and
     /// `RootView::toggle_compressor`.
     ToggleCompressor,
+    /// Pin the pane's channel to the rail, or take it off: More's `Pin to
+    /// the rail` or `Unpin from the rail`, for a live pane's channel and a
+    /// recording's alike. Says which, as the row it came from did, so a row
+    /// drawn a frame stale pins what is pinned already rather than taking
+    /// it off; see `RootView::set_pinned`.
+    Pin(bool),
     /// Raise the guide over the lower part of the watch page, from this
     /// pane, or put it away again: the Guide button on its bar, or on its
     /// header while it has no picture and so no bar. One guide for the

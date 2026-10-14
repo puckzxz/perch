@@ -24,6 +24,7 @@ use super::{bar, Switching, VideoEvent, VideoView};
 use crate::compressor;
 use crate::motion;
 use crate::seek_bar;
+use crate::sidebar;
 use crate::speed::Speed;
 use crate::stage::Place;
 use crate::target;
@@ -36,9 +37,9 @@ pub enum Menu {
     /// The renditions this stream offers, under the settings' choice.
     Quality,
     /// The rest: hear this pane alone or every pane again, the audio
-    /// compressor, a recording's speed, pop the pane out, open it on
-    /// twitch.tv, copy its link — and the quality and the maximize control,
-    /// while the bar has no room for them.
+    /// compressor, a recording's speed, pop the pane out, pin its channel to
+    /// the rail or take it off, open it on twitch.tv, copy its link — and the
+    /// quality and the maximize control, while the bar has no room for them.
     More,
     /// A recording's speeds (`crate::speed`), opened in More's place from
     /// its speed row, or from the speed on the seek row.
@@ -244,10 +245,11 @@ impl VideoView {
     /// the rest; then, with two panes or more, `Only this one` or `Hear all
     /// again`; then `Audio compressor · Off` or `· On`; then a recording's
     /// `Playback speed · 1x`, which opens the speeds in its place; then `Pop
-    /// out`, then the pane's way out to twitch.tv and its link. All but the
+    /// out`; then `Pin to the rail` or `Unpin from the rail` ([`pin_row`]);
+    /// then the pane's way out to twitch.tv and its link. All but the
     /// quality and the speed are the root's to do — it knows the panes, its
-    /// windows, and the clipboard and the browser are the app's — so they go
-    /// up as `VideoEvent::Pane`.
+    /// windows and the pins, and the clipboard and the browser are the
+    /// app's — so they go up as `VideoEvent::Pane`.
     ///
     /// A recording opens and copies at the moment it is at, and says so:
     /// `Copy link at 1:02:03`, from its first whole second on, by the rule
@@ -339,6 +341,18 @@ impl VideoView {
                 cx,
             ));
         }
+        // The pane's channel pinned to the rail, or taken off it, live or a
+        // recording's. The press says which it was offered as, so a row a
+        // frame stale cannot do the opposite (`PaneAction::Pin`).
+        let pinned = self.pinned;
+        let (id, words) = pin_row(pinned);
+        rows.push(menu_row(
+            id,
+            words.into(),
+            false,
+            move |_this, _window, cx| cx.emit(VideoEvent::Pane(PaneAction::Pin(!pinned))),
+            cx,
+        ));
         rows.push(menu_row(
             "more-open",
             "Open on twitch.tv".into(),
@@ -467,6 +481,16 @@ pub(super) fn folded_quality(
 /// menu and the seek row write it in.
 pub(super) fn speed_row(speed: Speed) -> SharedString {
     format!("Playback speed · {}", speed.label()).into()
+}
+
+/// More's pin row, with the pane's channel `pinned` or not: its id and its
+/// words, which say what a press does (`sidebar::pin_words`). The id
+/// follows the words, as every control's whose words follow a state does
+/// (`loudness::HearOnly::row`), so the row that says the other thing is a
+/// new element rather than the old one relabelled under the pointer.
+pub(super) fn pin_row(pinned: bool) -> (&'static str, &'static str) {
+    let id = if pinned { "more-unpin" } else { "more-pin" };
+    (id, sidebar::pin_words(pinned))
 }
 
 /// How a row of the quality menu is marked: not at all, as the one chosen,
@@ -647,6 +671,14 @@ mod tests {
             folded_quality(&playing, Some(&switching("480p30", false))).as_ref(),
             "Quality · switching to 480p30"
         );
+    }
+
+    /// More's pin row says what a press does to the pane's channel, and is
+    /// a new row, by its id, once the press has done it.
+    #[test]
+    fn mores_pin_row_says_what_a_press_does() {
+        assert_eq!(pin_row(false), ("more-pin", "Pin to the rail"));
+        assert_eq!(pin_row(true), ("more-unpin", "Unpin from the rail"));
     }
 
     /// More's speed row says the speed the recording plays at, in the

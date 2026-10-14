@@ -1,5 +1,5 @@
-//! A channel's page: its past broadcasts, and the way back to what it is
-//! doing now.
+//! A channel's page: its past broadcasts, the way back to what it is doing
+//! now, and its pin to the rail, followed or not.
 //!
 //! It takes over the browse page the way a category does, so there is only
 //! ever one thing to scroll. The cards borrow the stream card's bones — a 16:9
@@ -23,10 +23,12 @@ use gpui::{
 use settings::history::{History, Watched};
 use twitch_api::{Video, VideoKind, VIDEO_THUMBNAIL};
 
+use crate::assets::Icon;
 use crate::browse::{self, Action, ChannelPage, Discovery, SignIn};
 use crate::controls;
 use crate::layout;
 use crate::seek_bar;
+use crate::sidebar;
 use crate::theme;
 
 /// How long after a broadcast's listed end it may still be going.
@@ -435,16 +437,31 @@ fn byline(video: &Video, now: DateTime<Utc>) -> String {
     .join(" · ")
 }
 
+/// What the page's bar says of the channel beside its name, as the root
+/// knows it now: one value from the root to the bar, rather than an
+/// argument each through `browse::page`.
+pub struct Standing {
+    /// Whether the channel is on right now, which decides the one other
+    /// control the bar offers: the stream, when there is one, or else the
+    /// chat, which is what clicking an offline name used to open and stays
+    /// one click away.
+    pub live: bool,
+    /// When the channel, being off, says it is on next
+    /// (`schedule::Schedules::words`), which the bar says beside that
+    /// control: the one thing about the channel worth knowing before
+    /// choosing a recording, and nothing when it has no schedule.
+    pub next: Option<String>,
+    /// Whether it is pinned to the rail, which the bar's pin says the other
+    /// of: a press pins it or takes it off, followed or not
+    /// (`Action::SetPinned`).
+    pub pinned: bool,
+}
+
 /// The page: a bar saying whose broadcasts these are and how to leave, then
 /// the grid.
 ///
-/// `live` is whether the channel is on right now, which decides the one other
-/// control the bar offers: the stream, when there is one, or else the chat,
-/// which is what clicking an offline name used to open and stays one click
-/// away. `next` is when the channel, being off, says it is on next
-/// (`schedule::Schedules::words`), which the bar says beside that control:
-/// the one thing about the channel worth knowing before choosing a
-/// recording, and nothing when it has no schedule.
+/// `standing` is what the bar says of the channel beside its name; see
+/// [`Standing`].
 ///
 /// `history` is what has been watched, so a recording part-watched says so on
 /// its card and a click on it picks up where it was left.
@@ -454,8 +471,7 @@ pub fn view<V: 'static>(
     discovery: &Discovery,
     sign_in: &SignIn,
     history: &History,
-    live: bool,
-    next: Option<String>,
+    standing: Standing,
     room: layout::Room,
     cache: &ImageCache,
     can_add: bool,
@@ -538,6 +554,7 @@ pub fn view<V: 'static>(
     };
     let body = browse::scrollable(list, scroll).into_any_element();
 
+    let Standing { live, next, pinned } = standing;
     let login = channel.login.clone();
     let other = controls::pill(
         "channel-now",
@@ -548,7 +565,36 @@ pub fn view<V: 'static>(
         let on_action = on_action.clone();
         move |view, _event, window, cx| on_action(view, Action::Watch(login.clone()), window, cx)
     }));
-    // Quiet beside the control, and the first thing to give way when the
+    // The rail's own pin, lit while the channel is pinned, as it is on a
+    // pinned row, and keyed on that, so the words a press has just made
+    // false do not stay up (`controls::tip`). Its words name the rail, which
+    // is not beside it (`sidebar::pin_words`).
+    let pin_login = channel.login.clone();
+    let pin = controls::icon_button(
+        if pinned {
+            "channel-unpin"
+        } else {
+            "channel-pin"
+        },
+        Icon::Pin,
+        if pinned {
+            controls::Variant::Selected
+        } else {
+            controls::Variant::Pill
+        },
+    )
+    .tooltip(controls::tip(sidebar::pin_words(pinned)))
+    .on_click(cx.listener({
+        let on_action = on_action.clone();
+        move |view, _event, window, cx| {
+            let pin = Action::SetPinned {
+                login: pin_login.clone(),
+                pinned: !pinned,
+            };
+            on_action(view, pin, window, cx)
+        }
+    }));
+    // Quiet beside the controls, and the first thing to give way when the
     // bar runs out of room, with the whole of it a hover away: ungated, as
     // the browse page's tooltips are, inside the window's own margin.
     let other = div()
@@ -568,6 +614,7 @@ pub fn view<V: 'static>(
                 .tooltip(controls::full_text([next.clone()]))
                 .child(next)
         }))
+        .child(pin)
         .child(other.flex_none());
 
     div()

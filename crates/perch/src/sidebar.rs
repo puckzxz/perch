@@ -10,17 +10,19 @@
 //!
 //! Four groups, top to bottom (see [`groups`]). The channels pinned there,
 //! in the order they were pinned, live or not — see
-//! [`settings::Settings::pinned`]. Who else is live, by viewers. Then a few
-//! live channels you do not follow that are like the ones you watch, each
-//! saying which channel led to it — see `crate::recommended`, which says
-//! where they come from and how rarely they are asked for. Then everyone
-//! else followed, as names, each saying when it was last live, folded under
-//! a count, because that is the longest list in the app and most evenings
-//! nobody wants it. Folded is where it starts each session, and folded it
-//! builds no rows and asks for no pictures. The rows all hold still under
-//! the pointer; see `RootView::hold_live`. A pin is made and taken off from
-//! a followed channel's row itself, under the pointer, and saved by
-//! `RootView::set_pinned`.
+//! [`settings::Settings::pinned`] — followed or not: a pin nobody follows is
+//! asked about by itself (`root::pane_streams`), and is live when that says
+//! so. Who else is live, by viewers. Then a few live channels you do not
+//! follow that are like the ones you watch, each saying which channel led to
+//! it — see `crate::recommended`, which says where they come from and how
+//! rarely they are asked for. Then everyone else followed, as names, each
+//! saying when it was last live, folded under a count, because that is the
+//! longest list in the app and most evenings nobody wants it. Folded is
+//! where it starts each session, and folded it builds no rows and asks for
+//! no pictures. The rows all hold still under the pointer; see
+//! `RootView::hold_live`. A pin is made and taken off from a followed
+//! channel's row itself, under the pointer, from a pane's More and from a
+//! channel's page, and saved by `RootView::set_pinned`.
 //!
 //! On the left, opposite chat. Chat belongs to the pane it is part of and sits
 //! on the right of it; the rail belongs to the window. Putting both on the same
@@ -91,6 +93,18 @@ const GAP_COUNT: f32 = 4.0;
 /// the rail's border rather than touching it.
 const PREVIEW_OFFSET: f32 = theme::GAP_TIGHT * 2.0;
 
+/// What a pin control away from the rail says a press does, with the
+/// channel `pinned` or not: a pane's More row (`video_view::menu::pin_row`)
+/// and the channel page's pin, which name the rail since they are not
+/// beside it. The rail's own pin says `Pin` and `Unpin`.
+pub fn pin_words(pinned: bool) -> &'static str {
+    if pinned {
+        "Unpin from the rail"
+    } else {
+        "Pin to the rail"
+    }
+}
+
 /// Whether a window `width` by `height`, under a title bar `title_bar`
 /// tall, has room for a preview card where the rail hangs it: the whole
 /// card to the right of the rail, and its tallest under the bar, a gap
@@ -108,6 +122,10 @@ pub struct Rail<'a> {
     pub follows: &'a [LiveStream],
     /// Everyone else followed: by name, or held still the same way.
     pub offline: &'a [Channel],
+    /// What Helix said of the channels the follows poll does not ask about,
+    /// the pins nobody follows among them, when asked by login
+    /// (`root::pane_streams`): a pin found here is live.
+    pub asked: &'a [LiveStream],
     /// What is pinned, in pin order; see [`settings::Settings::pinned`].
     pub pinned: &'a [String],
     /// Live channels like the ones watched, ranked, or held still the same
@@ -126,7 +144,7 @@ pub struct Rail<'a> {
     /// `RootView::can_add`.
     pub can_add: bool,
     /// Whether a follows list has come back yet. Until one has, a pin cannot
-    /// be told live from offline.
+    /// be told live from offline, nor followed from not.
     pub follows_loaded: bool,
     /// Whether the offline group is unfolded.
     pub offline_open: bool,
@@ -141,13 +159,18 @@ pub struct Rail<'a> {
     pub preview_pointed: Option<&'a str>,
 }
 
-/// One channel, as the follows lists know it, or as Twitch suggests it.
+/// One channel, as the follows lists know it, as the ask about channels
+/// nobody follows found it, or as Twitch suggests it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Row<'a> {
+    /// Live: a follow, or a pin nobody follows that the ask about it found
+    /// on (`root::pane_streams`).
     Live(&'a LiveStream),
     Offline(&'a Channel),
-    /// A pin neither list has: they have not come back yet, or the channel
-    /// is no longer followed. Its login is all there is to show.
+    /// A pin neither follows list has, and no ask has found live: the lists
+    /// have not come back yet, or the channel is not followed and is off,
+    /// or not asked about yet. Its login is all there is to show, dim, as an
+    /// offline name is.
     Unknown(&'a str),
     /// A live channel nobody here follows, offered because it is like the
     /// ones watched; see `crate::recommended`.
@@ -222,10 +245,12 @@ impl Row<'_> {
         }
     }
 
-    /// Whether the row offers the pin. A followed channel's does; a
-    /// recommendation's does not, because a pin for a channel nobody follows
-    /// is a bare login that cannot say whether it is live — the worker asks
-    /// Twitch about follows only (see `Action::SetPinned`).
+    /// Whether the row offers the pin. A followed channel's does, and a
+    /// pinned row's, which unpins. A recommendation's does not: pinned from
+    /// there, a live row would land in Pinned as a bare login until the ask
+    /// about it was answered (`root::pane_streams`). A channel nobody follows
+    /// is pinned from its pane's More or its page instead, where it is
+    /// already open (see `Action::SetPinned`).
     fn offers_pin(&self) -> bool {
         !matches!(self, Row::Recommended(_))
     }
@@ -238,9 +263,23 @@ pub struct Groups<'a> {
     pub live: Vec<&'a LiveStream>,
     pub recommended: Vec<&'a Suggestion>,
     pub offline: Vec<&'a Channel>,
+    /// Whether a pin the follows list carries is live. Not every live pin:
+    /// one nobody follows is live by the ask about it, and is nobody you
+    /// follow.
+    pub followed_pin_live: bool,
 }
 
 impl Groups<'_> {
+    /// What the Live group says with nobody in it: not "nobody" when a pin
+    /// just above is a live follow.
+    pub fn nobody_live(&self) -> &'static str {
+        if self.followed_pin_live {
+            "Nobody else you follow is live."
+        } else {
+            "Nobody you follow is live."
+        }
+    }
+
     /// Whether the live row `key` names ([`row_key`]) is among these: a
     /// live pin, a live follow or a recommendation. What the root asks of
     /// the row its preview card follows, since only that row's probe can
@@ -264,20 +303,24 @@ impl Groups<'_> {
 /// Sort the follows, and the recommendations, into the rail's groups.
 ///
 /// A pinned channel is in Pinned and nowhere else, so it is one row and is
-/// counted once; Live, Recommended and Offline leave it out — a pin set by
-/// hand on a channel nobody follows can be recommended too. Pins keep pin
-/// order whoever is live — a group that reshuffled by viewers would be the
-/// live list again. Before any follows list has come back every pin is
-/// `Unknown`, rather than read as offline from lists that are only empty
-/// because nothing has arrived. Logins are compared through
-/// `settings::channel_key`, the rule the pins were stored by. The
-/// recommendations arrive ranked and already without anyone followed or open
-/// (`RootView::rank_recommended`), and keep their order — and are not shown
-/// at all until a follows list has come back, whatever the root still holds:
-/// without one, nobody can say they are not followed.
+/// counted once; Live, Recommended and Offline leave it out — a pin on a
+/// channel nobody follows can be recommended too. Pins keep pin order
+/// whoever is live — a group that reshuffled by viewers would be the live
+/// list again. A pin the follows lists do not have is live when `asked`,
+/// what the ask about channels nobody follows found on
+/// (`root::pane_streams`), has it, and `Unknown` otherwise. Before any
+/// follows list has come back every pin is `Unknown`, rather than read as
+/// offline from lists that are only empty because nothing has arrived.
+/// Logins are compared through `settings::channel_key`, the rule the pins
+/// were stored by. The recommendations arrive ranked and already without
+/// anyone followed or open (`RootView::rank_recommended`), and keep their
+/// order — and are not shown at all until a follows list has come back,
+/// whatever the root still holds: without one, nobody can say they are not
+/// followed.
 pub fn groups<'a>(
     follows: &'a [LiveStream],
     offline: &'a [Channel],
+    asked: &'a [LiveStream],
     recommended: &'a [Suggestion],
     pinned: &'a [String],
     follows_loaded: bool,
@@ -302,14 +345,24 @@ pub fn groups<'a>(
                 .find(|channel| channel_key(&channel.login) == *key)
             {
                 Row::Offline(channel)
+            } else if let Some(stream) = asked
+                .iter()
+                .find(|stream| channel_key(&stream.user_login) == *key)
+            {
+                Row::Live(stream)
             } else {
                 Row::Unknown(pin)
             }
         })
         .collect();
+    let followed_pin_live = follows_loaded
+        && follows
+            .iter()
+            .any(|stream| keys.contains(&channel_key(&stream.user_login)));
 
     Groups {
         pinned: rows,
+        followed_pin_live,
         live: follows
             .iter()
             .filter(|stream| !is_pinned(&stream.user_login))
@@ -358,8 +411,8 @@ fn row_key(group: Group, login: &str) -> String {
 /// One row: avatar and name, and for a live channel what they are playing —
 /// or, for a recommendation, why it is offered — and how many are watching.
 /// Under the pointer a followed channel's row offers the pin — to pin it, or
-/// on a pinned row to unpin it — and any live row, while there is room beside
-/// what is playing, `+`.
+/// on a pinned row, followed or not, to unpin it — and any live row, while
+/// there is room beside what is playing, `+`.
 ///
 /// An offline channel, or a pin nobody can place, is the name in `text_dim`,
 /// with no dot and no count: there is nobody watching to count, and a dimmer
@@ -695,6 +748,7 @@ pub fn rail<V: 'static>(
     let groups = groups(
         rail.follows,
         rail.offline,
+        rail.asked,
         rail.recommended,
         rail.pinned,
         rail.follows_loaded,
@@ -745,11 +799,6 @@ pub fn rail<V: 'static>(
         ));
     }
     if groups.live.is_empty() {
-        // Not "nobody" when a pin just above is live.
-        let pinned_live = groups
-            .pinned
-            .iter()
-            .any(|channel| matches!(channel, Row::Live(_)));
         list = list.child(
             div()
                 .px(px(theme::PANEL_PAD))
@@ -757,11 +806,7 @@ pub fn rail<V: 'static>(
                 .text_size(px(theme::TEXT_META))
                 .line_height(px(theme::LINE_BODY))
                 .text_color(theme::text_dim())
-                .child(if pinned_live {
-                    "Nobody else you follow is live."
-                } else {
-                    "Nobody you follow is live."
-                }),
+                .child(groups.nobody_live()),
         );
     }
 
@@ -905,19 +950,19 @@ mod tests {
         let offline = [channel("carol")];
         let recommended = [suggestion("small", 5), suggestion("big", 9000)];
 
-        let with = groups(&follows, &offline, &recommended, &[], true);
+        let with = groups(&follows, &offline, &[], &recommended, &[], true);
         assert_eq!(with.recommended, [&recommended[0], &recommended[1]]);
         assert_eq!(with.live, [&follows[0]]);
         assert_eq!(with.offline, [&offline[0]]);
         assert!(with.pinned.is_empty());
 
-        let without = groups(&follows, &offline, &[], &[], true);
+        let without = groups(&follows, &offline, &[], &[], &[], true);
         assert!(without.recommended.is_empty());
         assert_eq!(without.live, [&follows[0]]);
 
         // Before the follows have come back — a new client id's worker still
         // signing in — nothing is recommended, whatever was held from before.
-        let unloaded = groups(&[], &[], &recommended, &[], false);
+        let unloaded = groups(&[], &[], &[], &recommended, &[], false);
         assert!(unloaded.recommended.is_empty());
     }
 
@@ -928,7 +973,7 @@ mod tests {
         let recommended = [suggestion("handpinned", 50), suggestion("other", 40)];
         let pinned = pins(&["HandPinned"]);
 
-        let groups = groups(&[], &[], &recommended, &pinned, true);
+        let groups = groups(&[], &[], &[], &recommended, &pinned, true);
         assert_eq!(groups.pinned, [Row::Unknown("HandPinned")]);
         assert_eq!(groups.recommended, [&recommended[1]]);
     }
@@ -1001,7 +1046,7 @@ mod tests {
         let offline = [channel("carol"), channel("dave")];
         let pinned = pins(&["bob", "dave"]);
 
-        let groups = groups(&follows, &offline, &[], &pinned, true);
+        let groups = groups(&follows, &offline, &[], &[], &pinned, true);
         assert_eq!(
             groups.pinned,
             [Row::Live(&follows[1]), Row::Offline(&offline[1])]
@@ -1018,7 +1063,7 @@ mod tests {
         let offline = [channel("asleep")];
         let pinned = pins(&["small", "asleep", "big"]);
 
-        let groups = groups(&follows, &offline, &[], &pinned, true);
+        let groups = groups(&follows, &offline, &[], &[], &pinned, true);
         assert_eq!(logins(&groups.pinned), ["small", "asleep", "big"]);
         assert!(matches!(groups.pinned[1], Row::Offline(_)));
         assert!(groups.live.is_empty());
@@ -1026,16 +1071,54 @@ mod tests {
 
     /// Before any list has come back, empty lists say nothing about who is
     /// offline. Every pin waits as `Unknown`; so does a pin that neither list
-    /// has once they have come back.
+    /// has once they have come back, and that no ask has found live.
     #[test]
     fn pins_are_unknown_until_the_follows_arrive() {
         let pinned = pins(&["alice", "gone"]);
-        let before = groups(&[], &[], &[], &pinned, false);
+        let before = groups(&[], &[], &[], &[], &pinned, false);
         assert_eq!(before.pinned, [Row::Unknown("alice"), Row::Unknown("gone")]);
 
         let follows = [stream("alice", 10)];
-        let after = groups(&follows, &[], &[], &pinned, true);
+        let after = groups(&follows, &[], &[], &[], &pinned, true);
         assert_eq!(after.pinned, [Row::Live(&follows[0]), Row::Unknown("gone")]);
+    }
+
+    /// A pin nobody follows is live, with what Helix said, once the ask
+    /// about it finds it on — whatever case it was pinned in — and a live
+    /// row a card can follow; the follows' own word comes first for a
+    /// channel they have. An empty Live group does not count it as somebody
+    /// else you follow. Before a follows list has come back it waits with
+    /// the rest.
+    #[test]
+    fn a_pin_nobody_follows_is_live_when_the_ask_says_so() {
+        let follows = [stream("alice", 300)];
+        let asked = [stream("faraway", 42), stream("alice", 1)];
+        let pinned = pins(&["Faraway", "alice", "asleep"]);
+
+        let groups_now = groups(&follows, &[], &asked, &[], &pinned, true);
+        assert_eq!(
+            groups_now.pinned,
+            [
+                Row::Live(&asked[0]),
+                Row::Live(&follows[0]),
+                Row::Unknown("asleep")
+            ]
+        );
+        assert!(groups_now.draws_live_row(&row_key(Group::Pinned, "faraway")));
+        assert!(groups_now.live.is_empty(), "alice is pinned");
+        assert_eq!(groups_now.nobody_live(), "Nobody else you follow is live.");
+
+        // Live by the ask alone, faraway is nobody you follow.
+        let faraway = pins(&["faraway"]);
+        let unfollowed = groups(&[], &[], &asked, &[], &faraway, true);
+        assert_eq!(unfollowed.pinned, [Row::Live(&asked[0])]);
+        assert_eq!(unfollowed.nobody_live(), "Nobody you follow is live.");
+
+        let before = groups(&[], &[], &asked, &[], &pinned, false);
+        assert!(before
+            .pinned
+            .iter()
+            .all(|row| matches!(row, Row::Unknown(_))));
     }
 
     /// What a press of a row's pin does to the rail: pinned through the
@@ -1048,14 +1131,14 @@ mod tests {
         let mut settings = settings::Settings::default();
 
         assert!(settings.set_pinned("Bob", true));
-        let pinned = groups(&follows, &offline, &[], &settings.pinned, true);
+        let pinned = groups(&follows, &offline, &[], &[], &settings.pinned, true);
         assert_eq!(pinned.pinned, [Row::Live(&follows[1])]);
         assert_eq!(pinned.live, [&follows[0]]);
         let rows = pinned.pinned.len() + pinned.live.len() + pinned.offline.len();
         assert_eq!(rows, 3, "a pinned channel was counted twice");
 
         assert!(settings.set_pinned("bob", false));
-        let unpinned = groups(&follows, &offline, &[], &settings.pinned, true);
+        let unpinned = groups(&follows, &offline, &[], &[], &settings.pinned, true);
         assert!(unpinned.pinned.is_empty());
         assert_eq!(unpinned.live, [&follows[0], &follows[1]]);
     }
@@ -1067,7 +1150,7 @@ mod tests {
         let offline = [channel("alice"), channel("bob"), channel("carol")];
         let pinned = pins(&["Bob"]);
 
-        let groups = groups(&[], &offline, &[], &pinned, true);
+        let groups = groups(&[], &offline, &[], &[], &pinned, true);
         assert_eq!(groups.offline.len(), 2);
         assert_eq!(groups.offline, [&offline[0], &offline[2]]);
         assert_eq!(groups.pinned, [Row::Offline(&offline[1])]);
@@ -1084,7 +1167,7 @@ mod tests {
         let recommended = [suggestion("dave", 5)];
         let pinned = pins(&["bob", "carol"]);
 
-        let drawn = groups(&follows, &offline, &recommended, &pinned, true);
+        let drawn = groups(&follows, &offline, &[], &recommended, &pinned, true);
         assert!(drawn.draws_live_row(&row_key(Group::Live, "alice")));
         assert!(drawn.draws_live_row(&row_key(Group::Pinned, "bob")));
         assert!(drawn.draws_live_row(&row_key(Group::Recommended, "dave")));
@@ -1093,7 +1176,7 @@ mod tests {
         assert!(!drawn.draws_live_row(&row_key(Group::Offline, "carol")));
 
         // Alice's stream ends at the next poll, with the pointer on her row.
-        let ended = groups(&follows[1..], &offline, &recommended, &pinned, true);
+        let ended = groups(&follows[1..], &offline, &[], &recommended, &pinned, true);
         assert!(!ended.draws_live_row(&row_key(Group::Live, "alice")));
     }
 

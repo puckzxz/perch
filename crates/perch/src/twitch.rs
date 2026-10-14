@@ -172,14 +172,18 @@ pub enum Request {
         login: String,
         user_id: Option<String>,
     },
-    /// Full stream records for the channels of open live panes that no
-    /// list the app has fetched carries — a pane opened by name, from a
-    /// link or from the rail's Recommended group, whose answers say no
-    /// start, no title and no count — so its timeline has a start to run
-    /// from and its header something to say (`root::pane_streams`).
-    /// Helix's `/streams` by login, with the token, so it goes through
-    /// [`serve`]; it fills no browse list, and its failure travels in its
-    /// answer.
+    /// Full stream records for the channels nothing else the app asks
+    /// would say are on, all in one ask (`root::pane_streams`): a live
+    /// pane's that no list the app has fetched carries — opened by name,
+    /// from a link or from the rail's Recommended group, whose answers say
+    /// no start, no title and no count — so its timeline has a start to run
+    /// from and its header something to say; and a stopped pane's or a
+    /// pin's that nobody follows, which the follows poll never lists, so
+    /// the pane starts when the channel does and the pin says it is live.
+    /// Helix's `/streams` by login, up to
+    /// [`twitch_api::MAX_LOGINS_PER_REQUEST`] of them, with the token, so it
+    /// goes through [`serve`]; it fills no browse list, and its failure
+    /// travels in its answer.
     PaneStreams { logins: Vec<String> },
     /// Send `message` to the chat of the channel whose numeric id is
     /// `broadcaster_id` (the room id its chat's `ROOMSTATE` carries), as
@@ -222,7 +226,8 @@ impl Request {
     /// follows poll, whose lists are not the browse page's, a recording
     /// looked up for a link or a pane's muted stretches, whose failure is a
     /// toast or a line in the log, a pane's past broadcasts and the streams
-    /// of its channel, which are the pane's, the rail's recommendations,
+    /// of the channels no list asks about, which are the panes' and the
+    /// pins', the rail's recommendations,
     /// which are the rail's, when the offline follows were last live, which
     /// is words on names already on screen, the names of Shared Chat
     /// partners, the chat badges, the cheermotes, a chatter's account and a

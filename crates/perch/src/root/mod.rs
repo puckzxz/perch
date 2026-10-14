@@ -273,6 +273,13 @@ pub(crate) struct RootView {
     /// chat's followers-only check never says "only followers" on less than
     /// the whole list; see `composer::follows`.
     follows_complete: bool,
+    /// Whether a list of everyone followed has come back since the worker
+    /// started, cut short or not: what tells a channel nobody follows from
+    /// one followed and off (`RootView::followed`). `follows_loaded` cannot,
+    /// since the live list sets it too, seconds before this list arrives, and
+    /// for those seconds every offline follow would read as not followed and
+    /// be asked about as if it were not (`root::pane_streams`).
+    followed_loaded: bool,
     /// Who was live at the last poll, so newly-live channels can be told apart
     /// from ones that were already streaming. Without this every poll would
     /// re-announce everybody.
@@ -338,9 +345,12 @@ pub(crate) struct RootView {
     /// page and on a pane that found it off. For this session only; see
     /// `crate::schedule`.
     schedules: Schedules,
-    /// The streams of open live panes' channels that no fetched list
-    /// carries, asked of Helix by login so such a pane has a timeline and a
-    /// header; see `root::pane_streams`.
+    /// The streams of channels nothing else the app asks would say are on —
+    /// a live pane's that no fetched list carries, a stopped pane's or a
+    /// pin's that nobody follows — asked of Helix by login, in one ask, so
+    /// such a pane has a timeline and a header and starts when the channel
+    /// does, and such a pin says whether it is live; see `root::pane_streams`.
+    /// Never merged into `follows`.
     pane_streams: pane_streams::PaneStreams,
     sign_in: SignIn,
     /// Whether the signed-in token may send chat, from Twitch's token
@@ -597,6 +607,7 @@ impl RootView {
             avatars: HashMap::new(),
             follows_loaded: false,
             follows_complete: false,
+            followed_loaded: false,
             known_live: HashSet::new(),
             streams_seeded: false,
             seen_broadcasts: notifications::Seen::default(),

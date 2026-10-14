@@ -50,7 +50,10 @@ const PAGE_SIZE: &str = "100";
 /// screen of a search. A smaller page also keeps the follow-up lookup cheap.
 const SEARCH_PAGE_SIZE: &str = "40";
 /// How many `user_login` parameters Helix accepts in one `/streams` request.
-const MAX_LOGINS_PER_REQUEST: usize = 100;
+/// [`streams_by_login`] asks about this many and drops the rest, so a caller
+/// that reads a login left out of the answer as off caps its list here
+/// first (`perch`'s `root::pane_streams`).
+pub const MAX_LOGINS_PER_REQUEST: usize = 100;
 /// How many pages of follows to walk before giving up.
 ///
 /// Both followed endpoints paginate, and both cap a page at 100. Assuming only
