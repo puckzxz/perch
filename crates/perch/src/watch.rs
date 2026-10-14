@@ -837,6 +837,10 @@ pub enum PaneAction {
     /// Draw every chat this way, and remember it: a row of the chat options
     /// menu. Every chat's, not the pane's: see `RootView::set_chat_display`.
     SetChatDisplay(ChatDisplay),
+    /// Put the chat's width and a stacked pane's share of video back where
+    /// they are derived: the chat options menu's `Reset pane sizes`, the
+    /// pointer's way to what `Ctrl+0` does (`RootView::reset_sizes`).
+    ResetSizes,
     /// Hear this pane alone, every other held silent by Mute all's hush, or,
     /// once one pane alone is heard, every pane again: More's `Only this
     /// one` and `Hear all again`; see `RootView::hear_only`.

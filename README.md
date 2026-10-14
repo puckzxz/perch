@@ -212,8 +212,8 @@ it was — as long as that monitor is still there; the first time, it is sized t
 fit the screen.
 
 The seam between video and chat can be dragged, in either arrangement, and the
-size is remembered. `Ctrl+0` puts both back to what the layout would have
-derived.
+size is remembered. `Ctrl+0`, or **Reset pane sizes** at the foot of a pane's
+chat options, puts both back to what the layout would have derived.
 
 Hiding chat is remembered per channel, the way volume is — a channel you watch
 for the game stays that way without saying anything about the next one. Beside
@@ -443,7 +443,8 @@ The icon with the two Ts in a pane's header, beside its pop-out and its ×,
 opens the chat options: the text size — **Small**, **Default**, **Large** or
 **Larger** — and **Time on every message**, which starts every message with
 its time in place of the once-a-minute breaks. They apply to every chat at
-once and are remembered. The channel's name in the pane header opens
+once and are remembered. **Reset pane sizes**, under them, puts the chat and
+video sizes back, as `Ctrl+0` does. The channel's name in the pane header opens
 it on twitch.tv — and so do **Open on twitch.tv** under the bar's **More** and
 the palette's `Open … on twitch.tv`. On a live pane the site plays the stream
 as well, with its own sound.

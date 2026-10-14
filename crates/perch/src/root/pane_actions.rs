@@ -147,6 +147,12 @@ impl RootView {
                 self.chat_menu = None;
                 self.set_chat_display(display, cx);
             }
+            // The same menu's last row, and the same press.
+            PaneAction::ResetSizes => {
+                self.take_rest_of_run();
+                self.chat_menu = None;
+                self.reset_sizes(cx);
+            }
             // The Guide button on its bar; see `guide`.
             PaneAction::Guide => self.toggle_guide(key, cx),
         }

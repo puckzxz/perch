@@ -207,13 +207,19 @@ impl RootView {
         window.toggle_fullscreen();
     }
 
-    /// Put the video and chat back to the sizes they are derived at.
+    /// `Ctrl+0`; see [`reset_sizes`](Self::reset_sizes).
     pub(super) fn on_reset_layout(
         &mut self,
         _: &keys::ResetLayout,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.reset_sizes(cx);
+    }
+
+    /// Put the video and chat back to the sizes they are derived at: from
+    /// `Ctrl+0`, and from the chat options menu's `Reset pane sizes`.
+    pub(super) fn reset_sizes(&mut self, cx: &mut Context<Self>) {
         let defaults = Settings::default();
         self.settings.chat_width = defaults.chat_width;
         self.settings.video_share = defaults.video_share;

@@ -2397,9 +2397,11 @@ unconsidered.
 - **Sizes the user dragged are settings, not view state.** `chat_width` and
   `video_share` live in `settings.json`, and the drag writes them on mouse *up*
   rather than on every move — a drag is hundreds of events and each save is a
-  read-modify-write of the whole file. `Ctrl+0` puts both back to their
-  defaults, `video_share: 0.0` meaning "derive it", which is what the layout did
-  before anybody dragged anything.
+  read-modify-write of the whole file. `Ctrl+0`, or `Reset pane sizes` at
+  the foot of a pane's chat options menu (`RootView::reset_sizes`, the one
+  path for both), puts both back to their defaults, `video_share: 0.0`
+  meaning "derive it", which is what the layout did before anybody dragged
+  anything.
 - **The widget library reads the same tokens**, via `widget_theme::apply` after
   `gpui_component::init`. Without it `init` seeds its palette from
   `cx.window_appearance()` — the *operating system's* light/dark setting — so

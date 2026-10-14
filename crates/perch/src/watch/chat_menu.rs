@@ -1,15 +1,18 @@
-//! A pane's chat options menu: how big every chat's text is, and whether
-//! every message carries its time. Opened from the icon in the pane's
+//! A pane's chat options menu: how big every chat's text is, whether every
+//! message carries its time, and putting the chat and video sizes back to
+//! where they are derived, which is otherwise `Ctrl+0` alone. Opened from
+//! the icon in the pane's
 //! header (`header::pane_header`), on a pane with a chat panel only, and
 //! hung over the top of that pane's chat, under the header's right-hand
 //! cluster, the way the bar's menus hang over the picture from theirs
 //! (`video_view::menu`).
 //!
 //! What it sets is every chat's, not the pane's: it is about the reader's
-//! eyes and the screen, which are the same in every pane. The root keeps
-//! which pane's menu is open, one at a time across them all
-//! (`RootView::chat_menu`, [`toggled`]), and what the rows set
-//! (`RootView::set_chat_display`); this file only draws it.
+//! eyes and the screen, which are the same in every pane, and so are the
+//! sizes the last row puts back. The root keeps which pane's menu is open,
+//! one at a time across them all (`RootView::chat_menu`, [`toggled`]), and
+//! what the rows set (`RootView::set_chat_display`, `RootView::reset_sizes`);
+//! this file only draws it.
 //!
 //! Dismissed as the bar's menus are. The icon sits in an anchor that closes
 //! the menu on a press anywhere outside it (`PaneAction::CloseChatMenu`), so
@@ -45,7 +48,8 @@ pub fn toggled(open: Option<&str>, key: &str) -> Option<String> {
 }
 
 /// The menu for the pane `key` names, marking what `display` has chosen:
-/// the four text sizes under a heading, ruled off from the times. A layer
+/// the four text sizes under a heading, ruled off from the times, and
+/// `Reset pane sizes` ruled off at the foot. A layer
 /// for the pane's chat box (`watch::pane`), hung from its top-right corner
 /// a word's gap under the header's rule, right-aligned with the header's
 /// cluster, and dropping the last few pixels into place as it opens.
@@ -63,7 +67,7 @@ pub(super) fn menu<V: 'static>(
                 pane_id(key, &format!("chat-size-{index}")),
                 chat_display::size_label(size).into(),
                 display.size == size,
-                ChatDisplay { size, ..display },
+                PaneAction::SetChatDisplay(ChatDisplay { size, ..display }),
                 key,
                 on_pane.clone(),
                 cx,
@@ -76,10 +80,10 @@ pub(super) fn menu<V: 'static>(
             pane_id(key, "chat-times"),
             "Time on every message".into(),
             display.times,
-            ChatDisplay {
+            PaneAction::SetChatDisplay(ChatDisplay {
                 times: !display.times,
                 ..display
-            },
+            }),
             key,
             on_pane.clone(),
             cx,
@@ -92,6 +96,23 @@ pub(super) fn menu<V: 'static>(
                 .text_size(px(theme::TEXT_META))
                 .text_color(theme::text_dim())
                 .child(toggle_state(display.times)),
+        )
+        .border_t_1()
+        .border_color(theme::border())
+        .into_any_element(),
+    );
+    // The divider beside chat and the one between a stacked pane's video
+    // and chat are dragged; this puts both back. Never chosen, so never in
+    // the accent; ruled off, since it is about the page, not the text.
+    rows.push(
+        row(
+            pane_id(key, "reset-sizes"),
+            "Reset pane sizes".into(),
+            false,
+            PaneAction::ResetSizes,
+            key,
+            on_pane.clone(),
+            cx,
         )
         .border_t_1()
         .border_color(theme::border())
@@ -160,9 +181,10 @@ fn heading(words: &'static str) -> AnyElement {
 
 /// One row: in the accent when it is what is `chosen`, with anything the
 /// caller adds after its words pushed to the far end, and on the press,
-/// asks for every chat to be drawn as `choice`. The menu has already closed
-/// by then, in the capture phase (see the module), and the root takes the
-/// rest of the press's run (`RootView::set_chat_display`).
+/// asks for `action`: every chat drawn another way, or the sizes reset. The
+/// menu has already closed by then, in the capture phase (see the module),
+/// and the root takes the rest of the press's run
+/// (`RootView::on_pane_action`).
 ///
 /// Only the first press of a run, as the bar's rows: a later one is never a
 /// row's to take, since whatever the run's first press landed on chose.
@@ -171,7 +193,7 @@ fn row<V: 'static>(
     id: impl Into<ElementId>,
     label: SharedString,
     chosen: bool,
-    choice: ChatDisplay,
+    action: PaneAction,
     key: &str,
     on_pane: impl Fn(&mut V, &str, PaneAction, &mut Window, &mut Context<V>) + 'static,
     cx: &mut Context<V>,
@@ -203,7 +225,7 @@ fn row<V: 'static>(
                 if event.click_count > 1 {
                     return;
                 }
-                on_pane(view, &key, PaneAction::SetChatDisplay(choice), window, cx)
+                on_pane(view, &key, action.clone(), window, cx)
             }),
         )
 }
