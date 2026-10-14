@@ -1,0 +1,57 @@
+{
+  "id": "01GD17VE2R000E0RPNH2V9Z16G",
+  "name": "Halloween Global Emotes",
+  "flags": 0,
+  "emotes": [
+    {
+      "id": "01FSNK0GP000038GDBZ91HT6SQ",
+      "name": "PETPET",
+      "flags": 1,
+      "data": {
+        "id": "01FSNK0GP000038GDBZ91HT6SQ",
+        "name": "PETPET",
+        "flags": 256,
+        "animated": true,
+        "host": {
+          "url": "//cdn.7tv.app/emote/01FSNK0GP000038GDBZ91HT6SQ",
+          "files": [
+            {
+              "name": "2x.webp",
+              "static_name": "2x_static.webp",
+              "width": 64,
+              "height": 64,
+              "frame_count": 5,
+              "size": 8426,
+              "format": "WEBP"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "01K6WWG0R4T5A9FVNN4TWCWXA7",
+      "name": "EZ",
+      "flags": 0,
+      "data": {
+        "id": "01K6WWG0R4T5A9FVNN4TWCWXA7",
+        "name": "EZ",
+        "flags": 0,
+        "animated": false,
+        "host": {
+          "url": "//cdn.7tv.app/emote/01K6WWG0R4T5A9FVNN4TWCWXA7",
+          "files": [
+            {
+              "name": "2x.webp",
+              "static_name": "2x.webp",
+              "width": 64,
+              "height": 64,
+              "frame_count": 1,
+              "size": 7358,
+              "format": "WEBP"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

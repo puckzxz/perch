@@ -64,7 +64,7 @@ impl ChatView {
 
 #[cfg(test)]
 mod tests {
-    use emotes::{Emote, Token};
+    use emotes::{Emote, Provider, Token};
     use twitch_chat::Reply;
 
     use super::skips_leading_mention;
@@ -82,10 +82,12 @@ mod tests {
     }
 
     fn emote() -> Token {
-        Token::Emote(Emote {
-            name: "Kappa".into(),
-            url: "https://example.invalid/kappa".into(),
-        })
+        Token::Emote(Emote::new(
+            "Kappa",
+            "https://example.invalid/kappa",
+            Provider::Twitch,
+            emotes::Kind::Normal,
+        ))
     }
 
     /// The `@parent` that opens a reply is skipped, by login or display

@@ -1,0 +1,87 @@
+{
+  "default_sets": [
+    3,
+    1539687
+  ],
+  "sets": {
+    "3": {
+      "id": 3,
+      "_type": 1,
+      "title": "Global Emotes",
+      "emoticons": [
+        {
+          "id": 28136,
+          "name": "LilZ",
+          "height": 23,
+          "width": 32,
+          "modifier": false,
+          "modifier_flags": 0,
+          "urls": {
+            "1": "https://cdn.frankerfacez.com/emote/28136/1",
+            "2": "https://cdn.frankerfacez.com/emote/28136/2",
+            "4": "https://cdn.frankerfacez.com/emote/28136/4"
+          }
+        }
+      ]
+    },
+    "1532818": {
+      "id": 1532818,
+      "_type": 1,
+      "title": "Subwoofer Emote Effects",
+      "emoticons": [
+        {
+          "id": 720507,
+          "name": "ffzHyper",
+          "height": 32,
+          "width": 32,
+          "modifier": true,
+          "modifier_flags": 12289,
+          "urls": {
+            "1": "https://cdn.frankerfacez.com/emote/720507/1",
+            "2": "https://cdn.frankerfacez.com/emote/720507/2",
+            "4": "https://cdn.frankerfacez.com/emote/720507/4"
+          }
+        }
+      ]
+    },
+    "1539687": {
+      "id": 1539687,
+      "_type": 2,
+      "title": "Emote Effects",
+      "emoticons": [
+        {
+          "id": 723890,
+          "name": "ffzW",
+          "height": 32,
+          "width": 32,
+          "modifier": true,
+          "modifier_flags": 9,
+          "urls": {
+            "1": "https://cdn.frankerfacez.com/emote/723890/1",
+            "2": "https://cdn.frankerfacez.com/emote/723890/2",
+            "4": "https://cdn.frankerfacez.com/emote/723890/4"
+          }
+        },
+        {
+          "id": 720508,
+          "name": "ffzX",
+          "height": 32,
+          "width": 32,
+          "modifier": true,
+          "modifier_flags": 3,
+          "urls": {
+            "1": "https://cdn.frankerfacez.com/emote/720508/1",
+            "2": "https://cdn.frankerfacez.com/emote/720508/2",
+            "4": "https://cdn.frankerfacez.com/emote/720508/4"
+          }
+        }
+      ]
+    }
+  },
+  "users": {
+    "1532818": [
+      "a_supporter",
+      "another_supporter"
+    ]
+  }
+}

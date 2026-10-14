@@ -47,7 +47,8 @@ use crate::chat_text::{self, Kind};
 use crate::theme;
 
 /// What under the pointer a right-click on a row landed on, as far as the
-/// menu cares: a link, by where it points, an emote, by its name, or the
+/// menu cares: a link, by where it points, an emote, by its name (with
+/// whatever is stacked on it, as it was written: `Emote::typed`), or the
 /// row itself, anywhere else on it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Target {

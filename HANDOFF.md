@@ -127,6 +127,17 @@ header's passive tags stay lowercase (`muted`, `paused`, `buffering`,
   the streamer's permissions, following and unfollowing were taken out of
   Twitch's API, and chatter counts have no endpoint left (see "Known to be out
   of reach").
+- **The chat round of October 2026** was picked on 14 October 2026: emote
+  kinds, cheermotes and a viewer card, built in that order. Emote kinds are
+  built (see "An emote can be drawn over the one before it" under Chat).
+  Asked whether an emote effect it could not draw (`ffzX` after an emote,
+  `w!` before one) should hide its word or keep it as text, the user asked
+  for the effects to be drawn. They need no gpui patch: each is a change of
+  layout (wide, zero space) or a transform of the emote's decoded frames on
+  the CPU, handed to `img` as a `RenderImage`, which gpui animates like any
+  image. That is a unit of its own after emote kinds; until it lands, the
+  word is hidden, the emote drawn plain and the tooltip says `not drawn`,
+  and only an effect nobody knows yet is to stay that way.
 
 ---
 
@@ -151,7 +162,8 @@ crates/
                 (`schedule`, Helix); and sending a chat message, with the
                 scopes a token carries from Twitch's validation (`chat`,
                 Helix)
-  emotes        Twitch/FFZ/BTTV/7TV resolution + disk image cache
+  emotes        Twitch/FFZ/BTTV/7TV resolution, which emotes are drawn
+                together (`stack`), disk image cache
   settings      persisted user settings, and what has been watched
   perch         the app
 ```
@@ -197,7 +209,8 @@ App modules:
 | `rewind.rs` | rewinding a live pane, worked out: whether a timeline is offered (`span`), where a press lands (`pressed_at`, never within `EDGE_SECS` of the edge), the archive of the broadcast going on now (`archive_for`), where in it a moment is (`position_in`), the ask and the press waiting on it (`Rewind`), and whether a recording is the archive of the broadcast on now (`live_now`), weighed against what the pane knows of where it came from (`Origin`), which offers the way back to live (`back_to_live`) (pure, tested) |
 | `video.rs` | render thread; owns the mpv `Player`; the pane's `PositionHandle`, where a recording is and how fast it plays, which every player of the pane and its chat replay share |
 | `vod.rs` | positions a recording by rewriting its playlist; the keeper for one still growing |
-| `chat/mod.rs` | chat pane: rows, emotes, scrollback, drawn at the chat display options' size and with or without a time on every row (`set_display`), and a Shared Chat copy's label, from the names the root hands it (`learn_rooms`) |
+| `chat/mod.rs` | chat pane: rows, scrollback, drawn at the chat display options' size and with or without a time on every row (`set_display`), and a Shared Chat copy's label, from the names the root hands it (`learn_rooms`) |
+| `chat/emote.rs` | an emote in a line: its picture, the overlays stacked on it (which ones is `emotes::stack`'s), its tooltip (`EmoteTooltip`, a line per picture and effect, in words from `chat_words::emote_tip`) and its right press, which copies the stack as written |
 | `chat/room.rs` | what the room says, as the chat pane keeps it: `ROOMSTATE`'s modes merged (`room_state`, which also loads the third-party emotes for a new room or a full line) with their line at the foot (`modes_line`), and a timeout or ban greying its person's rows (`clear_person`) |
 | `chat/badges.rs` | the chat pane's badges: the books the root hands it (`set_badges`) and the group before a name (`badge_group`) |
 | `chat/reply.rs` | a reply's line above it (`reply_line`), and whether its first word is the `@parent` that line already says (`skips_leading_mention`, pure, tested) |
@@ -205,7 +218,7 @@ App modules:
 | `chat/composer.rs` | the box at the foot of a live chat that sends a message: whether it is open and why not (`state`, from `Access`, which the root mirrors in with `set_access`), what a message may be (`message`, `fit`), and the notice an answer leaves (`outcome_notice`, `failure_notice`), all pure and tested; the box itself, its `Enter`, and the line that stands in for it (`composer_bar`) |
 | `chat_display.rs` | how every chat is drawn: `ChatDisplay`, the text-size steps, `Metrics::of` (line, emote, badge, padding and piece budget from the size) and `draws_time_break` (pure, tested) |
 | `chat_badges.rs` | chat badges worked out: Helix's answers as books by set and version, a channel's own picture over the global one (`ChatBadges::art`), the tooltip (`tooltip`, `Subscriber, 14 months`), and which books to ask for (`Library`, once each a session) (pure, tested) |
-| `chat_words.rs` | what a chat says about itself in words: a timeout or ban (`ban_notice`), the line above a reply (`reply_context`), the line of modes and a mode's notice (`modes_line`, `mode_notice`) (pure, tested) |
+| `chat_words.rs` | what a chat says about itself in words: a timeout or ban (`ban_notice`), the line above a reply (`reply_context`), the line of modes and a mode's notice (`modes_line`, `mode_notice`), and what an emote says under the pointer (`emote_tip`) (pure, tested) |
 | `chat_tint.rs` | which wash a chat row wears: an event's, an announcement's colour, a highlighted or first message (`Wash`, `message_wash`, `event_wash`) (pure, tested) |
 | `chat_text.rs` | what a word in a message is — link, mention or plain (pure, tested) |
 | `settings_view.rs` | settings sheet, and its Sign out (`SettingsEvent::SignOut`); Desktop notifications is its one Windows-only field, and its help says so off Windows |
@@ -3511,6 +3524,71 @@ overhang at each end of a row has padding to sit in. At a larger text size
 scales with them (`Metrics::row_pad_y`, never below `ROW_PAD_Y`) — left at
 5px, a 16px chat's 5.5px overhang would reach into the row next door.
 
+**An emote can be drawn over the one before it.** Some third-party emotes
+are not pictures of their own but something done to the emote beside them.
+Each emote carries an `emotes::Kind`, read off its provider's answer when
+the set loads (`providers`; each provider's parser is pure and tested on a
+trimmed copy of its global answer of 14 October 2026, in
+`crates/emotes/src/fixtures/`):
+
+- `Overlay`, drawn over the emote before it. 7TV marks its zero-width emotes
+  in two places, the set's entry (`flags` bit 0, which Chatterino reads) and
+  the emote (`data.flags` bit 8, which 7TV's extension and BetterTTV read);
+  they agreed on every entry that day, and either is taken. BetterTTV marks
+  none, so its eight zero-width globals are a fixed list (`BTTV_ZERO_WIDTH`,
+  Chatterino's and 7TV's), applied to the global set only. And a
+  FrankerFaceZ modifier without its Hidden flag.
+- `EffectOnPrevious`, a FrankerFaceZ modifier with its Hidden flag
+  (`modifier_flags` bit 0): `ffzW`, `ffzX`, `ffzY`, `ffzCursed`.
+- `EffectOnNext`, a BetterTTV emote with `modifier: true`: the prefixes `w!
+  h! v! z! c! l! r! p! s!`.
+- `Normal`, everything else, and every Twitch emote (`Provider::Twitch`,
+  placed by the tag, never looked up by name and so never overridden).
+
+`emotes::stack` then moves each into the emote it belongs to
+(`Emote::attached`), by its provider's own rule: an overlay or a
+FrankerFaceZ effect onto the emote just before it, across spaces only, a
+picture already in the stack dropped as FrankerFaceZ drops a repeated
+modifier; a BetterTTV prefix onto the emote just after it. With nothing to
+attach to, an overlay or a FrankerFaceZ effect is a picture of its own and a
+BetterTTV prefix stays its word, which is again what each provider does. Its
+match over `Token` has no wildcard arm, so a new kind of token does not
+compile until it says how it stacks (not being an emote, it gives the waiting
+prefixes back as words and breaks adjacency). `emotes::message_tokens` is the
+one place the passes are put in order — Twitch's tag, the names, then the
+stacking — and `ChatView::message_line` calls only it.
+
+`chat::emote` draws a stack as one `flex_none` piece of the line, in the box
+the emote alone has always had (a line high, `EMOTE_PAD_X` either side, the
+overhang), so a line with a stack in it is no taller and wraps the same. Each
+overlay is an absolutely placed `img` in that box, `w_full` and the emote's
+height, fitted by `ObjectFit::Contain`; `w_full` because `img` turns an auto
+width into its own shape's width at its height (`img.rs`), which insets would
+lose to. Overlays take no listener, tooltip or cursor, so gpui gives them no
+hitbox and the emote under them answers the pointer for the whole stack. The
+emote's id is `Emote::id_key`, its URL alone when nothing is stacked on it,
+so a lone emote's id is what it always was, and every picture's in a stack,
+whose tooltip says more; an overlay's is its URL behind `over `, which no
+`id_key` starts with. Chat's element ids are the pane's, not the row's (no row
+has an id of its own), so keyed on its URL alone an overlay would share its
+state with the same picture standing alone at the same index in another row,
+and an element without a tooltip builder clears the tooltip it finds in its
+state (div.rs:1662-1668): the lone emote's tooltip would flash for a frame or
+never come up (found reading the code, not on screen). Effects are recognised
+and not drawn: the word is left out of the line, the emote under it is drawn
+plain, and the tooltip names it `not drawn` (drawing them is decided; see
+"Product decisions"). The tooltip
+(`chat_words::emote_tip`, drawn by `chat::emote::EmoteTooltip`) is a line for
+each picture and effect in the order written, the name and then what it is
+(`SteerR  7TV overlay`), and comes up only while the pointer is in the window.
+
+FrankerFaceZ's global answer is cut to the sets named in its `default_sets`.
+The rest belong to the logins listed under `users`: merged whole, as they
+were until 14 October 2026, they made its supporters' eight effects
+(`ffzHyper`, `ffzSpin` and the rest) pictures in everyone's chat. An answer
+without `default_sets` is a failed fetch, logged and asked again after
+`GLOBAL_RETRY_AFTER` like any other, never a reason to take every set.
+
 **Chat display options are every chat's, from any pane's header.** The chat
 options icon on a header that sits on a chat panel opens `watch::chat_menu`:
 four text sizes (Small, Default, Large, Larger: 12, 13, 14.5 and 16px body
@@ -3604,7 +3682,9 @@ so the pieces are copied whole: `Copy message` (the text as sent, so emote
 names stand where the pictures were and a reply keeps its `@name`), `Copy
 name` (the display name, as drawn), `Copy link` while the row has one — the
 one pressed, or else its first, written as the chat opens it, a bare host
-with its `https://` — and `Copy emote name` when the press was on an emote.
+with its `https://` — and `Copy emote name` when the press was on an emote:
+with whatever is stacked on it, as it was written (`w! KEKW SteerR`,
+`Emote::typed`), so pasting it draws the same picture.
 An event copies its note and its writer, or Twitch's sentence alone; the
 app's own notices, their words. `chat::copy_menu::entries` decides, pure and
 tested, from the row as it was when the menu opened. The menu is the chat's
@@ -4570,9 +4650,10 @@ replay says one notice row, emotes stay words, a renamed rendition never
 plays — so nothing a user sees says a query was retired. The script runs each
 crate's ignored `tests/live.rs`, which asks once: SideNav, last broadcasts and
 channel names (anonymous GQL), the chat replay query on the mobile Client-ID,
-the recent-messages service, the FFZ, BTTV and 7TV global sets, and every
-rendition the installed streamlink names for a live channel, read by
-`streamlink::quality`. It sends no token, and stays out of CI: anonymous GQL
+the recent-messages service, the FFZ, BTTV and 7TV global sets and the
+overlays and effects each marks, and every rendition the installed
+streamlink names for a live channel, read by `streamlink::quality`. It sends
+no token, and stays out of CI: anonymous GQL
 from a shared runner's address invites blocks and flaky failures. All of it
 answered on 14 October 2026.
 
@@ -4674,6 +4755,13 @@ the Twitch worker that no longer die without a word, a crash file, a
 sign-in that survives a Sign out race, a failed save and a power cut, one
 go-live toast per broadcast, an ended pane that tries once more when its
 broadcast is still listed, and an emote cache that keeps what is drawn.
+
+So is the start of the chat round of October 2026 (see "Product decisions"):
+7TV's and BetterTTV's zero-width emotes drawn over the emote before them,
+FrankerFaceZ's and BetterTTV's effects recognised, FrankerFaceZ's supporters'
+effects no longer in everyone's chat, and an emote's tooltip naming each
+picture in it and where it is from (see "An emote can be drawn over the one
+before it" under Chat). Drawing the effects comes next.
 
 Left over from phase 1, smallest first:
 
@@ -5108,6 +5196,20 @@ None of these is being worked on; all of them are real.
       the `buffering` tag up through a six-second stall and gone after it,
       `Reset pane sizes` putting a 520px chat back to 340 and saving it,
       and the pane's `streamlink 7.5.0 is too old` line.
+37. **Emote effects are not drawn yet**, and the rest of what emotes stacked
+    together leave out stays out. An effect's word is left out and the emote
+    under it drawn plain until the effects land (see "Product decisions").
+    A wide overlay on a narrow emote is fitted into the emote's box rather
+    than spilling over the words beside it, so it is drawn smaller than 7TV's
+    own extension or Chatterino draw it. FrankerFaceZ's `margins` and
+    `offset` on a modifier, and its global sets given to named users, are
+    ignored. As of 14 October 2026 a stack had been seen only by its tests:
+    the overlay's box is reasoned from gpui's source (an absolute `img` with
+    a percentage width in a block wrapper), so the first look should measure
+    it — the row pitch still 30 at Default, the emote 28 tall, the overlay
+    the emote's box plus `EMOTE_PAD_X` a side — at Larger as well, on a
+    wrapped message, with the tooltip gone once the pointer leaves the
+    window.
 
 ## Things not to redo
 
@@ -5213,6 +5315,15 @@ None of these is being worked on; all of them are real.
   refresh one in place — GPUI decodes per path.
 - Do not derive anything per-row from a row's index; the backlog drains from the
   front.
+- Do not merge FrankerFaceZ's global answer whole. Its `default_sets` are
+  everyone's; the other sets belong to the users named under `users`, and
+  taking them all put its supporters' effects in every chat.
+- Do not give an emote's overlay a listener, a tooltip or a cursor. It would
+  get a hitbox and take the pointer from the emote under it, which answers
+  for the whole stack (see "An emote can be drawn over the one before it").
+  Nor an id any tooltipped element can have: chat's ids are the pane's, not
+  the row's, and an element without a tooltip builder clears the tooltip of
+  every element sharing its id.
 - Do not bind a key with `context: None`; it outranks every scoped binding and
   swallows typing.
 - Do not interpolate a key *context* into a key *predicate*; they are different

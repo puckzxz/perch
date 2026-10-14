@@ -434,6 +434,15 @@ of yours sits on a rose wash, so it stands out in a fast chat. A past
 broadcast gets the same pane, replaying what was said as the picture reaches
 it — see [Past broadcasts](#past-broadcasts).
 
+A zero-width emote — 7TV's `SteerR`, BTTV's `cvMask` — is drawn over the
+emote before it, as one picture the size of that emote. FFZ's and BTTV's
+effects (flipped, wide, turned, greyed and the rest: `ffzX` after an emote,
+`w!` before one) are not drawn yet: the emote shows plain and the effect's
+word is left out. FFZ's effects for its supporters (`ffzHyper`, `ffzSpin`) are
+theirs alone, so in Perch they read as the words they are. The pointer on an
+emote says what it is called and where it is from, and the same for
+everything drawn with it: `KEKW  BetterTTV emote`, `SteerR  7TV overlay`.
+
 The time is shown once a minute, as a break between messages, rather than once
 per row — in a channel where fifteen messages share a minute, a column of
 identical timestamps is not a ruler. It is written the way your system writes a
@@ -495,7 +504,9 @@ greyed the same way.
 Right-click a message to copy it: **Copy message** copies the text as it was
 sent, emote names and all; **Copy name** the name; **Copy link**, when the
 message has one, the link you clicked on or else its first; and **Copy emote
-name**, when you clicked on an emote. A toast says what was copied. A click
+name**, when you clicked on an emote — with whatever is drawn over it or done
+to it, as it was written (`w! KEKW SteerR`), so pasting it draws the same
+picture. A toast says what was copied. A click
 anywhere else or `Esc` closes the menu, and the chat stays paused while it is
 open, so the message does not scroll away from under it.
 

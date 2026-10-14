@@ -10,7 +10,8 @@
 #
 #   twitch-api   SideNav, last broadcasts and channel names (anonymous GQL)
 #   twitch-chat  the chat replay query, and the recent-messages service
-#   emotes       FrankerFaceZ, BetterTTV and 7TV global sets
+#   emotes       FrankerFaceZ, BetterTTV and 7TV global sets, and the
+#                overlays and effects each one marks
 #   streamlink   every rendition the installed streamlink names, read by
 #                streamlink::quality, on a live channel
 #

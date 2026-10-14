@@ -9,26 +9,27 @@
 //! row: wrapping then happens at token boundaries, which is where you want it.
 //!
 //! The view is split by what it handles, the way `root/` is: this file has
-//! the view, its rows and how a message is drawn; `room` what the room says
-//! about itself (its modes, a timeout or a ban); `badges` the chat badges;
-//! `reply` a reply's context line; `copy_menu` what a right-click on a row
-//! offers to copy; and `composer` the box at the foot of a live chat that
-//! sends a message.
+//! the view, its rows and how a message is drawn; `emote` an emote in a
+//! line, with what is stacked on it and its tooltip; `room` what the room
+//! says about itself (its modes, a timeout or a ban); `badges` the chat
+//! badges; `reply` a reply's context line; `copy_menu` what a right-click on
+//! a row offers to copy; and `composer` the box at the foot of a live chat
+//! that sends a message.
 
 mod badges;
 pub mod composer;
 mod copy_menu;
+mod emote;
 mod reply;
 mod room;
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use emotes::{apply_named_emotes, tokenize, EmoteLoader, EmoteSets, ImageCache, Token};
+use emotes::{EmoteLoader, EmoteSets, ImageCache, Token};
 use gpui::{
-    div, img, list, point, prelude::*, px, AnyElement, Context, Entity, EventEmitter,
-    ListAlignment, ListState, MouseButton, Pixels, RetainAllImageCache, SharedString, Subscription,
-    Task, Window,
+    div, list, point, prelude::*, px, AnyElement, Context, Entity, EventEmitter, ListAlignment,
+    ListState, MouseButton, Pixels, RetainAllImageCache, SharedString, Subscription, Task, Window,
 };
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 
@@ -48,25 +49,6 @@ use crate::video::PositionHandle;
 
 use self::composer::{Composer, Step};
 use self::copy_menu::{CopyMenu, Target};
-
-/// Emote names are worth showing on hover: half of chat is emotes, and knowing
-/// what one is called is the difference between reading a message and guessing.
-struct EmoteTooltip {
-    name: SharedString,
-}
-
-impl Render for EmoteTooltip {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .px(px(theme::CONTROL_PAD_X))
-            .py(px(theme::CONTROL_PAD_Y))
-            .rounded(px(theme::RADIUS))
-            .bg(theme::surface_raised())
-            .text_size(px(theme::TEXT_LABEL))
-            .text_color(theme::text())
-            .child(self.name.clone())
-    }
-}
 
 /// Messages kept in memory. Old ones drop off the top: chat runs forever, and
 /// a pane holding everything it ever saw is a leak with a nicer name.
@@ -1263,10 +1245,15 @@ impl ChatView {
         );
 
         // Twitch's own emotes come from the tag with exact positions; the rest
-        // are name lookups applied to whatever text is left.
-        let tokens = tokenize(&message.text, message.emotes.as_deref(), true);
+        // are name lookups applied to whatever text is left, and an overlay
+        // or an effect goes into the emote it belongs to.
         let sets = self.emote_sets.clone();
-        let tokens = apply_named_emotes(tokens, &move |name| sets.lookup(name));
+        let tokens = emotes::message_tokens(
+            &message.text,
+            message.emotes.as_deref(),
+            true,
+            &move |name| sets.lookup(name),
+        );
 
         // Only a message that actually has an emote in it pays for the room one
         // needs. A wrapped wall of plain text keeps its tight leading, which is
@@ -1297,61 +1284,7 @@ impl ChatView {
                     }
                 }
                 Token::Emote(emote) => {
-                    let resolved = self.cache.get_or_request(&emote.url);
-                    // The right button says which emote it was, for the
-                    // row's copy menu, picture or not.
-                    let pressed = Self::press_target(Target::Emote(emote.name.clone()), cx);
-                    line = line.child(match resolved {
-                        // Until the image lands, show the emote's name so the
-                        // message still reads correctly.
-                        None => div()
-                            .text_color(theme::text_dim())
-                            .on_mouse_down(MouseButton::Right, pressed)
-                            .child(SharedString::from(emote.name))
-                            .into_any_element(),
-                        // The id is what makes animated emotes animate: GPUI
-                        // keys per-frame state on an element's global id, and
-                        // only requests an animation frame when one exists. An
-                        // img without an id is pinned to frame 0 forever.
-                        //
-                        // The id must identify the *image*, not the slot. Keyed
-                        // on position alone, a 40-frame GIF in one row and a
-                        // 1-frame PNG in another share state, and GPUI indexes
-                        // the PNG with the GIF's frame number and panics.
-                        Some(path) => {
-                            let name = SharedString::from(emote.name.clone());
-                            // Emotes are taller than the text they sit in. Give
-                            // the wrapper a line's worth of height and let the
-                            // image overhang it, so a row with emotes is no
-                            // taller than one without and the list keeps a
-                            // single vertical rhythm to scan down.
-                            //
-                            // The right button listens on the picture, not the
-                            // wrapper, for the same reason the tooltip does:
-                            // the picture overhangs the wrapper above and
-                            // below, and a press on the overhang is on the
-                            // emote as much as one in the middle.
-                            div()
-                                .flex_none()
-                                .h(px(metrics.line))
-                                .px(px(theme::EMOTE_PAD_X))
-                                .child(
-                                    img(path)
-                                        // Before `.id(..)`: `image_cache` is on
-                                        // `Img`, and `.id(..)` yields a
-                                        // `Stateful<Img>`.
-                                        .image_cache(&self.emote_images)
-                                        .id((SharedString::from(emote.url.clone()), emote_index))
-                                        .h(px(metrics.emote))
-                                        .mt(px(-metrics.overhang))
-                                        .on_mouse_down(MouseButton::Right, pressed)
-                                        .tooltip(move |_window, cx| {
-                                            cx.new(|_| EmoteTooltip { name: name.clone() }).into()
-                                        }),
-                                )
-                                .into_any_element()
-                        }
-                    });
+                    line = line.child(self.emote(emote, emote_index, metrics, cx));
                     emote_index += 1;
                 }
             }

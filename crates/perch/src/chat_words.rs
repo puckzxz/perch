@@ -1,13 +1,15 @@
 //! What a chat says about itself in words: a timeout or a ban, the line
-//! above a reply, and the room's modes, both as the quiet line at the foot
-//! of the pane and as a notice when one changes. Pure and tested; the chat
-//! view (`chat/`) puts the words where they go.
+//! above a reply, the room's modes, both as the quiet line at the foot of
+//! the pane and as a notice when one changes, and what a picture in a line
+//! says under the pointer (`emote_tip`). Pure and tested; the chat view
+//! (`chat/`) puts the words where they go.
 //!
 //! The modes are `twitch_chat::RoomModes`, merged there from `ROOMSTATE`.
 //! Sentence case, as the chat's own notices are, and lengths in whole words
 //! (`10 minutes`) where they are read in a sentence and in short units
 //! (`10m`) on the line of modes, which has to stay one line.
 
+use emotes::{Emote, Provider};
 use twitch_chat::{ModeChange, Reply, RoomModes};
 
 /// Units a length is said in, largest first.
@@ -145,6 +147,45 @@ pub fn mode_notice(change: ModeChange) -> String {
     }
 }
 
+/// A provider by the name it goes by.
+fn provider_name(provider: Provider) -> &'static str {
+    match provider {
+        Provider::Twitch => "Twitch",
+        Provider::Ffz => "FrankerFaceZ",
+        Provider::Bttv => "BetterTTV",
+        Provider::SevenTv => "7TV",
+    }
+}
+
+/// What an emote says under the pointer: a line for each picture and
+/// effect in its stack, in the order written (`Emote::written`), with its
+/// name and what it is — `KEKW` and `BetterTTV emote`, then `SteerR` and
+/// `7TV overlay`. An effect is named and not drawn: the emote under it is
+/// drawn plain.
+pub fn emote_tip(emote: &Emote) -> Vec<(String, String)> {
+    emote
+        .written()
+        .map(|layer| {
+            let what = if std::ptr::eq(layer, emote) {
+                "emote"
+            } else {
+                match layer.kind {
+                    emotes::Kind::Overlay => "overlay",
+                    emotes::Kind::EffectOnPrevious | emotes::Kind::EffectOnNext => {
+                        "effect, not drawn"
+                    }
+                    // `stack` attaches nothing plain.
+                    emotes::Kind::Normal => "emote",
+                }
+            };
+            (
+                layer.name.clone(),
+                format!("{} {what}", provider_name(layer.provider)),
+            )
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -266,5 +307,44 @@ lines  and	spaces "
             "Emote-only mode is off"
         );
         assert_eq!(mode_notice(ModeChange::Unique(true)), "Unique chat is on");
+    }
+
+    #[test]
+    fn an_emote_tip_names_each_layer_in_the_order_written() {
+        let lookup = |name: &str| {
+            let (provider, kind) = match name {
+                "KEKW" => (Provider::Bttv, emotes::Kind::Normal),
+                "SteerR" => (Provider::SevenTv, emotes::Kind::Overlay),
+                "ffzX" => (Provider::Ffz, emotes::Kind::EffectOnPrevious),
+                "w!" => (Provider::Bttv, emotes::Kind::EffectOnNext),
+                _ => return None,
+            };
+            Some(emotes::Named {
+                url: format!("https://example.invalid/{name}"),
+                provider,
+                kind,
+            })
+        };
+        let tokens = emotes::message_tokens("w! KEKW SteerR ffzX", None, false, &lookup);
+        let [emotes::Token::Emote(stack)] = tokens.as_slice() else {
+            panic!("not one stack: {tokens:?}");
+        };
+        let tip = emote_tip(stack);
+        let tip: Vec<(&str, &str)> = tip.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+        assert_eq!(
+            tip,
+            [
+                ("w!", "BetterTTV effect, not drawn"),
+                ("KEKW", "BetterTTV emote"),
+                ("SteerR", "7TV overlay"),
+                ("ffzX", "FrankerFaceZ effect, not drawn"),
+            ]
+        );
+
+        let kappa = Emote::new("Kappa", "u", Provider::Twitch, emotes::Kind::Normal);
+        assert_eq!(
+            emote_tip(&kappa),
+            [("Kappa".to_string(), "Twitch emote".to_string())]
+        );
     }
 }
