@@ -20,7 +20,7 @@
 //! | `renditions` | what each pane plays, and when it restarts: the quality chosen against each pane's own height (`pane_height_for`), the upward re-pick when the grid changes, a pick from the pane's menu; a new rendition resolved beside the picture and kept once its player has taken over in place (`video_view::swap`) |
 //! | `panes` | where each pane is drawn, applied: `restage`, the one funnel every change of state, membership, page, pop-out or maximize ends in; `set_slot_state`, the only write of a pane's state; `video_in_main`, the only way the main window reaches a player; `retire_homeless`, the one rule for which panes stop when nothing in the main window would draw them; a pane given the watch page and every pane shown again (`toggle_maximize`, `show_all_panes`), and `choose`, which takes the maximize to the pane chosen; two panes swapping places in the order (`move_pane`), from a header dropped on a pane or `Shift+←`/`Shift+→` |
 //! | `pop_out` | a pane in a window of its own, on top of other apps: moving its picture there and back, the window, and `to_root`, the only way back from it |
-//! | `hearing` | which panes are heard: More's `Only this one` and `Hear all again`, through Mute all's hush, and the mirror of it every player's menu keeps (`sync_hear_only`) |
+//! | `hearing` | which panes are heard: More's `Only this one` and `Hear all again`, through Mute all's hush, and the mirror of it every player's menu keeps (`sync_hear_only`); More's `Audio compressor`, every pane's at once (`toggle_compressor`) |
 //! | `ad_breaks` | a pane's ad-break notice: begun when streamlink says it is filtering an ad, counted down once a second, taken down when it is over |
 //! | `broadcasts` | what a stopped live pane asks about its channel's past broadcasts, and whether it can start by itself |
 //! | `guide` | the guide over the watch page: opening and closing it, what its tabs ask the worker for, a card's Watch in place of the pane it was opened from or `+ Add` beside, and the panel's shell — where it sits, the press outside that closes it, and the veil over the panes under it (`crate::veil`) |
@@ -471,6 +471,9 @@ impl RootView {
             eprintln!("settings: {e}; using defaults");
             Settings::default()
         });
+        // Before any player starts, each of which reads it from its first
+        // sample; see `crate::compressor`.
+        crate::compressor::set(settings.compressor);
         let history_path = settings::history::default_path(APP_NAME);
         let history = History::load(&history_path).unwrap_or_else(|e| {
             eprintln!("history: {e}; starting with none");

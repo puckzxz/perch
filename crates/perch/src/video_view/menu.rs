@@ -21,6 +21,7 @@ use gpui::{
 };
 
 use super::{bar, Switching, VideoEvent, VideoView};
+use crate::compressor;
 use crate::motion;
 use crate::seek_bar;
 use crate::speed::Speed;
@@ -34,9 +35,10 @@ use crate::watch::PaneAction;
 pub enum Menu {
     /// The renditions this stream offers, under the settings' choice.
     Quality,
-    /// The rest: hear this pane alone or every pane again, a recording's
-    /// speed, pop the pane out, open it on twitch.tv, copy its link — and the
-    /// quality and the maximize control, while the bar has no room for them.
+    /// The rest: hear this pane alone or every pane again, the audio
+    /// compressor, a recording's speed, pop the pane out, open it on
+    /// twitch.tv, copy its link — and the quality and the maximize control,
+    /// while the bar has no room for them.
     More,
     /// A recording's speeds (`crate::speed`), opened in More's place from
     /// its speed row, or from the speed on the seek row.
@@ -240,11 +242,12 @@ impl VideoView {
     /// More: what the bar has folded away first — the quality while its
     /// pill has, then the maximize control once it has too — ruled off from
     /// the rest; then, with two panes or more, `Only this one` or `Hear all
-    /// again`; then a recording's `Playback speed · 1x`, which opens the
-    /// speeds in its place; then `Pop out`, then the pane's way out to
-    /// twitch.tv and its link. All but the quality and the speed are the
-    /// root's to do — it knows the panes, its windows, and the clipboard and
-    /// the browser are the app's — so they go up as `VideoEvent::Pane`.
+    /// again`; then `Audio compressor · Off` or `· On`; then a recording's
+    /// `Playback speed · 1x`, which opens the speeds in its place; then `Pop
+    /// out`, then the pane's way out to twitch.tv and its link. All but the
+    /// quality and the speed are the root's to do — it knows the panes, its
+    /// windows, and the clipboard and the browser are the app's — so they go
+    /// up as `VideoEvent::Pane`.
     ///
     /// A recording opens and copies at the moment it is at, and says so:
     /// `Copy link at 1:02:03`, from its first whole second on, by the rule
@@ -299,6 +302,17 @@ impl VideoView {
                 cx,
             ));
         }
+        // The compressor, saying whether it is on. Every pane's at once, so
+        // the root turns it (`crate::compressor`); read as the menu is drawn,
+        // which is how a row on one pane says what another pane's turned.
+        let (id, words) = compressor::row(compressor::on());
+        rows.push(menu_row(
+            id,
+            words.into(),
+            false,
+            |_this, _window, cx| cx.emit(VideoEvent::Pane(PaneAction::ToggleCompressor)),
+            cx,
+        ));
         // A recording's speed, saying what it is, which opens the speeds in
         // this menu's place, as the folded quality row opens the qualities.
         // Nothing on a live stream, which plays at the speed it is made.

@@ -376,6 +376,12 @@ pub struct Settings {
     /// and for a file from before it existed, which is how chat always was.
     #[serde(default)]
     pub chat_message_times: bool,
+    /// Whether the audio compressor evens out how loud each stream is: More's
+    /// `Audio compressor` row on any pane, one answer for every pane (see
+    /// `perch`'s `compressor`). Off by default, and for a file from before it
+    /// existed, which is how every stream always sounded.
+    #[serde(default)]
+    pub compressor: bool,
     /// Whether what is playing keeps playing, in the mini player in the
     /// corner of the browse page, while you browse. The field keeps its
     /// one-word name, which is what settings files already on disk say.
@@ -439,6 +445,7 @@ impl Default for Settings {
             chat_history: 100,
             chat_text_size: ChatTextSize::Default,
             chat_message_times: false,
+            compressor: false,
             video_share: 0.0,
             miniplayer: true,
             desktop_notifications: DesktopNotifications::Pinned,
@@ -1089,6 +1096,7 @@ mod tests {
         assert_eq!(settings.chat_history, 100);
         assert_eq!(settings.chat_text_size, ChatTextSize::Default);
         assert!(!settings.chat_message_times);
+        assert!(!settings.compressor);
         assert_eq!(settings.desktop_notifications, DesktopNotifications::Pinned);
         assert!(settings.channel_prefs.is_empty());
         assert!(settings.pinned.is_empty());
@@ -1128,6 +1136,22 @@ mod tests {
             );
             assert_eq!(settings.volume, 55, "{word} took the file down");
         }
+    }
+
+    /// The compressor goes to disk and comes back as it was set.
+    #[test]
+    fn the_compressor_round_trips() {
+        let path = temp_file("compressor");
+        let _ = std::fs::remove_file(&path);
+        let settings = Settings {
+            compressor: true,
+            ..Settings::default()
+        };
+        settings.save(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains(r#""compressor": true"#), "got {text}");
+        assert!(Settings::load(&path).unwrap().compressor);
+        let _ = std::fs::remove_file(&path);
     }
 
     /// The chat options go to disk by name and come back as they were set.
@@ -1427,6 +1451,7 @@ mod tests {
         live.sidebar_collapsed = true;
         live.chat_text_size = ChatTextSize::Large;
         live.chat_message_times = true;
+        live.compressor = true;
         live.set_volume_for("forsen", 42);
         live.credentials.oauth = Some(a_sign_in());
 
@@ -1463,6 +1488,10 @@ mod tests {
         assert!(
             live.chat_message_times,
             "saving the sheet took the times off chat"
+        );
+        assert!(
+            live.compressor,
+            "saving the sheet turned the compressor off"
         );
         assert_eq!(live.volume_for("forsen"), 42);
         assert_eq!(live.volume, before.volume);

@@ -23,6 +23,7 @@ use mpv_frames::{Config, EndReason, Event, Player};
 use smallvec::smallvec;
 use streamlink::Playlist;
 
+use crate::compressor;
 use crate::seek_bar::Timeline;
 use crate::speed::Speed;
 use crate::vod::{self, Extent, Recording};
@@ -100,6 +101,17 @@ fn unpack_size(packed: u64) -> (u32, u32) {
 /// at the new size and that is then the last one, so it never spins.
 fn redraw_now(paused: bool, size_changed: bool, has_frame: bool) -> bool {
     paused && size_changed && has_frame
+}
+
+/// Before a recording reopens in `player`: mpv builds the new file's audio
+/// chain from the compressor's words, so words behind the pane's `volume`
+/// are brought up to it first; see `compressor::Applied`.
+fn reload_compressor(player: &Player, compression: &mut compressor::Applied, volume: u8) {
+    if let Some(words) = compression.before_reload(volume) {
+        if let Err(e) = player.set_audio_filters(&words) {
+            eprintln!("video: could not set the compressor: {e}");
+        }
+    }
 }
 
 /// What a stream plays, which decides what a pause means and whether there
@@ -544,6 +556,14 @@ impl VideoStream {
                             }
                         }
                     };
+                    // The compressor as it is now, from the first sample,
+                    // hearing the pane at the volume it opens at; a change
+                    // to either after this is picked up between frames.
+                    let mut extra = extra;
+                    let compressed = compressor::on();
+                    if compressed {
+                        extra.push(("af".to_string(), compressor::chain(volume)));
+                    }
                     let config = Config {
                         audio: true,
                         hwdec: hwdec_requested(),
@@ -618,6 +638,8 @@ impl VideoStream {
                     let (mut source_w, mut source_h) = (None, None);
                     let (mut current_w, mut current_h) = target.get();
                     let mut applied_volume = volume;
+                    let mut compression =
+                        compressor::Applied::new(compressed, volume, Instant::now());
                     // mpv opens at the normal speed, so a player started
                     // for a pane already playing faster — a quality swapped
                     // in place — differs from this on its first pass.
@@ -799,6 +821,7 @@ impl VideoStream {
                                             "video: resuming after {}s paused by reopening at {at:.1}",
                                             since.elapsed().as_secs()
                                         );
+                                        reload_compressor(&player, &mut compression, volume_level.load(Ordering::Relaxed));
                                         if let Err(e) = recording.reposition(&player, at) {
                                             eprintln!("video: could not reposition: {e}");
                                         }
@@ -823,6 +846,7 @@ impl VideoStream {
                             // its first position, so the bar does not sit on
                             // the old one while the player reopens.
                             positions.report(secs);
+                            reload_compressor(&player, &mut compression, volume_level.load(Ordering::Relaxed));
                             if let Err(e) = recording.reposition(&player, secs) {
                                 eprintln!("video: could not reposition: {e}");
                             }
@@ -850,6 +874,7 @@ impl VideoStream {
                                     "video: the recording has not moved for {}s; reopening at {at:.1}",
                                     moved_at.elapsed().as_secs()
                                 );
+                                reload_compressor(&player, &mut compression, volume_level.load(Ordering::Relaxed));
                                 if let Err(e) = recording.reposition(&player, at) {
                                     eprintln!("video: could not reposition: {e}");
                                 }
@@ -864,6 +889,28 @@ impl VideoStream {
                                 eprintln!("video: could not set volume: {e}");
                             }
                             applied_volume = wanted;
+                        }
+
+                        // Every pane's at once, hearing the pane at its
+                        // volume; see `crate::compressor::Applied`.
+                        match compression.step(compressor::on(), applied_volume, Instant::now()) {
+                            Some(compressor::Step::Words(filters)) => {
+                                if let Err(e) = player.set_audio_filters(&filters) {
+                                    eprintln!("video: could not set the compressor: {e}");
+                                }
+                            }
+                            Some(compressor::Step::Tell(volume)) => {
+                                let (label, filter, setting, value) =
+                                    compressor::drive_command(volume);
+                                if let Err(e) =
+                                    player.audio_filter_command(label, filter, setting, &value)
+                                {
+                                    eprintln!(
+                                        "video: could not tell the compressor the volume: {e}"
+                                    );
+                                }
+                            }
+                            None => {}
                         }
 
                         // The pane's speed, a recording's only; see

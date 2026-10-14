@@ -80,6 +80,8 @@ impl RootView {
             PaneAction::ToggleChat => self.toggle_chat(index, cx),
             // More's `Only this one`, or `Hear all again`; see `hearing`.
             PaneAction::HearOnly => self.hear_only(key, cx),
+            // More's `Audio compressor`; every pane's, see `hearing`.
+            PaneAction::ToggleCompressor => self.toggle_compressor(cx),
             // The moment the pane is at, on a recording: More is where a
             // moment is offered, and the palette's row is More by name.
             PaneAction::OpenOnTwitch => cx.open_url(&self.slots[index].link(true)),

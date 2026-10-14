@@ -7,10 +7,15 @@
 //! hush go plays it at that level again. What every menu offers is worked
 //! out from the hushes alone (`loudness::hear_only`), never kept as a fact of
 //! its own; see `loudness::HearOnly` for why.
+//!
+//! And how every pane sounds: the audio compressor, More's `Audio
+//! compressor` row on any pane, one answer for all of them
+//! (`toggle_compressor`, `crate::compressor`).
 
 use gpui::Context;
 
 use super::RootView;
+use crate::compressor;
 use crate::loudness::{self, HearOnly};
 
 impl RootView {
@@ -37,6 +42,26 @@ impl RootView {
         }
         self.sync_hear_only(cx);
         cx.notify();
+    }
+
+    /// More's `Audio compressor`, pressed on any pane: on for every pane if
+    /// it was off, off for every pane if it was on, and remembered. Every
+    /// player picks it up between frames (`crate::compressor`), so there is
+    /// nothing to tell each pane; the menu that was pressed closes with the
+    /// press, and the next one drawn reads the flag.
+    pub(super) fn toggle_compressor(&mut self, cx: &mut Context<Self>) {
+        let on = !self.settings.compressor;
+        self.settings.compressor = on;
+        compressor::set(on);
+        self.save_settings(cx);
+        self.toast(
+            if on {
+                "Audio compressor on"
+            } else {
+                "Audio compressor off"
+            },
+            cx,
+        );
     }
 
     /// What every pane's More offers about hearing one alone, from the

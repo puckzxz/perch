@@ -160,13 +160,20 @@ The bar over a playing pane has play, the speaker — crossed out whenever the
 pane is silent, Mute all included — and the volume at the left, and at the
 right the quality, with two panes or more the maximize, then chat, the guide
 (see below), fullscreen and **More**, which has **Only this one** with two
-panes or more, **Playback speed** on a recording, **Pop out** on Windows,
-**Open on twitch.tv** and **Copy link**. **Only this one** silences every other pane the way Mute all does,
-without touching anyone's volume; until you change a silenced pane's volume,
-every pane's More then says **Hear all again**, which brings them all back. A
-narrow pane drops the volume's figure first, then its slider, then folds the
-quality into More, and the maximize after it. A past broadcast with no chat to
-replay shows the chat icon crossed out, with nothing to press.
+panes or more, **Audio compressor**, **Playback speed** on a recording,
+**Pop out** on Windows, **Open on twitch.tv** and **Copy link**.
+**Only this one** silences every other pane the way Mute all does, without
+touching anyone's volume; until you change a silenced pane's volume, every
+pane's More then says **Hear all again**, which brings them all back.
+**Audio compressor** evens out how loud each stream is the way FrankerFaceZ's
+compressor does in the browser — a loud streamer comes down, a quiet one comes
+up — for every pane at once, and is remembered. As on Twitch with FFZ, a
+pane's volume goes in before the compressor, so it works gently at the volume
+you listen at and harder near the top of the slider, where turning a loud
+pane down changes it less. A narrow pane drops the volume's figure first, then
+its slider, then folds the quality into More, and the maximize after it. A
+past broadcast with no chat to replay shows the chat icon crossed out, with
+nothing to press.
 
 Back and forward work the way they do in a browser. `Alt+←` and `Alt+→`, the
 arrows in the title bar or the mouse's side buttons walk back through the

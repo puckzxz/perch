@@ -26,6 +26,7 @@ mod chat_text;
 mod chat_tint;
 mod chat_words;
 mod clock;
+mod compressor;
 mod controls;
 mod cpu_log;
 mod diagnostics;

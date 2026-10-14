@@ -819,6 +819,10 @@ pub enum PaneAction {
     /// once one pane alone is heard, every pane again: More's `Only this
     /// one` and `Hear all again`; see `RootView::hear_only`.
     HearOnly,
+    /// Turn the audio compressor on or off, for every pane at once: More's
+    /// `Audio compressor` row. See `crate::compressor` and
+    /// `RootView::toggle_compressor`.
+    ToggleCompressor,
     /// Raise the guide over the lower part of the watch page, from this
     /// pane, or put it away again: the Guide button on its bar, or on its
     /// header while it has no picture and so no bar. One guide for the

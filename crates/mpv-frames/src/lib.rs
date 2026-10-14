@@ -456,6 +456,40 @@ impl Player {
         self.set_property_async("volume", &percent.min(100).to_string())
     }
 
+    /// Replace the audio filter chain with `filters`, in the words mpv's `af`
+    /// option takes; empty clears it. Queued, like
+    /// [`set_paused`](Self::set_paused). A player property, so it holds
+    /// across [`load`](Self::load).
+    ///
+    /// A chain mpv cannot build is not an error here: set while sound is
+    /// playing, the sound plays on without it; but a file that *starts* with
+    /// one — the next [`load`](Self::load), or `af` given in
+    /// [`Config::extra`] — starts with no sound at all ("Audio filter
+    /// initialized failed!" in mpv's log, measured on mpv 0.37). So a chain
+    /// is worth playing through mpv once before it ships.
+    pub fn set_audio_filters(&self, filters: &str) -> Result<(), Error> {
+        self.set_property_async("af", filters)
+    }
+
+    /// Change one setting of a filter inside the audio chain without
+    /// building the chain again, so the sound does not stop: mpv's
+    /// `af-command`, to the chain labelled `label` (`@label:` in its words),
+    /// for the lavfi filter named `target` in it. Queued, like
+    /// [`set_paused`](Self::set_paused).
+    ///
+    /// It reaches only a chain mpv has built: one still being built (a file
+    /// opening) misses it, and a chain built again later (the next
+    /// [`load`](Self::load)) starts from its words, not from this.
+    pub fn audio_filter_command(
+        &self,
+        label: &str,
+        target: &str,
+        setting: &str,
+        value: &str,
+    ) -> Result<(), Error> {
+        self.command_async(&["af-command", label, setting, value, target])
+    }
+
     /// Play `speed` seconds of the source in one second: mpv's `speed`
     /// property. Queued, like [`set_paused`](Self::set_paused).
     ///
