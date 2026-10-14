@@ -135,9 +135,11 @@ header's passive tags stay lowercase (`muted`, `paused`, `buffering`,
   for the effects to be drawn. They need no gpui patch: each is a change of
   layout (wide, zero space) or a transform of the emote's decoded frames on
   the CPU, handed to `img` as a `RenderImage`, which gpui animates like any
-  image. That is a unit of its own after emote kinds; until it lands, the
-  word is hidden, the emote drawn plain and the tooltip says `not drawn`,
-  and only an effect nobody knows yet is to stay that way.
+  image. They are drawn as BetterTTV draws them, a unit of their own after
+  emote kinds (see "Effects are drawn as BetterTTV draws them" under Chat);
+  only an effect nobody knows yet keeps the fallback the user was asked
+  about: its word hidden, the emote drawn plain, and the tooltip saying
+  `not drawn`.
 
 ---
 
@@ -163,7 +165,8 @@ crates/
                 scopes a token carries from Twitch's validation (`chat`,
                 Helix)
   emotes        Twitch/FFZ/BTTV/7TV resolution, which emotes are drawn
-                together (`stack`), disk image cache
+                together (`stack`), what an effect does to an emote's
+                frames and place (`effects`), disk image cache
   settings      persisted user settings, and what has been watched
   perch         the app
 ```
@@ -210,12 +213,13 @@ App modules:
 | `video.rs` | render thread; owns the mpv `Player`; the pane's `PositionHandle`, where a recording is and how fast it plays, which every player of the pane and its chat replay share |
 | `vod.rs` | positions a recording by rewriting its playlist; the keeper for one still growing |
 | `chat/mod.rs` | chat pane: rows, scrollback, drawn at the chat display options' size and with or without a time on every row (`set_display`), and a Shared Chat copy's label, from the names the root hands it (`learn_rooms`) |
-| `chat/emote.rs` | an emote in a line: its picture, the overlays stacked on it (which ones is `emotes::stack`'s), its tooltip (`EmoteTooltip`, a line per picture and effect, in words from `chat_words::emote_tip`) and its right press, which copies the stack as written |
+| `chat/emote.rs` | an emote in a line: its picture, or the one its effects make (asked of the pane's `chat_effects::Pictures`, made on a background task, placed where `emotes::effects::Placement` says), the overlays stacked on it (which ones is `emotes::stack`'s), its tooltip (`EmoteTooltip`, a line per picture and effect, in words from `chat_words::emote_tip`) and its right press, which copies the stack as written |
 | `chat/room.rs` | what the room says, as the chat pane keeps it: `ROOMSTATE`'s modes merged (`room_state`, which also loads the third-party emotes for a new room or a full line) with their line at the foot (`modes_line`), and a timeout or ban greying its person's rows (`clear_person`) |
 | `chat/badges.rs` | the chat pane's badges: the books the root hands it (`set_badges`) and the group before a name (`badge_group`) |
 | `chat/reply.rs` | a reply's line above it (`reply_line`), and whether its first word is the `@parent` that line already says (`skips_leading_mention`, pure, tested) |
 | `chat/copy_menu.rs` | a chat row's right-click menu: what each entry copies from a row (`entries`, pure, tested), which link or emote the press was on (`press_target`), opening it at the pointer (`row_menu`), and the menu, deferred and anchored, with rows that act on the press (tested) |
 | `chat/composer.rs` | the box at the foot of a live chat that sends a message: whether it is open and why not (`state`, from `Access`, which the root mirrors in with `set_access`), what a message may be (`message`, `fit`), and the notice an answer leaves (`outcome_notice`, `failure_notice`), all pure and tested; the box itself, its `Enter`, and the line that stands in for it (`composer_bar`) |
+| `chat_effects.rs` | the pictures emote effects make, as a pane keeps them: `make` (an emote's file to one `RenderImage`, through `emotes::effects`, off the UI thread) and `Pictures`, by URL and effects, bounded at `LIMIT` with the one drawn longest ago let go, never one the frame being drawn used, and everything handed back to be released from the atlas (pure, tested) |
 | `chat_display.rs` | how every chat is drawn: `ChatDisplay`, the text-size steps, `Metrics::of` (line, emote, badge, padding and piece budget from the size) and `draws_time_break` (pure, tested) |
 | `chat_badges.rs` | chat badges worked out: Helix's answers as books by set and version, a channel's own picture over the global one (`ChatBadges::art`), the tooltip (`tooltip`, `Subscriber, 14 months`), and which books to ask for (`Library`, once each a session) (pure, tested) |
 | `chat_words.rs` | what a chat says about itself in words: a timeout or ban (`ban_notice`), the line above a reply (`reply_context`), the line of modes and a mode's notice (`modes_line`, `mode_notice`), and what an emote says under the pointer (`emote_tip`) (pure, tested) |
@@ -2181,7 +2185,10 @@ a pane ever drew — and every *frame* of an animated one, each its own atlas ti
 `RetainAllImageCache` and clears it in `on_release_in`, so closing a pane or
 switching channels gives it all back. That bounds emotes for panes that are
 *open*, which is the growth that compounds over an evening; it does not bound a
-single channel left open for hours, whose emote set saturates on its own.
+single channel left open for hours, whose emote set saturates on its own. The
+pictures emote effects make (`chat_effects::Pictures`) are given back in the
+same hook, and are bounded besides, at 64 a pane; see "Effects are drawn as
+BetterTTV draws them" under Chat.
 
 **A `list`'s scrollbar extent comes from *measured* items only.** gpui measures
 rows as it draws them, so in a live-appending list the ones you have not looked
@@ -3574,13 +3581,106 @@ has an id of its own), so keyed on its URL alone an overlay would share its
 state with the same picture standing alone at the same index in another row,
 and an element without a tooltip builder clears the tooltip it finds in its
 state (div.rs:1662-1668): the lone emote's tooltip would flash for a frame or
-never come up (found reading the code, not on screen). Effects are recognised
-and not drawn: the word is left out of the line, the emote under it is drawn
-plain, and the tooltip names it `not drawn` (drawing them is decided; see
-"Product decisions"). The tooltip
+never come up (found reading the code, not on screen). The tooltip
 (`chat_words::emote_tip`, drawn by `chat::emote::EmoteTooltip`) is a line for
 each picture and effect in the order written, the name and then what it is
-(`SteerR  7TV overlay`), and comes up only while the pointer is in the window.
+(`SteerR  7TV overlay`, `w!  BetterTTV effect`), and comes up only while the
+pointer is in the window.
+
+**Effects are drawn as BetterTTV draws them.** BetterTTV draws both
+providers' effects, mapping FrankerFaceZ's `ffzW`, `ffzX`, `ffzY` and
+`ffzCursed` onto its own `w!`, `h!`, `v!` and `c!` (`EMOTE_MODIFIERS`,
+`src/modules/chat/index.js`), each a class on the emote whose rule is in its
+`src/modules/chat/style.css` (both read with `gh api` on 14 October 2026),
+every length at its 28 px emote height, which is Perch's at Default: wide is
+`width: 112px; height: 28px; object-fit: fill`; `h!` and `v!` are
+`scaleX(-1)` and `scaleY(-1)`; `l!` and `r!` are `rotate(-90deg)` and
+`rotate(90deg)` with `max-width: 28px`; zero space is `margin-left: -4px`;
+cursed is `grayscale(1) brightness(0.7) contrast(2.5)`; party animates
+`sepia(0.5) hue-rotate(0..360deg) saturate(2.5)` linearly over 1.5 s; shake
+steps a `translate` of up to 2 px through ten keyframes in 500 ms,
+`step-start`, which holds each step at the keyframe that ends it, so the 0%
+one is never held. `emotes::effects` is all of it, pure and tested:
+`Effect::named` reads both providers' names, and `Effects` settles them as the
+stylesheet's cascade does, since every class lands on one element — one
+`transform` (`r!` over `l!` over `v!` over `h!`, the stylesheet's order, so
+`h! v!` is upside down only), one `filter` (party's animation over cursed's),
+a turn's `max-width` holding wide to a square, and shake, a property of its
+own, with anything. The CSS filter functions are the Filter Effects spec's
+matrices and lines (`effects/filter.rs`), in sRGB on colour that is not
+premultiplied, clamped after each, as the spec has them.
+
+gpui's image sprite has no transform, but nothing needs one. Wide and zero
+space only move the emote (`effects::WIDE`, `ZERO_SPACE`, scaled with
+`Metrics::emote`): the picture's own file, stretched across four emote
+heights, and the box's wrapper pulled back by a margin. Everything else
+changes the picture, so `chat::emote` asks the pane's
+`chat_effects::Pictures` for it by the emote's URL and its `Effects`, and the
+first ask reads the file the disk cache already holds and runs
+`chat_effects::make` on a background task (`cx.background_spawn`): decode as
+gpui decodes (`effects::decode`, every frame of a GIF or an animated WebP,
+composited), `effects::apply` (flip or turn whole pixels, recolour, then
+shake), RGBA to BGRA, one `RenderImage`. Party's hue and shake's offset run
+on a clock of their own, as a CSS animation runs beside the picture's frames:
+each frame takes them from its start time modulo the period, and a frame that
+would hold one past its next step is cut there into pieces showing the same
+picture, at shake's 50 ms steps or, with party alone, its 62.5 ms ones. So an
+animated emote keeps its pace and its delays add up as they did, and one whose
+frames are 500 ms still shakes (taken whole, every frame started on the same
+offset and it sat still); a still emote is one frame held a whole period, cut
+the same way: 24 frames over party's 1.5 s, shake's ten, and with both shake's
+steps over 1.5 s with the hue taken at each. Until it lands the emote's name
+stands in, as it does while the file downloads; a picture that cannot be made
+is logged (`emote effects: <url>: ...`) and the emote drawn plain. It is drawn
+with `img(ImageSource::Render)` where `effects::Placement` says, in emote
+heights: the box the line makes room for, and the picture's rectangle in it,
+stretched (`ObjectFit::Fill`) — a turn in a square at the emote height,
+fitted with its shape kept unless wide stretches it, and a shake's canvas,
+2 px of BetterTTV's at the drawn size larger on every side, so nothing it
+moves is cut off. The box is the wrapper's width, set from the placement, and
+the rectangle is the img's size and its left and top margins inside it, so
+the canvas hangs past the box without moving a word. The box has to be given:
+taffy sizes a block by the width a child sets and leaves the child's margins
+out (`determine_content_based_container_width`, compute/block.rs), so left to
+the margins a shaken emote widened its line by its reach, and a turned one
+wider than tall sat off its square, over the next word (found in review,
+reading taffy, not on screen). Its id is `Emote::id_key` behind `fx `, which no
+other id starts with: a made picture has frames of its own (a still emote
+shaken is ten), and the plain picture drawn when one cannot be made must
+never share its frame state. Overlays on an emote with effects are laid
+over its box plain, as BetterTTV puts the class on the emote, not on what is
+laid over it. An effect `Effect::named` does not know keeps the fallback the
+user was asked about: left out of the line, the emote drawn plain, and the
+tooltip saying `not drawn`.
+
+A shake hangs past the emote's overhang by its 2 px — 1.5 px past a row's
+padding at Default, and inside a wrapped message 6.5 of the 9 px between its
+lines (both scale with the text size). Checked above and below, as
+overhanging asks: it can cover a pixel or two of an emote overhanging from
+the next row or line, never a line's text, and only in the four of shake's
+ten steps that move it 2 px up or down, 50 ms each. Across, it moves into the
+box's own `EMOTE_PAD_X`, which at Default is exactly its reach, and at a
+larger text size a fraction of a pixel into the `GAP_WORD` beyond. Kept
+inside its box it would have to be drawn smaller than the emotes beside it,
+which BetterTTV's is not.
+
+Each made picture holds an atlas tile per frame, which gpui gives back only
+when told (`App::drop_image`), so `Pictures` keeps at most `LIMIT` (64) per
+pane and lets the one drawn longest ago go — never one the frame being drawn
+has asked for, so a frame asking for more overruns the bound until an ask in
+a later frame lets the extra go. The frame that does is usually the list's
+measuring pass (`measure_all`), which lays out every row of the backlog at
+once: when the pane first measures, and again whenever `remeasure` resets the
+list while following live (a new text size or times setting, a Shared Chat
+label arriving). Every distinct emote and effects in up to `MAX_MESSAGES`
+rows is then asked for and made, and held until later asks let it go; it
+costs memory and background work, not atlas tiles, since nothing measured is
+painted. What goes is handed back at the start of the
+pane's next `render`, before any row is drawn, so no scene being built names
+a freed tile, and everything goes in the same `on_release_in` that clears the
+pane's `RetainAllImageCache`, from every window, since a pane can be drawn in
+a pop-out. A picture landing for an ask let go meanwhile is dropped: never
+drawn, it has no tiles.
 
 FrankerFaceZ's global answer is cut to the sets named in its `default_sets`.
 The rest belong to the logins listed under `users`: merged whole, as they
@@ -4651,7 +4751,8 @@ plays — so nothing a user sees says a query was retired. The script runs each
 crate's ignored `tests/live.rs`, which asks once: SideNav, last broadcasts and
 channel names (anonymous GQL), the chat replay query on the mobile Client-ID,
 the recent-messages service, the FFZ, BTTV and 7TV global sets and the
-overlays and effects each marks, and every rendition the installed
+overlays and effects each marks (every effect Perch draws still served under
+its name), and every rendition the installed
 streamlink names for a live channel, read by `streamlink::quality`. It sends
 no token, and stays out of CI: anonymous GQL
 from a shared runner's address invites blocks and flaky failures. All of it
@@ -4758,10 +4859,11 @@ broadcast is still listed, and an emote cache that keeps what is drawn.
 
 So is the start of the chat round of October 2026 (see "Product decisions"):
 7TV's and BetterTTV's zero-width emotes drawn over the emote before them,
-FrankerFaceZ's and BetterTTV's effects recognised, FrankerFaceZ's supporters'
-effects no longer in everyone's chat, and an emote's tooltip naming each
-picture in it and where it is from (see "An emote can be drawn over the one
-before it" under Chat). Drawing the effects comes next.
+FrankerFaceZ's and BetterTTV's effects drawn as BetterTTV draws them,
+FrankerFaceZ's supporters' effects no longer in everyone's chat, and an
+emote's tooltip naming each picture in it and where it is from (see "An emote
+can be drawn over the one before it" and "Effects are drawn as BetterTTV draws
+them" under Chat).
 
 Left over from phase 1, smallest first:
 
@@ -5196,20 +5298,31 @@ None of these is being worked on; all of them are real.
       the `buffering` tag up through a six-second stall and gone after it,
       `Reset pane sizes` putting a 520px chat back to 340 and saving it,
       and the pane's `streamlink 7.5.0 is too old` line.
-37. **Emote effects are not drawn yet**, and the rest of what emotes stacked
-    together leave out stays out. An effect's word is left out and the emote
-    under it drawn plain until the effects land (see "Product decisions").
-    A wide overlay on a narrow emote is fitted into the emote's box rather
-    than spilling over the words beside it, so it is drawn smaller than 7TV's
-    own extension or Chatterino draw it. FrankerFaceZ's `margins` and
-    `offset` on a modifier, and its global sets given to named users, are
-    ignored. As of 14 October 2026 a stack had been seen only by its tests:
-    the overlay's box is reasoned from gpui's source (an absolute `img` with
-    a percentage width in a block wrapper), so the first look should measure
-    it — the row pitch still 30 at Default, the emote 28 tall, the overlay
-    the emote's box plus `EMOTE_PAD_X` a side — at Larger as well, on a
-    wrapped message, with the tooltip gone once the pointer leaves the
-    window.
+37. **What emotes stacked together leave out stays out, and stacks and
+    effects are seen only by their tests.** A wide overlay on a narrow emote
+    is fitted into the emote's box rather than spilling over the words beside
+    it, so it is drawn smaller than 7TV's own extension or Chatterino draw
+    it. FrankerFaceZ's `margins` and `offset` on a modifier, and its global
+    sets given to named users, are ignored. Effects follow BetterTTV's
+    stylesheet, not FrankerFaceZ's own drawing, so `ffzX ffzY` is upside
+    down only, as BetterTTV draws it. Party and shake are made into one
+    loop of an animated emote's own, so where that loop does not divide 1.5 s
+    or 500 ms the hue or offset jumps as it comes round, and a frame held long
+    costs a frame of memory for every step it is cut into. A turn's box is a square at the emote height where BetterTTV's
+    is the picture's own width, at most 28 px: the turned picture is the
+    same either way, and a narrow emote's box a little wider. As of 14
+    October 2026 none of it had been seen on screen: the overlay's box is
+    reasoned from gpui's source (an absolute `img` with a percentage width
+    in a block wrapper), and a made picture's place from
+    taffy's (a block wrapper given the box, the `img` placed in it by its
+    margins), so the
+    first look should measure them — the row pitch still 30 at Default, the
+    emote 28 tall, the overlay the emote's box plus `EMOTE_PAD_X` a side, a
+    wide emote 112 across, a turned or flipped one in its own box, a shaken
+    one moving 2 px either way about where it rests, and `z!` 4 px closer to
+    what is before it — at Larger as well, on a wrapped message, with the
+    tooltip gone once the pointer leaves the window; and watch the log for
+    `emote effects:` lines.
 
 ## Things not to redo
 
@@ -5344,6 +5457,12 @@ None of these is being worked on; all of them are real.
   `img` carries the frame's aspect ratio and taffy will use it the moment the
   percentage cannot resolve, which then decides the next frame's size. Flex
   container, stretched item; see the video trap.
+- Do not size a block wrapper by the margins of a child with a width of its
+  own. taffy takes that width and leaves the margins out
+  (`determine_content_based_container_width`, compute/block.rs), so they only
+  move the child inside a box as wide as it is; give the wrapper its width,
+  as a made emote picture's is (see "Effects are drawn as BetterTTV draws
+  them").
 - Do not call `.hover()` on a control from `controls.rs` a second time. gpui
   allows one hover style per element and asserts on the second in a debug
   build, so a debug build with two panes open panicked on the close button.

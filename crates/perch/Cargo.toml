@@ -20,7 +20,7 @@ anyhow = "1"
 chrono.workspace = true
 futures.workspace = true
 # Must match gpui's own versions so RenderImage accepts our Frame.
-image = { version = "0.25", default-features = false }
+image.workspace = true
 smallvec = "1"
 
 # Only for the test that holds a replayed comment's emote tag to what the

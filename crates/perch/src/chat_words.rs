@@ -160,8 +160,9 @@ fn provider_name(provider: Provider) -> &'static str {
 /// What an emote says under the pointer: a line for each picture and
 /// effect in its stack, in the order written (`Emote::written`), with its
 /// name and what it is — `KEKW` and `BetterTTV emote`, then `SteerR` and
-/// `7TV overlay`. An effect is named and not drawn: the emote under it is
-/// drawn plain.
+/// `7TV overlay`, or `w!` and `BetterTTV effect`. An effect nobody knows
+/// yet (`emotes::Effect::named`) is left out of the picture as it is of the
+/// line, and says so: `FrankerFaceZ effect, not drawn`.
 pub fn emote_tip(emote: &Emote) -> Vec<(String, String)> {
     emote
         .written()
@@ -172,7 +173,10 @@ pub fn emote_tip(emote: &Emote) -> Vec<(String, String)> {
                 match layer.kind {
                     emotes::Kind::Overlay => "overlay",
                     emotes::Kind::EffectOnPrevious | emotes::Kind::EffectOnNext => {
-                        "effect, not drawn"
+                        match emotes::Effect::named(&layer.name) {
+                            Some(_) => "effect",
+                            None => "effect, not drawn",
+                        }
                     }
                     // `stack` attaches nothing plain.
                     emotes::Kind::Normal => "emote",
@@ -315,7 +319,9 @@ lines  and	spaces "
             let (provider, kind) = match name {
                 "KEKW" => (Provider::Bttv, emotes::Kind::Normal),
                 "SteerR" => (Provider::SevenTv, emotes::Kind::Overlay),
-                "ffzX" => (Provider::Ffz, emotes::Kind::EffectOnPrevious),
+                // `ffzFuture` stands for a FrankerFaceZ effect added after
+                // this was written, which BetterTTV does not draw.
+                "ffzX" | "ffzFuture" => (Provider::Ffz, emotes::Kind::EffectOnPrevious),
                 "w!" => (Provider::Bttv, emotes::Kind::EffectOnNext),
                 _ => return None,
             };
@@ -325,7 +331,7 @@ lines  and	spaces "
                 kind,
             })
         };
-        let tokens = emotes::message_tokens("w! KEKW SteerR ffzX", None, false, &lookup);
+        let tokens = emotes::message_tokens("w! KEKW SteerR ffzX ffzFuture", None, false, &lookup);
         let [emotes::Token::Emote(stack)] = tokens.as_slice() else {
             panic!("not one stack: {tokens:?}");
         };
@@ -334,10 +340,11 @@ lines  and	spaces "
         assert_eq!(
             tip,
             [
-                ("w!", "BetterTTV effect, not drawn"),
+                ("w!", "BetterTTV effect"),
                 ("KEKW", "BetterTTV emote"),
                 ("SteerR", "7TV overlay"),
-                ("ffzX", "FrankerFaceZ effect, not drawn"),
+                ("ffzX", "FrankerFaceZ effect"),
+                ("ffzFuture", "FrankerFaceZ effect, not drawn"),
             ]
         );
 

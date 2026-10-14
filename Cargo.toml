@@ -48,6 +48,10 @@ thiserror = "2"
 # and `clock` is the half that reads the system time.
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 ureq = { version = "3", features = ["json"] }
+# The image crate gpui decodes with, at its version, so one is built: the app
+# hands gpui frames of it (`RenderImage`), and `emotes` changes an emote's
+# decoded frames for its effects. Each crate names the features it uses.
+image = { version = "0.25", default-features = false }
 
 # gpui is vendored, and this is the only reason why.
 #

@@ -12,7 +12,7 @@
 
 use std::time::{Duration, Instant};
 
-use emotes::{EmoteLoader, EmoteSets, Kind};
+use emotes::{Effect, EmoteLoader, EmoteSets, Kind};
 
 /// One global emote each provider has carried for years, by name.
 const KNOWN: [(&str, &str); 3] = [
@@ -84,4 +84,31 @@ fn global_emotes_keep_their_kinds() {
         .filter(|name| kind(name) == Some(Kind::Overlay))
         .collect();
     println!("7TV zero-width globals still there: {overlays:?}");
+}
+
+/// The effects Perch draws, as the providers serve them on 14 October 2026:
+/// BetterTTV's nine, written before an emote, and FrankerFaceZ's four in its
+/// default sets, written after one. A name gone, or marked as something
+/// else, would be drawn as a picture or a word of its own.
+#[test]
+#[ignore = "asks FFZ, BTTV and 7TV over the network; run by hand"]
+fn every_effect_drawn_is_still_served() {
+    let bttv = ["w!", "h!", "v!", "z!", "c!", "l!", "r!", "p!", "s!"];
+    let ffz = ["ffzW", "ffzX", "ffzY", "ffzCursed"];
+    let wanted: Vec<&str> = bttv.iter().chain(&ffz).copied().collect();
+    let (sets, missing) = global_sets(&wanted);
+    assert!(missing.is_empty(), "never loaded: {missing:?}");
+    for (names, kind) in [
+        (&bttv[..], Kind::EffectOnNext),
+        (&ffz[..], Kind::EffectOnPrevious),
+    ] {
+        for name in names {
+            assert_eq!(
+                sets.lookup(name).map(|named| named.kind),
+                Some(kind),
+                "{name}"
+            );
+            assert!(Effect::named(name).is_some(), "{name} is not drawn");
+        }
+    }
 }

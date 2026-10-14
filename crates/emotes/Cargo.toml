@@ -6,9 +6,12 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish.workspace = true
-description = "Twitch emote resolution and a disk-backed image cache."
+description = "Twitch emote resolution, what effects do to an emote's frames, and a disk-backed image cache."
 
 [dependencies]
 futures.workspace = true
 ureq.workspace = true
 serde_json.workspace = true
+# The decoders gpui's `img` uses (`effects::decode` reads an emote as it
+# does), for the frames an effect changes.
+image = { workspace = true, features = ["gif", "webp", "png", "jpeg"] }

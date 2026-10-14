@@ -22,6 +22,7 @@ mod channel_page;
 mod chat;
 mod chat_badges;
 mod chat_display;
+mod chat_effects;
 mod chat_text;
 mod chat_tint;
 mod chat_words;

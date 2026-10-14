@@ -435,13 +435,20 @@ broadcast gets the same pane, replaying what was said as the picture reaches
 it — see [Past broadcasts](#past-broadcasts).
 
 A zero-width emote — 7TV's `SteerR`, BTTV's `cvMask` — is drawn over the
-emote before it, as one picture the size of that emote. FFZ's and BTTV's
-effects (flipped, wide, turned, greyed and the rest: `ffzX` after an emote,
-`w!` before one) are not drawn yet: the emote shows plain and the effect's
-word is left out. FFZ's effects for its supporters (`ffzHyper`, `ffzSpin`) are
+emote before it, as one picture the size of that emote. FFZ's effects, written
+after an emote, and BTTV's, written before one, are drawn as BetterTTV draws
+them, and their word is left out: `ffzX` or `h!` mirrors the emote, `ffzY` or
+`v!` turns it upside down, `l!` and `r!` turn it a quarter, `ffzW` or `w!`
+stretches it four times as wide as it is tall, `z!` pulls it into the space
+before it, `ffzCursed` or `c!` greys and darkens it, `p!` cycles its colours
+and `s!` shakes it. Where two would do the same kind of thing, the one
+BetterTTV keeps is drawn: `h! v! KEKW` is upside down, not turned round, and
+`c! p!` is party. An effect newer than Perch is left out the same way, and the
+emote drawn plain. FFZ's effects for its supporters (`ffzHyper`, `ffzSpin`) are
 theirs alone, so in Perch they read as the words they are. The pointer on an
 emote says what it is called and where it is from, and the same for
-everything drawn with it: `KEKW  BetterTTV emote`, `SteerR  7TV overlay`.
+everything drawn with it: `KEKW  BetterTTV emote`, `SteerR  7TV overlay`,
+`w!  BetterTTV effect`.
 
 The time is shown once a minute, as a break between messages, rather than once
 per row — in a channel where fifteen messages share a minute, a column of

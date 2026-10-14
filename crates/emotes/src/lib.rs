@@ -1,6 +1,6 @@
 //! Emote resolution and image caching for chat.
 //!
-//! Four parts, each independent of any UI:
+//! Five parts, each independent of any UI:
 //!
 //! - [`tokenize`](mod@tokenize) turns a chat message plus its `emotes` tag
 //!   into text and emote runs. Pure logic, no network.
@@ -10,16 +10,20 @@
 //! - [`stack`](mod@stack) decides which emotes written together are drawn
 //!   together: an overlay on the emote under it, an effect on the emote it
 //!   changes. Pure.
+//! - [`effects`] works out what those effects do to an emote: its decoded
+//!   frames flipped, turned, recoloured or shaken, and where it goes. Pure.
 //! - [`cache`] downloads images to disk, because GPUI's `img` takes a path.
 //!
 //! [`message_tokens`] runs the pure passes over a message in their order.
 
 pub mod cache;
+pub mod effects;
 pub mod providers;
 pub mod stack;
 pub mod tokenize;
 
 pub use cache::ImageCache;
+pub use effects::{Effect, Effects};
 pub use providers::{EmoteLoader, EmoteSets, Provider};
 pub use stack::stack;
 pub use tokenize::{apply_named_emotes, tokenize, twitch_emote_url, Emote, Kind, Named, Token};

@@ -10,11 +10,11 @@
 //!
 //! The view is split by what it handles, the way `root/` is: this file has
 //! the view, its rows and how a message is drawn; `emote` an emote in a
-//! line, with what is stacked on it and its tooltip; `room` what the room
-//! says about itself (its modes, a timeout or a ban); `badges` the chat
-//! badges; `reply` a reply's context line; `copy_menu` what a right-click on
-//! a row offers to copy; and `composer` the box at the foot of a live chat
-//! that sends a message.
+//! line, with what is stacked on it, what its effects make of it and its
+//! tooltip; `room` what the room says about itself (its modes, a timeout or
+//! a ban); `badges` the chat badges; `reply` a reply's context line;
+//! `copy_menu` what a right-click on a row offers to copy; and `composer`
+//! the box at the foot of a live chat that sends a message.
 
 mod badges;
 pub mod composer;
@@ -23,6 +23,7 @@ mod emote;
 mod reply;
 mod room;
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -37,6 +38,7 @@ use twitch_chat::{ChatClient, ChatEvent, ChatMessage, ChatNotice, Replay, RoomMo
 
 use crate::chat_badges::ChatBadges;
 use crate::chat_display::{self, ChatDisplay, Metrics};
+use crate::chat_effects::{Made, Pictures};
 use crate::chat_text::{self, Kind};
 use crate::chat_tint;
 use crate::chat_words;
@@ -237,6 +239,11 @@ pub struct ChatView {
     /// it would need a byte budget whose eviction can only ever be a guess
     /// about what is still on screen.
     emote_images: Entity<RetainAllImageCache>,
+    /// The pictures FFZ's and BTTV's effects make of emotes in this pane
+    /// (`chat_effects`), each made off the UI thread and released with the
+    /// pane, as `emote_images` are. In a cell because the rows that ask for
+    /// them are drawn through `&self`, as `cache` is asked through it.
+    effect_pictures: RefCell<Pictures<Made>>,
     /// Keeps the release hook alive; a dropped `Subscription` unsubscribes.
     _release: Subscription,
     /// Name lookups for FFZ / BTTV / 7TV emotes, filled in as they load.
@@ -408,11 +415,16 @@ impl ChatView {
         // GPUI does not free atlas tiles when the `Arc<RenderImage>` goes:
         // `clear` is what calls `App::drop_image` for each entry, and it needs a
         // `Window`, which `Drop` does not have. Same shape as `VideoView`'s
-        // frame release, and for the same reason.
+        // frame release, and for the same reason. The pictures effects made
+        // go the same way, from every window, since a pane can be drawn in a
+        // pop-out.
         let release = cx.on_release_in(window, {
             let emote_images = emote_images.clone();
-            move |_this: &mut Self, window, cx| {
+            move |this: &mut Self, window, cx| {
                 emote_images.update(cx, |cache, cx| cache.clear(window, cx));
+                for made in this.effect_pictures.get_mut().take_all() {
+                    cx.drop_image(made.image, Some(window));
+                }
             }
         });
 
@@ -427,6 +439,7 @@ impl ChatView {
             list,
             cache,
             emote_images,
+            effect_pictures: RefCell::default(),
             _release: release,
             emote_sets,
             emote_loader,
@@ -1304,6 +1317,12 @@ impl ChatView {
 impl Render for ChatView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let this = cx.entity().downgrade();
+
+        // Before any row is drawn: the pictures effects made that the last
+        // frame let go of, which no scene being built can name any more.
+        for made in self.effect_pictures.get_mut().start_frame() {
+            cx.drop_image(made.image, Some(window));
+        }
 
         // Where the pointer is, against where the list was last laid out.
         // Before `at_live` is read: releasing held rows changes it.
