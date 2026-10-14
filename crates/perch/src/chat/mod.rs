@@ -14,8 +14,10 @@
 //! tooltip; `cheers` a cheer in a line, drawn as its cheermote with its
 //! Bits; `room` what the room says about itself (its modes, a timeout or
 //! a ban); `badges` the chat badges; `reply` a reply's context line;
-//! `copy_menu` what a right-click on a row offers to copy; and `composer`
-//! the box at the foot of a live chat that sends a message.
+//! `copy_menu` what a right-click on a row offers to copy; `viewer_card` the
+//! card a press on a name opens, with who that person is and their recent
+//! lines; and `composer` the box at the foot of a live chat that sends a
+//! message.
 
 mod badges;
 mod cheers;
@@ -24,6 +26,7 @@ mod copy_menu;
 mod emote;
 mod reply;
 mod room;
+pub mod viewer_card;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -32,7 +35,8 @@ use std::sync::Arc;
 use emotes::{EmoteLoader, EmoteSets, ImageCache, Token};
 use gpui::{
     div, list, point, prelude::*, px, AnyElement, Context, Entity, EventEmitter, ListAlignment,
-    ListState, MouseButton, Pixels, RetainAllImageCache, SharedString, Subscription, Task, Window,
+    ListState, MouseButton, MouseDownEvent, Pixels, RetainAllImageCache, SharedString,
+    Subscription, Task, Window,
 };
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 
@@ -54,6 +58,7 @@ use crate::video::PositionHandle;
 
 use self::composer::{Composer, Step};
 use self::copy_menu::{CopyMenu, Target};
+use self::viewer_card::{Cards, ViewerCard};
 
 /// Messages kept in memory. Old ones drop off the top: chat runs forever, and
 /// a pane holding everything it ever saw is a leak with a nicer name.
@@ -116,6 +121,19 @@ impl RowKind {
             RowKind::Message(message) => {
                 chat_tint::message_wash(message, me).map(chat_tint::Wash::color)
             }
+            RowKind::Notice(_) => None,
+        }
+    }
+
+    /// What a person said in this row, if a person said anything in it: a
+    /// message, or the note attached to an event. The app's own notices are
+    /// nobody's. The one answer to whose a row is, for a timeout greying
+    /// their rows (`clear_person`) and their card finding their lines
+    /// (`viewer_card::recent`).
+    fn said(&self) -> Option<&ChatMessage> {
+        match self {
+            RowKind::Message(message) => Some(message.as_ref()),
+            RowKind::Event(notice) => notice.body.as_ref(),
             RowKind::Notice(_) => None,
         }
     }
@@ -192,6 +210,38 @@ pub enum ChatViewEvent {
     /// (`RootView::on_composer_step`); opening the sign-in page with the
     /// code is the chat's own.
     Step(Step),
+    /// A press on a name, or an `@mention`, opened that person's card
+    /// (`viewer_card`). The root forgets a failed ask about their account,
+    /// so a fresh open asks again (`chat_profiles::Profiles::reopened`),
+    /// and tells the card what it knows of them (`RootView::tell_card`).
+    CardOpened { login: String },
+    /// A press landed on the card, which occludes, and so is never heard by
+    /// the root's own `track_focus`: take the keys back, as the player's
+    /// bar does (HANDOFF, "An occluder hides presses from the root's
+    /// `track_focus`"). Said in the capture phase, before anything on the
+    /// card acts.
+    ReturnKeys,
+    /// The card's × acted on the first press of a run and took the card
+    /// from under the pointer: have the rest of the run heard by nothing
+    /// (`RootView::run_guard`). `Watch` and a `Channel page` that goes move
+    /// the page too, and the root takes the run itself as it carries them
+    /// out; a `Channel page` that asks first moves nothing.
+    TakeRestOfRun,
+    /// The card's `Watch`, offered while `login` is live and another pane
+    /// fits: add their stream beside the panes, as the guide's `+ Add`
+    /// does, and stay on the watch page. The card has closed.
+    Watch { login: String },
+    /// The card's `Channel page`: open Perch's page of `login`'s past
+    /// broadcasts and schedule, which leaves the watch page. Unless
+    /// `confirmed`, the root first asks whether leaving would stop panes,
+    /// and if it would, asks the card to ask for a second press
+    /// (`ChatView::confirm_leaving`) rather than going; `confirmed` is that
+    /// second press.
+    ChannelPage {
+        login: String,
+        display_name: String,
+        confirmed: bool,
+    },
 }
 
 impl EventEmitter<ChatViewEvent> for ChatView {}
@@ -310,6 +360,13 @@ pub struct ChatView {
     /// How many copy menus this chat has opened: what keys each one's
     /// arrival, so one opened in place of another fades in as itself.
     menus_opened: u64,
+    /// The card a press on a name opened, while it is open, and whose card
+    /// a press outside it has just closed; see `viewer_card`. For the moment
+    /// only, like a menu.
+    cards: Cards<ViewerCard>,
+    /// How many cards this chat has opened: what keys each one's arrival
+    /// and its elements, so one opened in place of another is its own.
+    cards_opened: u64,
     /// The channel, by login, for a live chat; `None` for a replay. What
     /// the root works out this chat's [`composer::Access`] for.
     channel: Option<String>,
@@ -467,6 +524,8 @@ impl ChatView {
             menu: None,
             pressed: None,
             menus_opened: 0,
+            cards: Cards::default(),
+            cards_opened: 0,
             channel: live_channel,
             composer,
             _link: link,
@@ -538,8 +597,9 @@ impl ChatView {
                 let count = self.rows.len();
                 self.rows.clear();
                 self.held.clear();
-                // About a row that has gone.
+                // About a row that has gone, and a person whose lines have.
                 self.close_menu(cx);
+                self.close_card(cx);
                 self.list.splice(0..count, 0);
                 self.striped = false;
                 self.loaded = false;
@@ -742,9 +802,11 @@ impl ChatView {
     /// Nothing for a chat holding nothing back, which is most of them, so
     /// telling one on every restage costs nothing. A copy menu open over a
     /// chat that has gone off the screen goes with it, as it would hold the
-    /// rows otherwise.
+    /// rows otherwise, and so does a person's card, which would otherwise
+    /// come back up with the chat long after it was asked for.
     pub fn let_go_hold(&mut self, cx: &mut Context<Self>) {
         self.close_menu(cx);
+        self.close_card(cx);
         if !self.hold && self.held.is_empty() {
             return;
         }
@@ -1117,6 +1179,13 @@ impl ChatView {
             .and_then(|login| self.colors.get(&login.to_ascii_lowercase()).copied())
             .map(theme::readable)
             .unwrap_or(text_color);
+        // A mention that names a login opens that person's card, as their
+        // own name does (`viewer_card`); one that cannot be a login, a
+        // display name in another script, is only drawn.
+        let card = parsed
+            .mentioned()
+            .map(str::to_ascii_lowercase)
+            .filter(|login| twitch_chat::is_login(login));
 
         let punctuation = |text: &str| {
             div()
@@ -1152,12 +1221,20 @@ impl ChatView {
                             .on_click(cx.listener(move |_, _event, _window, cx| cx.open_url(&url)))
                             .into_any_element()
                     }
-                    (None, Kind::Mention) => div()
-                        .flex_none()
-                        .font_weight(theme::weight_title())
-                        .text_color(mention_color)
-                        .child(text)
-                        .into_any_element(),
+                    (None, Kind::Mention) => {
+                        let press = card.clone().map(|login| Self::name_press(login, cx));
+                        div()
+                            .flex_none()
+                            .font_weight(theme::weight_title())
+                            .text_color(mention_color)
+                            .when_some(press, |mention, press| {
+                                mention
+                                    .cursor_pointer()
+                                    .on_mouse_down(MouseButton::Left, press)
+                            })
+                            .child(text)
+                            .into_any_element()
+                    }
                     (None, _) => div()
                         .flex_none()
                         .text_color(text_color)
@@ -1229,12 +1306,10 @@ impl ChatView {
     /// event's note leaves it to the event's first line (`render_event`).
     ///
     /// The speaker's badges come next, before the name
-    /// ([`badge_group`](Self::badge_group)). A reply's text starts with the
-    /// `@parent` Twitch puts there, which the line above it already says, so
-    /// that first word is not drawn (`reply::skips_leading_mention`); it is dropped here
-    /// rather than from the text, because the `emotes` tag counts from the
-    /// text's start. Someone's first message in the channel ends with a
-    /// quiet `First message` tag, which says why the row is tinted.
+    /// ([`badge_group`](Self::badge_group)). The name opens the speaker's
+    /// card on a left press (`viewer_card`), a resub note's included. The
+    /// words after it are [`message_words`](Self::message_words)'s, which
+    /// draws a card's lines too.
     fn message_line(
         &self,
         row: &Row,
@@ -1244,23 +1319,62 @@ impl ChatView {
         metrics: &Metrics,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
-        // A deleted message keeps its place and loses its colour: greyed all
-        // through, name included, so it reads as struck rather than as said.
-        let name_color = if row.deleted {
+        let (name_color, _) = Self::speaker_colors(row, message);
+        // An action puts the name inside the sentence, so it is not repeated.
+        let name = if message.is_action {
+            message.display_name.clone()
+        } else {
+            format!("{}:", message.display_name)
+        };
+        // A line with no login to look up, which Twitch never sends, keeps
+        // a name that is only drawn.
+        let press = twitch_chat::is_login(&message.login)
+            .then(|| Self::name_press(message.login.clone(), cx));
+        let line = Self::word_line()
+            .children(time)
+            .children(source.map(|label| self.source_tag(row, label)))
+            .children(self.badge_group(row, message, metrics))
+            .child(
+                div()
+                    .flex_none()
+                    .font_weight(theme::weight_title())
+                    .text_color(name_color)
+                    .when_some(press, |name, press| {
+                        name.cursor_pointer()
+                            .on_mouse_down(MouseButton::Left, press)
+                    })
+                    .child(SharedString::from(name)),
+            );
+        self.message_words(line, row, message, metrics, message.reply.is_some(), cx)
+    }
+
+    /// The colours a line of `message` is drawn in: its speaker's name's,
+    /// and its words'.
+    ///
+    /// A deleted message keeps its place and loses its colour: greyed all
+    /// through, name included, so it reads as struck rather than as said.
+    /// An action is written in the speaker's colour; a normal message is
+    /// not, or a chat of many voices becomes a chat of many colours.
+    fn speaker_colors(row: &Row, message: &ChatMessage) -> (gpui::Hsla, gpui::Hsla) {
+        let name = if row.deleted {
             theme::text_dim()
         } else {
             theme::readable(message.color)
         };
-        // An action is written in the speaker's colour; a normal message is
-        // not, or a chat of many voices becomes a chat of many colours.
-        let text_color: gpui::Hsla = if message.is_action || row.deleted {
-            name_color
+        let words = if message.is_action || row.deleted {
+            name
         } else {
             theme::text()
         };
+        (name, words)
+    }
 
-        // Wrapping happens between children, so every word is its own child.
-        let mut line = div()
+    /// A line that wraps between its children, which is why every word,
+    /// emote and tag in it is one: a message's (`message_line`) and a card
+    /// line's (`viewer_card`). Laid in a `flex_row`, never straight in a
+    /// column (see `render_event`).
+    fn word_line() -> gpui::Div {
+        div()
             .flex_1()
             .min_w_0()
             .flex()
@@ -1268,23 +1382,32 @@ impl ChatView {
             .flex_wrap()
             .items_center()
             .gap_x(px(theme::GAP_WORD))
-            .children(time)
-            .children(source.map(|label| self.source_tag(row, label)))
-            .children(self.badge_group(row, message, metrics));
+    }
 
-        // An action puts the name inside the sentence, so it is not repeated.
-        let name = if message.is_action {
-            message.display_name.clone()
-        } else {
-            format!("{}:", message.display_name)
-        };
-        line = line.child(
-            div()
-                .flex_none()
-                .font_weight(theme::weight_title())
-                .text_color(name_color)
-                .child(SharedString::from(name)),
-        );
+    /// What `message` says, appended to `line` after whatever it already
+    /// holds: its words, emotes and cheers, then the `First message` and
+    /// `deleted` tags. A message line's after its name (`message_line`), and
+    /// a card line's after its time (`viewer_card`), so a person's lines on
+    /// their card are drawn exactly as the chat draws them.
+    ///
+    /// `reply_above` says the line `Replying to @name` is drawn above this
+    /// one, as a reply row's is. Then the reply's text, which starts with
+    /// the `@parent` Twitch puts there and that line already says, does not
+    /// draw that first word (`reply::skips_leading_mention`); it is dropped
+    /// here rather than from the text, because the `emotes` tag counts from
+    /// the text's start. A card's line has no such line above it, and keeps
+    /// the word. Someone's first message in the channel ends with a quiet
+    /// `First message` tag, which says why the row is tinted.
+    fn message_words(
+        &self,
+        mut line: gpui::Div,
+        row: &Row,
+        message: &ChatMessage,
+        metrics: &Metrics,
+        reply_above: bool,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let (_, text_color) = Self::speaker_colors(row, message);
 
         // Twitch's own emotes come from the tag with exact positions; a line
         // that spent Bits has its cheers found in the text left; the rest are
@@ -1311,7 +1434,8 @@ impl ChatView {
         let mut emote_index = 0usize;
         let mut word_index = 0usize;
         // Whether the first word is the `@parent` the reply line says.
-        let mut skip_first = reply::skips_leading_mention(message.reply.as_ref(), &tokens);
+        let mut skip_first =
+            reply_above && reply::skips_leading_mention(message.reply.as_ref(), &tokens);
         for token in tokens {
             match token {
                 Token::Text(text) => {
@@ -1486,7 +1610,9 @@ impl Render for ChatView {
                             ),
                         ),
                 )
-            });
+            })
+            // Last, so it is over the rows and the pills at their foot.
+            .children(self.viewer_card(&metrics, window, cx));
 
         div()
             .id("chat-pane")
@@ -1495,6 +1621,14 @@ impl Render for ChatView {
             // gives. Without it a quiet channel would not notice the pointer
             // going until the next message did.
             .on_hover(cx.listener(|_, _: &bool, _window, cx| cx.notify()))
+            // Every press in the chat, before anything in it hears it: what
+            // an earlier press closed is forgotten, so only this press's own
+            // close of a card can keep a name from opening it again. A
+            // parent's listeners go in before its children's, and the
+            // capture phase runs in that order (`viewer_card`).
+            .capture_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, _window, _cx| {
+                this.cards.press_began();
+            }))
             .size_full()
             .flex()
             .flex_col()

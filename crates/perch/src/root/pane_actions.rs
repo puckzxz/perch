@@ -159,10 +159,11 @@ impl RootView {
     }
 
     /// Close every menu open over a pane: a pane's chat options menu,
-    /// whichever menu is open on a player's bar, and a chat row's copy menu
-    /// (`chat::copy_menu`). Returns whether any was. For `Esc`, and for the
-    /// guide coming up or going, whose button stops the press that a menu's
-    /// own dismiss would otherwise have heard.
+    /// whichever menu is open on a player's bar, a chat row's copy menu
+    /// (`chat::copy_menu`), and a chat's viewer card (`chat::viewer_card`).
+    /// Returns whether any was. For `Esc`, and for the guide coming up or
+    /// going, whose button stops the press that a menu's own dismiss would
+    /// otherwise have heard.
     pub(super) fn close_menus(&mut self, cx: &mut Context<Self>) -> bool {
         let videos: Vec<_> = self
             .slots
@@ -177,6 +178,7 @@ impl RootView {
             closed |= view.update(cx, |view, cx| view.close_menu(cx));
         }
         closed |= self.close_copy_menus(cx);
+        closed |= self.close_viewer_cards(cx);
         closed
     }
 

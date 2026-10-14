@@ -2,8 +2,9 @@
 //! answering the browse page's requests, a stopped pane's, the rail's ask
 //! for channels like the ones watched, when the offline follows were last
 //! live, whose chat a Shared Chat line was copied from, what the badges
-//! in a chat look like, which cheers a chat can draw, when an offline
-//! channel says it will be on next, and sending a chat message.
+//! in a chat look like, which cheers a chat can draw, who a chatter is,
+//! when an offline channel says it will be on next, and sending a chat
+//! message.
 //!
 //! One thread owns the session, and it has to. Refresh tokens are single-use,
 //! so two things refreshing at once would spend the same token twice and lock
@@ -34,6 +35,7 @@ use twitch_api::chat::SendOutcome;
 use twitch_api::cheermotes::Cheermote;
 use twitch_api::recommend::{LastBroadcast, SimilarChannel};
 use twitch_api::schedule::Schedule;
+use twitch_api::users::User;
 use twitch_api::{Category, Channel, LiveStream, Session, Video, VideoKind};
 
 /// How often to re-ask Twitch who is live.
@@ -151,6 +153,14 @@ pub enum Request {
     /// Helix, with the token and no scope, so it goes through [`serve`]; it
     /// fills no browse list, and its failure travels in its answer.
     Cheermotes { room: String },
+    /// The account `login` names, for a chat's viewer card: its picture,
+    /// when it was made, and whether its channel is a partner's or an
+    /// affiliate's. Helix's Get Users (`twitch_api::users`). The root asks
+    /// once per login a session, when a card for that person opens; see
+    /// `crate::chat_profiles`. Helix, with the token and no scope, so it goes
+    /// through [`serve`]; it fills no browse list, and its failure travels
+    /// in its answer.
+    Profile { login: String },
     /// A channel's stream schedule, for the line saying when it is on next
     /// under an offline channel's page header and on an offline pane: Helix's
     /// Get Channel Stream Schedule (`twitch_api::schedule`). The root asks
@@ -215,9 +225,9 @@ impl Request {
     /// of its channel, which are the pane's, the rail's recommendations,
     /// which are the rail's, when the offline follows were last live, which
     /// is words on names already on screen, the names of Shared Chat
-    /// partners, the chat badges, the cheermotes and a message sent, which
-    /// are the chats', and a channel's schedule, which is a line on a page
-    /// or a pane.
+    /// partners, the chat badges, the cheermotes, a chatter's account and a
+    /// message sent, which are the chats', and a channel's schedule, which
+    /// is a line on a page or a pane.
     pub fn list_key(&self) -> Option<ListKey> {
         match self {
             Request::Follows
@@ -228,6 +238,7 @@ impl Request {
             | Request::ChannelNames { .. }
             | Request::Badges { .. }
             | Request::Cheermotes { .. }
+            | Request::Profile { .. }
             | Request::Schedule { .. }
             | Request::PaneStreams { .. }
             | Request::SendChat { .. } => None,
@@ -374,6 +385,14 @@ pub enum TwitchEvent {
     Cheermotes {
         room: String,
         result: Result<Vec<Cheermote>, String>,
+    },
+    /// The account a [`Request::Profile`] asked about, by the login it was
+    /// asked for: `None` when Twitch has no account by that name. Or why
+    /// not. Its own event with the failure inside it, for the reason
+    /// [`Broadcasts`](TwitchEvent::Broadcasts) has one.
+    Profile {
+        login: String,
+        result: Result<Option<User>, String>,
     },
     /// The schedule a [`Request::Schedule`] asked for, by the login it was
     /// asked for, or why not: empty for a channel that has never made one.
@@ -934,6 +953,11 @@ fn serve(
                 .map_err(|e| e.to_string());
             Ok(TwitchEvent::Cheermotes { room, result })
         }
+        Request::Profile { login } => {
+            let result =
+                twitch_api::users::user(client_id, token, &login).map_err(|e| e.to_string());
+            Ok(TwitchEvent::Profile { login, result })
+        }
         Request::Schedule { login, user_id } => {
             let result = user_id_or_lookup(client_id, token, &login, user_id)
                 .and_then(|user_id| {
@@ -1388,6 +1412,12 @@ mod tests {
             (
                 Request::Cheermotes {
                     room: "12826".into(),
+                },
+                None,
+            ),
+            (
+                Request::Profile {
+                    login: "fisher".into(),
                 },
                 None,
             ),

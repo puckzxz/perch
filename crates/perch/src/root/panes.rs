@@ -111,10 +111,11 @@ impl RootView {
     /// what it offers next is drawn. A maximize ends once its pane has gone,
     /// a lone pane is left, or a popped pane comes home (`Stage::retain`).
     /// Then each player hears its place, its window's focus and its maximize
-    /// control, and each pane off the screen starts its header over, hidden,
-    /// and lets its chat go. Every change of which panes there are, of their
-    /// states, of the page, of what is popped or of what is maximized ends
-    /// here.
+    /// control, each pane off the screen starts its header over, hidden,
+    /// and lets its chat go, and each viewer card open in a chat hears
+    /// whether it still offers `Watch` (`sync_viewer_cards`). Every change
+    /// of which panes there are, of their states, of the page, of what is
+    /// popped or of what is maximized ends here.
     ///
     /// And so does a pane coming home to a main window that draws none
     /// there: off the watch page with the mini player off. It is stopped,
@@ -175,6 +176,9 @@ impl RootView {
             });
         }
         self.sync_presentation(cx);
+        // Which panes there are decides whether an open viewer card offers
+        // `Watch` (`root::viewer_cards`).
+        self.sync_viewer_cards(cx);
         cx.notify();
     }
 
@@ -189,7 +193,21 @@ impl RootView {
     /// Whether a pane is at home in the main window with nothing there to
     /// draw it; see [`draws_home_panes`](Self::draws_home_panes).
     fn homeless(&self) -> bool {
-        !self.draws_home_panes()
+        self.homeless_on(self.page == Page::Watch)
+    }
+
+    /// Whether leaving the watch page now would stop a pane: the mini
+    /// player off, with a pane at home. [`homeless`](Self::homeless)'s rule,
+    /// asked of the browse page, for a control that leaves the watch page
+    /// and would rather ask first (a viewer card's `Channel page`).
+    pub(super) fn leaving_stops_panes(&self) -> bool {
+        self.homeless_on(false)
+    }
+
+    /// Whether a pane would be at home with nothing to draw it, on the
+    /// watch page or not as `watching` says.
+    fn homeless_on(&self, watching: bool) -> bool {
+        !draws_home_panes(watching, self.settings.miniplayer)
             && self
                 .slots
                 .iter()

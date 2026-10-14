@@ -33,6 +33,7 @@
 //! | `shared_chat` | the chats' Shared Chat labels: hearing an unnamed partner, asking its name, handing it to every chat; and `watch_chat`, which listens to every chat made |
 //! | `badges` | the chats' badges: hearing a chat's room, asking the worker for the global and the room's badge books, handing each to the chats it is for |
 //! | `cheers` | the live chats' cheers: hearing a live chat's room, asking the worker for its cheermotes, handing the answer to the live chats in that room |
+//! | `viewer_cards` | the chats' viewer cards: hearing a card open, asking the worker who its person is, telling every open card what is known (`sync_viewer_cards`), and a card's `Watch` and `Channel page`, the second asking for a second press where leaving would stop streams |
 //! | `schedule` | when an offline channel says it will be on next: asked of the worker once a session, the first time its page or a pane that found it off is drawn, and the answer kept |
 //! | `chrome` | pills, toasts, the rail |
 //! | `mini_player` | what plays on while you browse, in the corner of the page |
@@ -76,6 +77,7 @@ mod shared_chat;
 mod shortcuts;
 mod streams;
 mod title_bar;
+mod viewer_cards;
 mod warm;
 
 pub(crate) use self::pop_out::offered_here as pop_out_offered;
@@ -116,8 +118,8 @@ use crate::twitch::{SignInStart, TwitchService};
 use crate::video_view::VideoView;
 use crate::watch::{ResizeStart, Slot, StreamState, MAX_PANES};
 use crate::{
-    chat_cheers, cpu_log, keys, layout, motion, notifications, rail_preview, sidebar, theme, vod,
-    APP_NAME,
+    chat_cheers, chat_profiles, cpu_log, keys, layout, motion, notifications, rail_preview,
+    sidebar, theme, vod, APP_NAME,
 };
 
 /// Emotes and thumbnails are reproducible, so they live in the platform's
@@ -326,6 +328,11 @@ pub(crate) struct RootView {
     /// For this session only; see `crate::chat_cheers`. Named by its module,
     /// since `Library` alone is the badges'.
     cheers: chat_cheers::Library,
+    /// The chatters' accounts Helix has answered with, by login, and the
+    /// asks for them: what a chat's viewer card shows of its person beyond
+    /// their lines, which each open card is told. For this session only;
+    /// see `crate::chat_profiles`.
+    profiles: chat_profiles::Profiles,
     /// Each channel's stream schedule Helix has answered with, and the asks
     /// for them: the line saying when an offline channel is on next, on its
     /// page and on a pane that found it off. For this session only; see
@@ -603,6 +610,7 @@ impl RootView {
             source_rooms: SourceRooms::default(),
             badges: Library::default(),
             cheers: chat_cheers::Library::default(),
+            profiles: chat_profiles::Profiles::default(),
             schedules: Schedules::default(),
             pane_streams: pane_streams::PaneStreams::default(),
             sign_in: SignIn::Connecting,

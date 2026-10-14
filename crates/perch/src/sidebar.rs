@@ -77,7 +77,7 @@ const AVATAR: f32 = 30.0;
 
 /// Twitch serves profile pictures at a handful of sizes; this is the smallest
 /// that still looks right on a HiDPI display at [`AVATAR`].
-const AVATAR_REQUEST: &str = "70x70";
+const AVATAR_REQUEST: u32 = 70;
 
 /// The group a row's hover-revealed controls watch for the pointer.
 const ROW_GROUP: &str = "rail-row";
@@ -214,13 +214,11 @@ impl Row<'_> {
             Row::Recommended(suggestion) => {
                 Some(suggestion.channel.profile_image_url.clone()).filter(|url| !url.is_empty())
             }
-            // Twitch's URLs carry the size in the filename rather than as a
-            // parameter, so this is a substitution rather than a query. A miss
-            // simply leaves the original, which is a larger picture of the
-            // right person.
+            // A miss simply leaves the original, which is a larger picture
+            // of the right person; see `twitch_api::profile_image_at`.
             _ => avatars
                 .get(self.login())
-                .map(|url| url.replace("300x300", AVATAR_REQUEST)),
+                .map(|url| twitch_api::profile_image_at(url, AVATAR_REQUEST)),
         }
     }
 

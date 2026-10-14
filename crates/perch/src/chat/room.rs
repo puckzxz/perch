@@ -6,22 +6,11 @@
 
 use gpui::{div, prelude::*, px, Context, SharedString};
 
-use twitch_chat::{ChatMessage, ModeUpdate};
+use twitch_chat::ModeUpdate;
 
 use super::{ChatView, ChatViewEvent, RowKind};
 use crate::chat_words;
 use crate::theme;
-
-/// What a person said in a row, if a person said anything in it: a
-/// message, or the note attached to an event. The app's own notices are
-/// nobody's.
-fn said(kind: &RowKind) -> Option<&ChatMessage> {
-    match kind {
-        RowKind::Message(message) => Some(message.as_ref()),
-        RowKind::Event(notice) => notice.body.as_ref(),
-        RowKind::Notice(_) => None,
-    }
-}
 
 impl ChatView {
     /// A `ROOMSTATE`: the room's id, for the third-party emotes and the
@@ -74,12 +63,15 @@ impl ChatView {
     /// shown now, as for a `CLEARMSG`.
     ///
     /// Theirs means a message of theirs, or an event carrying a note they
-    /// wrote (a resub's message): the note is greyed with the `deleted` tag
-    /// as a message is (`message_line`), and Twitch's sentence above it is
-    /// left as it is, since that is Twitch speaking, not them.
+    /// wrote (a resub's message; `RowKind::said`): the note is greyed with
+    /// the `deleted` tag as a message is (`message_words`), and Twitch's
+    /// sentence above it is left as it is, since that is Twitch speaking,
+    /// not them.
     pub(super) fn clear_person(&mut self, login: &str, ban_seconds: Option<u64>) {
-        let theirs =
-            |kind: &RowKind| said(kind).is_some_and(|m| m.login.eq_ignore_ascii_case(login));
+        let theirs = |kind: &RowKind| {
+            kind.said()
+                .is_some_and(|m| m.login.eq_ignore_ascii_case(login))
+        };
         // Their display name, from the newest thing of theirs to hand,
         // since `CLEARCHAT` carries only the login.
         let name = self
@@ -89,7 +81,7 @@ impl ChatView {
             .map(|(kind, _)| kind)
             .chain(self.rows.iter().rev().map(|row| &row.kind))
             .filter(|kind| theirs(kind))
-            .find_map(|kind| said(kind).map(|message| message.display_name.clone()))
+            .find_map(|kind| kind.said().map(|message| message.display_name.clone()))
             .unwrap_or_else(|| login.to_string());
         for row in self.rows.iter_mut().filter(|row| theirs(&row.kind)) {
             row.deleted = true;

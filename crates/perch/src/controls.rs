@@ -153,6 +153,14 @@ variants! {
     /// A control that destroys something. Drawn like `Quiet`, and turns the
     /// colour of the thing it is about to do only under the pointer.
     Destructive,
+    /// A control that has been pressed once and asks for a second press,
+    /// because going ahead costs something: a viewer card's `Stop streams
+    /// and open?`. A `Pill`'s shape, so it is plainly the control it was a
+    /// moment ago, its words in the accent at rest as well as under the
+    /// pointer, since the question is the thing to notice. The accent, not
+    /// `danger`: the app has no warning colour, and `danger` is what a
+    /// `Destructive` control turns under the pointer, which this is not.
+    Confirm,
     /// Furniture in the window's own frame — the title bar's gear. No fill
     /// until the pointer is on it, because a bar of filled squares along the
     /// top of the window is chrome you stare past for three hours.
@@ -162,7 +170,7 @@ variants! {
 impl Variant {
     fn background(self) -> Option<gpui::Hsla> {
         match self {
-            Variant::Pill | Variant::Primary => Some(theme::surface_raised()),
+            Variant::Pill | Variant::Primary | Variant::Confirm => Some(theme::surface_raised()),
             Variant::Selected => Some(theme::accent_dim()),
             Variant::OnVideo | Variant::Quiet | Variant::Destructive | Variant::Chrome => None,
         }
@@ -173,14 +181,17 @@ impl Variant {
             Variant::Pill | Variant::Chrome | Variant::OnVideo => theme::text_muted(),
             Variant::Selected | Variant::Primary => theme::text(),
             Variant::Quiet | Variant::Destructive => theme::text_dim(),
+            Variant::Confirm => theme::accent(),
         }
     }
 
     /// The label's colour under the pointer. One signal for a destructive
-    /// control, and the same lift to full text for everything else.
+    /// control, a question that stays the colour it asks in, and the same
+    /// lift to full text for everything else.
     fn hover_foreground(self) -> gpui::Hsla {
         match self {
             Variant::Destructive => theme::danger(),
+            Variant::Confirm => theme::accent(),
             _ => theme::text(),
         }
     }
@@ -233,6 +244,9 @@ const CAPTION_GROUP: &str = "caption-button";
 /// The group a fold's chevron watches; see [`fold`].
 const FOLD_GROUP: &str = "fold";
 
+/// The group a pill's glyph watches; see [`pill_with_icon`].
+const PILL_GROUP: &str = "pill";
+
 /// The group the way back to live's drawn badge watches; see [`back_to_live`].
 const BACK_TO_LIVE_GROUP: &str = "back-to-live";
 
@@ -274,6 +288,34 @@ pub fn pill(
         // deform, so this is the only channel a press has.
         .active(move |style| style.bg(pressed_fill))
         .child(label.into())
+}
+
+/// A [`pill`] with a glyph after its words: `twitch.tv` and the arrow out of
+/// a box, on a control that leads out of the app. The glyph is the words'
+/// colour and lifts with them under the pointer, through `group_hover`, for
+/// the reason [`icon_button`]'s does, and is [`theme::PILL_GLYPH`] square, so
+/// the pill is no taller than one without.
+pub fn pill_with_icon(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    icon: Icon,
+    variant: Variant,
+) -> Stateful<Div> {
+    let hover_glyph = variant.hover_foreground();
+    pill(id, label, variant)
+        .group(PILL_GROUP)
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(theme::GAP_WORD))
+        .child(
+            svg()
+                .path(icon.path())
+                .flex_none()
+                .size(px(theme::PILL_GLYPH))
+                .text_color(variant.foreground())
+                .group_hover(PILL_GROUP, move |style| style.text_color(hover_glyph)),
+        )
 }
 
 /// A control that is a picture rather than a word: a square of
@@ -734,7 +776,7 @@ mod tests {
     /// `Variant::ALL`, which the enum's own declaration writes.
     fn sits_on(variant: Variant) -> gpui::Hsla {
         match variant {
-            Variant::Pill | Variant::Primary => theme::surface_raised(),
+            Variant::Pill | Variant::Primary | Variant::Confirm => theme::surface_raised(),
             Variant::Selected | Variant::Quiet | Variant::Destructive | Variant::Chrome => {
                 theme::surface()
             }

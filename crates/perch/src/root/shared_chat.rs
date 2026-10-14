@@ -19,9 +19,12 @@ impl RootView {
     /// cannot name (only a live chat ever does) and what its room is, for
     /// its badges (`root::badges`) and, live, its cheers (`root::cheers`),
     /// and asks for what a row of its copy menu copies to go on the
-    /// clipboard (`copy`). A live chat is told what its composer should know
-    /// about the user, and its sends and its composer's button come here too
-    /// (`chat_send`). The subscription lasts as long as the chat does.
+    /// clipboard (`copy`). Its viewer card says when it opens, and its
+    /// `Watch` and `Channel page`, and hands back the keys and the rest of a
+    /// press's run its controls took (`root::viewer_cards`). A live chat is
+    /// told what its composer should know about the user, and its sends and
+    /// its composer's button come here too (`chat_send`). The subscription
+    /// lasts as long as the chat does.
     pub(super) fn watch_chat(
         &mut self,
         chat: &Entity<ChatView>,
@@ -58,6 +61,24 @@ impl RootView {
                     this.take_rest_of_run();
                     this.copy(text.clone(), toast, cx);
                 }
+                ChatViewEvent::CardOpened { login } => this.on_card_opened(chat, login, cx),
+                // The card occludes, so the root's own focus never hears a
+                // press on it (HANDOFF, "An occluder hides presses").
+                ChatViewEvent::ReturnKeys => this.focus.focus(window),
+                ChatViewEvent::TakeRestOfRun => this.take_rest_of_run(),
+                ChatViewEvent::Watch { login } => this.watch_from_card(login.clone(), window, cx),
+                ChatViewEvent::ChannelPage {
+                    login,
+                    display_name,
+                    confirmed,
+                } => this.channel_page_from_card(
+                    chat,
+                    login.clone(),
+                    display_name.clone(),
+                    *confirmed,
+                    window,
+                    cx,
+                ),
             },
         )
         .detach();

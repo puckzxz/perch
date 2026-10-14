@@ -185,7 +185,9 @@ impl RootView {
     /// `SourceRooms::forget`. And the asks for chat badges, likewise; see
     /// `chat_badges::Library::forget`. And the asks for cheermotes,
     /// likewise; see `chat_cheers::Library::forget`. And the asks for
-    /// channels' schedules, likewise; see `schedule::Schedules::forget`.
+    /// chatters' accounts, likewise; see `chat_profiles::Profiles::forget`.
+    /// And the asks for channels' schedules, likewise; see
+    /// `schedule::Schedules::forget`.
     pub(super) fn forget_asks(&mut self) {
         for slot in &mut self.slots {
             slot.archives.forget();
@@ -197,6 +199,7 @@ impl RootView {
         self.source_rooms.forget();
         self.badges.forget();
         self.cheers.forget();
+        self.profiles.forget();
         self.schedules.forget();
     }
 

@@ -517,6 +517,22 @@ picture. A toast says what was copied. A click
 anywhere else or `Esc` closes the menu, and the chat stays paused while it is
 open, so the message does not scroll away from under it.
 
+Click a name — or an `@mention` — and a card opens over the chat saying who
+that is: their picture, their name and login, **Partner** or **Affiliate**,
+when their account was made (`Account created 14 Dec 2016 (9 years)`), the
+badges they wear, in words, and up to twenty of their messages in this chat,
+newest last, drawn as the chat draws them. At its foot, **Watch**, while they
+are live and there is room for another stream, adds them beside what is
+playing; **Channel page** opens their past broadcasts and schedule in Perch;
+and **twitch.tv** opens their channel in your browser. With the **Mini
+player** switch off, leaving the watch page stops the streams on it, so there
+**Channel page** asks first — **Stop streams and open?** — and goes only on a
+second click; a click anywhere else, or a few seconds, puts it back. Signed
+out the card has their names and messages, without the picture, the date or
+**Channel page**, which needs you signed in. A click anywhere else, the ×,
+their name again or `Esc` closes the card; right-click one of their messages
+on it to copy it. It has no hide, ignore or moderation buttons.
+
 While you are signed in, names wear their Twitch badges in front of them —
 broadcaster, moderator, VIP, the channel's own subscriber and bits badges —
 in Twitch's order, and the pointer on one says what it is: `Subscriber, 14
@@ -641,7 +657,8 @@ room at its foot, so nothing is stuck under the player. The **Mini player**
 switch in Settings turns it off, in which case leaving the watch page stops
 the streams instead — all but those popped out, which play on in their own
 windows — which is the cheaper answer if you go to Home to pick the next
-thing rather than to glance at the list.
+thing rather than to glance at the list. The card a name in chat opens asks
+before its **Channel page** does that (see [Chat](#chat)).
 
 ### The rail
 
@@ -965,7 +982,8 @@ crates/
   streamlink    supervises streamlink as a headless byte source
   twitch-chat   chat read over anonymous IRC; a recording's chat replayed
   twitch-api    device-code sign-in, follows, browsing, search, chat badges
-                and cheermotes, and sending a chat message
+                and cheermotes, a chatter's account, and sending a chat
+                message
   emotes        Twitch/FFZ/BTTV/7TV resolution, which words are cheers,
                 disk image cache
   settings      persisted user settings, and what has been watched

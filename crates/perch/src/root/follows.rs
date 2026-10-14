@@ -111,9 +111,12 @@ impl RootView {
                     .update_in(cx, |this: &mut RootView, window, cx| {
                         this.apply_twitch_event(event, window, cx);
                         // Any event can change what a composer should say:
-                        // the sign-in, the scope, the follows. And what the
-                        // settings sheet says about the sign-in, if it is up.
+                        // the sign-in, the scope, the follows; and what an
+                        // open viewer card knows, who is live among them.
+                        // And what the settings sheet says about the
+                        // sign-in, if it is up.
                         this.sync_chat_access(cx);
+                        this.sync_viewer_cards(cx);
                         this.sync_settings_sign_in(cx);
                     })
                     .is_err()
@@ -338,6 +341,9 @@ impl RootView {
             // The live chats' cheers, and no list's either; see
             // `root::cheers`.
             TwitchEvent::Cheermotes { room, result } => self.on_cheermotes(room, result, cx),
+            // A chatter's account for the viewer card open on them, and no
+            // list's either; see `root::viewer_cards`.
+            TwitchEvent::Profile { login, result } => self.on_profile(login, result, cx),
             // A line on a channel's page or an offline pane, and no list's
             // either; see `root::schedule`.
             TwitchEvent::Schedule { login, result } => self.on_schedule(login, result, cx),

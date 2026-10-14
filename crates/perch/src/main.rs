@@ -24,6 +24,7 @@ mod chat_badges;
 mod chat_cheers;
 mod chat_display;
 mod chat_effects;
+mod chat_profiles;
 mod chat_text;
 mod chat_tint;
 mod chat_words;

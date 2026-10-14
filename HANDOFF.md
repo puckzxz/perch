@@ -142,7 +142,23 @@ header's passive tags stay lowercase (`muted`, `paused`, `buffering`,
   `not drawn`. Cheermotes are built too (see "A cheer is drawn as Twitch
   draws it" under Chat). A cheer in a recording's chat replay stays the word
   typed: Twitch's copy does not say which lines spent Bits, and a guess would
-  draw anyone who typed `Cheer100` without cheering.
+  draw anyone who typed `Cheer100` without cheering. The viewer card is
+  built too (see "A name opens its person's card" under Chat): a press on a
+  name shows that person's picture, account age, badges and lines in that
+  chat, and nothing on it acts on the person — no hide or ignore, as no list
+  for hiding anyone was wanted (above), and no moderation (see "Moderation
+  and whispers" under "Known to be out of reach"). Asked whether its one link
+  should go to twitch.tv or to Perch's own channel page, the user asked for
+  both, with good UX for it: the card must never silently end what they are
+  watching. So `Watch` adds the person beside the panes while they are live,
+  `Channel page` asks for a second press where leaving the watch page would
+  stop streams (the mini player off, which is how the user runs), and
+  `twitch.tv` opens the browser. The question is in the accent, as the user
+  asked for where the app has no warning colour. The user's call was that
+  all three work signed out, on the reading that none needs the token; the
+  channel page's lists do, and signed out it says only that, so `Channel
+  page` is offered only signed in. That last was settled in review and has
+  not been put to the user yet.
 
 ---
 
@@ -164,7 +180,8 @@ crates/
                 `users` queries: when channels were last live, and a
                 channel's name by its numeric id; the chat badges
                 (`badges`, Helix); the cheermotes a chat draws a cheer
-                with (`cheermotes`, Helix); a channel's stream schedule
+                with (`cheermotes`, Helix); a chatter's account for a
+                viewer card (`users`, Helix); a channel's stream schedule
                 (`schedule`, Helix); and sending a chat message, with the
                 scopes a token carries from Twitch's validation (`chat`,
                 Helix)
@@ -192,7 +209,7 @@ App modules:
 | `trail.rs` | back and forward: the places behind and ahead, what a step passes over, and forgetting a place that is gone (pure, tested) |
 | `stage.rs` | where each pane is drawn — a pane, a mini-player tile, a window of its own, or nowhere while another pane has the watch page (`Place`) — which panes are popped out and which one is maximized (`Stage`), the cells the watch grid draws (`cells`) and what a pane's maximize control offers (`MaximizeButton`): the one owner of the answer both windows ask before drawing a player; and where a pane moved one place along the order goes (`moved`) (pure, tested) |
 | `os_window.rs` | what Perch asks of a window that gpui does not: its platform handle (`hwnd`, the one place a gpui window is asked for it — `instance::bring_forward` comes forward on it rather than looking it up itself), and keeping a pop-out above every other app (`keep_on_top`, Windows only) |
-| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `account` (the sign-in as the user drives it: the settings sheet's Sign out, Sign in, Sign in again for the chat scope, and `restart_twitch`, the worker started over, which a new client id does too), `chat_send` (sending chat: what each live chat's composer is told about the user, `sync_chat_access`, a message handed to the worker under a number of the root's, `send_chat`, and its answer handed back to the chat it came from, `on_chat_sent`), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams` (opening, restarting, closing, and `replace_with_video` and `replace_with_channel`, a recording swapped in for a live pane in place and the channel back in a recording's, both through `replace_slot`), `renditions` (what each pane plays, and when it restarts: the quality chosen against each pane's own height, `pane_height_for`, the upward re-pick when the grid changes, `sync_quality`, a pick from the pane's own menu, and how each changes what plays, `change_rendition` — beside a picture that covers the pane, to take over in place, and cold otherwise; and the root's half of that swap: what a start resolving beside a pane does with its events, `pending_event`, and what the pane keeps once its player has taken over or been given up on, `on_swapped` and `on_swap_failed`; and `set_pending`, the only write of a pane's pending start, which tells its player what a pick is switching it to and which a test holds the root to; and `beside_rendition`, the rendition a start beside a live picture names from the pane's menu, so streamlink skips its probe; tested), `warm` (streamlink started ahead for a live pane's quality menu: `quality_menu` on `VideoEvent::QualityMenu`, up to four renditions nearest what plays, `to_warm`, tested, each a `watch::WarmStart` on the slot whose `Ready` is kept until a pick takes it, `take_warm` and `adopt_warm` from `start_stream`, let go a grace after the menu closes, at its age while the menu stays open (`expire_warm`), with the player, or by a cold start; none for what a pick is already starting), `panes` (where each pane is drawn, applied: `restage`, the one funnel every change of a pane's state, of which panes there are, of the page, of what is popped out and of what is maximized ends in; `set_slot_state`, the only write of a pane's state, which a test holds the root to; `video_in_main`, the only way the main window reaches a player, which a test holds the mini player and the pages to; and the maximize as the root drives it, `toggle_maximize`, `show_all_panes`, and `choose`, which takes it to the pane chosen; and `move_pane`, two panes swapping places in the order, from a header dropped on a pane or `Shift+←`/`Shift+→`), `pop_out` (a pane's picture in a window of its own, on top of other apps: the `PopOut` view, opening and closing it through `cx.defer`, `to_root`, the only way back to the root from it, and `offered`, Windows only), `broadcasts` (what a stopped live pane asks about its channel's past broadcasts, and whether it may offer to start by itself), `rewind` (a live pane's timeline: when each live player's broadcast began, `sync_live_since`, a press on it carried out at once or when the ask for the archive is answered, and the archive opened in the pane's place; and the way back: whether each recording's broadcast is still on, `still_live` and `sync_back_to_live`, and `LIVE` pressed, `back_to_live`), `hearing` (which panes are heard: More's `Only this one` and `Hear all again` through Mute all's hush, and `sync_hear_only`, the one writer of every player's `HearOnly` mirror after `Start`; and More's `Audio compressor`, every pane's at once, `toggle_compressor`), `ad_breaks` (a pane's ad-break notice: begun on `StreamEvent::AdBreak`, ticked once a second by a timer the slot owns, taken down when it is over), `guide` (the guide over the watch page as the root runs it: `toggle_guide` from a pane's Guide button, which opens, moves or closes it, `close_guide`, `sync_guide_buttons`, the one writer of every player's `guide_from_here` mirror after `Start`, `fill_guide` through `fetch`, a card's Watch in place of the pane the guide was opened from — `replace_with_channel` — or `+ Add` through `Action::Add`, a category opened inside it, and the panel's shell: where it sits, the press outside that closes it, its probe into the veil), `pane_actions` (what a pane asks for, by its key: a press on it or one of its controls, which takes the keys back for the root first, and its player's requests; the moment a pane key brings a pane's header up over its picture; `copy`, the one place the clipboard is written; and `run_guard`, which swallows the rest of a double-click whose first press took a player out from under the pointer — More's `Pop out`, the mini player's — where the player's own guard cannot follow), `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `muted` (a recording's muted stretches: heard from every Helix answer that lists videos, `hear_muted`, given to a pane that opens one without them, as the history's do, `with_muted`, asked for once through `Request::Video` only when nothing was heard, also when sign-in lands, `ask_muted_for_open`, an answer claimed by a pane's question before a link's, `Muted::claim`, tested, and taken onto every pane playing it and its player's seek bar, `take_muted`), `prefs`, `recommended` (the rail's Recommended group: when to ask the worker, what its answer becomes, and the hooks that call it), `last_live` (when the offline follows were last live: when to ask the worker, and what its answer does), `shared_chat` (Shared Chat labels: each chat watched as it is made, live or a replay (`watch_chat`), its word about a partner it cannot name turned into one ask per id, and the names handed to every chat), `badges` (chat badges: a chat's word about its room answered with the badges known for it, the global and per-room books asked for once each, and every answer handed to the chats it is for), `cheers` (cheers: a live chat's word about its room answered with the cheermotes known for it, each room asked for once a session, and the answer handed to the live chats in that room; a replay is never asked for), `pane_streams` (the stream of a playing live pane that no fetched list carries — opened by name, from a link or from Recommended — asked of Helix by login when it starts and every two minutes while still uncovered, `ask_pane_streams`, so it has a timeline and a header; the answers are the last list `stream_info` reads, and `listed_stream` is every list but them; tested), `schedule` (when an offline channel says it is on next: `ask_schedule`, called while drawing an offline channel's page and a pane that found its channel off, once a channel a session, and `on_schedule`), `chrome` (pills, toasts, the rail, and its preview cards' state and timer, `point_rail_row`), `mini_player` (what plays on while you browse, in the corner of the page), `title_bar` (the bar Perch draws across the top of the window — the rail button, Home, back and forward, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`) |
+| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `account` (the sign-in as the user drives it: the settings sheet's Sign out, Sign in, Sign in again for the chat scope, and `restart_twitch`, the worker started over, which a new client id does too), `chat_send` (sending chat: what each live chat's composer is told about the user, `sync_chat_access`, a message handed to the worker under a number of the root's, `send_chat`, and its answer handed back to the chat it came from, `on_chat_sent`), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams` (opening, restarting, closing, and `replace_with_video` and `replace_with_channel`, a recording swapped in for a live pane in place and the channel back in a recording's, both through `replace_slot`), `renditions` (what each pane plays, and when it restarts: the quality chosen against each pane's own height, `pane_height_for`, the upward re-pick when the grid changes, `sync_quality`, a pick from the pane's own menu, and how each changes what plays, `change_rendition` — beside a picture that covers the pane, to take over in place, and cold otherwise; and the root's half of that swap: what a start resolving beside a pane does with its events, `pending_event`, and what the pane keeps once its player has taken over or been given up on, `on_swapped` and `on_swap_failed`; and `set_pending`, the only write of a pane's pending start, which tells its player what a pick is switching it to and which a test holds the root to; and `beside_rendition`, the rendition a start beside a live picture names from the pane's menu, so streamlink skips its probe; tested), `warm` (streamlink started ahead for a live pane's quality menu: `quality_menu` on `VideoEvent::QualityMenu`, up to four renditions nearest what plays, `to_warm`, tested, each a `watch::WarmStart` on the slot whose `Ready` is kept until a pick takes it, `take_warm` and `adopt_warm` from `start_stream`, let go a grace after the menu closes, at its age while the menu stays open (`expire_warm`), with the player, or by a cold start; none for what a pick is already starting), `panes` (where each pane is drawn, applied: `restage`, the one funnel every change of a pane's state, of which panes there are, of the page, of what is popped out and of what is maximized ends in; `set_slot_state`, the only write of a pane's state, which a test holds the root to; `video_in_main`, the only way the main window reaches a player, which a test holds the mini player and the pages to; and the maximize as the root drives it, `toggle_maximize`, `show_all_panes`, and `choose`, which takes it to the pane chosen; and `move_pane`, two panes swapping places in the order, from a header dropped on a pane or `Shift+←`/`Shift+→`), `pop_out` (a pane's picture in a window of its own, on top of other apps: the `PopOut` view, opening and closing it through `cx.defer`, `to_root`, the only way back to the root from it, and `offered`, Windows only), `broadcasts` (what a stopped live pane asks about its channel's past broadcasts, and whether it may offer to start by itself), `rewind` (a live pane's timeline: when each live player's broadcast began, `sync_live_since`, a press on it carried out at once or when the ask for the archive is answered, and the archive opened in the pane's place; and the way back: whether each recording's broadcast is still on, `still_live` and `sync_back_to_live`, and `LIVE` pressed, `back_to_live`), `hearing` (which panes are heard: More's `Only this one` and `Hear all again` through Mute all's hush, and `sync_hear_only`, the one writer of every player's `HearOnly` mirror after `Start`; and More's `Audio compressor`, every pane's at once, `toggle_compressor`), `ad_breaks` (a pane's ad-break notice: begun on `StreamEvent::AdBreak`, ticked once a second by a timer the slot owns, taken down when it is over), `guide` (the guide over the watch page as the root runs it: `toggle_guide` from a pane's Guide button, which opens, moves or closes it, `close_guide`, `sync_guide_buttons`, the one writer of every player's `guide_from_here` mirror after `Start`, `fill_guide` through `fetch`, a card's Watch in place of the pane the guide was opened from — `replace_with_channel` — or `+ Add` through `Action::Add`, a category opened inside it, and the panel's shell: where it sits, the press outside that closes it, its probe into the veil), `pane_actions` (what a pane asks for, by its key: a press on it or one of its controls, which takes the keys back for the root first, and its player's requests; the moment a pane key brings a pane's header up over its picture; `copy`, the one place the clipboard is written; and `run_guard`, which swallows the rest of a double-click whose first press took a player out from under the pointer — More's `Pop out`, the mini player's — where the player's own guard cannot follow), `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `muted` (a recording's muted stretches: heard from every Helix answer that lists videos, `hear_muted`, given to a pane that opens one without them, as the history's do, `with_muted`, asked for once through `Request::Video` only when nothing was heard, also when sign-in lands, `ask_muted_for_open`, an answer claimed by a pane's question before a link's, `Muted::claim`, tested, and taken onto every pane playing it and its player's seek bar, `take_muted`), `prefs`, `recommended` (the rail's Recommended group: when to ask the worker, what its answer becomes, and the hooks that call it), `last_live` (when the offline follows were last live: when to ask the worker, and what its answer does), `shared_chat` (Shared Chat labels: each chat watched as it is made, live or a replay (`watch_chat`), its word about a partner it cannot name turned into one ask per id, and the names handed to every chat), `badges` (chat badges: a chat's word about its room answered with the badges known for it, the global and per-room books asked for once each, and every answer handed to the chats it is for), `cheers` (cheers: a live chat's word about its room answered with the cheermotes known for it, each room asked for once a session, and the answer handed to the live chats in that room; a replay is never asked for), `viewer_cards` (a chat's viewer card as the root runs it: the account of the person on it asked for when it opens, `on_card_opened`, and every open card told what is known, `tell_card` and `sync_viewer_cards`, after every worker event and every `restage`; its `Watch`, through `Action::Add`, and its `Channel page`, which asks the card to ask for a second press where leaving would stop streams, `leaving_stops_panes`), `pane_streams` (the stream of a playing live pane that no fetched list carries — opened by name, from a link or from Recommended — asked of Helix by login when it starts and every two minutes while still uncovered, `ask_pane_streams`, so it has a timeline and a header; the answers are the last list `stream_info` reads, and `listed_stream` is every list but them; tested), `schedule` (when an offline channel says it is on next: `ask_schedule`, called while drawing an offline channel's page and a pane that found its channel off, once a channel a session, and `on_schedule`), `chrome` (pills, toasts, the rail, and its preview cards' state and timer, `point_rail_row`), `mini_player` (what plays on while you browse, in the corner of the page), `title_bar` (the bar Perch draws across the top of the window — the rail button, Home, back and forward, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`) |
 | `target.rs` | what a typed or pasted thing means: a login, or a twitch.tv link to a channel or a recording; `link`, its inverse and the one place a twitch.tv URL is written, and `moment`, the second a link to a recording starts at; and perch's own `perch://watch/<login>` link, written by `app_link` for a notification to open and read back by `parse_app_link` (pure, tested) |
 | `browse.rs` | the picker page: home, popular, categories, search; which of them is on screen (`Discovery::place`) and which lists are still being waited on (`is_loading`, and by key for the guide, `is_pending` and `error_for`); the stream card both the page and the guide draw (`card`, offering what `CardOffers` says) |
 | `channel_page.rs` | one channel's past broadcasts, and when each was; the recording card both pages use, and a stopped pane too; a recording's poster, and `archive_of`, which finds the recording of a broadcast that just ended (tested) |
@@ -218,23 +235,25 @@ App modules:
 | `rewind.rs` | rewinding a live pane, worked out: whether a timeline is offered (`span`), where a press lands (`pressed_at`, never within `EDGE_SECS` of the edge), the archive of the broadcast going on now (`archive_for`), where in it a moment is (`position_in`), the ask and the press waiting on it (`Rewind`), and whether a recording is the archive of the broadcast on now (`live_now`), weighed against what the pane knows of where it came from (`Origin`), which offers the way back to live (`back_to_live`) (pure, tested) |
 | `video.rs` | render thread; owns the mpv `Player`; the pane's `PositionHandle`, where a recording is and how fast it plays, which every player of the pane and its chat replay share |
 | `vod.rs` | positions a recording by rewriting its playlist; the keeper for one still growing |
-| `chat/mod.rs` | chat pane: rows, scrollback, drawn at the chat display options' size and with or without a time on every row (`set_display`), a Shared Chat copy's label, from the names the root hands it (`learn_rooms`), what a row is painted with (`row_paint`, the one answer its frame paints) and what its words land on (`row_ground`), and a message's line, its cheers among its words and emotes |
+| `chat/mod.rs` | chat pane: rows, scrollback, drawn at the chat display options' size and with or without a time on every row (`set_display`), a Shared Chat copy's label, from the names the root hands it (`learn_rooms`), what a row is painted with (`row_paint`, the one answer its frame paints) and what its words land on (`row_ground`), whose a row is (`RowKind::said`), and a message's line: its head, with a name that opens its person's card, then its words (`message_words`, which a card's lines are drawn by too), its cheers among its words and emotes |
 | `chat/emote.rs` | an emote in a line: its picture, or the one its effects make (asked of the pane's `chat_effects::Pictures`, made on a background task, placed where `emotes::effects::Placement` says), the overlays stacked on it (which ones is `emotes::stack`'s), its tooltip (`EmoteTooltip`, a line per picture and effect, in words from `chat_words::emote_tip`) and its right press, which copies the stack as written |
 | `chat/room.rs` | what the room says, as the chat pane keeps it: `ROOMSTATE`'s modes merged (`room_state`, which also loads the third-party emotes for a new room or a full line) with their line at the foot (`modes_line`), and a timeout or ban greying its person's rows (`clear_person`) |
 | `chat/badges.rs` | the chat pane's badges: the books the root hands it (`set_badges`) and the group before a name (`badge_group`) |
 | `chat/cheers.rs` | the chat pane's cheers: the book the root hands a live chat (`set_cheers`) and a cheer in a line (`cheer_piece`): the cheermote overhanging as an emote does, its tooltip in `EmoteTooltip` with words from `chat_words::cheer_tip`, and the amount in the tier's colour lifted against the row's paint |
 | `chat/reply.rs` | a reply's line above it (`reply_line`), and whether its first word is the `@parent` that line already says (`skips_leading_mention`, pure, tested) |
 | `chat/copy_menu.rs` | a chat row's right-click menu: what each entry copies from a row (`entries`, pure, tested), which link or emote the press was on (`press_target`), opening it at the pointer (`row_menu`), and the menu, deferred and anchored, with rows that act on the press (tested) |
+| `chat/viewer_card.rs` | a person's card, opened by a press on a name or an `@mention`: which card is open and the same-name toggle (`Cards`), their lines found by login (`recent`), where it goes in the list box (`place`), all pure and tested; what the root tells it (`CardFacts`, `set_card_facts`), and the card — picture, names, account line, badges in words, their lines drawn by `message_words`, and `Watch`, `Channel page` (signed in only; asking for a second press where the root says leaving would stop streams, `confirm_leaving`) and `twitch.tv`, all acting on the press (tested); the least card holds its head and foot whole (tested) |
 | `chat/composer.rs` | the box at the foot of a live chat that sends a message: whether it is open and why not (`state`, from `Access`, which the root mirrors in with `set_access`), what a message may be (`message`, `fit`), and the notice an answer leaves (`outcome_notice`, `failure_notice`), all pure and tested; the box itself, its `Enter`, and the line that stands in for it (`composer_bar`) |
 | `chat_effects.rs` | the pictures emote effects make, as a pane keeps them: `make` (an emote's file to one `RenderImage`, through `emotes::effects`, off the UI thread) and `Pictures`, by URL and effects, bounded at `LIMIT` with the one drawn longest ago let go, never one the frame being drawn used, and everything handed back to be released from the atlas (pure, tested) |
 | `chat_display.rs` | how every chat is drawn: `ChatDisplay`, the text-size steps, `Metrics::of` (line, emote, badge, padding and piece budget from the size) and `draws_time_break` (pure, tested) |
 | `chat_badges.rs` | chat badges worked out: Helix's answers as books by set and version, a channel's own picture over the global one (`ChatBadges::art`), the tooltip (`tooltip`, `Subscriber, 14 months`), and which books to ask for (`Library`, once each a session) (pure, tested) |
 | `chat_cheers.rs` | cheers worked out: Helix's cheermotes as a book by prefix (`book`, the first of a prefix winning), which picture and tier a word is (`ChatCheers::find`, Chatterino's rule), and which rooms to ask for (`Library`, once each a session) (pure, tested) |
+| `chat_profiles.rs` | who a chatter is, worked out: the accounts Helix answered with and which logins to ask about (`Profiles`, once a login a session, the newest 256 kept, a failure asked again only when that person's card is opened afresh), what an open card is told (`Lookup`), the line `Account created 14 Dec 2016 (9 years)` (`account_line`), the picture's size for the screen (`avatar_request`), and `Partner` or `Affiliate` (`broadcaster_tag`) (pure, tested) |
 | `chat_words.rs` | what a chat says about itself in words: a timeout or ban (`ban_notice`), the line above a reply (`reply_context`), the line of modes and a mode's notice (`modes_line`, `mode_notice`), and what an emote or a cheer says under the pointer (`emote_tip`, `cheer_tip`) (pure, tested) |
 | `chat_tint.rs` | which wash a chat row wears: an event's, an announcement's colour, a highlighted or first message (`Wash`, `message_wash`, `event_wash`) (pure, tested) |
 | `chat_text.rs` | what a word in a message is — link, mention or plain (pure, tested) |
 | `settings_view.rs` | settings sheet, and its Sign out (`SettingsEvent::SignOut`); Desktop notifications is its one Windows-only field, and its help says so off Windows |
-| `twitch.rs` | the worker: sign-in, follows polling, browse requests, a stopped pane's ask for its channel's past broadcasts (which a live pane's rewind rides too), the rail's anonymous ask for channels like the ones watched (`Request::Recommend`), the anonymous ask for when the offline follows were last live (`Request::LastLive`), and the anonymous ask for Shared Chat partners' names (`Request::ChannelNames`), all three answered ahead of the session's upkeep, the chats' badges from Helix (`Request::Badges`), a live chat's cheermotes from Helix (`Request::Cheermotes`), a channel's stream schedule from Helix (`Request::Schedule`, a 404 read as no schedule), a chat message sent (`Request::SendChat`), and the token validated at the first poll and hourly, saying whether it may send (`TwitchEvent::ChatScope`) |
+| `twitch.rs` | the worker: sign-in, follows polling, browse requests, a stopped pane's ask for its channel's past broadcasts (which a live pane's rewind rides too), the rail's anonymous ask for channels like the ones watched (`Request::Recommend`), the anonymous ask for when the offline follows were last live (`Request::LastLive`), and the anonymous ask for Shared Chat partners' names (`Request::ChannelNames`), all three answered ahead of the session's upkeep, the chats' badges from Helix (`Request::Badges`), a live chat's cheermotes from Helix (`Request::Cheermotes`), a chatter's account from Helix for a viewer card (`Request::Profile`), a channel's stream schedule from Helix (`Request::Schedule`, a 404 read as no schedule), a chat message sent (`Request::SendChat`), and the token validated at the first poll and hourly, saying whether it may send (`TwitchEvent::ChatScope`) |
 | `keys.rs` | the keymap: actions, bindings, contexts, the listing, and the keys a tooltip may name (`Hint`) |
 | `theme.rs` | **all** colour, spacing, type and motion tokens |
 | `sidebar.rs` | the follows rail down the left, beside both pages: Pinned, Live, Recommended, then Offline folded under a count, each offline row saying when it was last live where a live row says what is on (`groups`, pure, tested); each live row's probe for its preview card, and the card hung beside the row (`preview_probe`, `preview`) |
@@ -244,7 +263,7 @@ App modules:
 | `shared_chat.rs` | Shared Chat labels worked out: which partner ids to ask about (`SourceRooms::wants`, once each a session), what an answer comes to (`answered`), and whether and what a line is labelled (`label`, `Label::of`) (pure, tested) |
 | `recommended.rs` | the rail's Recommended group worked out: the seeds (`seeds`), when to ask (`Recommended::next_ask`), and what the answers come to (`suggestions`, `reason`) (pure, tested) |
 | `palette.rs` | the command palette, and what it can run |
-| `controls.rs` | the one button, the variants it comes in, the tags (`tag`, and `quiet_tag` for a Shared Chat copy's channel), the live dot, the red `LIVE` badge (`live_badge`) and its outlined way back from a recording (`back_to_live`), the icon button, the heading that folds (`fold`) and the plain one it sits among (`group_heading`), the window's caption buttons, the picture a pop-out is dragged by (`drag_layer`), and the two tooltip builders (`tip`, `full_text`) |
+| `controls.rs` | the one button, the variants it comes in, a pill with a glyph after its words (`pill_with_icon`), the tags (`tag`, and `quiet_tag` for a Shared Chat copy's channel), the live dot, the red `LIVE` badge (`live_badge`) and its outlined way back from a recording (`back_to_live`), the icon button, the heading that folds (`fold`) and the plain one it sits among (`group_heading`), the window's caption buttons, the picture a pop-out is dragged by (`drag_layer`), and the two tooltip builders (`tip`, `full_text`) |
 | `widget_theme.rs` | hands `theme.rs` to `gpui-component`'s own palette |
 | `assets.rs` | the icons: the ones `gpui-component` asks the host for, and Perch's own, typed as `assets::Icon` |
 | `motion.rs` | the four animation shapes, and the state one of them needs |
@@ -268,9 +287,10 @@ its IRC, its history, and a recording's replay, which is GraphQL too (see
 root asks the worker for on the chats' behalf: it is one answer for every
 chat, kept on the root, and the same anonymous GraphQL endpoint the rail's
 asks use (see "Shared Chat copies are labelled" under "Chat"). The chat
-badges and the cheermotes are the others, for the same reason, and Helix
-besides (see "Names wear their badges" and "A cheer is drawn as Twitch draws
-it"). The worker
+badges, the cheermotes and a chatter's account behind a viewer card are the
+others, for the same reason, and Helix besides (see "Names wear their
+badges", "A cheer is drawn as Twitch draws it" and "A name opens its
+person's card"). The worker
 takes requests on a `std::sync::mpsc` channel and waits on `recv_timeout`
 against the next follows-poll deadline — the wait and the mailbox are the
 same thing, so browsing never queues behind the timer.
@@ -1610,6 +1630,30 @@ on a picture, whose double-click is fullscreen. A control that stays put and
 only toggles — the header's pop-out icon turning into Bring back — takes no
 run, like every other toggle: a double-click there is two presses of it.
 
+**A toggle that a press outside also closes has to know that press closed
+it.** A chat's viewer card closes on a press outside it, `on_mouse_down_out`,
+which runs in the capture phase for any press outside its bounds
+(div.rs:226-236), and on its person's name pressed again. A press on that
+name is outside the card, so its close runs first, and the name's own
+listener, in the bubble phase, would find no card open and open it again:
+the toggle could never close. So the close notes whose card it was
+(`chat::viewer_card::Cards::press_outside`), and the name, finding its own
+login there, leaves it closed. The note must not outlive its press, or the
+next press on that name would be swallowed: the chat's root element forgets
+it in a capture listener of its own (`capture_any_mouse_down` on
+`chat-pane`), which runs before the card's, since a parent's mouse
+listeners go in before its children are painted (div.rs's paint, which
+calls `paint_mouse_listeners` and then paints the children) and the
+capture phase runs them in that order (window.rs, `dispatch_mouse_event`).
+That listener is hover-gated (div.rs:141-151), so it is silent for a press
+on the card, which occludes; the card's own capture listener forgets the
+note then. The name, an `@mention`, and every control on the card act only
+on a run's first press, and the outside close ignores the rest of a run
+too, so a double-click on a name opens its card and leaves it open. Read
+from the vendored source, and held by `the_same_name_closes_its_card` as
+far as a test without a window can; if the order ever changes, the failure
+is the card opening again, not a lost press.
+
 **A tooltip keeps the words it came up with.** gpui builds the tooltip's view
 once, when its delay runs out, keeps it in the element's state, and sets that
 same view on the window every frame the pointer stays (div.rs:1662-1664,
@@ -2344,6 +2388,13 @@ unconsidered.
   primary control was filled rather than bordered. A picture rather than a
   word is `icon_button`, the same variants in a square, and the title bar's
   gear wears `Variant::Chrome` — no fill until the pointer is on it.
+  `Variant::Confirm` is a control that costs something, pressed once and
+  asking for a second press — a viewer card's `Stop streams and open?` — a
+  pill's shape with its words in the accent at rest as well as under the
+  pointer (the app has no warning colour, and `danger` is what a destructive
+  control turns under the pointer);
+  `pill_with_icon` is a pill with a glyph after its words, `twitch.tv` and
+  the arrow out of a box (`theme::PILL_GLYPH`, under the pill's line).
   `icon_waiting` is that square with nothing to offer — back with nowhere to
   go: a `text_dim` glyph with no hover, no pointer and no handler, in the
   same place so the bar does not shift, and never a control faded to look
@@ -3494,7 +3545,10 @@ people stay recognisable by colour rather than being flattened to one, and the
 lift stops at a *measured* contrast rather than a fixed lightness: the two are
 not the same thing, and the flat floor this replaced left pure blue at 2.7:1.
 The test runs against `twitch_chat::message::DEFAULT_COLORS` itself so the two
-cannot drift.
+cannot drift. The lift is measured against what the name lands on
+(`theme::readable_on` takes the ground; `readable` is it on the bare
+surface), and a viewer card's name is held to the card's raised surface
+(`every_default_username_colour_clears_a_raised_card`).
 
 **Anything per-row belongs to the row, never to its index.** The backlog drains
 from the front once full, which shifts every surviving index. That inverted the
@@ -3828,6 +3882,99 @@ closed menu leaves under the pointer. It occludes, so a press on it reaches
 nothing under it; the panes' probes still see through it, as they see through
 everything but the guide (`crate::veil`), so a menu reaching over the next
 pane can bring that pane's bar up under the pointer.
+
+**A name opens its person's card.** A left press on a speaker's name in a
+line, a resub note's included, or on an `@mention` that is a login
+(`twitch_chat::is_login`; a display name in another script is only drawn),
+opens a card in that chat's list box (`chat::viewer_card`): the person's
+picture; their name in their colour, held to read on the card's
+`surface_raised` (`theme::readable_on`); `Partner` or `Affiliate`; their login
+where it is another word than the name; `Account created 14 Dec 2016 (9
+years)` (`chat_profiles::account_line`, counted on the local calendar as
+`channel_page::when` is); the badges on their newest line, each with its title
+in words (`chat_badges::tooltip`), since a card is read rather than pointed
+at; and up to twenty of their lines from this chat, newest last, each under
+its time and drawn by `ChatView::message_words`, the chat's own line-drawing,
+so emotes, stacks, cheers, links, mentions and `deleted` look as they do in
+the list. A reply's `@parent` is kept there, since no line above it says it.
+The lines are found by login among the rows each time the card is drawn
+(`viewer_card::recent`, through `RowKind::said`, which a timeout's greying
+uses too), so the card holds no rows of its own and no index, and a right
+press on one opens that row's copy menu by its `seq`. The name is their newest
+line's, else Helix's display name, else the login; the colour is their newest
+line's, else the chat's login→colour map, else plain text. The picture, the
+age and the tag are Helix's Get Users by login (`twitch_api::users`; the user
+token, no scope), through the worker as `Request::Profile`, asked when a card
+for that person opens and kept on the root as `chat_profiles::Profiles`: once
+a login a session, the newest 256 answers kept, a failure one line in the log
+(`viewer card: ...`) and asked again only when that person's card is opened
+afresh (`Profiles::reopened`, from `ChatViewEvent::CardOpened`). Each open
+card is told what is known (`CardFacts`, `ChatView::set_card_facts`) by
+`RootView::tell_card`, after every worker event beside `sync_chat_access`, at
+sign-out and restart, and at every `restage`; a failure is never wanted again
+by that sync, so it cannot ask in a loop. While the ask is out, the picture
+and the account line keep their room, so the card does not jump: the line is
+drawn unseen for a typical account, so it wraps where the answer's will (in
+the head's column, 186 px at the widest card, by an estimate of Segoe UI's
+widths it takes two), and an account with no picture keeps the empty circle.
+Signed out, or with no account found, both go, and the card has the names and
+lines the chat already has, and the badges where the chat has their books. An
+answer outlives a sign-out, as the badges' books do.
+
+It sits in the list box, a plain absolute child of it rather than deferred as
+the copy menu is, so the palette, the settings sheet and the guide draw over
+it. The body box has no clip, so `viewer_card::place` is what keeps it in:
+`theme::VIEWER_CARD_WIDTH` (300) wide, never more than the box less
+`GAP_TIGHT` a side (248 at `CHAT_WIDTH_MIN`, which a test holds wide enough
+for a word's piece), its left edge a little before the press; below the
+pressed line when all of it (`VIEWER_CARD_TALLEST`, 440) fits there, else on
+the side with more room if that is at least `VIEWER_CARD_SHORTEST` (260), and
+with less than that either side, 260 tall standing on the box's foot, rising
+over whatever is above the list box, which is drawn before the chat (the
+pane's header, then the picture where the chat is under it, or the pane above
+where it is beside it), and never down into the next pane, which is drawn
+after. The least height is the head, a row of badges and a foot wrapped onto
+two rows at their tallest, with one line to spare
+(`the_least_card_keeps_its_head_and_foot`), since only the lines shrink: at
+the 160 first chosen, a short card would have cut its foot's pills off. Where
+it opened is kept against the list box at the press, so it stays put while its
+row scrolls away or the pane resizes, and `place` holds that anchor inside the
+box first, so a box that shrinks under it (the window resized, a pane added)
+never leaves the card hanging past its foot. Its lines are a block in a well
+that shrinks and scrolls (`flex_shrink`, `min_h_0`) when the card has less
+room than they take, opened at the newest. The badges row and the foot wrap,
+each inside a `flex_row` (see "Things not to redo"). The pointer on it holds
+the chat's rows, as anywhere on the chat.
+
+It closes on a press anywhere outside it, heard in the capture phase so that
+press still lands (another name moves it), on the same name pressed again (see
+"A toggle that a press outside also closes" under the GPUI traps), on its ×,
+on `Esc` through `RootView::close_menus`, when the guide comes up, with the
+chat hidden or put off the screen (`let_go_hold`), on a replay's seek
+(`Reset`), and with the pane. With a copy menu from one of its lines up, a
+press outside the card closes the menu alone, so a menu row hanging past the
+card's edge does not take the card with it. It occludes, and hands the keys
+back in the capture phase (`ChatViewEvent::ReturnKeys`), as the player's bar
+does (see "An occluder hides presses from the root's `track_focus`"). Its foot
+is one row of pills, wrapping in a narrow chat, that act on the press: `Watch`
+while the person is live by a list the root holds (`live_info`), no pane plays
+them and another fits (`can_add`), which adds them beside the panes as the
+guide's `+ Add` does; `Channel page`, Perch's page of their past broadcasts
+and schedule, only signed in, since the page asks Helix for its lists with the
+user's token and signed out says only that (`CardFacts::channel_page`); and
+`twitch.tv` with an arrow out of a box (`Icon::ExternalLink`, the pop-out's
+file), through `target::link`. `Channel page` leaves the watch page, which
+with the mini player off stops every pane at home (`retire_homeless`), and
+Back does not bring them back, so the root decides at the press whether it
+would (`RootView::leaving_stops_panes`, `retire_homeless`'s own rule asked of
+the browse page). If it would, the pill turns into `Stop streams and open?`
+(`controls::Variant::Confirm`, in the accent) for `theme::CONFIRM_LINGER` (4
+s), and only a second press goes; a press anywhere else, or the wait running
+out, puts it back. `Watch`, `Channel page` going and the × take the rest of
+the press's run (`run_guard`). The two pills whose tooltips name the person
+key their ids on the name, which can change while the card is open (Helix's
+display name landing on a mention's card). Nothing on the card acts on the
+person (see "Product decisions").
 
 **Shared Chat copies are labelled with the channel they came from.** In a
 Shared Chat session a line said in any of the channels is copied into the
@@ -4935,14 +5082,17 @@ sign-in that survives a Sign out race, a failed save and a power cut, one
 go-live toast per broadcast, an ended pane that tries once more when its
 broadcast is still listed, and an emote cache that keeps what is drawn.
 
-So is the start of the chat round of October 2026 (see "Product decisions"):
+So is the chat round of October 2026 (see "Product decisions"):
 7TV's and BetterTTV's zero-width emotes drawn over the emote before them,
 FrankerFaceZ's and BetterTTV's effects drawn as BetterTTV draws them,
 FrankerFaceZ's supporters' effects no longer in everyone's chat, an
 emote's tooltip naming each picture in it and where it is from (see "An emote
 can be drawn over the one before it" and "Effects are drawn as BetterTTV draws
-them" under Chat), and a cheer drawn as its cheermote with its Bits in the
-tier's colour, signed in (see "A cheer is drawn as Twitch draws it").
+them" under Chat), a cheer drawn as its cheermote with its Bits in the
+tier's colour, signed in (see "A cheer is drawn as Twitch draws it"), and a
+card on a press on a name, with the person's picture, account age, badges
+and lines in that chat, and the ways to watch them, to their page in Perch
+and to twitch.tv (see "A name opens its person's card").
 
 Left over from phase 1, smallest first:
 
@@ -5070,6 +5220,11 @@ Ranked by what would be noticed, roughly:
 - **Chat scrollback from Twitch itself.** There is none. The website renders its
   own history server-side and exposes no endpoint; every client that shows it
   uses the third-party service `twitch_chat::history` talks to.
+- **How long a chatter has followed the channel.** Twitch's own card says
+  it; Helix answers it only to the channel's broadcaster and moderators (Get
+  Channel Followers with `user_id` needs `moderator:read:followers` and a
+  token whose user moderates the channel), and Get Followed Channels answers
+  only for the token's own user, so a viewer's card cannot say it.
 
 ## Paging, and what is not paged
 
@@ -5423,6 +5578,34 @@ None of these is being worked on; all of them are real.
     already answered); which prefixes one Get Cheermotes answer types
     `display_only` (keep the type if people type one in chat); and watch the
     log for `chat cheers:` lines.
+39. **The viewer card has been seen only by its tests.** As of 14 October
+    2026 perch had not been launched with it. Its layout is reasoned from
+    taffy (an absolute flex column with only `max_h`, holding a block well
+    that shrinks), and the same-name toggle from gpui's listener order, read
+    from source. The first look should check, in a 1600x920 window with two
+    panes side by side and a 1080x1900 one with two and four stacked: a name
+    near the top opens below and one near the foot above; in a 2x2 grid at
+    1600x920 a name in the middle of a chat opens the 260-tall card on the
+    chat's foot with its head and foot whole; at the narrowest chat the card
+    is 248 wide and its pills wrap; a short chat's card stands on its foot
+    and rises over the header and the picture; with a card open, adding a
+    third pane from the palette (`Ctrl+K`) shrinks the chat and the card
+    stays inside it; while the account is asked for, the unseen account line
+    keeps the room the answer's takes (one line or two); the badges row and
+    the foot wrap at the card's width rather than one per line; the lines
+    well shrinks and scrolls rather than collapsing to nothing or spilling
+    out of the card (if it collapses, see "A view flowed into a flex item");
+    the same name closes it, another moves it, `Esc` and the × close it, and
+    a double-click on a name leaves it open; signed out, the picture and the
+    age go with no gap, and `Channel page` is not offered; a lookup that
+    failed (the network off) asks again when the card is opened again;
+    `Channel page` with the mini player off asks first (`Stop streams and
+    open?`, in the accent) and goes on the second press, and with it on goes
+    at once; and the log for `viewer card:` lines. Known edges: the card
+    stays where it opened rather than following its row; a line that
+    arrives while it is open lands at the foot of the well without scrolling
+    to it; and an `@mention` of a word that is a login nobody has
+    (`@everyone`) costs one ask and shows no account.
 
 ## Things not to redo
 

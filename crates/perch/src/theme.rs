@@ -519,6 +519,9 @@ pub const CAPTION_GLYPH: f32 = 16.0;
 /// comfortable target at the bar's height without filling it edge to edge.
 pub const ICON: f32 = 16.0;
 pub const ICON_BUTTON: f32 = 28.0;
+/// A glyph after a pill's words (`controls::pill_with_icon`): under the
+/// pill's `LINE_TIGHT`, so it leaves the pill the height of one without.
+pub const PILL_GLYPH: f32 = 12.0;
 /// A chat composer's box: gpui-component's medium `Input`, the size every
 /// text box in the app is drawn at (`h_8`, 32 px). The line that stands in
 /// for the box when it is closed is drawn at the same height, so the chat
@@ -604,6 +607,12 @@ pub const SWITCH_LINGER: Duration = Duration::from_millis(1500);
 /// it came to. `VideoView::on_wheel` is the reader. The same glance as
 /// `SWITCH_LINGER`, so the same length.
 pub const VOLUME_LINGER: Duration = Duration::from_millis(1500);
+/// How long a control that asks for a second press waits for it before it
+/// goes back to its first words: a viewer card's `Channel page`, when going
+/// there would stop the streams (`chat::viewer_card`). Long enough to read
+/// `Stop streams and open?` and decide, short enough that a press much
+/// later is a new one rather than a yes.
+pub const CONFIRM_LINGER: Duration = Duration::from_secs(4);
 /// How faint a waiting indicator gets at the bottom of its breath. Never zero:
 /// something that vanishes entirely looks broken rather than busy.
 pub const PULSE_FLOOR: f32 = 0.45;
@@ -711,6 +720,18 @@ pub const SEEK_MUTED_MIN: f32 = 2.0;
 pub const MENU_MIN_WIDTH: f32 = 120.0;
 pub const MENU_BOTTOM: f32 = ICON_BUTTON + GAP_WORD;
 pub const MENU_RISE: f32 = 6.0;
+
+/// A chat's viewer card (`chat::viewer_card`): how wide it is where the
+/// chat has room, the tallest it grows, the least it keeps however short
+/// the chat is, and its person's picture. Its lines shrink and scroll in
+/// between; it is never wider than its chat less `GAP_TIGHT` a side. The
+/// least is its head, badges and foot at their tallest, with a line of
+/// theirs to spare (`the_least_card_keeps_its_head_and_foot`), since the
+/// lines are all that shrinks: under it the foot's pills were cut off.
+pub const VIEWER_CARD_WIDTH: f32 = 300.0;
+pub const VIEWER_CARD_TALLEST: f32 = 440.0;
+pub const VIEWER_CARD_SHORTEST: f32 = 260.0;
+pub const VIEWER_CARD_AVATAR: f32 = 40.0;
 
 /// The player's volume slider and the `100%` figure beside it, on the
 /// control bar (`video_view::bar`). The figure is as wide as its widest
@@ -1085,6 +1106,20 @@ mod tests {
                 "{color:#08x} was lifted to {:.3} when {:.3} would have done",
                 lifted.l,
                 under.l
+            );
+        }
+    }
+
+    /// A viewer card's name is in its person's colour on the card's raised
+    /// surface, a shade lighter than the chat's, and has to read there as
+    /// it does in the chat.
+    #[test]
+    fn every_default_username_colour_clears_a_raised_card() {
+        for color in twitch_chat::message::DEFAULT_COLORS {
+            let ratio = contrast(readable_on(color, surface_raised()), surface_raised());
+            assert!(
+                ratio >= MIN_CONTRAST,
+                "{color:#08x} came out at {ratio:.2}:1 on a raised card"
             );
         }
     }

@@ -14,14 +14,16 @@
 //! the website's unpublished GraphQL endpoint, anonymously, and its module docs
 //! say why and what happens when that stops working. [`badges`],
 //! [`cheermotes`] (what a cheer in chat is drawn as), [`chat`] (sending a
-//! chat message) and [`schedule`] (a channel's stream schedule) are Helix
-//! too, each in a file of its own only for length.
+//! chat message), [`schedule`] (a channel's stream schedule) and [`users`]
+//! (a chatter's account, for a chat's viewer card) are Helix too, each in a
+//! file of its own only for length.
 
 pub mod badges;
 pub mod chat;
 pub mod cheermotes;
 pub mod recommend;
 pub mod schedule;
+pub mod users;
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -492,6 +494,19 @@ pub fn thumbnail(template: &str, width: u32, height: u32) -> String {
         .replace("%{height}", &height.to_string())
         .replace("{width}", &width.to_string())
         .replace("{height}", &height.to_string())
+}
+
+/// A profile picture's address at `size` pixels square, from the one Helix
+/// hands out.
+///
+/// Twitch's profile pictures carry their size in the filename
+/// (`...-profile_image-300x300.png`) rather than as a parameter, and are
+/// served at a handful of sizes (70 and 150 among them), so this is a
+/// substitution rather than a query. The one place that knows that shape.
+/// An address without the 300-pixel size in it comes back as it was, which
+/// is a larger picture of the right person.
+pub fn profile_image_at(url: &str, size: u32) -> String {
+    url.replace("300x300", &format!("{size}x{size}"))
 }
 
 /// The template of a live channel's preview, for a channel known to be live
@@ -1584,6 +1599,24 @@ mod tests {
             thumbnail(template, 100, 50),
             "https://cdn.test/x-100x50.jpg"
         );
+    }
+
+    /// The size is in the filename, so asking for another is a swap of it,
+    /// and an address that does not carry it is left alone.
+    #[test]
+    fn a_profile_image_is_asked_for_at_a_size() {
+        assert_eq!(
+            profile_image_at(
+                "https://static-cdn.jtvnw.net/jtv_user_pictures/abc-profile_image-300x300.png",
+                70
+            ),
+            "https://static-cdn.jtvnw.net/jtv_user_pictures/abc-profile_image-70x70.png"
+        );
+        assert_eq!(
+            profile_image_at("https://cdn.test/a-150x150.png", 70),
+            "https://cdn.test/a-150x150.png"
+        );
+        assert_eq!(profile_image_at("", 150), "");
     }
 
     #[test]

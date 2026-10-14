@@ -70,6 +70,7 @@ impl RootView {
         self.twitch = service;
         self._twitch_pump = pump;
         self.sync_chat_access(cx);
+        self.sync_viewer_cards(cx);
         self.sync_settings_sign_in(cx);
         cx.notify();
     }
@@ -107,6 +108,7 @@ impl RootView {
         self.forget_tokens(cx);
         self.sign_in = SignIn::SignedOut;
         self.sync_chat_access(cx);
+        self.sync_viewer_cards(cx);
         self.sync_settings_sign_in(cx);
         cx.notify();
     }

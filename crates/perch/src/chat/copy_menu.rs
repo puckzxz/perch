@@ -13,13 +13,14 @@
 //!
 //! Opened by the right button anywhere on a row ([`ChatView::row_menu`],
 //! which gpui delivers as `MouseButton::Right` on Windows, from
-//! `WM_RBUTTONDOWN`, as on the other platforms), at the pointer, drawn
-//! deferred and anchored so it may reach past the chat's edge and is
-//! never clipped by the list, and turned back from the window's edges by
-//! `anchored`. A link or an emote says it was the one pressed
-//! ([`ChatView::press_target`]) before the row hears the press, which goes
-//! on to the root's own mouse-down like any other, so the keys come back
-//! to the root as they do for a press anywhere on the page.
+//! `WM_RBUTTONDOWN`, as on the other platforms), or on a person's line on
+//! their viewer card, which is that row's menu (`viewer_card`), at the
+//! pointer, drawn deferred and anchored so it may reach past the chat's
+//! edge and is never clipped by the list, and turned back from the
+//! window's edges by `anchored`. A link or an emote says it was the one
+//! pressed ([`ChatView::press_target`]) before the row hears the press,
+//! which goes on to the root's own mouse-down like any other, so the keys
+//! come back to the root as they do for a press anywhere on the page.
 //!
 //! Dismissed as the app's other menus are: a press anywhere outside it,
 //! heard in the capture phase (`on_mouse_down_out`), so that press still

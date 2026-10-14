@@ -145,6 +145,10 @@ perch_icons! {
     More => "more",
     PopIn => "pop-in",
     PopOut => "pop-out",
+    // Somewhere outside the app, opened in the browser: a viewer card's
+    // `twitch.tv`. The pop-out's arrow out of a box, which is the glyph
+    // everyone draws for it, under a name that says what it means here.
+    ExternalLink => "pop-out",
     // A pane given the watch page, and the grid back: the bar's maximize
     // control, which shows what a press leaves on the page. Not the
     // caption's `Maximize`, which is the window's, nor `Expand`, the mini
