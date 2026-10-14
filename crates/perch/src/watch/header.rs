@@ -59,6 +59,16 @@ enum PopOutButton {
     PopIn,
 }
 
+/// Whether a pane says `buffering`, its live picture `buffering` (waiting on
+/// the network, `VideoView::is_buffering`), with or without an ad break up
+/// (`in_ad_break`): only without, since an ad break holds the picture still
+/// too, and its own tag says why. The one rule for the header, and for a
+/// pop-out's word over its picture, since the header in the main window
+/// reads only the player that window draws.
+pub fn says_buffering(buffering: bool, in_ad_break: bool) -> bool {
+    buffering && !in_ad_break
+}
+
 /// Whether the header of a pane `showing` this offers the guide: when the
 /// pane has stopped for good — off, ended, finished, unplayable, failed — or
 /// its picture is in a window of its own. Those panes have no bar in this
@@ -499,9 +509,9 @@ pub(super) fn pane_header<V: 'static>(
                 .when(muted, |header| header.child(controls::tag("muted")))
                 .when(paused, |header| header.child(controls::tag("paused")))
                 // A live picture standing still on the network, said so it
-                // does not read as a player that has hung. Not during an ad
-                // break, which holds the picture still too and says why.
-                .when(buffering && ad_break.is_none(), |header| {
+                // does not read as a player that has hung; see
+                // `says_buffering`.
+                .when(says_buffering(buffering, ad_break.is_some()), |header| {
                     header.child(controls::tag("buffering"))
                 })
                 // The one tag that gives way, with `meta`, when the row runs
@@ -605,5 +615,16 @@ mod tests {
                 PopOutButton::Hidden
             );
         }
+    }
+
+    /// A picture waiting on the network says so, unless an ad break holds
+    /// it still and says why; a picture that is not waiting says nothing,
+    /// ad break or none.
+    #[test]
+    fn buffering_is_said_only_outside_an_ad_break() {
+        assert!(says_buffering(true, false));
+        assert!(!says_buffering(true, true));
+        assert!(!says_buffering(false, false));
+        assert!(!says_buffering(false, true));
     }
 }

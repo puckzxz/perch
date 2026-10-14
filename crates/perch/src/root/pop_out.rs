@@ -42,6 +42,8 @@
 //! shown what gpui's panels do there ([`offered`]). The pop-out's own keys
 //! are `keys::CONTEXT_POPOUT`'s.
 
+use std::time::Instant;
+
 use gpui::{
     div, prelude::*, px, size, AnyView, AnyWindowHandle, App, Bounds, Context, DisplayId,
     ElementId, Entity, FocusHandle, Pixels, SharedString, Subscription, TitlebarOptions,
@@ -292,10 +294,11 @@ impl Render for PopOut {
         let video = root
             .as_ref()
             .and_then(|root| root.read(cx).pop_out_video(&self.key));
-        let (pictured, covered) = video.as_ref().map_or((false, false), |video| {
-            let video = video.read(cx);
-            (video.has_picture(), video.covers())
-        });
+        let (pictured, covered, buffering) =
+            video.as_ref().map_or((false, false, false), |video| {
+                let video = video.read(cx);
+                (video.has_picture(), video.covers(), video.is_buffering())
+            });
         // A word until the picture covers the window, under the player, as
         // the pane and the tile keep one: the player draws nothing before
         // its first frame and leaves saying what is happening to whoever
@@ -306,6 +309,13 @@ impl Render for PopOut {
             Some(root) if !covered => root.read(cx).pop_out_word(&self.key),
             _ => None,
         };
+        // And what the pane's header says of a picture standing still, in a
+        // corner of it: an ad break's tag, or `buffering` once there is a
+        // picture; see `pop_out_badge`.
+        let badge = root.as_ref().and_then(|root| {
+            root.read(cx)
+                .pop_out_badge(&self.key, pictured && buffering)
+        });
 
         // `track_focus`, not an id: an id here would namespace every element
         // id beneath it, the player's included, as the root's would.
@@ -355,6 +365,18 @@ impl Render for PopOut {
                 pop_out.child(controls::drag_layer("pop-out-drag", window, cx))
             })
             .children(video)
+            // Over the picture, so after it; a badge, since it lands on
+            // whatever the picture is doing. Nothing on it takes the
+            // pointer, so the drag and the bar under it are untouched.
+            .when_some(badge, |pop_out, words| {
+                pop_out.child(
+                    controls::badge()
+                        .absolute()
+                        .top(px(theme::GAP_TIGHT))
+                        .left(px(theme::GAP_TIGHT))
+                        .child(words),
+                )
+            })
     }
 }
 
@@ -592,6 +614,32 @@ impl RootView {
         // only then, so a player that is there reads as starting.
         let showing = watch::showing(slot, false, false);
         Some((showing.word()?, matches!(showing, Showing::Starting { .. })))
+    }
+
+    /// What the pop-out of the pane `key` names says over its picture, its
+    /// player `buffering`: what the pane's header says beside its name of a
+    /// picture standing still. An ad break's tag while the pane has one,
+    /// counting down as the root's tick repaints this window, which reads
+    /// the root as it draws; otherwise `buffering`, by the header's own
+    /// rule (`watch::says_buffering`).
+    ///
+    /// Said here because that header, in the main window, is no help to a
+    /// pane out here. It reads only the players the main window draws
+    /// (`video_in_main`), so it says nothing of this one's stall; and the
+    /// main window is behind whatever the pop-out was put on top of, so an
+    /// ad break said only there goes unseen. A still picture with no word
+    /// on it is the hung player both words are there to rule out.
+    fn pop_out_badge(&self, key: &str, buffering: bool) -> Option<SharedString> {
+        if !self.stage.is_popped(key) {
+            return None;
+        }
+        let slot = self.slots.iter().find(|slot| slot.key == key)?;
+        let ad_break = slot
+            .ad_break
+            .map(|ad| SharedString::from(ad.tag(Instant::now())));
+        let buffering = watch::says_buffering(buffering, ad_break.is_some())
+            .then(|| SharedString::from("buffering"));
+        ad_break.or(buffering)
     }
 
     /// Open the pop-out for the pane `key` names, deferred; see the module.

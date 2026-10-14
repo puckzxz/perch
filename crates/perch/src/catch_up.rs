@@ -47,6 +47,19 @@ impl CatchUp {
     /// The speed to play at, given how many seconds the cache holds (`None`
     /// before mpv has said) and whether the pane is paused, which is not
     /// falling behind: unpausing a live pane jumps to the edge anyway.
+    ///
+    /// The reading the pause left is not acted on. The cache goes on
+    /// filling while paused, so it says the pane is as far behind as it was
+    /// paused for, which the jump undoes; the render thread forgets it as
+    /// it asks for the jump, and this is handed `None`, at normal speed,
+    /// until another reading comes. One mpv took in the moment before its
+    /// core took the jump can still come after that, and is acted on until
+    /// the next: the render thread forgets readings again when mpv says
+    /// playback restarted after the jump, which ends such a catch-up early,
+    /// but mpv hands a client its queued events before any change of a
+    /// property (client.c's `mpv_wait_event`), so a reading it took before
+    /// the restart can still follow the word of it. Rare, and a moment at
+    /// [`FACTOR`] at worst.
     pub fn speed(&mut self, buffered: Option<f64>, paused: bool) -> f64 {
         self.catching = match (buffered, paused) {
             (_, true) | (None, _) => false,
@@ -94,5 +107,18 @@ mod tests {
         assert_eq!(catch_up.speed(Some(7.8), false), FACTOR);
         assert_eq!(catch_up.speed(Some(7.8), true), 1.0);
         assert_eq!(catch_up.speed(Some(2.5), false), 1.0);
+    }
+
+    /// The unpause as the render thread hands it over: thirty seconds held
+    /// while paused, then no reading at all once it has asked for the jump
+    /// to the edge, then the reading from after it. Nothing on the way
+    /// catches up.
+    #[test]
+    fn an_unpause_waits_for_a_reading_from_after_the_jump() {
+        let mut catch_up = CatchUp::default();
+        assert_eq!(catch_up.speed(Some(30.0), true), 1.0);
+        assert_eq!(catch_up.speed(None, false), 1.0);
+        assert_eq!(catch_up.speed(Some(0.4), false), 1.0);
+        assert_eq!(catch_up.speed(Some(1.6), false), 1.0);
     }
 }

@@ -9,9 +9,10 @@
 //! 0:25` counting down, or `ad break` with no length to count, until one of
 //! two things says it is over (`AdBreak::over`): the length has run out, or
 //! the picture has moved again after standing still since the notice — the
-//! player's [`frames_resumed`], which also ends one with no length. A notice
-//! with no length that sees neither goes after [`NO_LENGTH_CAP`], so a word
-//! missed cannot leave the tag up for the rest of the stream.
+//! player's [`FrameClock`], kept on its render thread, which also ends one
+//! with no length. A notice with no length that sees neither goes after
+//! [`NO_LENGTH_CAP`], so a word missed cannot leave the tag up for the rest
+//! of the stream.
 //!
 //! The pane's slot holds it (`watch::Slot::ad_break`), any change of the
 //! pane's state drops it, and the root ticks it once a second while it is up
@@ -107,10 +108,36 @@ impl AdBreak {
     }
 }
 
+/// One player's frames, as its render thread counts them: when the last one
+/// came, so that each new one can say whether the picture had stood still
+/// (`video::VideoStream::resumed_at`).
+///
+/// On the render thread because that is where every frame is seen. A player
+/// nothing draws (`video::OFFSTAGE_SIZE`) publishes none and wakes nobody
+/// for them, so a count kept from the view's wakes stood still while a pane
+/// was maximized away: a pre-roll that ended offstage left its notice up to
+/// the cap, and the first frame after the pane came back read as the
+/// picture moving again, mid-break or not. Only frames mpv says are new
+/// are counted, never a redraw of the one it holds, which is the picture as
+/// it was.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FrameClock {
+    last: Option<Instant>,
+}
+
+impl FrameClock {
+    /// A new frame at `now`: whether it is the picture moving again.
+    pub fn tick(&mut self, now: Instant) -> bool {
+        let resumed = frames_resumed(self.last, now);
+        self.last = Some(now);
+        resumed
+    }
+}
+
 /// Whether a frame arriving at `now` is the picture moving again, after the
 /// frame before it at `previous` — or none at all, for the first, which is
 /// what ends a pre-roll.
-pub fn frames_resumed(previous: Option<Instant>, now: Instant) -> bool {
+fn frames_resumed(previous: Option<Instant>, now: Instant) -> bool {
     previous.is_none_or(|previous| now.saturating_duration_since(previous) >= FRAME_GAP)
 }
 
@@ -205,5 +232,21 @@ mod tests {
             Some(then),
             then + Duration::from_millis(33)
         ));
+    }
+
+    /// The clock counts every frame it is handed against the one before:
+    /// the first resumes, a stream's rate does not, a stand of a second
+    /// does once, and the frames after it are the picture playing on.
+    #[test]
+    fn the_frame_clock_resumes_once_per_stand() {
+        let start = Instant::now();
+        let mut clock = FrameClock::default();
+        assert!(clock.tick(start), "the first frame");
+        let frame = Duration::from_millis(17);
+        assert!(!clock.tick(start + frame));
+        assert!(!clock.tick(start + frame * 2));
+        let after_stand = start + frame * 2 + FRAME_GAP;
+        assert!(clock.tick(after_stand), "after standing still");
+        assert!(!clock.tick(after_stand + frame));
     }
 }

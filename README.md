@@ -207,8 +207,9 @@ still until the stream comes back. The header says `ad break · 0:25`
 meanwhile, counting down when streamlink says how long it is, or just `ad
 break` when it does not, until the picture moves again. With chat hidden,
 the header over the picture comes up for a moment when the break begins, and
-after that shows while the pointer is on the pane. If streamlink says
-nothing, nothing is shown.
+after that shows while the pointer is on the pane. A pane popped out into a
+window of its own says it in the corner of its picture there too. If
+streamlink says nothing, nothing is shown.
 
 The window opens where it was last closed — on the same monitor, at the size
 it was — as long as that monitor is still there; the first time, it is sized to
@@ -975,10 +976,12 @@ Twitch serves, so a 4K stream filling a 4K screen is drawn at its own size.
 
 A live pane whose picture stops for more than a second while it waits on the
 network says `buffering` in its header, beside `muted` and `paused`, until the
-picture moves again. When the picture comes back it is behind the stream by
-however long it waited, so it plays a twentieth faster, at the same pitch,
-until it is back at the live edge: about two minutes for a six-second stall.
-Chat, which never waits, is in step with it again by then.
+picture moves again; a pane popped out into a window of its own says it in
+the corner of its picture there. During an ad break neither does, since both
+say `ad break` instead. When the picture comes back it is behind the
+stream by however long it waited, so it plays a twentieth faster, at the same
+pitch, until it is back at the live edge: about two minutes for a six-second
+stall. Chat, which never waits, is in step with it again by then.
 
 The choice is made again whenever a pane changes size — another pane opening
 or closing, the rail folding, the window resizing or going fullscreen, a pane

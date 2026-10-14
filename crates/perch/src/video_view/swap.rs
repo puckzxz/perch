@@ -293,32 +293,26 @@ impl VideoView {
     }
 
     /// A wake from the stream `generation` names. The one on screen's
-    /// carries both a new frame to draw and — once — the news that there
-    /// will not be another (`VideoStream::stopped`); it also holds a pending
-    /// player to it, as often as it has frames. The pending one's draws
-    /// nothing until it takes over, so it repaints nothing.
+    /// carries a new frame to draw, a change of `buffering`, or — once —
+    /// the news that there will not be another frame
+    /// (`VideoStream::stopped`); it also holds a pending player to it, as
+    /// often as it has frames. The pending one's draws nothing until it
+    /// takes over, so it repaints nothing.
     fn woken(&mut self, generation: u64, cx: &mut Context<Self>) {
         match route(generation, self.generation, self.pending_generation()) {
             Wake::Current => {
                 if let Some(reason) = self.stream.take_stopped() {
                     cx.emit(VideoEvent::Stopped(reason));
                 } else {
+                    // Whether the picture moved is not read from wakes at
+                    // all: one that says the waiting began or ended may
+                    // carry no frame, and an offstage player sends none for
+                    // its frames. The render thread counts them
+                    // (`resumed_at`).
                     let buffering = self.stream.is_buffering();
-                    let news = buffering != self.buffering;
-                    self.buffering = buffering;
-                    if news {
+                    if buffering != self.buffering {
+                        self.buffering = buffering;
                         cx.emit(VideoEvent::Buffering);
-                    }
-                    // A wake that says the waiting began or ended may carry
-                    // no frame at all: it ends when the picture moves, but
-                    // also at a pause, with the picture as still as before.
-                    // Noting a frame then would tell the ad notice the
-                    // picture had moved again (`resumed_at`) and take it
-                    // down mid-break. Frames that do follow note themselves
-                    // on their own wakes; one folded into this wake waits
-                    // for the next, a frame later.
-                    if !news {
-                        self.note_frame();
                     }
                     self.pending_tick(cx);
                 }

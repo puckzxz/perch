@@ -107,6 +107,10 @@ impl EndReason {
 pub enum Event {
     FileLoaded,
     VideoReconfig,
+    /// Playback was started over after a discontinuity: "Usually happens on
+    /// start of playback and after seeking", in client.h's words, whose
+    /// purpose for it is telling a client that a seek has finished.
+    PlaybackRestart,
     /// Playback of the current file stopped. `reason` is what makes this
     /// worth acting on: the end of a live stream and a teardown arrive as
     /// the same event id.
@@ -343,6 +347,7 @@ impl Player {
                 ffi::MPV_EVENT_NONE => break,
                 ffi::MPV_EVENT_FILE_LOADED => Event::FileLoaded,
                 ffi::MPV_EVENT_VIDEO_RECONFIG => Event::VideoReconfig,
+                ffi::MPV_EVENT_PLAYBACK_RESTART => Event::PlaybackRestart,
                 // SAFETY: as for the property change below - libmpv
                 // guarantees `data` for this id, valid until the next
                 // `wait_event` on this handle.

@@ -39,7 +39,7 @@ use twitch_api::recommend::SimilarChannel;
 use twitch_api::{LiveStream, Video};
 
 pub use self::chat_menu::toggled as chat_menu_toggled;
-pub use self::header::Placement;
+pub use self::header::{says_buffering, Placement};
 pub use self::status::{showing, Showing};
 
 use crate::ad_break::AdBreak;

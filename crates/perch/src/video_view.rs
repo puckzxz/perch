@@ -61,7 +61,6 @@ use gpui::{
 use gpui_component::slider::{SliderEvent, SliderState};
 use twitch_api::MutedSegment;
 
-use crate::ad_break;
 use crate::controls;
 use crate::keys;
 use crate::loudness::{HearOnly, Loudness};
@@ -247,18 +246,10 @@ pub struct VideoView {
     /// and from `restage`, which every change of which panes there are ends
     /// in.
     hear_only: HearOnly,
-    /// When the stream on screen last sent a frame: what the next one is
-    /// measured against to say whether the picture has moved again after
-    /// standing still (`ad_break::frames_resumed`).
-    last_frame: Option<Instant>,
     /// Whether the stream on screen was waiting on the network at its last
     /// wake ([`is_buffering`](Self::is_buffering)): kept so the root is told
     /// only when that changes.
     buffering: bool,
-    /// When the picture last moved again after standing still, its first
-    /// frame included: what ends a pane's ad-break notice
-    /// (`ad_break::AdBreak::over`), read by the root as it ticks.
-    resumed_at: Option<Instant>,
     qualities: Qualities,
     /// The menu open over the control bar, if any: one at a time, so opening
     /// one is closing whichever was open (`menu::toggled`).
@@ -532,9 +523,7 @@ impl VideoView {
             wheel: Wheel::default(),
             volume_linger: None,
             hear_only: start.hear_only,
-            last_frame: None,
             buffering: false,
-            resumed_at: None,
             qualities,
             menu: None,
             row_run: false,
@@ -1009,21 +998,18 @@ impl VideoView {
         }
     }
 
-    /// A frame from the stream on screen has arrived, from the pump: noted
-    /// for whether the picture has moved again after standing still. A
-    /// clock read and a comparison, at the stream's frame rate.
-    fn note_frame(&mut self) {
-        let now = Instant::now();
-        if ad_break::frames_resumed(self.last_frame, now) {
-            self.resumed_at = Some(now);
-        }
-        self.last_frame = Some(now);
-    }
-
-    /// When the picture last moved again after standing still, its first
-    /// frame included; see `VideoView::resumed_at`.
+    /// When the picture on screen last moved again after standing still,
+    /// its first frame included: what ends a pane's ad-break notice
+    /// (`ad_break::AdBreak::over`), read by the root as it ticks.
+    ///
+    /// The stream on screen's own count, kept by its render thread
+    /// (`VideoStream::resumed_at`), so it goes on while nothing draws the
+    /// player and no wake has to carry it. A rendition swapped in counts
+    /// from its own first frame, beside the picture; that it says nothing
+    /// of the frames before it does not matter, since a swap ends the
+    /// notice (`RootView::on_swapped`).
     pub fn resumed_at(&self) -> Option<Instant> {
-        self.resumed_at
+        self.stream.resumed_at()
     }
 
     /// When the live broadcast on screen began, from

@@ -34,6 +34,7 @@ pub const MPV_EVENT_COMMAND_REPLY: c_int = 5;
 pub const MPV_EVENT_END_FILE: c_int = 7;
 pub const MPV_EVENT_FILE_LOADED: c_int = 8;
 pub const MPV_EVENT_VIDEO_RECONFIG: c_int = 17;
+pub const MPV_EVENT_PLAYBACK_RESTART: c_int = 21;
 pub const MPV_EVENT_PROPERTY_CHANGE: c_int = 22;
 
 // ── client.h: mpv_end_file_reason ────────────────────────────────────

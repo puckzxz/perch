@@ -23,6 +23,7 @@ use mpv_frames::{Config, EndReason, Event, Player};
 use smallvec::smallvec;
 use streamlink::Playlist;
 
+use crate::ad_break::FrameClock;
 use crate::catch_up::CatchUp;
 use crate::compressor;
 use crate::seek_bar::Timeline;
@@ -93,9 +94,12 @@ fn unpack_size(packed: u64) -> (u32, u32) {
 }
 
 /// Whether the render thread draws the frame mpv holds again, now, rather
-/// than waiting for the next one: only for a player that is `paused`, whose
-/// render size has changed since it last rendered (`size_changed`), and that
-/// has a frame to draw again (`has_frame`).
+/// than waiting for the next one: only for a player that has a frame to draw
+/// again (`has_frame`), and then either on the first pass after nothing drew
+/// it (`just_shown`), or when its render size has changed since it last
+/// rendered (`size_changed`) while it is `still`, sending no frame that
+/// would carry the new size: paused, or not having sent one since it was
+/// shown again ([`Redraws`]).
 ///
 /// The loop renders when mpv says a new frame is ready, and a paused player
 /// sends none. So a paused pane that grew — the window made larger, a
@@ -104,11 +108,58 @@ fn unpack_size(packed: u64) -> (u32, u32) {
 /// seeked. mpv's render call draws the frame it last drew when no new one is
 /// queued ("If no new frame is available, the previous frame is redrawn",
 /// render.h), and without waiting for a display time, since nothing new is
-/// presented. A playing player needs none of this: its next frame comes at
+/// presented. A playing player needs none of that: its next frame comes at
 /// the new size within a frame or two. Once per size, since the redraw is
 /// at the new size and that is then the last one, so it never spins.
-fn redraw_now(paused: bool, size_changed: bool, has_frame: bool) -> bool {
-    paused && size_changed && has_frame
+///
+/// A player coming back from offstage needs it playing or not. It published
+/// nothing while nothing drew it (`OFFSTAGE_SIZE`), so the frame its pane
+/// shows on its return is the one from the moment it went away, minutes old
+/// perhaps; a playing one would replace it only with its next frame, which
+/// an ad break or a stall does not send. Drawing what mpv holds, the newest
+/// frame it decoded, puts the picture as it is now up at once. Once, since
+/// only the first pass back is `just_shown`, and at the size last asked
+/// for, which can still be the one the pane had before it went away: the
+/// pane asks for the size it comes back at only as its window next draws
+/// it, a moment after the player is told it is drawn again. So until mpv
+/// sends a new frame the player counts as `still`, and a size asked for in
+/// that moment is drawn again at once too, as a paused player's is, rather
+/// than left soft for as long as an ad break holds the picture.
+fn redraw_now(just_shown: bool, still: bool, size_changed: bool, has_frame: bool) -> bool {
+    (just_shown || (still && size_changed)) && has_frame
+}
+
+/// What [`redraw_now`] is asked from, pass by pass, beyond what the render
+/// loop knows anyway: whether nothing drew the player on the last pass, and
+/// whether it has sent a new frame since something drew it again.
+#[derive(Clone, Copy, Debug, Default)]
+struct Redraws {
+    was_hidden: bool,
+    unmoved_since_shown: bool,
+}
+
+impl Redraws {
+    /// Whether this pass draws the frame mpv holds again, for a player
+    /// `hidden` (`VideoStream::offstage`) or not, and `paused` or not.
+    /// Never while hidden, where nothing would see it.
+    fn due(&mut self, hidden: bool, paused: bool, size_changed: bool, has_frame: bool) -> bool {
+        let just_shown = self.was_hidden && !hidden;
+        self.was_hidden = hidden;
+        self.unmoved_since_shown |= just_shown;
+        !hidden
+            && redraw_now(
+                just_shown,
+                paused || self.unmoved_since_shown,
+                size_changed,
+                has_frame,
+            )
+    }
+
+    /// A new frame from mpv was drawn: from here the picture carries a new
+    /// size by itself again, unless it is paused.
+    fn drew_new_frame(&mut self) {
+        self.unmoved_since_shown = false;
+    }
 }
 
 /// Before a recording reopens in `player`: mpv builds the new file's audio
@@ -454,8 +505,18 @@ pub struct VideoStream {
     /// waiting on the network: mpv's `paused-for-cache`, which it sets when
     /// its cache runs dry and clears when it has enough to play again. Said
     /// by the render thread with a wake of its own, since a picture that is
-    /// waiting sends no frames to carry it; read by the pane's header.
+    /// waiting sends no frames to carry it; read by the pane's header, and
+    /// by a popped pane's window, over its picture.
     buffering: Arc<AtomicBool>,
+    /// When the picture last moved again after standing still for
+    /// `ad_break::FRAME_GAP`, its first frame included: what ends a pane's
+    /// ad-break notice (`ad_break::AdBreak::over`). Counted by the render
+    /// thread from every new frame mpv hands it, offstage ones included,
+    /// rather than by the view from its wakes: an offstage player sends
+    /// none, and a wake that says `buffering` or a stop carries no frame,
+    /// so a clock kept from wakes stood still offstage and could take a
+    /// wake for a frame. Written only when it changes, which is rarely.
+    resumed: Arc<Mutex<Option<Instant>>>,
     /// Whether nothing draws this player: a pane on the watch page while
     /// another has it to itself (`Place::Offstage`). Its frames are then
     /// rendered at [`OFFSTAGE_SIZE`] into a buffer nobody reads, and never
@@ -505,6 +566,7 @@ impl VideoStream {
         let volume_level = Arc::new(AtomicU8::new(volume));
         let paused = Arc::new(AtomicBool::new(start_paused));
         let buffering = Arc::new(AtomicBool::new(false));
+        let resumed: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
         let offstage = Arc::new(AtomicBool::new(false));
         let source_size = Arc::new(AtomicU64::new(0));
         let stopped: Arc<Mutex<Option<Stopped>>> = Arc::new(Mutex::new(None));
@@ -557,6 +619,7 @@ impl VideoStream {
                 let target = target.clone();
                 let paused = paused.clone();
                 let buffering = buffering.clone();
+                let resumed = resumed.clone();
                 let offstage = offstage.clone();
                 let source_size = source_size.clone();
                 let stopped = stopped.clone();
@@ -728,6 +791,13 @@ impl VideoStream {
                     // Allocated once: nothing reads it, so nothing holds it.
                     let mut thrown_away =
                         vec![0u8; OFFSTAGE_SIZE.0 as usize * OFFSTAGE_SIZE.1 as usize * 4];
+                    // Whether nothing drew the player on the last pass, and
+                    // whether it has sent a frame since it was drawn again,
+                    // for when it redraws at once (`redraw_now`).
+                    let mut redraws = Redraws::default();
+                    // When mpv last handed over a new frame, drawn or not;
+                    // see `resumed`.
+                    let mut frame_clock = FrameClock::default();
 
                     'frames: while !stop.load(Ordering::Relaxed) {
                         for event in player.poll_events() {
@@ -839,6 +909,20 @@ impl VideoStream {
                                     failure = Some("the player shut down".to_string());
                                     break 'frames;
                                 }
+                                // Playback started over after a jump, which
+                                // on a live player is the one to the edge
+                                // on unpause, below. A cache reading mpv
+                                // took in the moment before the core took
+                                // the jump can still arrive after the one
+                                // forgotten as it was asked for, and it
+                                // measures what lay ahead of where the
+                                // picture was: forgotten here too, which
+                                // ends a catch-up it started. This narrows
+                                // that gap rather than closing it, since a
+                                // reading mpv took before the restart can
+                                // still come after this; see
+                                // `crate::catch_up::CatchUp::speed`.
+                                Event::PlaybackRestart => buffered = None,
                                 _ => {}
                             }
                         }
@@ -894,6 +978,13 @@ impl VideoStream {
                                 // leaving the viewer permanently behind. On a
                                 // recording, where it stopped is the point.
                                 let _ = player.seek_to_live();
+                                // The cache went on filling while paused, so
+                                // the last reading says the pane is as far
+                                // behind as it was paused for, which the
+                                // jump is about to undo. The catch-up below
+                                // waits for the next reading rather than
+                                // speeding up on this one.
+                                buffered = None;
                             }
                             if let Some(recording) = &mut recording {
                                 if want_pause {
@@ -1037,27 +1128,42 @@ impl VideoStream {
                             }
                         }
 
-                        // A paused player that has changed size draws what
-                        // it holds again, at the new size, rather than wait
-                        // for a frame it will not send; see `redraw_now`.
-                        // Published below exactly as a decoded frame is.
+                        // A paused player that has changed size, and any
+                        // player drawn again after nothing drew it, draws
+                        // what it holds again, at the size it is drawn at,
+                        // rather than wait for a frame that may not come;
+                        // see `redraw_now`. Published below exactly as a
+                        // decoded frame is.
                         //
                         // Not offstage, where nothing would see it.
                         let hidden = offstage.load(Ordering::Relaxed);
-                        let redraw = !hidden
-                            && redraw_now(
-                                applied_pause,
-                                rendered != Some((current_w, current_h)),
-                                rendered.is_some(),
-                            );
+                        let redraw = redraws.due(
+                            hidden,
+                            applied_pause,
+                            rendered != Some((current_w, current_h)),
+                            rendered.is_some(),
+                        );
                         if !redraw && !player.wait_for_frame(Duration::from_millis(200)) {
                             continue;
                         }
+                        // A new frame from mpv, drawn or offstage, is the
+                        // picture moving: counted here, where every one of
+                        // them is seen, for the ad notice (`resumed`). A
+                        // redraw is the picture as it was, and not counted.
+                        if !redraw {
+                            let now = Instant::now();
+                            if frame_clock.tick(now) {
+                                *resumed.lock().unwrap() = Some(now);
+                            }
+                        }
                         // A player nothing draws renders its frame small and
                         // keeps none of it: the pane's last full-size picture
-                        // stays in `latest`, and `rendered` keeps its size, so
-                        // the first frame after it comes back is drawn at the
-                        // size it is drawn at, never a small one stretched.
+                        // stays in `latest` while it is away, so nothing
+                        // drawn small is ever stretched over the pane, and
+                        // the first pass back draws what mpv holds, at the
+                        // size the pane last asked for, and again at any it
+                        // asks for before the picture moves (`redraw_now`);
+                        // `rendered` keeps the size it was last drawn at.
                         // The rendition is not touched. Measured before this,
                         // two live 1080p panes with one maximized away, the
                         // render threads used 9.7% of a core against 6.6% with
@@ -1111,6 +1217,9 @@ impl VideoStream {
 
                         *latest.lock().unwrap() = Some(Arc::new(frame));
                         rendered = Some((current_w, current_h));
+                        if !redraw {
+                            redraws.drew_new_frame();
+                        }
 
                         // Full channel means the UI has not consumed the last
                         // wake yet; it will see this frame when it gets there.
@@ -1151,6 +1260,7 @@ impl VideoStream {
                 seek,
                 live,
                 buffering,
+                resumed,
                 offstage,
                 extent,
                 thread: Some(thread),
@@ -1251,6 +1361,13 @@ impl VideoStream {
         self.buffering.load(Ordering::Relaxed)
     }
 
+    /// When the picture last moved again after standing still, its first
+    /// frame included; see [`resumed`](Self::resumed). `None` before
+    /// a first frame.
+    pub fn resumed_at(&self) -> Option<Instant> {
+        *self.resumed.lock().unwrap()
+    }
+
     /// Say whether nothing draws this player; see
     /// [`offstage`](Self::offstage). Taken between frames.
     pub fn set_offstage(&self, offstage: bool) {
@@ -1328,7 +1445,7 @@ mod tests {
     /// it plays.
     #[test]
     fn a_paused_stream_redraws_when_its_size_changes() {
-        assert!(redraw_now(true, true, true));
+        assert!(redraw_now(false, true, true, true));
     }
 
     /// A playing one waits: its next frame is a frame or two away and comes
@@ -1336,24 +1453,68 @@ mod tests {
     /// a render.
     #[test]
     fn a_playing_stream_waits_for_its_next_frame() {
-        assert!(!redraw_now(false, true, true));
+        assert!(!redraw_now(false, false, true, true));
+    }
+
+    /// Back from offstage, a player draws what mpv holds at once, still or
+    /// not, at its old size or a new one: the pane would otherwise
+    /// show the frame from when it went away until mpv next sent one, which
+    /// in an ad break or a stall it does not.
+    #[test]
+    fn a_stream_shown_again_redraws_at_once() {
+        for still in [false, true] {
+            for size_changed in [false, true] {
+                assert!(
+                    redraw_now(true, still, size_changed, true),
+                    "still {still}, size changed {size_changed}"
+                );
+            }
+        }
     }
 
     /// With no frame to draw again — none decoded yet, or the one there was
     /// dropped by a reposition reloading the file — a redraw would draw an
-    /// empty picture, so the loop waits for a frame as it always has.
+    /// empty picture, so the loop waits for a frame as it always has, shown
+    /// again or not.
     #[test]
     fn nothing_is_redrawn_before_a_first_frame() {
-        assert!(!redraw_now(true, true, false));
-        assert!(!redraw_now(false, true, false));
+        assert!(!redraw_now(false, true, true, false));
+        assert!(!redraw_now(false, false, true, false));
+        assert!(!redraw_now(true, false, false, false));
+        assert!(!redraw_now(true, true, true, false));
     }
 
-    /// Once per change of size: the redraw is at the new size, after which
-    /// nothing has changed, so a paused player never spins.
+    /// Once per change of size, and once per return: the redraw is at the
+    /// new size, after which nothing has changed, and the pass after it is
+    /// not the first one back, so a player never spins.
     #[test]
     fn an_unchanged_size_never_redraws() {
-        assert!(!redraw_now(true, false, true));
-        assert!(!redraw_now(false, false, true));
+        assert!(!redraw_now(false, true, false, true));
+        assert!(!redraw_now(false, false, false, true));
+    }
+
+    /// A playing pane back from offstage in an ad break, its picture
+    /// standing still: drawn again at once at the size it had, and again
+    /// at its new size once its window has asked for it, since no frame of
+    /// its own will carry that; never while it is away. Once it has sent a
+    /// frame, its next one carries a new size again, as any playing one's.
+    #[test]
+    fn a_return_is_redrawn_at_a_size_asked_for_late() {
+        let mut redraws = Redraws::default();
+        assert!(!redraws.due(true, false, true, true), "offstage");
+        assert!(
+            redraws.due(false, false, false, true),
+            "the first pass back"
+        );
+        assert!(!redraws.due(false, false, false, true), "once");
+        assert!(
+            redraws.due(false, false, true, true),
+            "the size asked for after"
+        );
+        assert!(!redraws.due(false, false, false, true), "once per size");
+        redraws.drew_new_frame();
+        assert!(!redraws.due(false, false, true, true), "moving again");
+        assert!(redraws.due(false, true, true, true), "paused, as ever");
     }
 
     /// A pane at 100 s, and a player of it that has not been published: one
