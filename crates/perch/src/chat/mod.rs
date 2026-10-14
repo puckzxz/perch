@@ -11,12 +11,14 @@
 //! The view is split by what it handles, the way `root/` is: this file has
 //! the view, its rows and how a message is drawn; `emote` an emote in a
 //! line, with what is stacked on it, what its effects make of it and its
-//! tooltip; `room` what the room says about itself (its modes, a timeout or
+//! tooltip; `cheers` a cheer in a line, drawn as its cheermote with its
+//! Bits; `room` what the room says about itself (its modes, a timeout or
 //! a ban); `badges` the chat badges; `reply` a reply's context line;
 //! `copy_menu` what a right-click on a row offers to copy; and `composer`
 //! the box at the foot of a live chat that sends a message.
 
 mod badges;
+mod cheers;
 pub mod composer;
 mod copy_menu;
 mod emote;
@@ -37,6 +39,7 @@ use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 use twitch_chat::{ChatClient, ChatEvent, ChatMessage, ChatNotice, Replay, RoomModes};
 
 use crate::chat_badges::ChatBadges;
+use crate::chat_cheers::ChatCheers;
 use crate::chat_display::{self, ChatDisplay, Metrics};
 use crate::chat_effects::{Made, Pictures};
 use crate::chat_text::{self, Kind};
@@ -168,9 +171,11 @@ pub enum ChatViewEvent {
     UnknownRoom(String),
     /// The chat's room, by its numeric id: from each `ROOMSTATE` live (on
     /// joining, and again whenever a mode changes) and once from a replay.
-    /// The root answers with the badges for it (`RootView::on_chat_room`),
+    /// The root answers with the badges for it (`RootView::on_chat_room`)
+    /// and, for a live chat, its cheermotes (`RootView::cheers_for_room`),
     /// asking the worker for any it has not got; it is told every time, and
-    /// `chat_badges::Library::wants` keeps that to one ask per room.
+    /// `chat_badges::Library::wants` and `chat_cheers::Library::wants` keep
+    /// that to one ask per room.
     Room(String),
     /// A row of the copy menu was pressed (`copy_menu`): put `text` on the
     /// clipboard and say so with `toast`. The root does both
@@ -279,6 +284,13 @@ pub struct ChatView {
     /// [`set_badges`](Self::set_badges). Empty signed out, when no badge is
     /// drawn and none leaves a gap.
     badges: ChatBadges,
+    /// The cheermotes this chat can draw, the global ones and its own
+    /// channel's: the root's (`chat_cheers::Library`), mirrored here as its
+    /// room becomes known and as the answer arrives, through
+    /// [`set_cheers`](Self::set_cheers). Empty until a sign-in has asked
+    /// for the room (an answer outlives a sign-out), and always in a
+    /// replay; while empty, every cheer is the word typed.
+    cheers: ChatCheers,
     /// The room's numeric id, once the source has said it
     /// ([`ChatEvent::RoomState`]): what the root keys this chat's badges on.
     room_id: Option<String>,
@@ -449,6 +461,7 @@ impl ChatView {
             rooms: HashMap::new(),
             window_hovered: false,
             badges: ChatBadges::default(),
+            cheers: ChatCheers::default(),
             room_id: None,
             modes: None,
             menu: None,
@@ -795,9 +808,9 @@ impl ChatView {
     /// get their width back.
     ///
     /// Its padding above and below follows the text size, so an emote's
-    /// overhang always has room ([`Metrics::row_pad_y`]).
+    /// overhang always has room ([`Metrics::row_pad_y`]). What it is painted
+    /// with is [`row_paint`](Self::row_paint).
     fn row_frame(row: &Row, metrics: &Metrics, me: Option<&str>) -> gpui::Div {
-        let wash = row.kind.wash(me);
         div()
             .w_full()
             .flex()
@@ -805,17 +818,33 @@ impl ChatView {
             .items_start()
             .px(px(theme::ROW_PAD_X))
             .py(px(metrics.row_pad_y))
-            // The stripe is a reading aid for a run of like rows; an event is
-            // not one of those, and two washes on one row is mud.
-            //
-            // It used to be a stripe *and* a hairline under every row, which is
-            // two separators doing one job. The stripe is the one that survives
-            // a wrapped message: it fills the whole block, so three lines of one
-            // message read as one thing rather than as three rows.
-            .when(wash.is_none() && row.striped, |line| {
-                line.bg(theme::stripe())
-            })
-            .when_some(wash, |line, color| line.bg(color))
+            .when_some(Self::row_paint(row, me), |line, color| line.bg(color))
+    }
+
+    /// What a row is painted with, if anything: its wash (`RowKind::wash`),
+    /// or else its stripe. The one answer, for the frame that paints it and
+    /// for anything written on it in a colour of its own
+    /// ([`row_ground`](Self::row_ground)).
+    ///
+    /// The stripe is a reading aid for a run of like rows; an event is not
+    /// one of those, and two washes on one row is mud. It used to be a
+    /// stripe *and* a hairline under every row, which is two separators
+    /// doing one job. The stripe is the one that survives a wrapped message:
+    /// it fills the whole block, so three lines of one message read as one
+    /// thing rather than as three rows.
+    fn row_paint(row: &Row, me: Option<&str>) -> Option<gpui::Hsla> {
+        row.kind
+            .wash(me)
+            .or_else(|| row.striped.then(theme::stripe))
+    }
+
+    /// The colour a row's words actually land on: the surface, with the
+    /// row's paint over it. What a colour that is not the theme's own, a
+    /// cheer's amount, is lifted against (`theme::readable_on`), since a
+    /// wash lightens the surface it lies on.
+    fn row_ground(&self, row: &Row) -> gpui::Hsla {
+        Self::row_paint(row, self.me())
+            .map_or_else(theme::surface, |paint| theme::surface().blend(paint))
     }
 
     /// The time, once, above the first message of each minute.
@@ -1257,21 +1286,26 @@ impl ChatView {
                 .child(SharedString::from(name)),
         );
 
-        // Twitch's own emotes come from the tag with exact positions; the rest
-        // are name lookups applied to whatever text is left, and an overlay
-        // or an effect goes into the emote it belongs to.
+        // Twitch's own emotes come from the tag with exact positions; a line
+        // that spent Bits has its cheers found in the text left; the rest are
+        // name lookups applied to whatever text is left after that, and an
+        // overlay or an effect goes into the emote it belongs to.
         let sets = self.emote_sets.clone();
         let tokens = emotes::message_tokens(
             &message.text,
             message.emotes.as_deref(),
             true,
+            message.bits,
+            &|word| self.cheers.find(word),
             &move |name| sets.lookup(name),
         );
 
-        // Only a message that actually has an emote in it pays for the room one
-        // needs. A wrapped wall of plain text keeps its tight leading, which is
-        // most of what wraps.
-        let overhangs = tokens.iter().any(|token| matches!(token, Token::Emote(_)));
+        // Only a message that actually has a picture in it pays for the room
+        // one needs. A wrapped wall of plain text keeps its tight leading,
+        // which is most of what wraps.
+        let overhangs = tokens
+            .iter()
+            .any(|token| matches!(token, Token::Emote(_) | Token::Cheer(_)));
         line = line.when(overhangs, |line| line.gap_y(px(metrics.overhang * 2.0)));
 
         let mut emote_index = 0usize;
@@ -1298,6 +1332,17 @@ impl ChatView {
                 }
                 Token::Emote(emote) => {
                     line = line.child(self.emote(emote, emote_index, metrics, cx));
+                    emote_index += 1;
+                }
+                Token::Cheer(cheer) => {
+                    // Greyed with the rest of a deleted row; otherwise the
+                    // tier's colour, as far as the row's paint needs it lifted.
+                    let amount = if row.deleted {
+                        theme::text_dim()
+                    } else {
+                        theme::readable_on(cheer.color, self.row_ground(row))
+                    };
+                    line = line.child(self.cheer_piece(cheer, emote_index, amount, metrics));
                     emote_index += 1;
                 }
             }
@@ -1466,9 +1511,12 @@ impl Render for ChatView {
 
 #[cfg(test)]
 mod tests {
-    use super::trim_front;
+    use super::{trim_front, ChatView, Row, RowKind};
+    use crate::theme;
     use emotes::{tokenize, Token};
+    use twitch_chat::message::parse_line;
     use twitch_chat::replay::parse_page;
+    use twitch_chat::ChatMessage;
 
     /// The backlog and the rows held under the pointer keep the newest, in
     /// order, and say how many went so the list can be spliced to match.
@@ -1480,6 +1528,33 @@ mod tests {
         assert_eq!(trim_front(&mut items, 3), 0);
         assert_eq!(trim_front(&mut items, 10), 0);
         assert_eq!(items, [3, 4, 5]);
+    }
+
+    /// What a row is painted with is its wash, or else its stripe: the one
+    /// answer the frame paints and a cheer's amount is lifted against.
+    #[test]
+    fn a_rows_paint_is_what_its_frame_paints() {
+        let row = |kind: RowKind, striped: bool| Row {
+            kind,
+            striped,
+            stamp: "".into(),
+            seq: 1,
+            deleted: false,
+        };
+        let notice = || RowKind::Notice("Connected".into());
+        assert_eq!(
+            ChatView::row_paint(&row(notice(), true), None),
+            Some(theme::stripe())
+        );
+        assert_eq!(ChatView::row_paint(&row(notice(), false), None), None);
+
+        let first = parse_line("@first-msg=1 :a!a@a PRIVMSG #a :hello").unwrap();
+        let first = ChatMessage::from_irc(&first).unwrap();
+        assert_eq!(
+            ChatView::row_paint(&row(RowKind::Message(Box::new(first)), true), None),
+            Some(theme::first_message_wash()),
+            "a wash and a stripe are not both painted"
+        );
     }
 
     /// The tag a replay builds is read by the tokenizer the live pane uses,
@@ -1509,6 +1584,7 @@ mod tests {
             .map(|token| match token {
                 Token::Text(text) => format!("T:{text}"),
                 Token::Emote(emote) => format!("E:{}", emote.name),
+                Token::Cheer(cheer) => format!("C:{}", cheer.name),
             })
             .collect();
         assert_eq!(names, ["T:🎣 ", "E:Kappa", "T: nice"]);

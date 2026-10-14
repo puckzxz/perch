@@ -573,7 +573,14 @@ mod tests {
                 kind,
             })
         };
-        let tokens = message_tokens("w! KEKW ffzY ffzFuture", None, false, &lookup);
+        let tokens = message_tokens(
+            "w! KEKW ffzY ffzFuture",
+            None,
+            false,
+            None,
+            &|_| None,
+            &lookup,
+        );
         let [Token::Emote(kekw)] = tokens.as_slice() else {
             panic!("not one stack: {tokens:?}");
         };

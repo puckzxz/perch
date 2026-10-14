@@ -2,8 +2,8 @@
 //! answering the browse page's requests, a stopped pane's, the rail's ask
 //! for channels like the ones watched, when the offline follows were last
 //! live, whose chat a Shared Chat line was copied from, what the badges
-//! in a chat look like, when an offline channel says it will be on next,
-//! and sending a chat message.
+//! in a chat look like, which cheers a chat can draw, when an offline
+//! channel says it will be on next, and sending a chat message.
 //!
 //! One thread owns the session, and it has to. Refresh tokens are single-use,
 //! so two things refreshing at once would spend the same token twice and lock
@@ -31,6 +31,7 @@ use futures::channel::mpsc;
 use settings::{OAuthTokens, Settings};
 use twitch_api::badges::BadgeSet;
 use twitch_api::chat::SendOutcome;
+use twitch_api::cheermotes::Cheermote;
 use twitch_api::recommend::{LastBroadcast, SimilarChannel};
 use twitch_api::schedule::Schedule;
 use twitch_api::{Category, Channel, LiveStream, Session, Video, VideoKind};
@@ -143,6 +144,13 @@ pub enum Request {
     /// through [`serve`] like the browse page's asks; it fills no browse
     /// list, and its failure travels in its answer.
     Badges { channel: Option<String> },
+    /// The cheermotes a live chat in the room `room` (a channel's numeric
+    /// id) can draw, the global ones and the channel's own in one answer:
+    /// Helix's Get Cheermotes (`twitch_api::cheermotes`). The root asks once
+    /// per room a session, as live chats meet it; see `crate::chat_cheers`.
+    /// Helix, with the token and no scope, so it goes through [`serve`]; it
+    /// fills no browse list, and its failure travels in its answer.
+    Cheermotes { room: String },
     /// A channel's stream schedule, for the line saying when it is on next
     /// under an offline channel's page header and on an offline pane: Helix's
     /// Get Channel Stream Schedule (`twitch_api::schedule`). The root asks
@@ -200,15 +208,16 @@ pub enum ListKey {
 }
 
 impl Request {
-    /// The browse list this fills, or `None` for the nine that fill none:
-    /// the follows poll, whose lists are not the browse page's, a recording
+    /// The browse list this fills, or `None` for those that fill none: the
+    /// follows poll, whose lists are not the browse page's, a recording
     /// looked up for a link or a pane's muted stretches, whose failure is a
-    /// toast or a line in the log, a pane's past
-    /// broadcasts, which are the pane's, the rail's recommendations, which
-    /// are the rail's, when the offline follows were last live, which is
-    /// words on names already on screen, and the names of Shared Chat
-    /// partners, the chat badges and a message sent, which are the chats',
-    /// and a channel's schedule, which is a line on a page or a pane.
+    /// toast or a line in the log, a pane's past broadcasts and the streams
+    /// of its channel, which are the pane's, the rail's recommendations,
+    /// which are the rail's, when the offline follows were last live, which
+    /// is words on names already on screen, the names of Shared Chat
+    /// partners, the chat badges, the cheermotes and a message sent, which
+    /// are the chats', and a channel's schedule, which is a line on a page
+    /// or a pane.
     pub fn list_key(&self) -> Option<ListKey> {
         match self {
             Request::Follows
@@ -218,6 +227,7 @@ impl Request {
             | Request::LastLive { .. }
             | Request::ChannelNames { .. }
             | Request::Badges { .. }
+            | Request::Cheermotes { .. }
             | Request::Schedule { .. }
             | Request::PaneStreams { .. }
             | Request::SendChat { .. } => None,
@@ -357,6 +367,13 @@ pub enum TwitchEvent {
     Badges {
         channel: Option<String>,
         result: Result<Vec<BadgeSet>, String>,
+    },
+    /// The cheermotes a [`Request::Cheermotes`] asked for, by the room it
+    /// was asked for, or why not. Its own event with the failure inside it,
+    /// for the reason [`Broadcasts`](TwitchEvent::Broadcasts) has one.
+    Cheermotes {
+        room: String,
+        result: Result<Vec<Cheermote>, String>,
     },
     /// The schedule a [`Request::Schedule`] asked for, by the login it was
     /// asked for, or why not: empty for a channel that has never made one.
@@ -912,6 +929,11 @@ fn serve(
             .map_err(|e| e.to_string());
             Ok(TwitchEvent::Badges { channel, result })
         }
+        Request::Cheermotes { room } => {
+            let result = twitch_api::cheermotes::cheermotes(client_id, token, &room)
+                .map_err(|e| e.to_string());
+            Ok(TwitchEvent::Cheermotes { room, result })
+        }
         Request::Schedule { login, user_id } => {
             let result = user_id_or_lookup(client_id, token, &login, user_id)
                 .and_then(|user_id| {
@@ -1317,8 +1339,8 @@ mod tests {
         assert_eq!(unpictured(&more, &asked), ["newfollow"]);
     }
 
-    /// Every request the browse page makes names the list it fills, and the
-    /// seven that fill none say so. A request with no key would leave its list
+    /// Every request the browse page makes names the list it fills, and
+    /// those that fill none say so. A request with no key would leave its list
     /// with nothing to wait on, and its failure with nowhere to be said; a
     /// pane's or the rail's request with one would end a browse list's wait.
     #[test]
@@ -1360,6 +1382,12 @@ mod tests {
             (
                 Request::Badges {
                     channel: Some("12826".into()),
+                },
+                None,
+            ),
+            (
+                Request::Cheermotes {
+                    room: "12826".into(),
                 },
                 None,
             ),

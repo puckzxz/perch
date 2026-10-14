@@ -3,7 +3,8 @@
 //! Five parts, each independent of any UI:
 //!
 //! - [`tokenize`](mod@tokenize) turns a chat message plus its `emotes` tag
-//!   into text and emote runs. Pure logic, no network.
+//!   into text and emote runs, and a message that spent Bits into its
+//!   cheers. Pure logic, no network.
 //! - [`providers`] fetches FrankerFaceZ / BetterTTV / 7TV name lookups, which
 //!   have no positional data and so are matched word-exact, and what kind
 //!   of emote each is.
@@ -26,21 +27,31 @@ pub use cache::ImageCache;
 pub use effects::{Effect, Effects};
 pub use providers::{EmoteLoader, EmoteSets, Provider};
 pub use stack::stack;
-pub use tokenize::{apply_named_emotes, tokenize, twitch_emote_url, Emote, Kind, Named, Token};
+pub use tokenize::{
+    apply_cheers, apply_named_emotes, tokenize, twitch_emote_url, Cheer, Emote, Kind, Named, Token,
+};
 
 /// A message as a line draws it: its text split into words and emotes,
-/// Twitch's from the `emotes` tag, then the third-party ones by `lookup`,
-/// then each overlay and effect moved into the emote it belongs to.
+/// Twitch's from the `emotes` tag, then its cheers by `cheer` when it spent
+/// `bits`, then the third-party emotes by `lookup`, then each overlay and
+/// effect moved into the emote it belongs to.
 ///
 /// The one place the order of the passes is written. Each depends on the one
-/// before: names are only looked up in the text Twitch's tag left, and
-/// stacking needs every emote's kind. `animated` picks Twitch's animated
-/// variant where it has one.
+/// before: cheers and names are only looked up in the text Twitch's tag
+/// left, a cheer comes before a name so a third-party emote named like one
+/// cannot take a word that spent Bits, and stacking needs every emote's
+/// kind. `animated` picks Twitch's animated variant where it has one.
 pub fn message_tokens(
     text: &str,
     tag: Option<&str>,
     animated: bool,
+    bits: Option<u32>,
+    cheer: &impl Fn(&str) -> Option<Cheer>,
     lookup: &impl Fn(&str) -> Option<Named>,
 ) -> Vec<Token> {
-    stack(apply_named_emotes(tokenize(text, tag, animated), lookup))
+    let mut tokens = tokenize(text, tag, animated);
+    if let Some(bits) = bits {
+        tokens = apply_cheers(tokens, bits, cheer);
+    }
+    stack(apply_named_emotes(tokens, lookup))
 }

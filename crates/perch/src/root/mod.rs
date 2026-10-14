@@ -32,6 +32,7 @@
 //! | `recommended` | the rail's Recommended group: when to ask the worker, and what its answer becomes |
 //! | `shared_chat` | the chats' Shared Chat labels: hearing an unnamed partner, asking its name, handing it to every chat; and `watch_chat`, which listens to every chat made |
 //! | `badges` | the chats' badges: hearing a chat's room, asking the worker for the global and the room's badge books, handing each to the chats it is for |
+//! | `cheers` | the live chats' cheers: hearing a live chat's room, asking the worker for its cheermotes, handing the answer to the live chats in that room |
 //! | `schedule` | when an offline channel says it will be on next: asked of the worker once a session, the first time its page or a pane that found it off is drawn, and the answer kept |
 //! | `chrome` | pills, toasts, the rail |
 //! | `mini_player` | what plays on while you browse, in the corner of the page |
@@ -49,6 +50,7 @@ mod badges;
 mod broadcasts;
 mod browsing;
 mod chat_send;
+mod cheers;
 mod chrome;
 mod commands;
 mod follows;
@@ -114,7 +116,8 @@ use crate::twitch::{SignInStart, TwitchService};
 use crate::video_view::VideoView;
 use crate::watch::{ResizeStart, Slot, StreamState, MAX_PANES};
 use crate::{
-    cpu_log, keys, layout, motion, notifications, rail_preview, sidebar, theme, vod, APP_NAME,
+    chat_cheers, cpu_log, keys, layout, motion, notifications, rail_preview, sidebar, theme, vod,
+    APP_NAME,
 };
 
 /// Emotes and thumbnails are reproducible, so they live in the platform's
@@ -318,6 +321,11 @@ pub(crate) struct RootView {
     /// which each chat mirrors. For this session only; see
     /// `crate::chat_badges`.
     badges: Library,
+    /// The cheermotes Helix has answered with, by room, and the asks for
+    /// them: what every live chat draws its cheers with, which each mirrors.
+    /// For this session only; see `crate::chat_cheers`. Named by its module,
+    /// since `Library` alone is the badges'.
+    cheers: chat_cheers::Library,
     /// Each channel's stream schedule Helix has answered with, and the asks
     /// for them: the line saying when an offline channel is on next, on its
     /// page and on a pane that found it off. For this session only; see
@@ -594,6 +602,7 @@ impl RootView {
             last_live: LastLive::default(),
             source_rooms: SourceRooms::default(),
             badges: Library::default(),
+            cheers: chat_cheers::Library::default(),
             schedules: Schedules::default(),
             pane_streams: pane_streams::PaneStreams::default(),
             sign_in: SignIn::Connecting,

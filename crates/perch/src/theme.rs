@@ -75,7 +75,7 @@ pub fn contrast(a: Hsla, b: Hsla) -> f32 {
     (a.max(b) + 0.05) / (a.min(b) + 0.05)
 }
 
-/// How many halving steps [`readable`] spends finding the lightness it needs.
+/// How many halving steps [`readable_on`] spends finding the lightness it needs.
 /// Ten puts it within 0.1% of the true floor, which is finer than the eye or
 /// the 8-bit colour it ends up as.
 const READABLE_STEPS: u32 = 10;
@@ -92,9 +92,24 @@ const READABLE_STEPS: u32 = 10;
 /// Luminance rises monotonically with lightness at fixed hue and saturation,
 /// so bisection finds the floor; the alternative is stepping, which costs a
 /// hundred times as much for every name on screen every frame.
+///
+/// Measured against the bare [`surface`]; [`readable_on`] is the same lift
+/// against any other ground.
 pub fn readable(color: u32) -> Hsla {
+    readable_on(color, surface())
+}
+
+/// [`readable`] against `ground`, which must be opaque: a colour lifted only
+/// as far as it must be to read on what it is actually drawn on.
+///
+/// A row's wash lightens the surface under it, so a colour lifted to just
+/// clear the bar on the bare surface falls under it on a washed row: one at
+/// 4.5:1 on the surface reads 4.32:1 on the stripe and 3.87:1 on the mention
+/// wash. A colour written on a washed row is lifted against that row's own
+/// paint (`ChatView::row_ground`), as a cheer's amount is.
+pub fn readable_on(color: u32, ground: Hsla) -> Hsla {
     let mut color: Hsla = rgb(color).into();
-    if contrast(color, surface()) >= MIN_CONTRAST {
+    if contrast(color, ground) >= MIN_CONTRAST {
         return color;
     }
 
@@ -102,7 +117,7 @@ pub fn readable(color: u32) -> Hsla {
     for _ in 0..READABLE_STEPS {
         let mid = (low + high) / 2.0;
         color.l = mid;
-        if contrast(color, surface()) >= MIN_CONTRAST {
+        if contrast(color, ground) >= MIN_CONTRAST {
             high = mid;
         } else {
             low = mid;
@@ -1071,6 +1086,51 @@ mod tests {
                 lifted.l,
                 under.l
             );
+        }
+    }
+
+    /// One algorithm: `readable` is `readable_on` the bare surface.
+    #[test]
+    fn readable_is_readable_on_the_surface() {
+        for color in twitch_chat::message::DEFAULT_COLORS
+            .into_iter()
+            .chain([0x979797])
+        {
+            assert_eq!(readable(color), readable_on(color, surface()));
+        }
+    }
+
+    /// A cheer's amount is written in its tier's colour on whatever its row
+    /// is painted with, and has to read on every one of them, the loud wash
+    /// included: the grey of a 1-Bit cheer, and every colour Twitch hands
+    /// out, standing in for whatever tier colours Helix sends.
+    #[test]
+    fn a_cheer_amount_reads_on_every_chat_row() {
+        let washes: [(&str, Hsla); 10] = [
+            ("stripe", stripe()),
+            ("event_wash", event_wash()),
+            ("event_wash_loud", event_wash_loud()),
+            ("first_message_wash", first_message_wash()),
+            ("mention_wash", mention_wash()),
+            ("highlight_wash", highlight_wash()),
+            ("announcement_wash_blue", announcement_wash_blue()),
+            ("announcement_wash_green", announcement_wash_green()),
+            ("announcement_wash_orange", announcement_wash_orange()),
+            ("announcement_wash_purple", announcement_wash_purple()),
+        ];
+        let grounds = std::iter::once(("surface", surface()))
+            .chain(washes.map(|(name, wash)| (name, surface().blend(wash))));
+        for (ground_name, ground) in grounds {
+            for color in twitch_chat::message::DEFAULT_COLORS
+                .into_iter()
+                .chain([0x979797])
+            {
+                let ratio = contrast(readable_on(color, ground), ground);
+                assert!(
+                    ratio >= MIN_CONTRAST,
+                    "{color:#08x} reads {ratio:.2}:1 on {ground_name}"
+                );
+            }
         }
     }
 }

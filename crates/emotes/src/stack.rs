@@ -51,9 +51,12 @@ pub fn stack(tokens: Vec<Token>) -> Vec<Token> {
                     written.push_str(&text);
                 }
             }
-            Token::Text(text) => {
+            // A word, or a cheer, which is never a base: what waits for an
+            // emote after it goes back as its words, and nothing before it
+            // takes a layer written after it (`base_before`).
+            other @ (Token::Text(_) | Token::Cheer(_)) => {
                 release(&mut waiting, &mut written, &mut out);
-                out.push(Token::Text(text));
+                out.push(other);
             }
             Token::Emote(emote) => match emote.kind {
                 Kind::EffectOnNext => {
@@ -98,7 +101,7 @@ fn base_before(out: &[Token]) -> Option<usize> {
     for (index, token) in out.iter().enumerate().rev() {
         match token {
             Token::Text(text) if text.trim().is_empty() => {}
-            Token::Text(_) => return None,
+            Token::Text(_) | Token::Cheer(_) => return None,
             Token::Emote(_) => return Some(index),
         }
     }
@@ -129,7 +132,7 @@ mod tests {
     use super::*;
     use crate::message_tokens;
     use crate::providers::Provider;
-    use crate::tokenize::{apply_named_emotes, tokenize, Named};
+    use crate::tokenize::{apply_named_emotes, tokenize, Cheer, Named};
 
     /// A lookup over a few emotes of every kind, each its own provider's.
     fn lookup(name: &str) -> Option<Named> {
@@ -149,7 +152,24 @@ mod tests {
     }
 
     fn tokens(text: &str) -> Vec<Token> {
-        message_tokens(text, None, false, &lookup)
+        message_tokens(text, None, false, None, &|_| None, &lookup)
+    }
+
+    /// `Cheer` with an amount, any amount: the line's Bits decide what is
+    /// drawn, and a cheer lookup proper is `perch::chat_cheers`.
+    fn cheer(word: &str) -> Option<Cheer> {
+        let amount = word.strip_prefix("Cheer")?.parse().ok()?;
+        Some(Cheer {
+            name: word.to_string(),
+            amount,
+            url: "https://example.invalid/cheer".into(),
+            color: 0x979797,
+        })
+    }
+
+    /// A message that spent `bits`.
+    fn cheered(text: &str, bits: u32) -> Vec<Token> {
+        message_tokens(text, None, false, Some(bits), &cheer, &lookup)
     }
 
     /// Each token as a short string: `T:` and its text, or `E:` and the
@@ -167,6 +187,7 @@ mod tests {
                     }
                     out
                 }
+                Token::Cheer(cheer) => format!("C:{}", cheer.name),
             })
             .collect()
     }
@@ -211,7 +232,14 @@ mod tests {
     /// Twitch's own emotes, placed by the tag, take overlays like any other.
     #[test]
     fn an_overlay_sits_on_a_twitch_emote() {
-        let stacked = message_tokens("Kappa SteerR", Some("25:0-4"), false, &lookup);
+        let stacked = message_tokens(
+            "Kappa SteerR",
+            Some("25:0-4"),
+            false,
+            None,
+            &|_| None,
+            &lookup,
+        );
         assert_eq!(shape(&stacked), ["E:Kappa+SteerR"]);
         let Token::Emote(kappa) = &stacked[0] else {
             panic!("not an emote");
@@ -283,5 +311,28 @@ mod tests {
             stacked.id_key(),
             "https://example.invalid/KEKW https://example.invalid/SteerR"
         );
+    }
+
+    /// A cheer is no emote to stack on: an overlay after it is drawn
+    /// alone, and a BetterTTV effect before it stays a word.
+    #[test]
+    fn a_cheer_is_never_a_base() {
+        assert_eq!(
+            shape(&cheered("Cheer100 SteerR", 100)),
+            ["C:Cheer100", "T: ", "E:SteerR"]
+        );
+        assert_eq!(shape(&cheered("w! Cheer100", 100)), ["T:w! ", "C:Cheer100"]);
+    }
+
+    /// Cheers come out of the text before the third-party names are looked
+    /// up, and only in a message that spent Bits; without them the same
+    /// words are text.
+    #[test]
+    fn a_message_with_bits_draws_its_cheers_among_its_emotes() {
+        assert_eq!(
+            shape(&cheered("Cheer100 KEKW", 100)),
+            ["C:Cheer100", "T: ", "E:KEKW"]
+        );
+        assert_eq!(shape(&tokens("Cheer100 KEKW")), ["T:Cheer100 ", "E:KEKW"]);
     }
 }

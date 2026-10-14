@@ -523,6 +523,16 @@ in Twitch's order, and the pointer on one says what it is: `Subscriber, 14
 months`. A past broadcast's chat replay wears them too. Signed out there are
 no badges and no gap where they would be.
 
+While you are signed in, a cheer looks the way it does on Twitch: each
+`Cheer100` in a message that spent Bits is the cheer's moving picture for its
+tier, with the amount after it in the tier's colour, and the pointer on the
+picture says how many Bits (`Cheer100  100 Bits`). Right-click it and the menu
+is the message's, whose **Copy message** has the cheer as it was typed. A
+channel's cheers are learned once you are signed in, and kept until Perch
+closes, a sign-out included; until then, and always in a past broadcast's chat
+replay, a cheer is the word that was typed, and so is a partner channel's own
+cheer copied in by Shared Chat.
+
 A reply has a dim line above it, `Replying to @name: what they said`, cut
 short to one line, and its own text no longer starts with the `@name`.
 Someone's first message in the channel has a faint blue tint and a
@@ -772,7 +782,8 @@ same way.
 
 The chat plays back beside it: what was being said at the moment on screen,
 from Twitch's own copy of it, with the same emotes, links, colours and badges
-as a live pane and the time breaks reading the broadcast's own clock. Jump
+as a live pane (a cheer stays the word typed: Twitch's copy does not say who
+spent Bits) and the time breaks reading the broadcast's own clock. Jump
 somewhere else and the pane swaps to the conversation around the new moment,
 starting a little before it, so you land mid-chat rather than in a blank. `C`
 hides it, and that is remembered per channel the way it is for a live pane. A
@@ -954,8 +965,9 @@ crates/
   streamlink    supervises streamlink as a headless byte source
   twitch-chat   chat read over anonymous IRC; a recording's chat replayed
   twitch-api    device-code sign-in, follows, browsing, search, chat badges
-                and sending a chat message
-  emotes        Twitch/FFZ/BTTV/7TV resolution, disk image cache
+                and cheermotes, and sending a chat message
+  emotes        Twitch/FFZ/BTTV/7TV resolution, which words are cheers,
+                disk image cache
   settings      persisted user settings, and what has been watched
   perch         the app
 ```

@@ -15,12 +15,12 @@ use crate::theme;
 /// Whether the first word of a message drawn from `tokens` is the `@parent`
 /// of its `reply`, and so is not drawn (`message_line`).
 ///
-/// Only the very first word, and only when no emote comes before it: an
-/// `@parent` later in the text was written by the person, and a message
-/// that opens with an emote did not open with Twitch's `@`. A word that
-/// names somebody else is kept. The word is skipped when the line is drawn,
-/// never cut from the text, because the `emotes` tag counts characters from
-/// the text's start.
+/// Only the very first word, and only when no emote or cheer comes before
+/// it: an `@parent` later in the text was written by the person, and a
+/// message that opens with a picture did not open with Twitch's `@`. A
+/// word that names somebody else is kept. The word is skipped when the line
+/// is drawn, never cut from the text, because the `emotes` tag counts
+/// characters from the text's start.
 pub(super) fn skips_leading_mention(reply: Option<&Reply>, tokens: &[Token]) -> bool {
     let Some(reply) = reply else {
         return false;
@@ -32,7 +32,7 @@ pub(super) fn skips_leading_mention(reply: Option<&Reply>, tokens: &[Token]) -> 
                     return reply.is_mention(word);
                 }
             }
-            Token::Emote(_) => return false,
+            Token::Emote(_) | Token::Cheer(_) => return false,
         }
     }
     false
@@ -64,7 +64,7 @@ impl ChatView {
 
 #[cfg(test)]
 mod tests {
-    use emotes::{Emote, Provider, Token};
+    use emotes::{Cheer, Emote, Provider, Token};
     use twitch_chat::Reply;
 
     use super::skips_leading_mention;
@@ -121,6 +121,21 @@ mod tests {
         assert!(!skips_leading_mention(
             Some(&reply),
             &[text(" "), emote(), text(" @someone")]
+        ));
+    }
+
+    /// A message that opens with a cheer opened with no `@` either.
+    #[test]
+    fn a_cheer_first_skips_nothing() {
+        let cheer = Token::Cheer(Cheer {
+            name: "Cheer100".into(),
+            amount: 100,
+            url: "https://example.invalid/cheer".into(),
+            color: 0x979797,
+        });
+        assert!(!skips_leading_mention(
+            Some(&parent()),
+            &[cheer, text(" @someone hi")]
         ));
     }
 

@@ -17,11 +17,11 @@ impl RootView {
     /// Shared Chat name already known, so a partner met in another pane is
     /// named here from the first line. It says when it meets a partner it
     /// cannot name (only a live chat ever does) and what its room is, for
-    /// its badges (`root::badges`), and asks for what a row of its copy menu
-    /// copies to go on the clipboard (`copy`). A live chat is told what its
-    /// composer should know about the user, and its sends and its
-    /// composer's button come here too (`chat_send`). The subscription
-    /// lasts as long as the chat does.
+    /// its badges (`root::badges`) and, live, its cheers (`root::cheers`),
+    /// and asks for what a row of its copy menu copies to go on the
+    /// clipboard (`copy`). A live chat is told what its composer should know
+    /// about the user, and its sends and its composer's button come here too
+    /// (`chat_send`). The subscription lasts as long as the chat does.
     pub(super) fn watch_chat(
         &mut self,
         chat: &Entity<ChatView>,
@@ -43,7 +43,10 @@ impl RootView {
             window,
             |this: &mut RootView, chat, event, window, cx| match event {
                 ChatViewEvent::UnknownRoom(id) => this.ask_channel_name(id),
-                ChatViewEvent::Room(room) => this.on_chat_room(chat.clone(), room, cx),
+                ChatViewEvent::Room(room) => {
+                    this.on_chat_room(chat.clone(), room, cx);
+                    this.cheers_for_room(chat, room, cx);
+                }
                 ChatViewEvent::Send { room_id, message } => {
                     this.send_chat(chat, room_id.clone(), message.clone(), cx)
                 }

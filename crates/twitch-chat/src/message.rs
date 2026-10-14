@@ -160,6 +160,13 @@ pub struct ChatMessage {
     /// Sent with Highlight My Message, the channel-points reward
     /// (`msg-id=highlighted-message`).
     pub highlighted: bool,
+    /// The Bits cheered with this line, from the `bits` tag, which Twitch
+    /// sends only on a cheer and which is the cheer words' amounts summed
+    /// (`Cheer1 Cheer1` carries 2). It is what says which words in the
+    /// text were cheers and how far they go (`emotes::apply_cheers`).
+    /// `None` on every other line, and always in a replay, whose comments
+    /// do not say.
+    pub bits: Option<u32>,
 }
 
 /// One chat badge, by name: its set (`subscriber`, `moderator`, `bits`) and
@@ -347,6 +354,11 @@ impl ChatMessage {
             reply: Reply::from_irc(message),
             first: message.tag("first-msg") == Some("1"),
             highlighted: message.tag("msg-id") == Some("highlighted-message"),
+            // A zero or a value that is not a count spent nothing.
+            bits: message
+                .tag("bits")
+                .and_then(|bits| bits.parse::<u32>().ok())
+                .filter(|&bits| bits > 0),
         }
     }
 }
@@ -775,6 +787,28 @@ mod tests {
             parse_line("@first-msg=0;msg-id=highlighted-message :a!a@a PRIVMSG #a :look").unwrap();
         let lit = ChatMessage::from_irc(&lit).unwrap();
         assert!(!lit.first && lit.highlighted);
+    }
+
+    /// A cheer carries the Bits it spent; a line without the tag, or with
+    /// one that spent nothing or is not a count, carries none, and so does
+    /// a resub's note, which never has the tag.
+    #[test]
+    fn a_cheer_carries_its_bits() {
+        let bits = |tags: &str| {
+            let line = format!("{tags}:a!a@a PRIVMSG #a :Cheer100 nice");
+            ChatMessage::from_irc(&parse_line(&line).unwrap())
+                .unwrap()
+                .bits
+        };
+        assert_eq!(bits("@bits=100;color=#FF0000 "), Some(100));
+        assert_eq!(bits(""), None);
+        assert_eq!(bits("@bits=0 "), None);
+        assert_eq!(bits("@bits=abc "), None);
+
+        let note =
+            r"@msg-id=resub;login=a;system-msg=hi :tmi.twitch.tv USERNOTICE #a :Cheer100 again";
+        let notice = ChatNotice::from_irc(&parse_line(note).unwrap()).unwrap();
+        assert_eq!(notice.body.unwrap().bits, None);
     }
 
     /// An announcement keeps its colour; any other notice has none, even

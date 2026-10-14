@@ -154,9 +154,10 @@ impl RootView {
                 // it; see `root::muted`.
                 self.ask_muted_for_open();
                 // And the names of the Shared Chat partners those panes met,
-                // and the badges for their chats.
+                // and the badges and cheermotes for their chats.
                 self.ask_met_channel_names();
                 self.ask_met_badges();
+                self.ask_met_cheermotes();
                 // And the rail's recommendations, which the worker can now
                 // take.
                 self.update_recommended();
@@ -334,6 +335,9 @@ impl RootView {
             // see `root::shared_chat`.
             TwitchEvent::ChannelNames { ids, result } => self.on_channel_names(ids, result, cx),
             TwitchEvent::Badges { channel, result } => self.on_badges(channel, result, cx),
+            // The live chats' cheers, and no list's either; see
+            // `root::cheers`.
+            TwitchEvent::Cheermotes { room, result } => self.on_cheermotes(room, result, cx),
             // A line on a channel's page or an offline pane, and no list's
             // either; see `root::schedule`.
             TwitchEvent::Schedule { login, result } => self.on_schedule(login, result, cx),

@@ -43,7 +43,8 @@
 //!   is built by counting characters across the fragments instead.
 //! - **A sub notice is a plain comment** whose text is Twitch's sentence
 //!   followed by the user's note, with nothing to mark it. It is rendered as
-//!   the message it has become. No `/me` marker was seen either.
+//!   the message it has become. No `/me` marker was seen either, and nothing
+//!   says which lines spent Bits, so a cheer is the word that was typed.
 //!
 //! An offset past the end answers `comments: null` beside a "service error";
 //! a highlight or an upload answers an empty list — a highlight is cut from
@@ -599,6 +600,9 @@ fn comment(node: &Value) -> Option<Comment> {
             reply: None,
             first: false,
             highlighted: false,
+            // Nor of Bits: a node has no such field, so `Cheer100` in a
+            // comment cannot be told from someone typing it.
+            bits: None,
         },
         id,
         offset,
@@ -880,6 +884,52 @@ mod tests {
         assert!(comment(&node).is_none());
     }
 
+    /// Whether `value`, or anything inside it, is an object with a `bits`
+    /// key. Keys only: `bits` is also a badge's set id, a value that says
+    /// nothing of what a comment spent.
+    fn has_bits_key(value: &Value) -> bool {
+        match value {
+            Value::Object(fields) => {
+                fields.contains_key("bits") || fields.values().any(has_bits_key)
+            }
+            Value::Array(items) => items.iter().any(has_bits_key),
+            _ => false,
+        }
+    }
+
+    /// A comment says nothing of Bits, so one that reads like a cheer is
+    /// the words typed and spends none. The fixture, a live answer, has no
+    /// field in any comment that could say otherwise.
+    #[test]
+    fn a_replayed_cheer_spends_no_bits() {
+        let node = json!({
+            "id": "x", "contentOffsetSeconds": 7,
+            "commenter": { "id": "1", "login": "a", "displayName": "A" },
+            "createdAt": "2026-09-08T14:01:56Z",
+            "message": { "fragments": [{ "emote": null, "text": "Cheer100 nice" }], "userColor": null }
+        });
+        let line = comment(&node).unwrap();
+        assert_eq!(line.message.text, "Cheer100 nice");
+        assert_eq!(line.message.bits, None);
+        // The walk finds the key at any depth, and not the badge's value.
+        assert!(has_bits_key(&json!({ "message": [{ "bits": 100 }] })));
+        assert!(!has_bits_key(
+            &json!({ "userBadges": [{ "setID": "bits" }] })
+        ));
+        let raw: Value = serde_json::from_str(PAGE).unwrap();
+        let edges = raw
+            .pointer("/0/data/video/comments/edges")
+            .and_then(Value::as_array)
+            .unwrap();
+        assert_eq!(edges.len(), 5);
+        for edge in edges {
+            assert!(
+                !has_bits_key(&edge["node"]),
+                "the comments query has no bits field"
+            );
+        }
+    }
+
     #[test]
     fn past_the_end_is_empty_and_final() {
         let body = json!([{
@@ -944,6 +994,7 @@ mod tests {
                 reply: None,
                 first: false,
                 highlighted: false,
+                bits: None,
             },
         }
     }

@@ -21,6 +21,7 @@ mod browse;
 mod channel_page;
 mod chat;
 mod chat_badges;
+mod chat_cheers;
 mod chat_display;
 mod chat_effects;
 mod chat_text;

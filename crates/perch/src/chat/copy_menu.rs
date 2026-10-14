@@ -332,6 +332,7 @@ mod tests {
             reply: None,
             first: false,
             highlighted: false,
+            bits: None,
         }
     }
 

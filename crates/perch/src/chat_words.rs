@@ -1,15 +1,15 @@
 //! What a chat says about itself in words: a timeout or a ban, the line
 //! above a reply, the room's modes, both as the quiet line at the foot of
 //! the pane and as a notice when one changes, and what a picture in a line
-//! says under the pointer (`emote_tip`). Pure and tested; the chat view
-//! (`chat/`) puts the words where they go.
+//! says under the pointer (`emote_tip`, `cheer_tip`). Pure and tested; the
+//! chat view (`chat/`) puts the words where they go.
 //!
 //! The modes are `twitch_chat::RoomModes`, merged there from `ROOMSTATE`.
 //! Sentence case, as the chat's own notices are, and lengths in whole words
 //! (`10 minutes`) where they are read in a sentence and in short units
 //! (`10m`) on the line of modes, which has to stay one line.
 
-use emotes::{Emote, Provider};
+use emotes::{Cheer, Emote, Provider};
 use twitch_chat::{ModeChange, Reply, RoomModes};
 
 /// Units a length is said in, largest first.
@@ -190,6 +190,14 @@ pub fn emote_tip(emote: &Emote) -> Vec<(String, String)> {
         .collect()
 }
 
+/// What a cheer says under the pointer, in the emote's look: the word as
+/// sent and the Bits it spent, `Cheer100` and `100 Bits`, or `1 Bit`.
+/// `Bits` keeps its capital, as Twitch's name for them.
+pub fn cheer_tip(cheer: &Cheer) -> Vec<(String, String)> {
+    let unit = if cheer.amount == 1 { "Bit" } else { "Bits" };
+    vec![(cheer.name.clone(), format!("{} {unit}", cheer.amount))]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -331,7 +339,14 @@ lines  and	spaces "
                 kind,
             })
         };
-        let tokens = emotes::message_tokens("w! KEKW SteerR ffzX ffzFuture", None, false, &lookup);
+        let tokens = emotes::message_tokens(
+            "w! KEKW SteerR ffzX ffzFuture",
+            None,
+            false,
+            None,
+            &|_| None,
+            &lookup,
+        );
         let [emotes::Token::Emote(stack)] = tokens.as_slice() else {
             panic!("not one stack: {tokens:?}");
         };
@@ -352,6 +367,24 @@ lines  and	spaces "
         assert_eq!(
             emote_tip(&kappa),
             [("Kappa".to_string(), "Twitch emote".to_string())]
+        );
+    }
+
+    #[test]
+    fn a_cheer_tip_says_its_bits() {
+        let cheer = |name: &str, amount: u32| Cheer {
+            name: name.into(),
+            amount,
+            url: String::new(),
+            color: 0x979797,
+        };
+        assert_eq!(
+            cheer_tip(&cheer("Cheer100", 100)),
+            [("Cheer100".to_string(), "100 Bits".to_string())]
+        );
+        assert_eq!(
+            cheer_tip(&cheer("cheer1", 1)),
+            [("cheer1".to_string(), "1 Bit".to_string())]
         );
     }
 }

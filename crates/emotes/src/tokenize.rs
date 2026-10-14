@@ -18,6 +18,24 @@ use crate::providers::Provider;
 pub enum Token {
     Text(String),
     Emote(Emote),
+    /// A word that spent Bits, drawn as its cheermote ([`apply_cheers`]).
+    Cheer(Cheer),
+}
+
+/// A cheer in a line that spent Bits: `Cheer100` as the picture of the
+/// tier its amount reaches, with the amount written after it in the
+/// tier's colour, as Twitch's own chat draws it. What a word is worth and
+/// which picture it gets are the lookup's (`perch::chat_cheers`); this
+/// crate only places it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Cheer {
+    /// The word as sent, `Cheer100`, kept for the tooltip.
+    pub name: String,
+    /// The Bits it spent.
+    pub amount: u32,
+    pub url: String,
+    /// The tier's colour, 0xRRGGBB, for the amount.
+    pub color: u32,
 }
 
 /// What an emote does to the emotes written beside it, as its provider says
@@ -226,6 +244,47 @@ pub fn apply_named_emotes(
     tokens: Vec<Token>,
     lookup: &impl Fn(&str) -> Option<Named>,
 ) -> Vec<Token> {
+    replace_words(tokens, |word| {
+        let named = lookup(word)?;
+        Some(Token::Emote(Emote::new(
+            word,
+            named.url,
+            named.provider,
+            named.kind,
+        )))
+    })
+}
+
+/// Replace whole words with cheers, in a message whose `bits` tag says it
+/// spent `bits`, leaving every other word alone.
+///
+/// Word-exact as the named emotes are, and only in the text: a word Twitch
+/// placed an emote on stays that emote. `lookup` says what a word would be
+/// (`Cheer100`, in any case, is 100 Bits of `Cheer`), and the tag says how
+/// far the words go: each cheer is taken from what is left, in the order
+/// written, and one that would spend more than is left stays a word. So a
+/// `Cheer100` typed beside a 1-Bit cheer is not drawn as a hundred.
+/// Chatterino keeps the same running budget.
+pub fn apply_cheers(
+    tokens: Vec<Token>,
+    bits: u32,
+    lookup: &impl Fn(&str) -> Option<Cheer>,
+) -> Vec<Token> {
+    let mut left = bits;
+    replace_words(tokens, |word| {
+        let cheer = lookup(word).filter(|cheer| cheer.amount <= left)?;
+        left -= cheer.amount;
+        Some(Token::Cheer(cheer))
+    })
+}
+
+/// The word walk both replacements share: each space-separated word of the
+/// text tokens offered to `replace` in order, and put in the line as what
+/// it gives back, or left text where it gives nothing. The spaces between
+/// words are kept as they were sent, a token that is not text is passed
+/// through untouched, and an empty word, between two spaces, is never
+/// offered.
+fn replace_words(tokens: Vec<Token>, mut replace: impl FnMut(&str) -> Option<Token>) -> Vec<Token> {
     let mut out = Vec::new();
     for token in tokens {
         let Token::Text(text) = token else {
@@ -236,23 +295,23 @@ pub fn apply_named_emotes(
         let mut pending = String::new();
         for word in text.split_inclusive(' ') {
             let trimmed = word.trim_end_matches(' ');
-            match lookup(trimmed) {
-                Some(named) if !trimmed.is_empty() => {
+            let replaced = if trimmed.is_empty() {
+                None
+            } else {
+                replace(trimmed)
+            };
+            match replaced {
+                Some(replaced) => {
                     if !pending.is_empty() {
                         out.push(Token::Text(std::mem::take(&mut pending)));
                     }
-                    out.push(Token::Emote(Emote::new(
-                        trimmed,
-                        named.url,
-                        named.provider,
-                        named.kind,
-                    )));
+                    out.push(replaced);
                     // Preserve the separator that split_inclusive kept.
                     if word.ends_with(' ') {
                         pending.push(' ');
                     }
                 }
-                _ => pending.push_str(word),
+                None => pending.push_str(word),
             }
         }
         if !pending.is_empty() {
@@ -272,6 +331,7 @@ mod tests {
             .map(|t| match t {
                 Token::Text(s) => format!("T:{s}"),
                 Token::Emote(e) => format!("E:{}", e.name),
+                Token::Cheer(c) => format!("C:{}", c.name),
             })
             .collect()
     }
@@ -375,7 +435,7 @@ mod tests {
             .iter()
             .filter_map(|token| match token {
                 Token::Emote(emote) => Some((emote.name.as_str(), emote.provider, emote.kind)),
-                Token::Text(_) => None,
+                Token::Text(_) | Token::Cheer(_) => None,
             })
             .collect();
         assert_eq!(
@@ -402,5 +462,67 @@ mod tests {
             Token::Emote(e) => assert_eq!(e.url, "orig"),
             _ => panic!("emote was replaced"),
         }
+    }
+
+    /// A cheer lookup over `Cheer` in any case, each amount one picture:
+    /// what a word is worth is the lookup's to say, not this module's.
+    fn cheer(word: &str) -> Option<Cheer> {
+        let prefix = word.trim_end_matches(|c: char| c.is_ascii_digit());
+        let amount = word[prefix.len()..].parse().ok()?;
+        prefix.eq_ignore_ascii_case("cheer").then(|| Cheer {
+            name: word.to_string(),
+            amount,
+            url: "https://example.invalid/cheer".into(),
+            color: 0x979797,
+        })
+    }
+
+    #[test]
+    fn cheers_replace_whole_words_within_the_bits() {
+        let text = vec![Token::Text("cheer100 great Cheer1".into())];
+        let tokens = apply_cheers(text, 101, &cheer);
+        assert_eq!(names(&tokens), ["C:cheer100", "T: great ", "C:Cheer1"]);
+        let Token::Cheer(first) = &tokens[0] else {
+            panic!("not a cheer");
+        };
+        assert_eq!(first.amount, 100);
+        // Inside a word is not a cheer, nor is the prefix alone.
+        let text = vec![Token::Text("xCheer100 Cheer Cheer100!".into())];
+        assert_eq!(
+            names(&apply_cheers(text, 100, &cheer)),
+            ["T:xCheer100 Cheer Cheer100!"]
+        );
+    }
+
+    /// The `bits` tag is the most the words can spend, taken in the order
+    /// written: a word past what is left stays the word it was typed as.
+    #[test]
+    fn a_cheer_past_the_bits_left_stays_a_word() {
+        let text = vec![Token::Text("Cheer100 Cheer100".into())];
+        assert_eq!(
+            names(&apply_cheers(text, 100, &cheer)),
+            ["C:Cheer100", "T: Cheer100"]
+        );
+        let text = vec![Token::Text("Cheer500 Cheer1".into())];
+        assert_eq!(
+            names(&apply_cheers(text, 1, &cheer)),
+            ["T:Cheer500 ", "C:Cheer1"]
+        );
+    }
+
+    /// A word Twitch put an emote on stays that emote.
+    #[test]
+    fn cheers_leave_emotes_alone() {
+        let tokens = apply_cheers(tokenize("Kappa Cheer1", Some("25:0-4"), false), 1, &cheer);
+        assert_eq!(names(&tokens), ["E:Kappa", "T: ", "C:Cheer1"]);
+    }
+
+    #[test]
+    fn cheers_keep_the_spaces_between_words() {
+        let text = vec![Token::Text("a  Cheer1  b ".into())];
+        assert_eq!(
+            names(&apply_cheers(text, 1, &cheer)),
+            ["T:a  ", "C:Cheer1", "T:  b "]
+        );
     }
 }
