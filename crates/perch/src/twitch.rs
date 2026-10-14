@@ -388,6 +388,11 @@ pub enum TwitchEvent {
         id: u64,
         result: Result<SendOutcome, SendFailure>,
     },
+    /// A refreshed sign-in could not be written to the settings file. Not
+    /// the end of the worker, which goes on with it and tries the save
+    /// again at each poll; said once, since a launch before one lands
+    /// starts signed out.
+    SignInUnsaved(String),
     /// Sign-in itself failed, so nothing works.
     Error(String),
     /// One browse request failed. The session is fine; only that list is empty,
@@ -583,11 +588,11 @@ fn interruptible_sleep(total: Duration, stop: &AtomicBool) -> bool {
 /// A worker that is mid-request when its service is replaced — which is exactly
 /// what a client-id change does — would otherwise finish, and write tokens
 /// belonging to the *old* client id over the new worker's settings. Teardown no
-/// longer waits for this thread, so the thread has to decline instead.
+/// longer waits for this thread, so the thread has to decline instead. It is
+/// read under the file's lock (`Settings::save_sign_in_if`), not before it:
+/// read before, a Sign out landing in between cleared the file and then had
+/// the refreshed tokens written back over it.
 fn persist(settings_path: &Path, session: &Session, stop: &AtomicBool) -> Result<(), String> {
-    if stop.load(Ordering::Relaxed) {
-        return Ok(());
-    }
     let tokens = OAuthTokens {
         access_token: session.access_token.clone(),
         refresh_token: session.refresh_token.clone(),
@@ -595,7 +600,11 @@ fn persist(settings_path: &Path, session: &Session, stop: &AtomicBool) -> Result
         user_id: session.user_id.clone(),
         login: session.login.clone(),
     };
-    Settings::save_sign_in(settings_path, Some(tokens)).map_err(|e| e.to_string())
+    Settings::save_sign_in_if(settings_path, Some(tokens), || {
+        !stop.load(Ordering::Relaxed)
+    })
+    .map(|_| ())
+    .map_err(|e| e.to_string())
 }
 
 /// How many times a refresh that never reached Twitch is retried at startup
@@ -612,12 +621,18 @@ const STARTUP_REFRESH_WAIT: Duration = Duration::from_secs(3);
 
 /// Get a usable session, signing in or refreshing as needed; with
 /// [`SignInStart::Fresh`], straight to a new device code.
+///
+/// A session Twitch issued that could not be saved is not the end of the
+/// worker: it is returned with `unsaved` set, for `keep_session_fresh` to
+/// save at each poll until it lands, and said once
+/// (`TwitchEvent::SignInUnsaved`).
 fn establish_session(
     settings_path: &Path,
     start: SignInStart,
     client_id: &str,
     tx: &mpsc::UnboundedSender<TwitchEvent>,
     stop: &AtomicBool,
+    unsaved: &mut bool,
 ) -> Option<Session> {
     let settings = Settings::load(settings_path).ok()?;
 
@@ -648,9 +663,9 @@ fn establish_session(
             ) {
                 Ok(session) => {
                     if let Err(e) = persist(settings_path, &session, stop) {
-                        let _ = tx.unbounded_send(TwitchEvent::Error(format!(
-                            "signed in but could not save tokens: {e}"
-                        )));
+                        eprintln!("sign-in: could not save the refreshed sign-in: {e}");
+                        let _ = tx.unbounded_send(TwitchEvent::SignInUnsaved(e));
+                        *unsaved = true;
                     }
                     return Some(session);
                 }
@@ -710,9 +725,9 @@ fn establish_session(
         match twitch_api::poll_token(client_id, &device.device_code) {
             Ok(session) => {
                 if let Err(e) = persist(settings_path, &session, stop) {
-                    let _ = tx.unbounded_send(TwitchEvent::Error(format!(
-                        "signed in but could not save tokens: {e}"
-                    )));
+                    eprintln!("sign-in: could not save the new sign-in: {e}");
+                    let _ = tx.unbounded_send(TwitchEvent::SignInUnsaved(e));
+                    *unsaved = true;
                 }
                 let _ = tx.unbounded_send(TwitchEvent::SignedIn {
                     login: session.login.clone(),
@@ -757,13 +772,30 @@ fn establish_session(
 /// the next poll will simply try again. Treating both alike meant one dropped
 /// packet signed the user out for the rest of the session, which is the same
 /// bad-wifi failure the post-exchange lookup used to have.
+///
+/// A refreshed session that could not be saved is saved again at every call
+/// until it is (`unsaved`), and said once. Refresh tokens are single use, so
+/// the one on disk died with the refresh: left unsaved, the next launch would
+/// sign the user out without a word.
 fn keep_session_fresh(
     session: &mut Session,
+    unsaved: &mut bool,
     client_id: &str,
     settings_path: &Path,
     tx: &mpsc::UnboundedSender<TwitchEvent>,
     stop: &AtomicBool,
 ) -> bool {
+    // Not once stopped: `persist` declines then, and its `Ok` would read
+    // as a save that landed.
+    if *unsaved && !stop.load(Ordering::Relaxed) {
+        match persist(settings_path, session, stop) {
+            Ok(()) => {
+                eprintln!("sign-in: saved at last");
+                *unsaved = false;
+            }
+            Err(e) => eprintln!("sign-in: still could not save: {e}"),
+        }
+    }
     if !twitch_api::needs_refresh(session.expires_at) {
         return true;
     }
@@ -774,7 +806,13 @@ fn keep_session_fresh(
         &session.login,
     ) {
         Ok(fresh) => {
-            let _ = persist(settings_path, &fresh, stop);
+            if let Err(e) = persist(settings_path, &fresh, stop) {
+                eprintln!("sign-in: could not save the refreshed sign-in: {e}");
+                if !*unsaved {
+                    let _ = tx.unbounded_send(TwitchEvent::SignInUnsaved(e));
+                }
+                *unsaved = true;
+            }
             *session = fresh;
             true
         }
@@ -1142,7 +1180,11 @@ fn run(
         return;
     };
 
-    let Some(mut session) = establish_session(&settings_path, start, &client_id, &tx, &stop) else {
+    // A sign-in not yet on disk; see `keep_session_fresh`.
+    let mut unsaved = false;
+    let Some(mut session) =
+        establish_session(&settings_path, start, &client_id, &tx, &stop, &mut unsaved)
+    else {
         return;
     };
     let _ = tx.unbounded_send(TwitchEvent::SignedIn {
@@ -1159,7 +1201,14 @@ fn run(
 
     while !stop.load(Ordering::Relaxed) {
         if Instant::now() >= next_poll {
-            if !keep_session_fresh(&mut session, &client_id, &settings_path, &tx, &stop) {
+            if !keep_session_fresh(
+                &mut session,
+                &mut unsaved,
+                &client_id,
+                &settings_path,
+                &tx,
+                &stop,
+            ) {
                 return;
             }
             if Instant::now() >= next_validate {
@@ -1209,7 +1258,14 @@ fn run(
                 if stop.load(Ordering::Relaxed) {
                     return;
                 }
-                if !keep_session_fresh(&mut session, &client_id, &settings_path, &tx, &stop) {
+                if !keep_session_fresh(
+                    &mut session,
+                    &mut unsaved,
+                    &client_id,
+                    &settings_path,
+                    &tx,
+                    &stop,
+                ) {
                     return;
                 }
                 match request {

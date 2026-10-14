@@ -573,10 +573,14 @@ fn read_if_present(path: &Path) -> Result<Option<String>, Error> {
 
 /// Write `text` to `path`, creating parent directories as needed.
 ///
-/// Written to a temporary file and renamed, so an interrupted save cannot
-/// leave a truncated file behind — which for the settings, holding the
-/// sign-in, would mean silently signing the user out.
+/// Written to a temporary file, flushed to the disk, and renamed, so an
+/// interrupted save cannot leave a truncated file behind — which for the
+/// settings, holding the sign-in, would mean silently signing the user out.
+/// The flush is what makes that hold through a power cut as well as a
+/// crash: without it the rename can reach the disk before the bytes it
+/// names, and the file comes back empty.
 fn write_atomically(path: &Path, text: &str) -> Result<(), Error> {
+    use std::io::Write as _;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|source| Error::Write {
             path: parent.to_path_buf(),
@@ -584,7 +588,11 @@ fn write_atomically(path: &Path, text: &str) -> Result<(), Error> {
         })?;
     }
     let temp = path.with_extension("json.part");
-    std::fs::write(&temp, text).map_err(|source| Error::Write {
+    let written = std::fs::File::create(&temp).and_then(|mut file| {
+        file.write_all(text.as_bytes())?;
+        file.sync_all()
+    });
+    written.map_err(|source| Error::Write {
         path: temp.clone(),
         source,
     })?;
@@ -837,10 +845,30 @@ impl Settings {
     /// lock the UI's saves take. Twitch refresh tokens are single-use, so this
     /// has to land, and land intact, every time one is issued.
     pub fn save_sign_in(path: &Path, oauth: Option<OAuthTokens>) -> Result<(), Error> {
+        Self::save_sign_in_if(path, oauth, || true).map(|_| ())
+    }
+
+    /// [`save_sign_in`](Self::save_sign_in), unless `wanted` says otherwise
+    /// once the lock is held, and whether it wrote.
+    ///
+    /// For the sign-in worker, whose tokens must not land after Sign out
+    /// has cleared them. Asked under the lock, because asked before it the
+    /// answer can change while the worker waits for it: Sign out stops the
+    /// worker and then takes the lock to clear the file, so a worker that
+    /// asks inside it either goes first, and is cleared after, or sees that
+    /// it was stopped, and writes nothing.
+    pub fn save_sign_in_if(
+        path: &Path,
+        oauth: Option<OAuthTokens>,
+        wanted: impl FnOnce() -> bool,
+    ) -> Result<bool, Error> {
         let _guard = file_lock();
+        if !wanted() {
+            return Ok(false);
+        }
         let mut settings = Self::load(path)?;
         settings.credentials.oauth = oauth;
-        settings.write(path)
+        settings.write(path).map(|()| true)
     }
 
     /// Forget the stored sign-in, keeping everything else the file says:
@@ -1663,6 +1691,63 @@ mod tests {
             Some(format!("refresh-{ROUNDS}")),
             "the worker's last token was overwritten by an older one"
         );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Sign out against a refresh landing at the same moment: whichever
+    /// takes the lock first, the file ends signed out, because the worker
+    /// asks whether it was stopped under the lock rather than before it.
+    /// Hammered rather than reasoned about, the stop flag set by the "UI"
+    /// just before it clears the file, as `RootView::sign_out` does.
+    #[test]
+    fn a_sign_out_is_never_undone_by_a_refresh_in_flight() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let path = temp_file("sign-out-race");
+        for round in 0..100 {
+            let _ = std::fs::remove_file(&path);
+            Settings::default().save(&path).unwrap();
+            let stop = Arc::new(AtomicBool::new(false));
+            let worker = std::thread::spawn({
+                let path = path.clone();
+                let stop = stop.clone();
+                move || {
+                    let tokens = OAuthTokens {
+                        refresh_token: format!("refresh-{round}"),
+                        ..Default::default()
+                    };
+                    Settings::save_sign_in_if(&path, Some(tokens), || {
+                        !stop.load(Ordering::Relaxed)
+                    })
+                    .unwrap();
+                }
+            });
+            stop.store(true, Ordering::Relaxed);
+            Settings::sign_out(&path).unwrap();
+            worker.join().unwrap();
+            assert_eq!(
+                Settings::load(&path).unwrap().credentials.oauth,
+                None,
+                "round {round}: a refresh was written back over a sign-out"
+            );
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_save_not_wanted_under_the_lock_writes_nothing() {
+        let path = temp_file("unwanted-save");
+        let _ = std::fs::remove_file(&path);
+        Settings::default().save(&path).unwrap();
+        let tokens = OAuthTokens {
+            refresh_token: "kept-out".into(),
+            ..Default::default()
+        };
+        assert!(!Settings::save_sign_in_if(&path, Some(tokens.clone()), || false).unwrap());
+        assert_eq!(Settings::load(&path).unwrap().credentials.oauth, None);
+        assert!(Settings::save_sign_in_if(&path, Some(tokens), || true).unwrap());
+        assert!(Settings::load(&path).unwrap().credentials.oauth.is_some());
         let _ = std::fs::remove_file(&path);
     }
 

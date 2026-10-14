@@ -205,6 +205,14 @@ impl RootView {
                 self.refreshing = false;
                 cx.notify();
             }
+            // Not terminal: the worker carries on and saves again at each
+            // poll. Said because a launch before a save lands is signed out.
+            TwitchEvent::SignInUnsaved(reason) => {
+                self.toast(
+                    format!("Could not save the sign-in: {reason}. Perch will keep trying."),
+                    cx,
+                );
+            }
             TwitchEvent::Error(reason) => {
                 // Terminal: the worker has returned, so no refresh it was
                 // holding is ever going to be answered — and no browse

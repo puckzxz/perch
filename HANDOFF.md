@@ -1238,7 +1238,22 @@ Unrelated credentials, easy to confuse, documented in `settings::Credentials`:
   plain text. That is a documented tradeoff, not an oversight.
 
 Neither can do the other's job. Refresh tokens are **single-use** — persist the
-new one immediately or the next launch is locked out.
+new one immediately or the next launch is locked out. A save that fails is
+not let go: `keep_session_fresh` tries it again at every poll until it
+lands, and says once that it could not (`TwitchEvent::SignInUnsaved`, a
+toast) — a session from a refresh or a sign-in at startup as well
+(`establish_session`'s `unsaved`). It used to be thrown away
+(`let _ = persist(…)`), which signed the next launch out without a word,
+or at startup ended the worker as if the sign-in had failed. The save itself is flushed to the disk
+before its rename (`settings::write_atomically`), so a power cut cannot
+leave the file empty either. And a public client's refresh token — perch's
+is one, since the device flow has no secret — expires 30 days after it was
+issued ("Refreshing Access Tokens" on dev.twitch.tv, read 14 October 2026).
+Each refresh issues a new one, and perch refreshes whenever the access
+token is within five minutes of running out (`twitch_api::needs_refresh`),
+so the clock starts again whenever perch runs; one left closed for longer
+than that starts the device flow again, through the "sign-in expired" path
+in `establish_session`.
 
 **Nothing that can fail may sit between the token swap and the save.**
 `twitch_api::refresh` used to call `current_user()` before returning, which put
@@ -1333,10 +1348,12 @@ and only then forgets the tokens through `Settings::sign_out`, which is
 `save_sign_in(None)`: the sign-in writer's own path, under the lock every
 save takes and re-reading the file, so no preference is lost and no later
 preference save can bring the tokens back (`save_preferences` keeps the
-sign-in it finds, which is now none). A worker that read `stop` just before
-it was set and wrote in the instant after could still put its tokens back;
-the window is the gap between a flag read and a lock, the same one a client
-id change has always had. What is left is `SignIn::SignedOut` and
+sign-in it finds, which is now none). The worker asks `stop` under that
+lock, not before it (`Settings::save_sign_in_if`), so a refresh in flight
+either lands first and is cleared after, or sees it was stopped and writes
+nothing; asked before, a worker that read the flag just before Sign out set
+it and wrote in the instant after put its tokens back on disk
+(`a_sign_out_is_never_undone_by_a_refresh_in_flight`). What is left is `SignIn::SignedOut` and
 `TwitchService::stopped()`, a service with no thread whose every request
 reports nobody there: no code is asked for until the user presses Sign in,
 which is offered wherever the sign-in is said once signed out
@@ -4747,11 +4764,14 @@ None of these is being worked on; all of them are real.
    seconds after, keeps up to four more streamlinks waiting, idle (about
    45 MB each, no CPU, no network), so a pick does not wait for one to
    start (`root::warm`).
-4. **Sign out can race a refresh.** A worker that read its `stop` flag just
-   before Sign out set it, and wrote its refreshed tokens in the instant
-   after, puts them back on disk; see "The second scope, and signing out".
-   The gap between a flag read and the settings lock is the same one a
-   client id change has always had.
+4. **Chat said while the connection was down is lost.** Backfill runs on
+   the first connect only (`twitch_chat`, "Only on the first attempt"), so
+   a sleep, a Wi-Fi drop or a NAT timeout leaves a gap the pane does not
+   mark beyond its `Disconnected` notice. The history service's `after=`
+   could fill it, but its changelog lists that parameter as unreleased,
+   so it would have to be deduplicated by message id and tested against
+   the live service first. (This item was Sign out racing a refresh, fixed
+   on 14 October 2026; see "The second scope, and signing out".)
 5. **Animated WebP** (7TV, some BTTV) may render as stills. Twitch's own
    animated emotes are GIF and animate correctly.
 6. **`ImageCache::new` is still on the pre-window UI thread.** It is now
