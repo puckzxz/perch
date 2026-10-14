@@ -382,11 +382,9 @@ impl RootView {
 
         let first_poll = !self.streams_seeded;
         if !first_poll {
-            let mut newly: Vec<&LiveStream> = streams
-                .iter()
-                .filter(|s| !self.known_live.contains(&s.user_login))
-                .collect();
-            newly.sort_by_key(|stream| std::cmp::Reverse(stream.viewer_count));
+            // Before `who` below notes this poll's broadcasts as seen.
+            let newly =
+                notifications::newly_live(&streams, &self.known_live, &self.seen_broadcasts);
             for stream in newly {
                 // A stream with no category set has an empty game, and joined
                 // regardless the notice ended in a dangling " · ".

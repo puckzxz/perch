@@ -46,6 +46,34 @@ impl Seen {
         let broadcast = broadcast(stream);
         self.0.insert(stream.user_login.clone(), broadcast.clone()) != Some(broadcast)
     }
+
+    /// Whether `stream`'s broadcast is one not seen before for its channel,
+    /// noting nothing: [`who`] notes.
+    fn is_new(&self, stream: &LiveStream) -> bool {
+        self.0.get(&stream.user_login) != Some(&broadcast(stream))
+    }
+}
+
+/// Who among a poll's `streams` the in-app toast announces, most watched
+/// first: a channel the poll before did not list (`was_live`), with a
+/// broadcast not seen before, the rule [`who`] keeps for the desktop.
+///
+/// Read before `who`, which notes the poll's broadcasts as seen. Without
+/// the broadcast, a stream Helix left out of one poll was announced again
+/// when the next listed it, and with desktop notifications off this toast
+/// is the only news there is. The first poll's silence is the caller's, as
+/// it is `who`'s.
+pub fn newly_live<'a>(
+    streams: &'a [LiveStream],
+    was_live: &HashSet<String>,
+    seen: &Seen,
+) -> Vec<&'a LiveStream> {
+    let mut newly: Vec<&LiveStream> = streams
+        .iter()
+        .filter(|stream| !was_live.contains(&stream.user_login) && seen.is_new(stream))
+        .collect();
+    newly.sort_by_key(|stream| std::cmp::Reverse(stream.viewer_count));
+    newly
 }
 
 /// What tells one of a channel's broadcasts from another: Helix's id for
@@ -236,6 +264,47 @@ mod tests {
         told.iter()
             .map(|stream| stream.user_login.clone())
             .collect()
+    }
+
+    /// The in-app toast keeps the desktop's rule: a broadcast that blinked
+    /// out of one poll is not news when the next lists it again, and a new
+    /// broadcast of the same channel is.
+    #[test]
+    fn the_toast_announces_a_broadcast_once() {
+        let mut seen = Seen::default();
+        let first = [stream("a", "1", 10), stream("b", "2", 500)];
+        // The first poll seeds silently; `who` notes what it saw.
+        who(
+            &first,
+            &live(&[]),
+            true,
+            DesktopNotifications::Off,
+            |_| false,
+            true,
+            &mut seen,
+        );
+
+        // "a" drops out of a poll, then comes back under the same id.
+        let blinked = [stream("b", "2", 500)];
+        assert!(newly_live(&blinked, &live(&["a", "b"]), &seen).is_empty());
+        who(
+            &blinked,
+            &live(&["a", "b"]),
+            false,
+            DesktopNotifications::Off,
+            |_| false,
+            true,
+            &mut seen,
+        );
+        let back = [stream("a", "1", 10), stream("b", "2", 500)];
+        assert!(newly_live(&back, &live(&["b"]), &seen).is_empty());
+
+        // A new broadcast, and a channel never seen, are news, most watched first.
+        let fresh = [stream("a", "9", 10), stream("c", "3", 40)];
+        assert_eq!(
+            logins(&newly_live(&fresh, &live(&["b"]), &seen)),
+            ["c", "a"]
+        );
     }
 
     /// Asked for everyone, in the background, past the first poll: whoever

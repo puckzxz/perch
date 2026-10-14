@@ -2041,8 +2041,12 @@ night with nobody live, and would swallow the first go-live of the morning;
 and once a broadcast — `Seen` keeps the broadcast id (or `started_at` where
 Helix gave none) each channel was last seen live with, noted for every stream
 in every poll whether or not anybody was told, so a stream that blinks out of
-one poll and back is not news, and nor is one already live at launch. `Seen`
-outlives `restart_twitch`, which only empties `known_live`. "In front" is
+one poll and back is not news, and nor is one already live at launch. The
+in-app toast goes by the same rule (`notifications::newly_live`, read before
+`who` notes the poll): it used to go by `known_live` alone, which each poll
+replaces, so a stream Helix left out of one poll was announced again at the
+next, and with desktop notifications off that toast is the only news there
+is. `Seen` outlives `restart_twitch`, which only empties `known_live`. "In front" is
 the active window, not a visible one: perch in view on one monitor while
 somebody types on the other gets both the in-app notice and the toast, which
 the docs say. `notifications::batch` caps a poll at three toasts — past
