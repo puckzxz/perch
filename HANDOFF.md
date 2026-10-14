@@ -1236,7 +1236,25 @@ for a few minutes, then again with the setting under test flipped, and compare
 steady-state rows of the CSV rather than a moment of each.
 
 **Always benchmark `--release`.** Debug builds are several times slower at the
-per-frame format conversion.
+per-frame format conversion, and their UI thread sits at a whole core on its
+own, so nothing measured in one says anything. `cargo build --profile
+profiling -p perch` gives an optimized build with symbols in its own
+directory, which a test copy can run while a user's release build is left
+alone.
+
+**Where the UI thread's time goes, measured** (14 October 2026: an optimized
+build, two live 1080p panes side by side with busy chats, 90 seconds, a
+throwaway timer around each render, not kept). The thread used 29% of a
+core, 289 ms a second. Building chat rows took about 20 ms of it (2,200 rows
+drawn a second: every visible row is rebuilt whenever its chat repaints,
+tokenizing and looking up emotes as it goes); the video views, their texture
+uploads included, about 24 ms; `RootView::render` about 9 ms; `ChatView`'s
+own render about 2 ms. The other 234 ms or so is gpui's: layout, prepaint,
+paint and presenting the frame. So a cache of each row's tokens, an idea that
+had been on the list, would save two percent of a core at most, and was not
+built. If the UI thread is ever worth cutting, the lever is the element count
+gpui lays out — a chat row is an element per word, for the reasons under
+Chat — not the work done to build them.
 
 ### Networking
 
