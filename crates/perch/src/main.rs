@@ -18,6 +18,7 @@
 mod ad_break;
 mod assets;
 mod browse;
+mod catch_up;
 mod channel_page;
 mod chat;
 mod chat_badges;

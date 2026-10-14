@@ -231,6 +231,7 @@ App modules:
 | `wheel.rs` | `Alt` and the wheel over a picture, turned into volume steps: one per click of a notched wheel, a click's worth at a time for a touchpad or trackpad (`Wheel`) (pure, tested) |
 | `ad_break.rs` | a pane's ad-break notice: what its header tag says (`ad break · 0:25`), when it ticks, and when it is over — its length run out, or the picture moving again after standing still (`frames_resumed`) (pure, tested) |
 | `seek_bar.rs` | the bar on a recording, and on a live pane its timeline, ending in its length or the live badge (`End`), and the arithmetic behind it; a recording's muted stretches as a band behind the rail (`muted_spans`), and `muted` in the time under the pointer over one (`muted_at`, `hover_label`) (tested) |
+| `catch_up.rs` | a live player that fell behind after a stall plays at 1.05 until it is near the edge again, read from `demuxer-cache-duration` (pure, tested) |
 | `speed.rs` | how fast a recording plays: the speeds More offers, `0.75x` to `2x` (`Speed::CHOICES`), and how each is written (`label`) (pure, tested); the speed itself lives on the pane's `video::PositionHandle` |
 | `rewind.rs` | rewinding a live pane, worked out: whether a timeline is offered (`span`), where a press lands (`pressed_at`, never within `EDGE_SECS` of the edge), the archive of the broadcast going on now (`archive_for`), where in it a moment is (`position_in`), the ask and the press waiting on it (`Rewind`), and whether a recording is the archive of the broadcast on now (`live_now`), weighed against what the pane knows of where it came from (`Origin`), which offers the way back to live (`back_to_live`) (pure, tested) |
 | `video.rs` | render thread; owns the mpv `Player`; the pane's `PositionHandle`, where a recording is and how fast it plays, which every player of the pane and its chat replay share |
@@ -436,6 +437,24 @@ on the wake that says it began, which would put the ad notice's sense of
 when the picture last moved (`VideoView::resumed_at`) late. The pane's
 header says `buffering` beside `muted` and `paused`, and not during an ad
 break, which freezes the picture too and says why.
+
+**A live picture that fell behind catches up.** mpv jumps to the live edge
+only when a live pane is unpaused (`seek_to_live`). After the network
+stalls, streamlink fetches the segments it missed and hands them over at
+once, so mpv resumes with the backlog in its cache and plays it at normal
+speed, behind for good, chat (which arrives as it is said) that far ahead
+of the picture. Measured on 14 October 2026 by suspending a scratch copy's
+streamlink for eight seconds on a live channel (`NtSuspendProcess` on the
+launcher and its Python): the cache sat at about 1.6 s before and at 7.8 s
+after, the picture 6.2 s further from live, for as long as anyone watched.
+Now the render thread observes `demuxer-cache-duration` on a live player
+and `crate::catch_up` plays it at 1.05 while it holds more than 3 s, until
+it is under 1.75 s, as Twitch's player and FrankerFaceZ's `allow-catchup`
+do; mpv's pitch correction keeps the speech from rising. Measured again
+with it: 6.3 s behind after the stall, a quarter of a second less every
+five seconds, back near the edge in two minutes. Not a jump, which would
+throw away what was said in those seconds; not while paused. A pane's own
+speed (`crate::speed`) stays a recording's only.
 
 **`mpv_render_context_render` blocks until the frame's display time**, up to
 `video-timing-offset` (50 ms default). That wait is what keeps video timed to
@@ -5077,7 +5096,8 @@ So is the round of 14 October 2026, picked by the user from a ranked list
 of thirty: chat lines that name or answer the signed-in user wear a wash of
 their own; a live picture waiting on the network says `buffering`; `Reset
 pane sizes` in the chat options menu; previews for recommended channels; a
-2160p render cap; and the reliability half — held chat rows capped,
+2160p render cap; a live pane that fell behind after a stall catching up
+at 1.05 (measured); and the reliability half — held chat rows capped,
 streamlink's age and Twitch's changes named in the pane, render loops and
 the Twitch worker that no longer die without a word, a crash file, a
 sign-in that survives a Sign out race, a failed save and a power cut, one

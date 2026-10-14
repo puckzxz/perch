@@ -4,7 +4,9 @@
 //! A recording only. A live stream plays at the speed it is made, and
 //! anything faster would run into the live edge within the minute; the More
 //! menu of a live pane has no speed row, and `VideoStream::set_speed` does
-//! nothing to one.
+//! nothing to one. The one time a live player plays faster is its own
+//! doing, catching up with the edge after falling behind it
+//! (`crate::catch_up`), and that is never a speed the pane chose.
 //!
 //! Per pane and never saved: the speed lives on the pane's
 //! `video::PositionHandle`, beside its position, so every player the pane

@@ -942,7 +942,10 @@ Twitch serves, so a 4K stream filling a 4K screen is drawn at its own size.
 
 A live pane whose picture stops for more than a second while it waits on the
 network says `buffering` in its header, beside `muted` and `paused`, until the
-picture moves again.
+picture moves again. When the picture comes back it is behind the stream by
+however long it waited, so it plays a twentieth faster, at the same pitch,
+until it is back at the live edge: about two minutes for a six-second stall.
+Chat, which never waits, is in step with it again by then.
 
 The choice is made again whenever a pane changes size — another pane opening
 or closing, the rail folding, the window resizing or going fullscreen, a pane

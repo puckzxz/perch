@@ -23,6 +23,7 @@ use mpv_frames::{Config, EndReason, Event, Player};
 use smallvec::smallvec;
 use streamlink::Playlist;
 
+use crate::catch_up::CatchUp;
 use crate::compressor;
 use crate::seek_bar::Timeline;
 use crate::speed::Speed;
@@ -636,9 +637,13 @@ impl VideoStream {
                     // Only a live picture says `buffering`: a recording's
                     // jumps are reopens that wait a second each by design,
                     // and its stalls have their own remedy (`vod::stalled`).
+                    // And how much it holds, which is how far behind the
+                    // edge it is (`crate::catch_up`).
                     if live {
-                        if let Err(e) = player.observe_property("paused-for-cache") {
-                            eprintln!("video: could not observe paused-for-cache: {e}");
+                        for name in ["paused-for-cache", "demuxer-cache-duration"] {
+                            if let Err(e) = player.observe_property(name) {
+                                eprintln!("video: could not observe {name}: {e}");
+                            }
                         }
                     }
                     // Only a recording has a position worth the traffic:
@@ -701,6 +706,11 @@ impl VideoStream {
                     // Since when mpv has been waiting on its cache, while it
                     // is; see `buffering`.
                     let mut starved_since: Option<Instant> = None;
+                    // How many seconds a live player's cache holds, and the
+                    // catch-up that reads it; see `crate::catch_up`.
+                    let mut buffered: Option<f64> = None;
+                    let mut catch_up = CatchUp::default();
+                    let mut live_speed = 1.0;
 
                     'frames: while !stop.load(Ordering::Relaxed) {
                         for event in player.poll_events() {
@@ -722,6 +732,9 @@ impl VideoStream {
                                                 has_moved = true;
                                             }
                                         }
+                                    }
+                                    "demuxer-cache-duration" => {
+                                        buffered = value.and_then(|v| v.parse().ok());
                                     }
                                     "paused-for-cache" => {
                                         let starved = value.as_deref() == Some("yes");
@@ -970,6 +983,28 @@ impl VideoStream {
                                 }
                             }
                             None => {}
+                        }
+
+                        // A live player that fell behind catches up, a little
+                        // faster until it is near the edge again; see
+                        // `crate::catch_up`. Said in the log each way.
+                        if live {
+                            let wanted = catch_up.speed(buffered, applied_pause);
+                            if wanted != live_speed {
+                                eprintln!(
+                                    "video: {} ({:.1}s buffered)",
+                                    if wanted > 1.0 {
+                                        "behind live; catching up"
+                                    } else {
+                                        "at the live edge again"
+                                    },
+                                    buffered.unwrap_or_default()
+                                );
+                                if let Err(e) = player.set_speed(wanted) {
+                                    eprintln!("video: could not set speed: {e}");
+                                }
+                                live_speed = wanted;
+                            }
                         }
 
                         // The pane's speed, a recording's only; see
