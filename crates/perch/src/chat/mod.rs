@@ -1154,13 +1154,16 @@ impl ChatView {
     ///
     /// `piece_chars` is the budget at the chat's text size
     /// ([`Metrics::piece_chars`]): fewer characters as the glyphs grow, so a
-    /// piece fits the narrowest chat at every size.
+    /// piece fits the narrowest chat at every size. `ground` is what the word
+    /// is drawn on, which a mention's colour is lifted against.
+    #[allow(clippy::too_many_arguments)]
     fn render_word(
         &self,
         word: &str,
         seq: u64,
         position: usize,
         text_color: gpui::Hsla,
+        ground: gpui::Hsla,
         piece_chars: usize,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
@@ -1174,10 +1177,12 @@ impl ChatView {
         let url = (parsed.kind == Kind::Link).then(|| parsed.url());
         // Drawn in the colour of whoever is being talked to, when we have seen
         // them speak. Otherwise left alone: a wrong colour is worse than none.
+        // Lifted against what the word is drawn on, `ground`, which a wash
+        // makes lighter than the bare surface.
         let mention_color = parsed
             .mentioned()
             .and_then(|login| self.colors.get(&login.to_ascii_lowercase()).copied())
-            .map(theme::readable)
+            .map(|color| theme::readable_on(color, ground))
             .unwrap_or(text_color);
         // A mention that names a login opens that person's card, as their
         // own name does (`viewer_card`); one that cannot be a login, a
@@ -1319,7 +1324,8 @@ impl ChatView {
         metrics: &Metrics,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
-        let (name_color, _) = Self::speaker_colors(row, message);
+        let ground = self.row_ground(row);
+        let (name_color, _) = Self::speaker_colors(row, message, ground);
         // An action puts the name inside the sentence, so it is not repeated.
         let name = if message.is_action {
             message.display_name.clone()
@@ -1345,7 +1351,15 @@ impl ChatView {
                     })
                     .child(SharedString::from(name)),
             );
-        self.message_words(line, row, message, metrics, message.reply.is_some(), cx)
+        self.message_words(
+            line,
+            row,
+            message,
+            ground,
+            metrics,
+            message.reply.is_some(),
+            cx,
+        )
     }
 
     /// The colours a line of `message` is drawn in: its speaker's name's,
@@ -1354,12 +1368,19 @@ impl ChatView {
     /// A deleted message keeps its place and loses its colour: greyed all
     /// through, name included, so it reads as struck rather than as said.
     /// An action is written in the speaker's colour; a normal message is
-    /// not, or a chat of many voices becomes a chat of many colours.
-    fn speaker_colors(row: &Row, message: &ChatMessage) -> (gpui::Hsla, gpui::Hsla) {
+    /// not, or a chat of many voices becomes a chat of many colours. The
+    /// speaker's colour is lifted against `ground`, what the line is drawn
+    /// on: a row's wash (`row_ground`) is lighter than the bare surface, and
+    /// a colour lifted only for the surface read 3.87:1 on the mention wash.
+    fn speaker_colors(
+        row: &Row,
+        message: &ChatMessage,
+        ground: gpui::Hsla,
+    ) -> (gpui::Hsla, gpui::Hsla) {
         let name = if row.deleted {
             theme::text_dim()
         } else {
-            theme::readable(message.color)
+            theme::readable_on(message.color, ground)
         };
         let words = if message.is_action || row.deleted {
             name
@@ -1398,16 +1419,22 @@ impl ChatView {
     /// the text's start. A card's line has no such line above it, and keeps
     /// the word. Someone's first message in the channel ends with a quiet
     /// `First message` tag, which says why the row is tinted.
+    ///
+    /// `ground` is what the line is drawn on, which the speaker's and the
+    /// mentioned people's colours are lifted against: the row's paint in the
+    /// list, the chat's surface in a card's well.
+    #[allow(clippy::too_many_arguments)]
     fn message_words(
         &self,
         mut line: gpui::Div,
         row: &Row,
         message: &ChatMessage,
+        ground: gpui::Hsla,
         metrics: &Metrics,
         reply_above: bool,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
-        let (_, text_color) = Self::speaker_colors(row, message);
+        let (_, text_color) = Self::speaker_colors(row, message, ground);
 
         // Twitch's own emotes come from the tag with exact positions; a line
         // that spent Bits has its cheers found in the text left; the rest are
@@ -1448,6 +1475,7 @@ impl ChatView {
                             row.seq,
                             word_index,
                             text_color,
+                            ground,
                             metrics.piece_chars,
                             cx,
                         ));
@@ -1651,6 +1679,37 @@ mod tests {
     use twitch_chat::message::parse_line;
     use twitch_chat::replay::parse_page;
     use twitch_chat::ChatMessage;
+
+    /// A speaker's name is lifted against the paint of the row it is on,
+    /// not the bare surface: every colour Twitch hands out reads on the
+    /// mention wash, the lightest a message row wears, where a colour lifted
+    /// only for the surface read 3.87:1.
+    #[test]
+    fn a_name_reads_on_the_row_it_is_drawn_on() {
+        use super::{ChatView, Row, RowKind};
+        use crate::theme;
+        let row = Row {
+            kind: RowKind::Notice("".into()),
+            striped: false,
+            stamp: "".into(),
+            seq: 0,
+            deleted: false,
+        };
+        let ground = theme::surface().blend(theme::mention_wash());
+        for color in twitch_chat::message::DEFAULT_COLORS {
+            let line = format!("@color=#{color:06X} :someone!someone@someone PRIVMSG #a :hi");
+            let message = twitch_chat::ChatMessage::from_irc(
+                &twitch_chat::message::parse_line(&line).unwrap(),
+            )
+            .unwrap();
+            let (name, _) = ChatView::speaker_colors(&row, &message, ground);
+            let ratio = theme::contrast(name, ground);
+            assert!(
+                ratio >= theme::MIN_CONTRAST,
+                "{color:06x} reads {ratio:.2}:1 on the mention wash"
+            );
+        }
+    }
 
     /// The backlog and the rows held under the pointer keep the newest, in
     /// order, and say how many went so the list can be spliced to match.

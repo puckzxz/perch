@@ -80,7 +80,9 @@ pub fn contrast(a: Hsla, b: Hsla) -> f32 {
 /// the 8-bit colour it ends up as.
 const READABLE_STEPS: u32 = 10;
 
-/// A username colour that can be read on this background.
+/// A username colour that can be read on `ground`, which must be opaque: a
+/// colour lifted only as far as it must be to read on what it is actually
+/// drawn on.
 ///
 /// Hue and saturation are kept and only lightness is lifted, so people stay
 /// recognisable by colour rather than being flattened to one. The lift stops
@@ -92,15 +94,6 @@ const READABLE_STEPS: u32 = 10;
 /// Luminance rises monotonically with lightness at fixed hue and saturation,
 /// so bisection finds the floor; the alternative is stepping, which costs a
 /// hundred times as much for every name on screen every frame.
-///
-/// Measured against the bare [`surface`]; [`readable_on`] is the same lift
-/// against any other ground.
-pub fn readable(color: u32) -> Hsla {
-    readable_on(color, surface())
-}
-
-/// [`readable`] against `ground`, which must be opaque: a colour lifted only
-/// as far as it must be to read on what it is actually drawn on.
 ///
 /// A row's wash lightens the surface under it, so a colour lifted to just
 /// clear the bar on the bare surface falls under it on a washed row: one at
@@ -1050,7 +1043,7 @@ mod tests {
     #[test]
     fn every_default_username_colour_clears_the_background() {
         for color in twitch_chat::message::DEFAULT_COLORS {
-            let ratio = contrast(readable(color), surface());
+            let ratio = contrast(readable_on(color, surface()), surface());
             assert!(
                 ratio >= MIN_CONTRAST,
                 "{color:#08x} came out at {ratio:.2}:1"
@@ -1068,7 +1061,7 @@ mod tests {
             "pure blue should need lifting"
         );
 
-        let lifted = readable(0x0000ff);
+        let lifted = readable_on(0x0000ff, surface());
         assert!(contrast(lifted, surface()) >= MIN_CONTRAST);
         assert_eq!(lifted.h, raw.h, "the hue is the person");
         assert!(lifted.l > raw.l);
@@ -1083,7 +1076,7 @@ mod tests {
             contrast(raw, surface()) > MIN_CONTRAST,
             "coral should not need lifting"
         );
-        assert_eq!(readable(0xff7f50), raw);
+        assert_eq!(readable_on(0xff7f50, surface()), raw);
     }
 
     /// Lifting further than necessary is the same flattening the floor caused,
@@ -1094,7 +1087,7 @@ mod tests {
     fn the_lift_stops_as_soon_as_it_clears_the_bar() {
         for color in twitch_chat::message::DEFAULT_COLORS {
             let raw: Hsla = rgb(color).into();
-            let lifted = readable(color);
+            let lifted = readable_on(color, surface());
             if lifted.l == raw.l {
                 continue; // Already legible, and returned untouched.
             }
@@ -1121,17 +1114,6 @@ mod tests {
                 ratio >= MIN_CONTRAST,
                 "{color:#08x} came out at {ratio:.2}:1 on a raised card"
             );
-        }
-    }
-
-    /// One algorithm: `readable` is `readable_on` the bare surface.
-    #[test]
-    fn readable_is_readable_on_the_surface() {
-        for color in twitch_chat::message::DEFAULT_COLORS
-            .into_iter()
-            .chain([0x979797])
-        {
-            assert_eq!(readable(color), readable_on(color, surface()));
         }
     }
 

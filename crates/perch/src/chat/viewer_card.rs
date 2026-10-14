@@ -754,7 +754,15 @@ impl ChatView {
                         .py(px(metrics.row_pad_y))
                         // As on the row itself; see `copy_menu`.
                         .on_mouse_down(MouseButton::Right, Self::row_menu(row.seq, cx))
-                        .child(self.message_words(head, row, message, metrics, false, cx)),
+                        .child(self.message_words(
+                            head,
+                            row,
+                            message,
+                            theme::surface(),
+                            metrics,
+                            false,
+                            cx,
+                        )),
                 )
             })
             .collect();

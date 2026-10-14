@@ -2515,17 +2515,19 @@ unconsidered.
   app uses, `theme::contrast` computes it, and `every_text_tier_is_legible`
   holds every text token to it on every surface it lands on. `text_dim` used to
   fail that on two of three surfaces while carrying game names, offline channel
-  names and the whole of the settings help. `readable()` bisects a username's
-  lightness until it *measures* legible rather than stopping at a fixed one —
-  the flat floor it replaced left pure blue at 2.7:1. It is `readable_on`
-  the bare surface; a colour that is not the theme's own, written on a
-  washed chat row, is lifted against that row's paint instead
+  names and the whole of the settings help. `readable_on()` bisects a
+  username's lightness until it *measures* legible on the ground it is drawn
+  on rather than stopping at a fixed one — the flat floor it replaced left
+  pure blue at 2.7:1. A colour that is not the theme's own, written on a
+  washed chat row, is lifted against that row's paint
   (`readable_on(color, ChatView::row_ground(row))`), since a wash lightens
   the ground: a colour lifted to 4.5:1 on the surface reads 4.32:1 on the
   stripe and 3.87:1 on the mention wash. A cheer's amount is lifted that
-  way (`a_cheer_amount_reads_on_every_chat_row`); usernames and mention
-  colours are still lifted against the bare surface, a one-line change of
-  its own. Text on a picture is
+  way (`a_cheer_amount_reads_on_every_chat_row`), and so are a speaker's
+  name and a mention's colour (`ChatView::speaker_colors`, `render_word`,
+  told the ground by `message_words`'s caller: the row's paint in the list,
+  the bare surface in a viewer card's well;
+  `a_name_reads_on_the_row_it_is_drawn_on`). Text on a picture is
   held to the brightest picture there is, a white frame under its wash
   (`theme::over_white`), by
   `every_tier_drawn_on_a_picture_reads_over_a_white_frame`. Two washes, two
