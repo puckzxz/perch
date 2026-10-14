@@ -4813,8 +4813,17 @@ None of these is being worked on; all of them are real.
    so it would have to be deduplicated by message id and tested against
    the live service first. (This item was Sign out racing a refresh, fixed
    on 14 October 2026; see "The second scope, and signing out".)
-5. **Animated WebP** (7TV, some BTTV) may render as stills. Twitch's own
-   animated emotes are GIF and animate correctly.
+5. **A mention is matched by login alone.** A line is washed as
+   addressed to the reader when it names their login as a word
+   (`chat_tint::addressed_to`); a display name that is not the login in
+   another case — a localised one, in another script — is not matched,
+   since the composer's `Access` carries the login only. Nor are nicknames
+   or any other word: there are no highlight rules ("What to build next",
+   item 4). (This item was animated WebP rendering as stills, which it
+   does not: gpui decodes every frame and steps through them as it does a
+   GIF's. Checked on 14 October 2026 by decoding a 7TV animated emote with
+   the image crate gpui uses — 40 frames, 40 ms apart — and by reading
+   `img.rs`; not yet watched on screen.)
 6. **`ImageCache::new` is still on the pre-window UI thread.** It is now
    bounded rather than unbounded — `scan_and_prune` trims the permanent
    directory to 256MB, least recently drawn first, and deletes `.part`

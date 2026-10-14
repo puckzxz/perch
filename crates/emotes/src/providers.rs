@@ -363,8 +363,11 @@ fn load_7tv(agent: &ureq::Agent, room: Option<&str>) -> Result<Vec<(String, Stri
             continue;
         };
 
-        // Prefer WebP: it is what 7TV always ships, and the image crate reads
-        // static WebP. Animated WebP may render as a still, which beats nothing.
+        // Prefer WebP: it is what 7TV always ships. An animated one animates:
+        // gpui decodes every frame of it (`img.rs`, the WebP arm) and steps
+        // through them as it does a GIF's, for any image with an element id.
+        // Checked on 14 October 2026 by decoding 7TV's PepePls with the
+        // image crate gpui uses (40 frames, 40 ms apart).
         let file = host
             .get("files")
             .and_then(Value::as_array)
