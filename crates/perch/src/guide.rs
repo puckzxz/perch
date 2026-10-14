@@ -1169,9 +1169,10 @@ mod tests {
     }
 
     /// A recommendation drawn as a card is the channel the answer named,
-    /// with no picture to ask for.
+    /// with its live preview to ask for at the address any live channel's
+    /// is, though the answer carried none.
     #[test]
-    fn a_recommendation_asks_for_no_picture() {
+    fn a_recommendation_asks_for_its_live_preview() {
         let channel = SimilarChannel {
             login: "zackrawrr".into(),
             user_id: "552120296".into(),

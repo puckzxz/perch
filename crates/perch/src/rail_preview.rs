@@ -8,10 +8,11 @@
 //! ([`PREVIEW_DELAY`]) brings up that card beside the rail — the picture,
 //! the title, the game, the viewers and how long the stream has been on —
 //! and it goes the moment the pointer leaves the row. A recommendation's
-//! answer carries no picture (see `guide::as_stream`), so its card is the
-//! words alone, with the reason it is offered after the game, as the
-//! guide's cards say it. Offline rows, and pins nobody can place, show
-//! nothing: their row already says all there is.
+//! answer carries no picture and no start, so its card has the preview
+//! every live channel has at the address Helix would have named (see
+//! `guide::as_stream`) and no uptime, with the reason it is offered after
+//! the game, as the guide's cards say it. Offline rows, and pins nobody can
+//! place, show nothing: their row already says all there is.
 //!
 //! The card sits to the right of the rail, over the page, never over the
 //! row: the row's pin and `+` stay where the pointer can reach them. It is
@@ -209,8 +210,8 @@ impl Preview {
 /// on it takes a press. The picture is the cached preview the cards draw
 /// (`browse::stream_preview`), with the viewers and the uptime on it in the
 /// same badge; a stream with no picture to fetch has the badge's words in a
-/// line under the game instead. A recommendation's has one now, at the
-/// address every live channel's preview is (`guide::as_stream`). Raised and ruled
+/// line under the game instead. A recommendation's has one, at the address
+/// every live channel's preview is (`guide::as_stream`). Raised and ruled
 /// like a menu, since it floats over the page as one does.
 pub fn card(stream: &LiveStream, note: Option<&str>, cache: &ImageCache) -> AnyElement {
     let watching = [

@@ -253,9 +253,10 @@ impl RootView {
     }
 
     /// The rail's recommendations as the guide draws them: from whichever
-    /// list of streams has each, picture and all, or else from what the
-    /// rail's answer said, with no picture (`guide::as_stream`), each with
-    /// the words that say which channel led to it.
+    /// list of streams has each, uptime and all, or else from what the
+    /// rail's answer said, with the live preview at the address every live
+    /// channel's is and no uptime (`guide::as_stream`), each with the words
+    /// that say which channel led to it.
     fn guide_recommended(&self) -> Vec<(LiveStream, String)> {
         self.recommended
             .shown

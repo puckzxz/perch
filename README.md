@@ -239,18 +239,19 @@ A live pane has a red `LIVE` badge after its name, so a glance down the page
 says which panes are live; a recording says `replay` there instead.
 
 While a pane starts it shows the channel's latest picture — the one its card on
-the browse page shows, when a list there has the channel — dimmed under its
-name, and the stream fades in over it when it arrives. A channel that is off
-says so and offers what there is instead: its last broadcast, as a card where
-there is room, which plays right there in place of the live pane; **Start when
-they go live**, a switch that is on unless you turn it off, for a channel you
-follow; and **Try again**. Under those it says when the channel is on next, if
-it has a schedule on Twitch — *Next stream: Tue 7:00 PM · its title · its
-game*, in your clock's format — or that it is *On a break until 12 Oct*. When
-a stream ends the pane says so — it does not simply stop on its last frame,
-which is indistinguishable from a pause — and offers **Watch from the start**,
-which plays that broadcast's recording from the top in the same pane once
-Twitch lists it, **Try again** and **Close**. The last broadcast, the
+the browse page shows, when a list there has the channel or the rail recommends
+it — dimmed under its name, and the stream fades in over it when it arrives. A
+channel that is off says so and offers what there is instead: its last
+broadcast, as a card where there is room, which plays right there in place of
+the live pane; **Start when they go live**, a switch that is on unless you turn
+it off, there for any channel while you are signed in (see [Home](#home) for
+how soon it starts); and **Try again**. Under those it says when the channel is
+on next, if it has a schedule on Twitch — *Next stream: Tue 7:00 PM · its title
+· its game*, in your clock's format — or that it is *On a break until 12 Oct*.
+When a stream ends the pane says so — it does not simply stop on its last
+frame, which is indistinguishable from a pause — and offers **Watch from the
+start**, which plays that broadcast's recording from the top in the same pane
+once Twitch lists it, **Try again** and **Close**. The last broadcast, the
 recording and the schedule need a sign-in to be found. Chat stays connected
 either way, which is where the goodnights are, until a recording takes the
 pane's place and brings its own chat replay.
@@ -269,7 +270,9 @@ which channel led to it; **Popular**; and **Categories**, where picking one
 shows its streams inside the guide, with **← Categories** to go back. Popular
 and Categories are the same lists as the browse page's tabs, with the same
 **Load more**, so whatever either has fetched the other already has. A
-recommended channel shows a picture only once one of those lists has it.
+recommended channel's card shows its live preview like any other; how long it
+has been on shows only once a list Perch has fetched carries the channel, since
+a recommendation does not say.
 
 Rest the pointer on a card for its two offers. **Watch**, or a click anywhere
 on the card, plays that channel in place of the pane you opened the guide
@@ -462,13 +465,15 @@ time, twelve-hour or twenty-four, in your language.
 
 The icon with the two Ts in a pane's header, beside its pop-out and its ×,
 opens the chat options: the text size — **Small**, **Default**, **Large** or
-**Larger** — and **Time on every message**, which starts every message with
-its time in place of the once-a-minute breaks. They apply to every chat at
-once and are remembered. **Reset pane sizes**, under them, puts the chat and
-video sizes back, as `Ctrl+0` does. The channel's name in the pane header opens
-it on twitch.tv — and so do **Open on twitch.tv** under the bar's **More** and
-the palette's `Open … on twitch.tv`. On a live pane the site plays the stream
-as well, with its own sound.
+**Larger** — and **Time on every message**, which starts every message with its
+time in place of the once-a-minute breaks. They apply to every chat at once and
+are remembered. **Reset pane sizes**, under them, puts the chat and video sizes
+back, as `Ctrl+0` does. On a chat too short to hold the menu, it rises over the
+header and the picture rather than running off the chat's foot, so
+**Reset pane sizes** is always in reach. The channel's name in the pane header
+opens it on twitch.tv — and so do **Open on twitch.tv** under the bar's
+**More** and the palette's `Open … on twitch.tv`. On a live pane the site plays
+the stream as well, with its own sound.
 
 ### Sending a message
 
@@ -686,8 +691,9 @@ same "Live 3 hours ago" Home shows, where a live row says what is on.
 
 Rest the pointer on a live row for a moment and its card comes up beside the
 rail: the stream's picture with how many are watching and for how long, its
-title and what they are playing — for a recommendation, the title, the game
-and the reason, since Twitch sends no picture with those. It goes when the
+title and what they are playing — for a recommendation the same card, with
+the reason after the game and no uptime on the picture, since Twitch does not
+say when a recommended stream started. It goes when the
 pointer leaves the row, and once one is up, the next row's comes up straight
 away as you move down the list. A window too small to hold the card beside
 the rail shows none, rather than covering the rail or the title bar.

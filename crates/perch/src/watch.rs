@@ -1141,8 +1141,9 @@ fn pane<V: 'static>(
         Placement::OverPicture => (None, Some(header)),
     };
     // The chat options menu, while it is open on this pane: over the top of
-    // its chat, under the header that opened it. Only with a chat panel,
-    // which is the only place the header offers it.
+    // its chat, under the header that opened it, or risen over that header
+    // from the foot of a chat box too short for it (`chat_menu::placed`).
+    // Only with a chat panel, which is the only place the header offers it.
     let chat_menu = info
         .chat_menu
         .filter(|_| placement == Placement::Panel)

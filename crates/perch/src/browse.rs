@@ -677,9 +677,11 @@ fn preview_url(stream: &LiveStream) -> String {
 /// Twitch's cadence ([`THUMBNAIL_MAX_AGE`]); a refresh retires the old file,
 /// which is why [`release_retired_previews`] runs before anything calls this.
 ///
-/// Nothing for a stream with no template to fill — one the guide drew from
-/// the rail's recommendations, whose answers carry no preview
-/// (`guide::as_stream`) — rather than a request for an empty address.
+/// Nothing for a stream with no template to fill — one whose Helix answer
+/// left it out — rather than a request for an empty address. A
+/// recommendation always has one: the address every live channel's preview
+/// is at, which `guide::as_stream` fills in because its answer carries
+/// none.
 pub(crate) fn stream_preview(cache: &ImageCache, stream: &LiveStream) -> Option<PathBuf> {
     if stream.thumbnail_url.is_empty() {
         return None;

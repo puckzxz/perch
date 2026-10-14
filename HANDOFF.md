@@ -4,7 +4,7 @@ For whoever picks this up next. `README.md` covers *using* it; this covers
 *working on* it — the architecture, the traps, and the things that cost real
 time to discover and would cost the same again.
 
-Roughly 65,000 lines across seven crates, tests included. `cargo test --workspace`,
+Over 70,000 lines across seven crates, tests included. `cargo test --workspace`,
 `cargo clippy --workspace --all-targets` and `cargo fmt --all --check` are all
 expected to pass; if one does not, that is the change you are looking at, not
 the baseline.
@@ -221,7 +221,7 @@ App modules:
 | `veil.rs` | what the overlays on the watch page cover, so the panes' measured hover leaves the pointer alone there, each under its own `Cover`: the guide's probe and an open viewer card's write their bounds (`cover`), the root lifts the guide's on every frame it is not drawn and a chat its card's on every render without one, as it closes and as the chat goes (`lift`), and every pane probe — the pane's, the player's, the chat's hold — asks `pointer_over`, the pane's hover and the chat's hold leaving their own card out (`reaches`, tested) |
 | `watch.rs` | the grid of panes; `Slot` lives here, made by `Slot::new`, with `PendingStart`, a start of its stream resolving beside the picture, and `WarmStart`, a streamlink started ahead for the pane's quality menu (`Slot::warm`), and `PaneAction`, everything a pane asks of the root; the band a header rides over the picture on, and when it is up (`Slot::point`, `band_wanted`, tested); the layer a dragged header is dropped on (`drop_layer`, `PaneDrag`) |
 | `watch/header.rs` | a pane's header — name, the red `LIVE` badge on a live pane, numbers, what is on, `muted`/`paused` and an ad break's tag, the chat options icon on a header that sits on chat, the pop-out icon that turns into Bring back, and the × — each icon naming its key — the handle a pane is dragged by onto another, and `Placement`, the one rule for where it goes: the chat panel, or over the picture with no chat on screen (tested) |
-| `watch/chat_menu.rs` | a pane's chat options menu, hung over its chat: the text sizes and `Time on every message` (with its state in words), which pane's is open (`toggled`, one at a time), rows that act on the press (tested) |
+| `watch/chat_menu.rs` | a pane's chat options menu, hung over its chat, or risen from the foot of a chat box too short for it (`placed`): the text sizes and `Time on every message` (with its state in words), and `Reset pane sizes` ruled off at the foot (`PaneAction::ResetSizes`, `RootView::reset_sizes`, shared with `Ctrl+0`), which pane's is open (`toggled`, one at a time), rows that act on the press (tested) |
 | `watch/status.rs` | a pane with no picture: `Showing`, the one reading of its state that the pane's sentence and the mini player's word both come from, and the screen drawn from it under the player — a starting pane's poster, a stopped one's next steps and what room it has for them (`next_up_room`), and `Elsewhere`, a pane whose picture is in a window of its own, with `Bring back` (tested) |
 | `layout.rs` | derives grid shape from window aspect, as `Grid::of`, the one grid the watch page, the divider drag and each pane's quality read; `quality_height`, the height a pane asks a rendition for; the page's `Body`, the title bar's height and drag edge, and the mini player's tiles, how far in it floats clear of the scrollbar, and the `Room` a browse list leaves for it; where a pop-out opens, stacked clear of where the open ones really are (`pop_out_bounds`) (pure, tested) |
 | `video_view.rs` | the player element: its sound, its hover, the picture and the gestures on it (`Alt` and the wheel, a middle press), and when the picture last moved again after standing still (`resumed_at`); drawn as a pane, a mini-player tile, in a pop-out or not at all while another pane is maximized (`stage::Place`), moved between them only by `set_place`, and belonging to no window |
@@ -2730,9 +2730,10 @@ header rests over it. The split:
   `muted` and `paused`, and at the end of a right-hand cluster its icons. On a
   header sitting on a chat panel, and nowhere else, first the chat options
   (`Icon::ChatOptions`, a large T and a small one), which open the menu that
-  sets how every chat is drawn (see "Chat display options" under Chat); it is
-  the menu's anchor, as the bar's cluster is the bar's menus', its id follows
-  whether the menu is open, and it gives no tooltip while it is. Then, where
+  sets how every chat is drawn and puts the pane sizes back (see "Chat
+  display options" under Chat); it is the menu's anchor, as the bar's
+  cluster is the bar's menus', its id follows whether the menu is open, and
+  it gives no tooltip while it is. Then, where
   the pop-out is offered (`root::pop_out_offered`), out into a window of its
   own on a playing pane and `Bring back` on a popped one
   (`header::PopOutButton`), both naming `P` through `keys::Hint::PopOut` and
@@ -2848,10 +2849,12 @@ header rests over it. The split:
   scroll sideways in a panel too narrow for them, and an ×; under it, the
   list. It reuses rather than repeats: Following is `RootView::follows`;
   Recommended is `Recommended::shown`, each drawn from whichever list of
-  streams has the channel or else as `guide::as_stream`, with no picture, and
-  its reason after the game, built only while that tab shows; with none it
-  says why — `Recommended::refused` for the session, nothing yet, signing in —
-  or leaves a sign-in waiting on you to `browse::empty_state`; Popular and
+  streams has the channel (`RootView::stream_info`) or else as
+  `guide::as_stream`, with the live preview at the address every live
+  channel's is and no uptime, and its reason after the game, built only while
+  that tab shows; with none it says why — `Recommended::refused` for the
+  session, nothing yet, signing in — or leaves a sign-in waiting on you to
+  `browse::empty_state`; Popular and
   Categories are `Discovery::popular` and `Discovery::categories`, asked for
   through `fetch` by the very requests the browse page sends
   (`guide::Shows::first_page`, held to `browse::Place::first_page` by key in a
@@ -3387,39 +3390,41 @@ page or the guide away. So after `rail_preview::PREVIEW_DELAY` (400 ms) on a
 live row — Pinned live, Live or Recommended — a card comes up beside the
 rail, level with the row: the browse cards' cached preview at the guide's
 widest card size, the viewers and uptime on it in the same badge, the name,
-up to two lines of title, and the game. A recommendation's answer has no
-picture and no start time, so its card is the words, with its reason after
-the game as the guide's cards write it, and the viewers in a line of their
-own. Offline rows and unplaceable pins show nothing. Once a card is up, the
-next row's comes up at once (`PREVIEW_WARM`), so reading down the rail is
-not a wait at every row; a press anywhere on the rail puts the card away
-until the pointer leaves that row. The rule is `rail_preview::Preview`'s,
-pure and tested; the root keeps one (`RootView::rail_preview`) and wakes
-the rail with a timer that asks again when it fires
-(`Preview::wait_left`), so an early wake sleeps out the rest. Each live row
-measures the pointer with a probe of its own (`sidebar::preview_probe`)
-against the part of it the rail's scroller shows, and speaks only when its
-answer differs from what the root held when the rail was drawn, so a rail
-nobody points at says nothing; when it does speak it asks for the next
-frame itself, since a notify from prepaint asks for none (see the GPUI
-traps). The card is `deferred(anchored())` off the row's right-hand edge
-(see the GPUI traps), outside the rail's bounds, so it never covers the
-row's pin or `+` and the hold that keeps the rows still measures the rail
-alone; it has no listeners, so it takes no hover or press from the page
-under it. `anchored`'s snap keeps it inside the window, which in a small
-one would slide it left over the row or lift it over the title bar, so
+up to two lines of title, and the game. A recommendation's answer carries
+neither a picture nor a start time, so its card is drawn through
+`guide::as_stream`: the preview every live channel has at the address Helix
+would have named (`twitch_api::live_thumbnail_template`), with the viewers
+alone in its badge and no uptime, and its reason after the game as the
+guide's cards write it. Offline rows and unplaceable pins show nothing.
+Once a card is up, the next row's comes up at once (`PREVIEW_WARM`), so
+reading down the rail is not a wait at every row; a press anywhere on the
+rail puts the card away until the pointer leaves that row. The rule is
+`rail_preview::Preview`'s, pure and tested; the root keeps one
+(`RootView::rail_preview`) and wakes the rail with a timer that asks again
+when it fires (`Preview::wait_left`), so an early wake sleeps out the rest.
+Each live row measures the pointer with a probe of its own
+(`sidebar::preview_probe`) against the part of it the rail's scroller shows,
+and speaks only when its answer differs from what the root held when the
+rail was drawn, so a rail nobody points at says nothing; when it does speak
+it asks for the next frame itself, since a notify from prepaint asks for
+none (see the GPUI traps). The card is `deferred(anchored())` off the row's
+right-hand edge (see the GPUI traps), outside the rail's bounds, so it never
+covers the row's pin or `+` and the hold that keeps the rows still measures
+the rail alone; it has no listeners, so it takes no hover or press from the
+page under it. `anchored`'s snap keeps it inside the window, which in a
+small one would slide it left over the row or lift it over the title bar, so
 cards show only in a window with room for the tallest one beside the rail
 and under the bar (`sidebar::previews_fit`, against
 `rail_preview::PREVIEW_TALLEST`, which the card's set line heights make
 exact), and a row the rail's top cuts off shows none. Probes see through
 what is drawn over them, so no card shows while a modal is up
-(`RootView::modal_open`) or while the pointer is out of the window, and
-the row is forgotten then (`RootView::follows_rail`). So is a row no longer
+(`RootView::modal_open`) or while the pointer is out of the window, and the
+row is forgotten then (`RootView::follows_rail`). So is a row no longer
 drawn at all — its stream ended at a poll, or it moved group — since only
 its own probe could say the pointer left it, and a key held on to would
 count as a card still up and let the next row skip its wait
-(`sidebar::Groups::draws_live_row`). The rail has no folded-to-avatars
-state for a card to work around: folded, it is not drawn at all.
+(`sidebar::Groups::draws_live_row`). The rail has no folded-to-avatars state
+for a card to work around: folded, it is not drawn at all.
 
 **A went-live toast is the way to the channel**, not only news of it:
 `Toast::action`, watch from the text and `+ Add` from the pill beside it. And
@@ -3624,10 +3629,14 @@ the title, game and viewers — comes
 from `Recommended::channel`, every channel the answers have named this
 session, through `RootView::live_info` and `channel_name`; the reasons that
 later name it as a seed use the same name. A recommendation knows no start
-time and carries no preview, so that pane has no uptime and starts on black.
+time and carries no preview of its own, so that pane starts over the
+preview at the address every live channel's is (`RootView::poster`, through
+`guide::as_stream`), and has its start, and an uptime, once
+`root::pane_streams` answers for it, signed in; signed out it has none.
 Nothing is saved, and the palette does not offer recommendations yet; the
-guide draws them as cards (see "Where controls live"), with no picture
-unless a list of streams has the channel.
+guide draws them as cards (see "Where controls live"), with the same
+preview, and an uptime only once a list of streams or that ask has the
+channel.
 
 **Pins from anywhere.** A pin used to be made only from a followed channel's
 rail row, and one on a channel nobody follows — written by hand in
@@ -4001,8 +4010,12 @@ without `default_sets` is a failed fetch, logged and asked again after
 **Chat display options are every chat's, from any pane's header.** The chat
 options icon on a header that sits on a chat panel opens `watch::chat_menu`:
 four text sizes (Small, Default, Large, Larger: 12, 13, 14.5 and 16px body
-text) and `Time on every message`. They are `Settings::chat_text_size` (a
-name on disk, `settings::ChatTextSize`, pixels only in `chat_display`) and
+text) and `Time on every message`, and `Reset pane sizes` ruled off at its
+foot, which is no display option and not `set_chat_display`'s: it is
+`PaneAction::ResetSizes`, answered by `RootView::reset_sizes`, the one path
+`Ctrl+0` takes too (see "Sizes the user dragged are settings"). The two
+display options are `Settings::chat_text_size` (a name on disk,
+`settings::ChatTextSize`, pixels only in `chat_display`) and
 `Settings::chat_message_times`, both serde-defaulted so an older file loads as
 chat always was, and the settings sheet does not own them (`SheetFields`), so
 saving it keeps them. `Default` is `theme::TEXT_BODY` exactly, and
@@ -4027,10 +4040,20 @@ is sized for, and a long run in it would draw a piece wider than its line
 (`chat_display::draws_time_break`). The menu is drawn by `watch::pane` as a
 layer over the pane's chat box, after chat so it is over it, rather than
 hanging from the header like the bar's menus hang from the bar: the header is
-drawn before chat, so anything hung from it would be painted under chat. Its
-anchor is still the header's icon, its rows act on the press, and the root's
-`run_guard` takes the rest of a row's double-click, which would otherwise land
-on a link in the chat under the closed menu. One menu across all panes
+drawn before chat, so anything hung from it would be painted under chat. It
+hangs at the top of the box where the box has the room, and in a box shorter
+than it — a stacked pane's, with the divider dragged down — rises from the
+box's foot over the header and the picture, which the cell draws before chat
+(`chat_menu::placed`: a column laid out from its foot, with an auto margin
+under the menu that takes the room when there is some). Hung from the top by
+an inset, it ran on past a short box's foot, under the next pane or the
+page's clip, and lost `Reset pane sizes` first, in just the case it is
+there for. It is not deferred, as the copy menu is: that would take it out
+of the page's clip, which keeps everything under the title bar off the
+bar's caption areas. Its anchor is still the header's icon, its rows act on
+the press, and the root's `run_guard` takes the rest of a row's
+double-click, which would otherwise land on a link in the chat under the
+closed menu. One menu across all panes
 (`RootView::chat_menu`); it closes when its pane stops being drawn on a chat
 panel, on leaving the page, and when its pane leaves however it leaves
 (`retire_slots`, a close from the keys or Stop all included, and
@@ -5810,6 +5833,12 @@ None of these is being worked on; all of them are real.
       by itself, an ended one's `Watch from the start` finding its own
       broadcast, and the one ask's cadence (a `pane streams:` line in the
       log is a failed ask; the ask itself says nothing).
+    - the chat options menu on a chat box shorter than it
+      (`chat_menu::placed`): at 1080 × 1900 with two stacked panes and the
+      divider dragged to 0.8, on the top pane and the bottom one, risen over
+      the header and the picture with every row in sight and taking its
+      press, `Reset pane sizes` among them; checked only against taffy's
+      layout in a throwaway crate.
 37. **What emotes stacked together leave out stays out, and stacks and
     effects are seen only by their tests.** A wide overlay on a narrow emote
     is fitted into the emote's box rather than spilling over the words beside
