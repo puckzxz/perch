@@ -417,11 +417,12 @@ impl RootView {
 
         // A pane that found nothing to play, whose channel this poll lists as
         // broadcasting, tries again by itself when `Start when they go live`
-        // says so: the channel was opened before the stream started, or the
-        // broadcast dropped and came back. Which broadcasts count is the
+        // says so: the channel was opened before the stream started, the
+        // broadcast dropped and came back, or the pane's connection dropped
+        // and the broadcast never stopped. Which broadcasts count is the
         // pane's to say (`Slot::due_to_start`), from when this one started;
-        // a try at one the pane found early is noted on it, so it is made
-        // once.
+        // a try at one already going is noted on it, so it is made once.
+        let now = Utc::now();
         let resumed: Vec<(String, DateTime<Utc>)> = self
             .slots
             .iter()
@@ -430,7 +431,7 @@ impl RootView {
                 let started = DateTime::parse_from_rfc3339(&stream.started_at)
                     .ok()?
                     .with_timezone(&Utc);
-                slot.due_to_start(started)
+                slot.due_to_start(started, now)
                     .then(|| (slot.key.clone(), started))
             })
             .collect();

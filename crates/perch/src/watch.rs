@@ -172,6 +172,11 @@ pub struct WarmStart {
     pub ready: Option<StreamEvent>,
 }
 
+/// How long after a live pane saw its broadcast end a follows poll that
+/// still lists that broadcast is believed: twice the list's lag of up to a
+/// minute. See [`Slot::due_to_start`].
+const STILL_LISTED: chrono::TimeDelta = chrono::TimeDelta::minutes(2);
+
 /// One stream and everything that belongs to it.
 ///
 /// Dropping a slot stops its streamlink (the supervisor) and its mpv (the
@@ -282,9 +287,10 @@ pub struct Slot {
     /// offline channel is for; per pane and for the session, never saved.
     pub start_when_live: bool,
     /// The broadcast, by its `started_at`, this pane last tried by itself
-    /// while it said the channel was off: one try per broadcast, for a pane
+    /// with the broadcast already going: one try per broadcast, for a pane
     /// that asked in a broadcast's first seconds, before streamlink could
-    /// find it — see [`due_to_start`](Self::due_to_start).
+    /// find it, or one whose broadcast dropped and is still listed — see
+    /// [`due_to_start`](Self::due_to_start).
     pub retried_for: Option<DateTime<Utc>>,
     /// The channel's newest past broadcasts, asked for each time a live pane
     /// stops (`RootView::ask_broadcasts`): what it offers next, the last
@@ -513,6 +519,14 @@ impl Slot {
             StreamState::Offline | StreamState::Ended | StreamState::Failed(_) => Some(Utc::now()),
             StreamState::Starting | StreamState::Playing(_) => None,
         };
+        // A try that found the broadcast playing has done its work: a drop
+        // later in the same broadcast is a stall of its own, and gets its
+        // own try (`due_to_start`). One that found nothing to play keeps the
+        // note, which is what stops a list slower than the pane from
+        // trying the same broadcast again and again.
+        if matches!(state, StreamState::Playing(_)) {
+            self.retried_for = None;
+        }
         self.state = state;
     }
 
@@ -522,29 +536,37 @@ impl Slot {
         self.ad_tick = None;
     }
 
-    /// Whether a poll that lists this pane's channel as broadcasting since
-    /// `started` should start the pane by itself.
+    /// Whether a poll at `now` that lists this pane's channel as
+    /// broadcasting since `started` should start the pane by itself.
     ///
     /// Only a live pane that has stopped, and only with `Start when they go
     /// live` on. Then a broadcast that began after the pane stopped is one it
     /// has not tried, whatever the pane is saying. One that began before is
     /// usually the one the pane already saw end — the list is up to a minute
     /// behind the pane, so a stream that has just ended is still on it, and a
-    /// try would only find it gone and turn "ended" into "offline". Except
-    /// for a pane saying the channel is off: one opened in a broadcast's
-    /// first seconds asked before streamlink could find it, and is offline
-    /// with the broadcast already going. That pane gets one try for that
-    /// broadcast, and [`retried_for`](Self::retried_for) remembers it.
-    pub fn due_to_start(&self, started: DateTime<Utc>) -> bool {
+    /// try would only find it gone and turn "ended" into "offline". Unless
+    /// the list still has it [`STILL_LISTED`] after the pane stopped, by
+    /// when an ended broadcast has left it: then the end the pane saw was a
+    /// connection dropping — a hiccup at Twitch's end, a sleep, an outage at
+    /// ours — and the broadcast is still going. And a pane saying the
+    /// channel is off gets the same try at once: opened in a broadcast's
+    /// first seconds, it asked before streamlink could find it. Either way,
+    /// one try per broadcast, which [`retried_for`](Self::retried_for)
+    /// remembers, so a list that is slower than that still costs one try
+    /// and no loop.
+    pub fn due_to_start(&self, started: DateTime<Utc>, now: DateTime<Utc>) -> bool {
         let Some(stalled) = self.stalled_at else {
             return false;
         };
         if !self.is_live() || !self.start_when_live {
             return false;
         }
+        let untried = self.retried_for != Some(started);
         match self.state {
-            StreamState::Offline => started > stalled || self.retried_for != Some(started),
-            StreamState::Ended | StreamState::Failed(_) => started > stalled,
+            StreamState::Offline => started > stalled || untried,
+            StreamState::Ended | StreamState::Failed(_) => {
+                started > stalled || (now - stalled >= STILL_LISTED && untried)
+            }
             StreamState::Starting | StreamState::Playing(_) => false,
         }
     }
@@ -1569,7 +1591,7 @@ mod tests {
             StreamState::Failed("mpv gave up".into()),
         ] {
             let pane = stopped(state, "2026-10-01T18:00:00Z");
-            assert!(pane.due_to_start(at("2026-10-01T18:05:00Z")));
+            assert!(pane.due_to_start(at("2026-10-01T18:05:00Z"), at("2026-10-01T18:05:30Z")));
         }
     }
 
@@ -1580,7 +1602,7 @@ mod tests {
     #[test]
     fn an_offline_pane_tries_a_broadcast_it_found_early_once() {
         let pane = stopped(StreamState::Offline, "2026-10-01T18:00:20Z");
-        assert!(pane.due_to_start(at("2026-10-01T18:00:00Z")));
+        assert!(pane.due_to_start(at("2026-10-01T18:00:00Z"), at("2026-10-01T18:00:30Z")));
     }
 
     /// That try is made once per broadcast. A later broadcast is another.
@@ -1589,8 +1611,11 @@ mod tests {
         let started = at("2026-10-01T18:00:00Z");
         let mut pane = stopped(StreamState::Offline, "2026-10-01T18:00:20Z");
         pane.retried_for = Some(started);
-        assert!(!pane.due_to_start(started), "tried twice");
-        assert!(pane.due_to_start(at("2026-10-01T20:00:00Z")));
+        assert!(
+            !pane.due_to_start(started, at("2026-10-01T18:01:00Z")),
+            "tried twice"
+        );
+        assert!(pane.due_to_start(at("2026-10-01T20:00:00Z"), at("2026-10-01T20:00:30Z")));
     }
 
     /// The list is up to a minute behind the pane, so the broadcast the
@@ -1600,7 +1625,45 @@ mod tests {
     fn an_ended_broadcast_still_listed_is_not_due() {
         for state in [StreamState::Ended, StreamState::Failed("gone".into())] {
             let pane = stopped(state, "2026-10-01T22:00:00Z");
-            assert!(!pane.due_to_start(at("2026-10-01T18:00:00Z")));
+            assert!(!pane.due_to_start(at("2026-10-01T18:00:00Z"), at("2026-10-01T22:00:30Z")));
+            assert!(!pane.due_to_start(at("2026-10-01T18:00:00Z"), at("2026-10-01T22:01:59Z")));
+        }
+    }
+
+    /// A try that found nothing keeps its note through every state short of
+    /// playing, which is what stops a slow list trying one broadcast for
+    /// ever. (Playing, which clears it, holds a player, which a test without
+    /// a window cannot make; `set_state` is the one place it is cleared.)
+    #[test]
+    fn a_try_that_found_nothing_is_remembered() {
+        let started = at("2026-10-01T18:00:00Z");
+        let mut pane = stopped(StreamState::Offline, "2026-10-01T18:00:20Z");
+        pane.retried_for = Some(started);
+        for state in [
+            StreamState::Starting,
+            StreamState::Offline,
+            StreamState::Ended,
+            StreamState::Failed("gone".into()),
+        ] {
+            pane.set_state(state);
+            assert_eq!(pane.retried_for, Some(started));
+        }
+    }
+
+    /// Still listed two minutes on, though, the end the pane saw was its
+    /// connection dropping, and the broadcast is still going: it is tried,
+    /// once.
+    #[test]
+    fn a_dropped_broadcast_still_listed_later_is_tried_once() {
+        let started = at("2026-10-01T18:00:00Z");
+        for state in [StreamState::Ended, StreamState::Failed("dropped".into())] {
+            let mut pane = stopped(state, "2026-10-01T22:00:00Z");
+            assert!(pane.due_to_start(started, at("2026-10-01T22:02:00Z")));
+            pane.retried_for = Some(started);
+            assert!(
+                !pane.due_to_start(started, at("2026-10-01T22:30:00Z")),
+                "tried twice"
+            );
         }
     }
 
@@ -1610,7 +1673,7 @@ mod tests {
         for state in [StreamState::Offline, StreamState::Ended] {
             let mut pane = stopped(state, "2026-10-01T18:00:00Z");
             pane.start_when_live = false;
-            assert!(!pane.due_to_start(at("2026-10-01T19:00:00Z")));
+            assert!(!pane.due_to_start(at("2026-10-01T19:00:00Z"), at("2026-10-01T19:00:30Z")));
         }
     }
 
@@ -1621,13 +1684,13 @@ mod tests {
         let mut video = recording(0.0);
         video.set_state(StreamState::Offline);
         video.stalled_at = Some(at("2026-10-01T18:00:00Z"));
-        assert!(!video.due_to_start(at("2026-10-01T19:00:00Z")));
+        assert!(!video.due_to_start(at("2026-10-01T19:00:00Z"), at("2026-10-01T19:00:30Z")));
 
         let mut asking = live();
         asking.stalled_at = Some(at("2026-10-01T18:00:00Z"));
-        assert!(!asking.due_to_start(at("2026-10-01T19:00:00Z")));
+        assert!(!asking.due_to_start(at("2026-10-01T19:00:00Z"), at("2026-10-01T19:00:30Z")));
         assert!(
-            !live().due_to_start(at("2026-10-01T19:00:00Z")),
+            !live().due_to_start(at("2026-10-01T19:00:00Z"), at("2026-10-01T19:00:30Z")),
             "never stalled"
         );
     }

@@ -3178,7 +3178,16 @@ retry keyed on presence alone would find it gone and turn "ended" into
 "offline" for nothing. One exception, for a pane that says *offline* while the
 poll lists a broadcast that began before it stopped: it asked in that
 broadcast's first seconds, before streamlink could find it, and gets one try
-per broadcast, remembered in `Slot::retried_for`.
+per broadcast, remembered in `Slot::retried_for`. And one for a pane that
+says *ended* or failed while the poll still lists the broadcast it was
+playing `watch::STILL_LISTED` (two minutes, twice the list's lag) after it
+stopped: by then an ended broadcast has left the list, so the end the pane
+saw was its connection dropping — a hiccup at Twitch's end, a sleep, an
+outage at ours — and the broadcast never stopped. The same `retried_for`
+makes that one try per stall: a try that gets the broadcast playing again
+clears the note (`Slot::set_state`), so a later drop gets its own, and one
+that finds nothing keeps it, so a list slower than that costs one wasted
+try, which turns "ended" into "offline", and no loop.
 
 **A toast holds still under the pointer**, so one being read or reached for
 does not go: while the pointer is on any card, no toast counts down
