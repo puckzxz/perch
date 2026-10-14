@@ -551,9 +551,19 @@ pane is measured by the whole body, the one cell `RootView::grid` has while
 it lasts, so being given the page re-picks it upward at once
 (`maximize_changed`). The panes maximized away are measured by the grid they
 come back to, every pane's, and `sync_quality` leaves them until it does, so
-the maximize never moves them; meanwhile they go on decoding at the size they
-were last drawn at, which is the quality rule's price, not a saving anybody
-asked for. Their cells can grow while they are away — a resize, a pane
+the maximize never moves them; meanwhile they go on decoding their
+rendition, which is the quality rule's price, not a saving anybody asked
+for, though what they render is not: a player nothing draws renders its
+frames at 160x90 into a buffer nobody reads and publishes none
+(`VideoStream::set_offstage`, from `VideoView::set_place`), so its last
+full-size picture stays up for its return and no frame drawn small ever
+reaches the screen. Measured with two live 1080p panes, alternating a
+minute each: maximized, the process went from 116 to 104 percent of a core
+while the shown phases, the control, stayed at 79; most of it off the UI
+thread, which no longer took a wake per frame of the hidden pane, the rest
+the conversion. A pane getting ready beside one (the swap) is never marked,
+since it is known ready by its frames; it takes the mark when it takes
+over. Their cells can grow while they are away — a resize, a pane
 closed — so the grid coming back chooses again, upwards only as ever:
 `maximize_changed` does, and so does `restage`, once it is done, for a
 maximize that ends there (a popped pane coming home, the maximized pane
@@ -2902,8 +2912,10 @@ header rests over it. The split:
   `watch::pane` in a grid of one, so its element path is unchanged and
   nothing remounts. The others are drawn as nothing —
   `stage::Place::Offstage`, through `VideoView::set_place` like any change
-  of place — and play on with their sound, at the size they were last drawn
-  at, redrawing no window while the palette is closed: the page reads only
+  of place — and play on with their sound and their rendition, rendering
+  small and publishing nothing (see "Quality is chosen again when the grid
+  changes" under Video),
+  redrawing no window while the palette is closed: the page reads only
   the panes it draws, but the palette reads every player in the main window
   to know which can offer `Choose quality for …` (`palette_entries`), and so
   redraws the main window at their frame rate while it is open. Nothing rather
@@ -5466,9 +5478,10 @@ None of these is being worked on; all of them are real.
     activated and the keys go with it; and it is an ordinary window, with a
     taskbar and `Alt+Tab` entry, because that is how the keyboard gets back
     to it. Making it a tool window would take both away.
-32. **Panes maximized away still decode**, at the size they were last drawn
-    at and with their sound, so a maximize saves no CPU: the quality rule
-    puts the picture you come back to first. They redraw no window while
+32. **Panes maximized away still decode**, their rendition and their sound,
+    so a maximize saves only what drawing them cost (their frames are
+    rendered small and thrown away, `VideoStream::set_offstage`): the
+    quality rule puts the picture you come back to first. They redraw no window while
     the palette is closed; while it is open the main window redraws at
     their frame rate, since it reads every player to know which can offer
     `Choose quality for …`. See "A pane given the window".

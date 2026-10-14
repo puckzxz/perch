@@ -456,10 +456,21 @@ pub struct VideoStream {
     /// by the render thread with a wake of its own, since a picture that is
     /// waiting sends no frames to carry it; read by the pane's header.
     buffering: Arc<AtomicBool>,
+    /// Whether nothing draws this player: a pane on the watch page while
+    /// another has it to itself (`Place::Offstage`). Its frames are then
+    /// rendered at [`OFFSTAGE_SIZE`] into a buffer nobody reads, and never
+    /// published; see [`set_offstage`](Self::set_offstage).
+    offstage: Arc<AtomicBool>,
     /// A recording's length, for the seek bar; `None` on a live stream.
     extent: Option<Extent>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
+
+/// What a player nothing draws renders at: the floor a size handle takes
+/// (`SizeHandle::request`). mpv has to be asked for its frames to keep its
+/// timing, its audio and its decode going as they were, so they are asked
+/// for, at a size that costs next to nothing to convert, and thrown away.
+const OFFSTAGE_SIZE: (u32, u32) = (160, 90);
 
 /// How long a live picture waits on the network before its pane says
 /// `buffering`. A stream starting or swapping in waits a moment as a matter
@@ -494,6 +505,7 @@ impl VideoStream {
         let volume_level = Arc::new(AtomicU8::new(volume));
         let paused = Arc::new(AtomicBool::new(start_paused));
         let buffering = Arc::new(AtomicBool::new(false));
+        let offstage = Arc::new(AtomicBool::new(false));
         let source_size = Arc::new(AtomicU64::new(0));
         let stopped: Arc<Mutex<Option<Stopped>>> = Arc::new(Mutex::new(None));
         let positions = match &playback {
@@ -545,6 +557,7 @@ impl VideoStream {
                 let target = target.clone();
                 let paused = paused.clone();
                 let buffering = buffering.clone();
+                let offstage = offstage.clone();
                 let source_size = source_size.clone();
                 let stopped = stopped.clone();
                 let positions = positions.clone();
@@ -711,6 +724,10 @@ impl VideoStream {
                     let mut buffered: Option<f64> = None;
                     let mut catch_up = CatchUp::default();
                     let mut live_speed = 1.0;
+                    // Where an offstage player's frames go; see `offstage`.
+                    // Allocated once: nothing reads it, so nothing holds it.
+                    let mut thrown_away =
+                        vec![0u8; OFFSTAGE_SIZE.0 as usize * OFFSTAGE_SIZE.1 as usize * 4];
 
                     'frames: while !stop.load(Ordering::Relaxed) {
                         for event in player.poll_events() {
@@ -1024,12 +1041,39 @@ impl VideoStream {
                         // it holds again, at the new size, rather than wait
                         // for a frame it will not send; see `redraw_now`.
                         // Published below exactly as a decoded frame is.
-                        let redraw = redraw_now(
-                            applied_pause,
-                            rendered != Some((current_w, current_h)),
-                            rendered.is_some(),
-                        );
+                        //
+                        // Not offstage, where nothing would see it.
+                        let hidden = offstage.load(Ordering::Relaxed);
+                        let redraw = !hidden
+                            && redraw_now(
+                                applied_pause,
+                                rendered != Some((current_w, current_h)),
+                                rendered.is_some(),
+                            );
                         if !redraw && !player.wait_for_frame(Duration::from_millis(200)) {
+                            continue;
+                        }
+                        // A player nothing draws renders its frame small and
+                        // keeps none of it: the pane's last full-size picture
+                        // stays in `latest`, and `rendered` keeps its size, so
+                        // the first frame after it comes back is drawn at the
+                        // size it is drawn at, never a small one stretched.
+                        // The rendition is not touched. Measured before this,
+                        // two live 1080p panes with one maximized away, the
+                        // render threads used 9.7% of a core against 6.6% with
+                        // both shown at the smaller size; the hidden pane's
+                        // share is what this takes back, more for a pane
+                        // last drawn large.
+                        if hidden {
+                            if let Err(e) = player.render_bgra(
+                                OFFSTAGE_SIZE.0,
+                                OFFSTAGE_SIZE.1,
+                                &mut thrown_away,
+                            ) {
+                                eprintln!("video: render failed: {e}");
+                                failure = Some(format!("could not draw the picture: {e}"));
+                                break;
+                            }
                             continue;
                         }
                         // A buffer per frame, given away rather than copied out
@@ -1107,6 +1151,7 @@ impl VideoStream {
                 seek,
                 live,
                 buffering,
+                offstage,
                 extent,
                 thread: Some(thread),
             },
@@ -1204,6 +1249,12 @@ impl VideoStream {
     /// [`buffering`](Self::buffering).
     pub fn is_buffering(&self) -> bool {
         self.buffering.load(Ordering::Relaxed)
+    }
+
+    /// Say whether nothing draws this player; see
+    /// [`offstage`](Self::offstage). Taken between frames.
+    pub fn set_offstage(&self, offstage: bool) {
+        self.offstage.store(offstage, Ordering::Relaxed);
     }
 
     /// Change playback volume (0-100). Takes effect on the next frame.

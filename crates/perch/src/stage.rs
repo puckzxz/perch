@@ -36,9 +36,10 @@ pub enum Place {
     /// In the watch grid, with its bar, its menus and its double-click.
     Pane,
     /// On the watch page while another pane has it to itself: drawn by
-    /// nothing. It plays on as it was, with its sound, rendering at the size
-    /// it was last drawn at, and behaves as a tile does — no bar, no hover,
-    /// no menu — until the grid comes back.
+    /// nothing. It plays on as it was, with its sound and its rendition, its
+    /// frames rendered small and thrown away (`VideoStream::set_offstage`),
+    /// and behaves as a tile does — no bar, no hover, no menu — until the
+    /// grid comes back.
     Offstage,
     /// A tile in the mini player on the browse page: no bar, no hover, and a
     /// click that goes back to watching.

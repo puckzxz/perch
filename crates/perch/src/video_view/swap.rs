@@ -35,6 +35,7 @@ use futures::channel::mpsc::Receiver;
 use gpui::{Context, Task};
 
 use super::{Qualities, VideoEvent, VideoView};
+use crate::stage::Place;
 use crate::video::{Stopped, VideoStream};
 
 /// How far ahead of a playing recording its new player is started, in
@@ -508,6 +509,7 @@ impl VideoView {
             ..
         } = pending;
         stream.set_paused(self.stream.is_paused());
+        stream.set_offstage(self.place == Place::Offstage);
         stream.set_volume(self.loudness.audible());
         self.stream.set_volume(0);
         // A seek of the user's that the old player has not taken yet goes

@@ -505,6 +505,9 @@ impl VideoView {
             }
         });
 
+        // A player started where nothing draws it renders small from its
+        // first frame; see `set_place`.
+        stream.set_offstage(start.place == Place::Offstage);
         let mut view = Self {
             key: start.key,
             stream,
@@ -779,6 +782,10 @@ impl VideoView {
         }
         self.place = place;
         self.root_focus = focus;
+        // Drawn by nothing, it renders small and publishes nothing
+        // (`VideoStream::set_offstage`). The player on screen only: one
+        // getting ready beside it is known ready by its frames.
+        self.stream.set_offstage(place == Place::Offstage);
         self.let_go(cx);
         // What holds the bar up without the pointer — a switch under way —
         // holds it up in the new place too, from a fade started over.
