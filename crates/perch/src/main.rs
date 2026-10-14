@@ -214,6 +214,7 @@ fn main() {
     if !cfg!(debug_assertions) {
         let _ = diagnostics::capture_stderr();
     }
+    diagnostics::keep_panics();
     if let Some(e) = unguarded {
         eprintln!("instance: {e}; running without the one-perch guard");
     }

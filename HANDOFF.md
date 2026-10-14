@@ -367,10 +367,13 @@ used to log it and end, and the pane said "Starting…" for good. It now fills
 `stopped` with `Stopped::Failed("could not open the player: …")` and wakes the
 frame channel, as an end of file does, so the view emits `VideoEvent::Stopped`,
 `stream_stopped` retires the player, and the pane offers `Try again`. A
-recording whose playlist cannot be written already did this. Not yet the
+recording whose playlist cannot be written already did this, and so do the
 loop's own exits: a frame that fails to render, a buffer that does not match
-its size, and mpv's `Shutdown` still end the thread without a word, leaving
-the last frame up as if paused.
+its size, and mpv's `Shutdown` each end the loop with a reason, said after
+it the same way unless the loop was asked to stop or an end of file has
+already been said (whose wake may have been read already, which leaves the
+slot empty again, so a local `reported` is what tells). They used to end the
+thread without a word, leaving the last frame up as if paused.
 
 **`mpv_render_context_render` blocks until the frame's display time**, up to
 `video-timing-offset` (50 ms default). That wait is what keeps video timed to
@@ -1925,7 +1928,14 @@ that turned out to be unnecessary.
 **The release build has no console**, so `eprintln!` and panic messages go to a
 handle that leads nowhere. `diagnostics::capture_stderr` points the process's
 stderr at `%LOCALAPPDATA%\perch\perch.log` before anything can
-write, and keeps the previous run as `.log.old`. It works by `SetStdHandle`
+write, and keeps the previous run as `.log.old`. Panics go to
+`perch.crash.log` beside it as well, appended with a backtrace
+(`diagnostics::keep_panics`, the default hook first, so the log reads as it
+did): a panic on a worker thread ends only that thread and the app goes on
+looking alive, and the log that said why is renamed at the next launch and
+gone at the one after. The crash file starts again past a megabyte, its old
+self kept as `.old`. The Twitch worker catches its own panic and ends as a
+`TwitchEvent::Error` would, so the UI stops saying signed in. It works by `SetStdHandle`
 rather than by a logging facade because Windows resolves that handle on *every
 write* — so it catches the library crates and panic output too, with no change
 anywhere else. That was verified with a throwaway before the code was written;

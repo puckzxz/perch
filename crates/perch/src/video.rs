@@ -664,6 +664,10 @@ impl VideoStream {
                     // reconfig and uninit), and a redraw with none draws an
                     // empty picture over the one on screen.
                     let mut rendered: Option<(u32, u32)> = None;
+                    // Why the loop below ended, when it ended on its own
+                    // rather than at `stop`; see the report after it.
+                    let mut failure: Option<String> = None;
+                    let mut reported = false;
 
                     'frames: while !stop.load(Ordering::Relaxed) {
                         for event in player.poll_events() {
@@ -751,6 +755,7 @@ impl VideoStream {
                                         eprintln!("video: stream stopped: {reason:?}");
                                         *stopped.lock().unwrap() = Some(reason);
                                         let _ = tx.try_send(());
+                                        reported = true;
                                         // Nothing more will decode. Leaving
                                         // tears mpv down here rather than
                                         // waiting on frames that cannot
@@ -760,6 +765,7 @@ impl VideoStream {
                                 }
                                 Event::Shutdown => {
                                     eprintln!("video: mpv shut down");
+                                    failure = Some("the player shut down".to_string());
                                     break 'frames;
                                 }
                                 _ => {}
@@ -954,6 +960,7 @@ impl VideoStream {
                         let mut buf = vec![0u8; current_w as usize * current_h as usize * 4];
                         if let Err(e) = player.render_bgra(current_w, current_h, &mut buf) {
                             eprintln!("video: render failed: {e}");
+                            failure = Some(format!("could not draw the picture: {e}"));
                             break;
                         }
 
@@ -962,6 +969,7 @@ impl VideoStream {
                         // looks like a bug and is not one.
                         let Some(image) = RgbaImage::from_raw(current_w, current_h, buf) else {
                             eprintln!("video: buffer did not match {current_w}x{current_h}");
+                            failure = Some("could not draw the picture".to_string());
                             break;
                         };
                         let mut frame = RenderImage::new(smallvec![Frame::new(image)]);
@@ -974,6 +982,18 @@ impl VideoStream {
 
                         // Full channel means the UI has not consumed the last
                         // wake yet; it will see this frame when it gets there.
+                        let _ = tx.try_send(());
+                    }
+
+                    // A loop that ended on its own says so, as an end of file
+                    // does, so the pane offers `Try again` rather than keep
+                    // its last frame up as if paused. Not one asked to stop,
+                    // whose pane is not listening, and not one that already
+                    // said why: the wake it sent may have been read already,
+                    // which leaves `stopped` empty again.
+                    if !reported && !stop.load(Ordering::Relaxed) {
+                        let why = failure.unwrap_or_else(|| "the player stopped".to_string());
+                        *stopped.lock().unwrap() = Some(Stopped::Failed(why));
                         let _ = tx.try_send(());
                     }
 

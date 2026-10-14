@@ -47,6 +47,59 @@ pub fn capture_stderr() -> std::io::Result<PathBuf> {
     Ok(path)
 }
 
+/// Where panics are kept, beside the log: appended, so a crash survives the
+/// launch after it, which moves the log it was written to aside and the one
+/// after that, which deletes it.
+pub fn crash_path() -> PathBuf {
+    log_path().with_extension("crash.log")
+}
+
+/// The crash file is started again once it is past this, its old self kept
+/// as `.old` beside it.
+const CRASH_FILE_LIMIT: u64 = 1024 * 1024;
+
+/// Keep every panic, with a backtrace, in [`crash_path`] as well as on
+/// stderr.
+///
+/// The default hook stays first, so the log reads as it always has; what it
+/// leaves out is the backtrace, which it prints only when `RUST_BACKTRACE`
+/// says so, and nobody sets that on a windowed app. A panic on a worker
+/// thread ends only that thread, so the app goes on looking alive, and the
+/// log that said why is renamed at the next launch and gone at the one
+/// after.
+pub fn keep_panics() {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        default(info);
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        let thread = std::thread::current();
+        let entry = format!(
+            "{} {} {}: panic on thread '{}': {info}
+{backtrace}
+",
+            crate::APP_NAME,
+            env!("CARGO_PKG_VERSION"),
+            chrono::Utc::now().to_rfc3339(),
+            thread.name().unwrap_or("unnamed"),
+        );
+        eprintln!("{backtrace}");
+        let _ = append_crash(&entry);
+    }));
+}
+
+fn append_crash(entry: &str) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let path = crash_path();
+    if std::fs::metadata(&path).is_ok_and(|meta| meta.len() > CRASH_FILE_LIMIT) {
+        let _ = std::fs::rename(&path, path.with_extension("log.old"));
+    }
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)?
+        .write_all(entry.as_bytes())
+}
+
 /// `STD_ERROR_HANDLE` from `winbase.h`.
 #[cfg(windows)]
 const STD_ERROR_HANDLE: u32 = -12i32 as u32;

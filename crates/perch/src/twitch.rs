@@ -483,7 +483,22 @@ impl TwitchService {
             .name("twitch".into())
             .spawn({
                 let stop = stop.clone();
-                move || run(settings_path, start, tx, stop, requests_rx)
+                // A panic ends only this thread, and the UI would go on
+                // saying signed in with nothing behind it: no follows poll,
+                // no browsing, no chat sent. Said as the end of the worker
+                // it is, which the UI already knows how to show; the panic
+                // itself is in the crash file (`diagnostics::keep_panics`).
+                let said = tx.clone();
+                move || {
+                    let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        run(settings_path, start, tx, stop, requests_rx)
+                    }));
+                    if ran.is_err() {
+                        let _ = said.unbounded_send(TwitchEvent::Error(
+                            "Perch's connection to Twitch stopped after an error. Restart perch to reconnect.".into(),
+                        ));
+                    }
+                }
             })
             .expect("failed to spawn twitch service");
 
