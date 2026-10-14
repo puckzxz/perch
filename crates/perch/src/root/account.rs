@@ -6,13 +6,22 @@
 //! The worker owns the session (see `crate::twitch`), so every one of these
 //! is the old worker dropped and, unless the user is signing out, a new one
 //! started. Dropping a worker sets its `stop` flag, which `persist` checks
-//! before it writes a token, so the tokens are forgotten only after it is
-//! stopped and a refresh it was in the middle of cannot write them back.
-//! Only signing out forgets them: signing in again leaves them on disk
-//! until the new sign-in replaces them (`SignInStart::Fresh`).
+//! under the file's lock before it writes a token, so the tokens are
+//! forgotten only after it is stopped and a refresh it was in the middle of
+//! cannot write them back. Signing out forgets them, and so does a new
+//! client id saved from the settings sheet, which stops the worker first
+//! for the same reason (`root::prefs`). Signing in again leaves them on
+//! disk until the new sign-in replaces them (`SignInStart::Fresh`).
+//!
+//! Forgetting them is a save like any other, handed to the writer thread
+//! (`root::saving`), so it lands a moment after the press. Every worker
+//! started reads the settings file only once what was handed to the writer
+//! before it has landed (`settings::writer::Landed`): a Sign in pressed
+//! straight after Sign out, or the worker a new client id starts, never
+//! reads the tokens just forgotten or the client id just replaced.
 
 use gpui::{Context, Task, Window};
-use settings::Settings;
+use settings::writer::Save;
 
 use super::RootView;
 use crate::browse::{Discovery, SignIn};
@@ -23,9 +32,9 @@ impl RootView {
     /// fed: the follows, the browse lists fetched with its token and the
     /// trail through them, the panes' and the pins' asks, whether its token
     /// may send, and the messages it was sending, each of which says so in
-    /// its chat. What signing out leaves, and what every restart begins
-    /// with.
-    fn stop_twitch(&mut self, cx: &mut Context<Self>) {
+    /// its chat. What signing out leaves, what every restart begins with,
+    /// and what a new client id does before its tokens are forgotten.
+    pub(super) fn stop_twitch(&mut self, cx: &mut Context<Self>) {
         self.twitch = TwitchService::stopped();
         self._twitch_pump = Task::ready(());
         self.chat_scope = None;
@@ -74,7 +83,13 @@ impl RootView {
     ) {
         self.stop_twitch(cx);
         self.sign_in = SignIn::Connecting;
-        let (service, pump) = Self::spawn_twitch(self.settings_path.clone(), start, window, cx);
+        let (service, pump) = Self::spawn_twitch(
+            self.settings_path.clone(),
+            start,
+            self.saves.landed(),
+            window,
+            cx,
+        );
         self.twitch = service;
         self._twitch_pump = pump;
         self.sync_chat_access(cx);
@@ -94,26 +109,27 @@ impl RootView {
         }
     }
 
-    /// Sign in: the empty state's, the browse lists' and the settings
-    /// sheet's `Sign in` once signed out, and a closed composer's after a
-    /// sign-in that failed. Nothing is forgotten first, so stored tokens are
-    /// tried before a new code is asked for — which is also what brings back
-    /// a sign-in whose `Sign in again` code was never entered.
+    /// Sign in: the empty state's, the browse lists', the settings sheet's
+    /// and a closed composer's `Sign in`, once signed out or after a
+    /// sign-in that failed (`SignIn::offers_sign_in`). Nothing is forgotten
+    /// first, so stored tokens are tried before a new code is asked for —
+    /// which is also what brings back a sign-in whose `Sign in again` code
+    /// was never entered, and a worker that stopped after an error.
     pub(super) fn start_sign_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.focus.focus(window);
         self.restart_twitch(SignInStart::Stored, window, cx);
     }
 
     /// The settings sheet's `Sign out`: the worker stopped, the stored
-    /// tokens forgotten through `Settings::sign_out` (which keeps every
-    /// other field the file holds, under the lock every save takes), and
-    /// the app as it is with no sign-in: the follows gone, the rail and
-    /// Home saying `Signed out` with a `Sign in` beside it, and every
-    /// composer the same. No worker runs, so nothing asks Twitch for a code
+    /// tokens forgotten through `Settings::sign_out` on the writer's thread
+    /// (which keeps every other field the file holds, under the lock every
+    /// save takes), and the app as it is with no sign-in: the follows gone,
+    /// the rail and Home saying `Signed out` with a `Sign in` beside it, and
+    /// every composer the same. No worker runs, so nothing asks Twitch for a code
     /// until the user presses Sign in.
     pub(super) fn sign_out(&mut self, cx: &mut Context<Self>) {
         self.stop_twitch(cx);
-        self.forget_tokens(cx);
+        self.forget_tokens();
         self.sign_in = SignIn::SignedOut;
         self.sync_chat_access(cx);
         self.sync_viewer_cards(cx);
@@ -134,13 +150,10 @@ impl RootView {
         self.restart_twitch(SignInStart::Fresh, window, cx);
     }
 
-    /// Forget the stored sign-in on disk and in the root's copy. Only once
-    /// the worker is stopped; see the module.
-    fn forget_tokens(&mut self, cx: &mut Context<Self>) {
+    /// Forget the stored sign-in on disk, through the writer, and in the
+    /// root's copy. Only once the worker is stopped; see the module.
+    fn forget_tokens(&mut self) {
         self.settings.credentials.oauth = None;
-        if let Err(e) = Settings::sign_out(&self.settings_path) {
-            eprintln!("settings: could not forget the sign-in: {e}");
-            self.toast(format!("Could not forget the sign-in: {e}"), cx);
-        }
+        self.saves.save(Save::SignOut);
     }
 }

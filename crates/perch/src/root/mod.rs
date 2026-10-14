@@ -27,6 +27,7 @@
 //! | `pane_actions` | what a pane asks for, by its key: its controls, and its player's requests; the header a pane key reveals; `run_guard`, which swallows the rest of a double-click whose first press took a player from under the pointer |
 //! | `launches` | what the command line named, at startup and from later launches |
 //! | `history` | what has been watched: noting where each recording got to, resuming there |
+//! | `saving` | writing the settings and the history down: each save a copy handed to one writer thread (`settings::writer`), a failed one said, and the wait for the last saves as the window closes |
 //! | `muted` | a recording's muted stretches: heard from every Helix answer that lists videos, given to a pane that opens one without them, asked for once when nothing has been heard, and taken onto every pane playing it and its player's seek bar |
 //! | `prefs` | the settings sheet, the divider drag, how every chat is drawn, the rail folding and what is pinned to it |
 //! | `recommended` | the rail's Recommended group: when to ask the worker, and what its answer becomes |
@@ -72,6 +73,7 @@ mod prefs;
 mod recommended;
 mod renditions;
 mod rewind;
+mod saving;
 mod schedule;
 mod shared_chat;
 mod shortcuts;
@@ -95,6 +97,7 @@ use gpui::{
 };
 use gpui_component::input::{InputEvent, InputState};
 use settings::history::{Forgotten, History};
+use settings::writer::Writer;
 use settings::Settings;
 use twitch_api::{Channel, LiveStream};
 
@@ -205,11 +208,17 @@ enum Page {
 
 pub(crate) struct RootView {
     settings: Settings,
+    /// Read by each sign-in worker the root starts; the root's own saves
+    /// go through `saves`, which has the path.
     settings_path: PathBuf,
     /// Every recording opened, and where each was left. A file of its own
     /// beside the settings; see `settings::history`.
     history: History,
-    history_path: PathBuf,
+    /// Where every save of the settings and the history goes, to be written
+    /// off the UI thread in the order it was made; see `root::saving`.
+    saves: Writer,
+    /// Says on screen a save that failed; see `start_saving`.
+    _saves_pump: Task<()>,
     /// Which scheduled history save is the newest; see `save_history_soon`.
     history_epoch: u64,
     /// Notes where the recordings playing have got to, every few seconds;
@@ -541,8 +550,16 @@ impl RootView {
             this.on_window_resized(window, cx)
         });
 
-        let (service, twitch_pump) =
-            Self::spawn_twitch(settings_path.clone(), SignInStart::Stored, window, cx);
+        // Before the worker, which reads the settings file only once what
+        // was handed to the writer ahead of it has landed.
+        let (saves, saves_pump) = Self::start_saving(settings_path.clone(), history_path, cx);
+        let (service, twitch_pump) = Self::spawn_twitch(
+            settings_path.clone(),
+            SignInStart::Stored,
+            saves.landed(),
+            window,
+            cx,
+        );
 
         // In the title bar, over both pages; see `run_search` for what a
         // search from the watch page does.
@@ -591,7 +608,8 @@ impl RootView {
             settings,
             settings_path,
             history,
-            history_path,
+            saves,
+            _saves_pump: saves_pump,
             history_epoch: 0,
             _history_tick: Self::keep_history(cx),
             cache,
@@ -677,19 +695,6 @@ impl RootView {
             view.toast(warning, cx);
         }
         view
-    }
-
-    /// Write the preferences down, and say so on screen if that fails.
-    ///
-    /// One place rather than eight copies of the same `if let Err`, and a toast
-    /// rather than a log line: a release build's stderr is a file nobody is
-    /// watching, and a save that fails silently is a preference that comes back
-    /// on the next launch with no explanation.
-    fn save_settings(&mut self, cx: &mut Context<Self>) {
-        if let Err(e) = self.settings.save_preferences(&self.settings_path) {
-            eprintln!("settings: could not save: {e}");
-            self.toast(format!("Could not save settings: {e}"), cx);
-        }
     }
 
     /// Whether "open beside what is playing" is an offer worth making: only

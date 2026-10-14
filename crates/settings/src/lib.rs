@@ -9,9 +9,10 @@
 //! than an oversight — see [`Credentials`].
 //!
 //! What has been watched is in a file of its own beside this one; see
-//! [`history`].
+//! [`history`]. The app writes both off its UI thread, through [`writer`].
 
 pub mod history;
+pub mod writer;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -21,15 +22,16 @@ use serde::{Deserialize, Serialize};
 
 /// One writer at a time, process-wide.
 ///
-/// Two threads write the settings file: the UI saves preferences, and the
-/// sign-in worker saves tokens as Twitch issues them. Each one reads the file
-/// back first to keep the other's fields, which is right, and is also a
-/// read-modify-write - so with nothing serialising them, a token save landing
-/// between the UI's read and its write would be overwritten by the *old*
-/// tokens the UI had just read, and a refresh token Twitch honours exactly
-/// once would be gone. Both writers share one temporary filename too, so two
-/// concurrent saves could also collide on the rename. Every path that writes
-/// the file holds this across its read and its write.
+/// Two threads write the settings file: the app's [`writer`] saves the
+/// UI's preferences, and the sign-in worker saves tokens as Twitch issues
+/// them. Each one reads the file back first to keep the other's fields,
+/// which is right, and is also a read-modify-write - so with nothing
+/// serialising them, a token save landing between the UI's read and its
+/// write would be overwritten by the *old* tokens the UI had just read, and
+/// a refresh token Twitch honours exactly once would be gone. Both writers
+/// share one temporary filename too, so two concurrent saves could also
+/// collide on the rename. Every path that writes the file holds this across
+/// its read and its write.
 static FILE_LOCK: Mutex<()> = Mutex::new(());
 
 /// Hold the write lock, surviving a poisoned mutex: a panic in another writer
@@ -854,9 +856,10 @@ impl Settings {
     /// For the sign-in worker, whose tokens must not land after Sign out
     /// has cleared them. Asked under the lock, because asked before it the
     /// answer can change while the worker waits for it: Sign out stops the
-    /// worker and then takes the lock to clear the file, so a worker that
-    /// asks inside it either goes first, and is cleared after, or sees that
-    /// it was stopped, and writes nothing.
+    /// worker and only then has the file cleared under the lock (by the
+    /// app's [`writer`]), so a worker that asks inside it either goes
+    /// first, and is cleared after, or sees that it was stopped, and writes
+    /// nothing.
     pub fn save_sign_in_if(
         path: &Path,
         oauth: Option<OAuthTokens>,

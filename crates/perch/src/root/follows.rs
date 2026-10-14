@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use chrono::Utc;
 use gpui::{Context, Task, Window};
 use settings::history::History;
+use settings::writer::Landed;
 use twitch_api::{Channel, LiveStream, Video};
 
 use super::{LinkedVideo, RootView, ToastAction};
@@ -97,13 +98,17 @@ use crate::browse::{SearchResults, SignIn, Unanswered};
 use crate::twitch::{ListKey, Request, SignInStart, TwitchEvent, TwitchService};
 
 impl RootView {
+    /// Start a worker, which reads `settings_path` once `landed` says the
+    /// saves handed to the writer before it are on disk, and the task that
+    /// takes its events.
     pub(super) fn spawn_twitch(
         settings_path: PathBuf,
         start: SignInStart,
+        landed: Landed,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> (TwitchService, Task<()>) {
-        let (service, mut events) = TwitchService::start(settings_path, start);
+        let (service, mut events) = TwitchService::start(settings_path, start, landed);
         let pump = cx.spawn_in(window, async move |this, cx| {
             use futures::StreamExt as _;
             while let Some(event) = events.next().await {
@@ -213,8 +218,9 @@ impl RootView {
                 self.refreshing = false;
                 cx.notify();
             }
-            // Not terminal: the worker carries on and saves again at each
-            // poll. Said because a launch before a save lands is signed out.
+            // Not terminal: the worker carries on and saves again at every
+            // poll and before every signed-in request it serves. Said
+            // because a launch before a save lands is signed out.
             TwitchEvent::SignInUnsaved(reason) => {
                 self.toast(
                     format!("Could not save the sign-in: {reason}. Perch will keep trying."),

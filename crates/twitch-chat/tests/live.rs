@@ -24,28 +24,58 @@ const CHANNELS: [&str; 4] = ["xqc", "shroud", "summit1g", "lirik"];
 /// anonymously, as `twitch_api::recommend` asks its own.
 const WEB_CLIENT_ID: &str = "kimne78kx3ncx6brgo4mv6wki5h1ko";
 
-/// The newest past broadcast of `login`, by id, if it keeps any.
-fn newest_archive(login: &str) -> Option<String> {
+/// The newest past broadcast of `login`, by id, if it keeps any; or why the
+/// query that asks could not say, in its own words.
+fn newest_archive(login: &str) -> Result<Option<String>, String> {
     let query = format!(
         r#"query {{ user(login: "{login}") {{ videos(first: 1, type: ARCHIVE, sort: TIME) {{ edges {{ node {{ id }} }} }} }} }}"#
     );
     let mut response = ureq::post("https://gql.twitch.tv/gql")
         .header("Client-ID", WEB_CLIENT_ID)
         .send_json(json!({ "query": query }))
-        .ok()?;
-    let body: Value = response.body_mut().read_json().ok()?;
-    body.pointer("/data/user/videos/edges/0/node/id")
+        .map_err(|e| e.to_string())?;
+    let body: Value = response
+        .body_mut()
+        .read_json()
+        .map_err(|e| format!("unreadable answer: {e}"))?;
+    if let Some(errors) = body.get("errors") {
+        return Err(errors.to_string());
+    }
+    Ok(body
+        .pointer("/data/user/videos/edges/0/node/id")
         .and_then(Value::as_str)
-        .map(str::to_string)
+        .map(str::to_string))
 }
 
 #[test]
 #[ignore = "asks Twitch over the network; run by hand"]
 fn chat_replay_still_answers() {
+    // Only a helper: the query this check is for is the replay below, which
+    // a recording named by hand reaches without it. So a refusal here is
+    // said beside the advice rather than ending the check by itself.
+    let mut refused = Vec::new();
     let video = std::env::var("PERCH_LIVE_VIDEO")
         .ok()
-        .or_else(|| CHANNELS.iter().find_map(|login| newest_archive(login)))
-        .expect("no recording to ask about: set PERCH_LIVE_VIDEO");
+        .or_else(|| {
+            CHANNELS
+                .iter()
+                .find_map(|login| match newest_archive(login) {
+                    Ok(found) => found,
+                    Err(e) => {
+                        refused.push(format!("{login}: {e}"));
+                        None
+                    }
+                })
+        })
+        .unwrap_or_else(|| {
+            if refused.is_empty() {
+                panic!("no recording to ask about: set PERCH_LIVE_VIDEO");
+            }
+            panic!(
+                "no recording to ask about, the lookup was refused ({}): set PERCH_LIVE_VIDEO",
+                refused.join("; ")
+            )
+        });
     // A minute in, where any broadcast has had something said.
     let page = twitch_chat::replay::page_at(&video, 60)
         .unwrap_or_else(|e| panic!("the replay query was refused for video {video}: {e:?}"));

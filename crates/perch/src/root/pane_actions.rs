@@ -258,7 +258,7 @@ impl RootView {
 
         let channel = self.slots[index].channel.clone();
         if self.settings.set_chat_hidden_for(&channel, hidden) {
-            self.save_settings(cx);
+            self.save_settings();
         }
         cx.notify();
     }

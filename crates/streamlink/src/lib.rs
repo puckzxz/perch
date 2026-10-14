@@ -35,8 +35,9 @@ use std::io::{BufRead, BufReader, Read};
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use futures::channel::mpsc;
 pub use playlist::Playlist;
@@ -394,15 +395,23 @@ fn list_streams(
 
 /// What a `--json` probe printed, read: [`streams_from_json`] of it, or why
 /// there is nothing to read. Nothing at all is what a streamlink that
-/// refused its arguments prints, its complaint going to stderr.
+/// refused its arguments prints, its complaint going to stderr, and what
+/// one prints whose config has `quiet`, which silences `--json` too
+/// (streamlink's `setup_console`, 8.6.2); the second is named, since
+/// nothing else would point at it.
 fn streams_from_answer(stdout: &[u8]) -> Result<Vec<(String, String)>, String> {
     if stdout.iter().all(u8::is_ascii_whitespace) {
-        return Err("streamlink exited without an answer".into());
+        return Err(NO_ANSWER.into());
     }
     let json: serde_json::Value = serde_json::from_slice(stdout)
         .map_err(|e| format!("streamlink returned unreadable JSON: {e}"))?;
     streams_from_json(&json)
 }
+
+/// What a pane says when a probe printed nothing; see
+/// [`streams_from_answer`].
+const NO_ANSWER: &str = "streamlink exited without an answer. If streamlink's config has a \
+                         quiet line, that keeps its answer from perch.";
 
 /// `reason`, with what to do about it when it is the kind of failure an
 /// update of streamlink is the fix for: Twitch retiring a query streamlink
@@ -573,6 +582,106 @@ impl Drop for StreamSupervisor {
     }
 }
 
+/// How long a serving run is given to say `Starting server` before the
+/// start is given up on.
+///
+/// It says it about two seconds after the spawn ("Where a switch's seconds
+/// go" in HANDOFF), and a streamlink that fails says why and exits, which
+/// ends the wait at once. Only one that stays up and says nothing reaches
+/// this: a streamlink whose config has `quiet`, or a `logfile`, either of
+/// which keeps its log off stdout whatever `--loglevel` says (streamlink's
+/// `setup_logger`, 8.6.2), and which no argument takes back. It waits for a
+/// player to connect, and the pane, which connects only once told `Ready`,
+/// used to say Starting for good. Long enough that a slow network is not
+/// taken for it: streamlink's own HTTP timeout is 20 seconds a request, and
+/// it asks Twitch two things before it starts the server.
+const READY_WAIT: Duration = Duration::from_secs(60);
+
+/// How often the wait for `Starting server` looks at whether it can stop.
+const READY_LOOK_EVERY: Duration = Duration::from_millis(200);
+
+/// What a pane says when its serving run stayed up without saying it was
+/// ready; see [`READY_WAIT`].
+fn silent_reason() -> String {
+    format!(
+        "streamlink did not say it was ready within {} seconds. A quiet or \
+         logfile line in streamlink's config keeps what it says from perch.",
+        READY_WAIT.as_secs()
+    )
+}
+
+/// Whether a serving run has answered — said `Starting server`, or exited —
+/// or been given up on first. Whichever comes first wins, by a compare and
+/// swap, so a `Starting server` that arrives as the wait runs out is either
+/// a `Ready` or the kill, never both.
+#[derive(Default)]
+struct Readiness(AtomicU8);
+
+impl Readiness {
+    const WAITING: u8 = 0;
+    const ANSWERED: u8 = 1;
+    const GAVE_UP: u8 = 2;
+
+    /// Note an answer. Whether it came before the start was given up on.
+    fn answer(&self) -> bool {
+        self.settle(Self::ANSWERED)
+    }
+
+    /// Give up, unless an answer came first. Whether it gave up.
+    fn give_up(&self) -> bool {
+        self.settle(Self::GAVE_UP)
+    }
+
+    fn settle(&self, to: u8) -> bool {
+        self.0
+            .compare_exchange(Self::WAITING, to, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+
+    fn waiting(&self) -> bool {
+        self.0.load(Ordering::Acquire) == Self::WAITING
+    }
+
+    fn given_up(&self) -> bool {
+        self.0.load(Ordering::Acquire) == Self::GAVE_UP
+    }
+}
+
+/// Wait up to `within` for `readiness` to be answered, and give up on it if
+/// it is not. Whether it gave up. Never once `stop` is set: the pane has
+/// gone, and its `Drop` does the killing.
+fn gave_up_after(readiness: &Readiness, stop: &AtomicBool, within: Duration) -> bool {
+    let deadline = Instant::now() + within;
+    loop {
+        if stop.load(Ordering::Relaxed) || !readiness.waiting() {
+            return false;
+        }
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return readiness.give_up();
+        }
+        std::thread::sleep(left.min(READY_LOOK_EVERY));
+    }
+}
+
+/// Wait for the serving run in `slot` to say it is ready, on a thread of
+/// its own, since the read that hears it blocks; past [`READY_WAIT`], give
+/// up and kill it, which closes its stdout and ends that read.
+fn give_up_unless_ready(readiness: Arc<Readiness>, stop: Arc<AtomicBool>, slot: ChildSlot) {
+    let spawned = std::thread::Builder::new()
+        .name("streamlink-ready".into())
+        .spawn(move || {
+            if gave_up_after(&readiness, &stop, READY_WAIT) {
+                kill_parked(&slot);
+            }
+        });
+    // Without the thread the wait is unbounded, as it always was; the start
+    // itself is still worth making.
+    if let Err(e) = spawned {
+        eprintln!("streamlink: could not bound the wait for the server: {e}");
+    }
+}
+
 fn run(
     channel: String,
     pane_height: u32,
@@ -648,7 +757,10 @@ fn run(
         // logged at info, and so are the ad notices (`ads`). A `loglevel`
         // above that in streamlink's own config file would leave the pane
         // starting for ever; the command line is read after the file, so
-        // this wins.
+        // this wins. Over `loglevel` only: a `quiet` or a `logfile` there
+        // keeps the log off stdout whatever the level, and no argument
+        // takes either back, so the wait for `Ready` is bounded instead
+        // ([`READY_WAIT`]).
         "--loglevel".to_string(),
         "info".to_string(),
     ];
@@ -710,6 +822,11 @@ fn run(
         return;
     }
 
+    // Waited for, but not for ever; see `READY_WAIT`. Past it the child is
+    // killed, which ends the read below, and the pane is told why.
+    let readiness = Arc::new(Readiness::default());
+    give_up_unless_ready(readiness.clone(), stop.clone(), child_slot.clone());
+
     // streamlink announces the server on stdout, so watch for that rather than
     // probing the port: a probe connection would be a real client, and this
     // also tells us when the channel turns out to be offline. The same lines
@@ -722,24 +839,39 @@ fn run(
                 return;
             }
             if line.contains("Starting server, access with one of") {
-                let _ = tx.unbounded_send(StreamEvent::Ready {
-                    url: url.clone(),
-                    quality: chosen.name.clone(),
-                    available: playable.clone(),
-                    playlist: None,
-                });
+                // Not once the start has been given up on: its child is
+                // being killed, and the pane is about to hear why.
+                if readiness.answer() {
+                    let _ = tx.unbounded_send(StreamEvent::Ready {
+                        url: url.clone(),
+                        quality: chosen.name.clone(),
+                        available: playable.clone(),
+                        playlist: None,
+                    });
+                }
             } else if let Some(secs) = ads::ad_break(&line) {
                 // The same log, read line by line as it comes, so an ad is
                 // heard as streamlink says it, never after it. Streamlink is
-                // run at info, which these are at, whatever its own config
-                // file says.
+                // run at info, which these are at, whatever `loglevel` its
+                // own config file sets; a `quiet` or a `logfile` there hides
+                // these as it hides `Starting server`, and the start does
+                // not get this far (`READY_WAIT`).
                 let _ = tx.unbounded_send(StreamEvent::AdBreak { secs });
             }
         }
     }
+    // An exit is an answer too, so the wait stands down; a start already
+    // given up on stays given up.
+    readiness.answer();
 
     if stop.load(Ordering::Relaxed) {
         kill_parked(&child_slot);
+        return;
+    }
+    if readiness.given_up() {
+        let _ = tx.unbounded_send(StreamEvent::Failed {
+            reason: silent_reason(),
+        });
         return;
     }
 
@@ -889,8 +1021,6 @@ mod tests {
         );
     }
 
-    /// The same words for an expired video as for a channel that is off, so
-    /// the caller has to know which it asked about.
     /// streamlink 8.6.0 renamed a recording's audio `audio_only` and gave a
     /// channel's portrait renditions names of their own (PR 7087). Neither
     /// is a picture for the menu, and a portrait one must never be `best`:
@@ -918,6 +1048,8 @@ mod tests {
         assert_eq!(choose(&available, &best, 2160).unwrap().name, "1080p60");
     }
 
+    /// The same words for an expired video as for a channel that is off, so
+    /// the caller has to know which it asked about.
     #[test]
     fn nothing_playable_is_empty_not_an_error() {
         let json: serde_json::Value = serde_json::from_str(
@@ -934,18 +1066,18 @@ mod tests {
         );
     }
 
-    /// A streamlink that refused its arguments prints nothing on stdout,
-    /// and that is said as nothing, not as JSON that could not be read.
+    /// A streamlink that refused its arguments, or one told to be quiet,
+    /// prints nothing on stdout, and that is said as nothing, not as JSON
+    /// that could not be read, with the config line that does it named.
     #[test]
     fn an_empty_answer_is_said_plainly() {
-        assert_eq!(
-            streams_from_answer(b"").unwrap_err(),
-            "streamlink exited without an answer"
+        let empty = streams_from_answer(b"").unwrap_err();
+        assert!(
+            empty.starts_with("streamlink exited without an answer."),
+            "{empty}"
         );
-        assert_eq!(
-            streams_from_answer(b" \r\n").unwrap_err(),
-            "streamlink exited without an answer"
-        );
+        assert!(empty.contains("quiet"), "{empty}");
+        assert_eq!(streams_from_answer(b" \r\n").unwrap_err(), empty);
         assert!(streams_from_answer(b"{not json")
             .unwrap_err()
             .starts_with("streamlink returned unreadable JSON"));
@@ -994,6 +1126,44 @@ mod tests {
             ..StreamOptions::default()
         };
         assert_eq!(empty.known_ladder(), None);
+    }
+
+    /// A serving run that answers in time is never given up on, and one
+    /// given up on stays given up: a `Starting server` that comes after
+    /// the wait ran out is not a `Ready`.
+    #[test]
+    fn the_wait_for_the_server_gives_up_only_on_silence() {
+        let stop = AtomicBool::new(false);
+
+        let answered = Readiness::default();
+        assert!(answered.answer());
+        assert!(!gave_up_after(&answered, &stop, Duration::ZERO));
+        assert!(!answered.given_up());
+
+        let silent = Readiness::default();
+        assert!(gave_up_after(&silent, &stop, Duration::from_millis(20)));
+        assert!(silent.given_up());
+        assert!(!silent.answer(), "a late answer was taken");
+        assert!(silent.given_up());
+
+        // A pane torn down while it waits is its `Drop`'s to end.
+        let stopped = Readiness::default();
+        assert!(!gave_up_after(
+            &stopped,
+            &AtomicBool::new(true),
+            Duration::ZERO
+        ));
+        assert!(!stopped.given_up());
+    }
+
+    /// The pane's words for a streamlink that never said it was ready name
+    /// the two config lines that do that, and the wait they came after.
+    #[test]
+    fn a_silent_streamlink_is_said_as_its_config() {
+        let reason = silent_reason();
+        assert!(reason.contains("60 seconds"), "{reason}");
+        assert!(reason.contains("quiet") && reason.contains("logfile"));
+        assert!(reason.contains("streamlink's config"));
     }
 
     /// A kept binary that is gone is forgotten, so the next start searches

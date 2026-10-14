@@ -309,9 +309,14 @@ fn main() {
                     move |window, cx| {
                         let placement = placement_of(window.window_bounds());
                         root.update(cx, |this, cx| {
-                            this.remember_window(placement, cx);
+                            this.remember_window(placement);
                             this.remember_watching(cx);
                             this.close_pop_outs(cx);
+                            // Every save is written off this thread, and the
+                            // process ends with this window without waiting
+                            // for that one, so the last saves are waited for
+                            // here; see `root::saving`.
+                            this.finish_saving();
                         })
                         .ok();
                         // A launch arriving from here on is turned away, and

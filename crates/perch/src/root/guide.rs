@@ -220,7 +220,7 @@ impl RootView {
         cx: &mut Context<Self>,
     ) {
         if self.settings.note_watched(&channel) {
-            self.save_settings(cx);
+            self.save_settings();
         }
         self.replace_with_channel(key, channel, window, cx);
         self.update_recommended();

@@ -223,7 +223,7 @@ impl RootView {
         let defaults = Settings::default();
         self.settings.chat_width = defaults.chat_width;
         self.settings.video_share = defaults.video_share;
-        self.save_settings(cx);
+        self.save_settings();
         cx.notify();
     }
 

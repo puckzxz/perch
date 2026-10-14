@@ -131,7 +131,7 @@ impl RootView {
 
             // Remembered for the palette, which leads with it next time.
             if this.settings.note_watched(&channel) {
-                this.save_settings(cx);
+                this.save_settings();
             }
             // A new seed for the rail's recommendations, and one channel
             // fewer to recommend.
@@ -238,7 +238,7 @@ impl RootView {
 
             // A recording counts as watching its channel, for the palette.
             if this.settings.note_watched(&channel) {
-                this.save_settings(cx);
+                this.save_settings();
             }
             // And for the rail's recommendations.
             this.update_recommended();

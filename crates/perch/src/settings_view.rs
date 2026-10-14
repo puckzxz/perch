@@ -127,8 +127,9 @@ pub enum SettingsEvent {
     /// sign-in's own path (`RootView::sign_out`, `Settings::sign_out`),
     /// and leaves whatever the sheet holds unsaved and in place.
     SignOut,
-    /// `Sign in` was pressed, where `Sign out` was once signed out: the
-    /// same `RootView::start_sign_in` as the empty state's, and as with
+    /// `Sign in` was pressed: where `Sign out` was once signed out, and
+    /// beside it after a sign-in that failed. The same
+    /// `RootView::start_sign_in` as the empty state's, and as with
     /// `SignOut` the sheet's fields stay as they are.
     SignIn,
 }
@@ -145,7 +146,8 @@ pub struct SettingsPanel {
     sign_in_status: SharedString,
     /// Whether `Sign out` is offered beside the status (`SignIn::can_sign_out`).
     sign_out_offered: bool,
-    /// Whether `Sign in` is offered there instead (`SignIn::offers_sign_in`).
+    /// Whether `Sign in` is offered there, in its place once signed out and
+    /// beside it after a failure (`SignIn::offers_sign_in`).
     sign_in_offered: bool,
     /// The fields' scroll position, shared with the scrollbar drawn over them.
     scroll: ScrollHandle,
@@ -541,7 +543,10 @@ impl Render for SettingsPanel {
                             })
                             // And once signed out, the way back in, where Sign
                             // out was: the sheet is where the user just left
-                            // it, and it acts at once too.
+                            // it, and it acts at once too. After a sign-in
+                            // that failed, beside it: Sign in tries the
+                            // stored tokens again, which Sign out would
+                            // throw away.
                             .when(self.sign_in_offered, |footer| {
                                 footer.child(
                                     controls::pill(

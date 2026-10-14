@@ -53,7 +53,7 @@ impl RootView {
         let on = !self.settings.compressor;
         self.settings.compressor = on;
         compressor::set(on);
-        self.save_settings(cx);
+        self.save_settings();
         self.toast(
             if on {
                 "Audio compressor on"

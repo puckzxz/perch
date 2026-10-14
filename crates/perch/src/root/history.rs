@@ -10,6 +10,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use chrono::Utc;
 use gpui::{App, Context, Task};
 use settings::history::{self, Forgotten};
+use settings::writer::Save;
 use twitch_api::Video;
 
 use super::{RootView, ToastAction};
@@ -193,20 +194,15 @@ impl RootView {
         .detach();
     }
 
-    /// Write the history down now.
-    ///
-    /// A failure goes to the log rather than to a toast: this runs every few
-    /// seconds while a recording plays, and a disk that refuses once will
-    /// refuse again, which would be a toast every fifteen seconds for as
-    /// long as it did.
+    /// Write the history down now: a copy, to the writer (`root::saving`),
+    /// whose failure goes to the log and never to a toast.
     pub(super) fn save_history(&mut self) {
-        if let Err(e) = self.history.save(&self.history_path) {
-            eprintln!("history: could not save: {e}");
-        }
+        self.saves.save(Save::History(self.history.clone()));
     }
 
     /// Where every recording had got to, written down on the way out: the
-    /// window is closing, and nothing scheduled will run after it.
+    /// window is closing, and nothing scheduled will run after it. Handed
+    /// to the writer like any save, and waited for by `finish_saving`.
     pub(crate) fn remember_watching(&mut self, cx: &mut Context<Self>) {
         self.note_watching(cx);
         self.save_history();

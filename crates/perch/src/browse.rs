@@ -461,14 +461,15 @@ pub enum Action {
     /// Show one of the tabs, as its pill does: Home's Continue watching
     /// raises it for the whole history when it has more than one row.
     ShowTab(Tab),
-    /// Open the settings sheet. Only the not-signed-in state raises this: it is
-    /// the one empty state whose instruction is "Open settings", and telling
-    /// somebody where a button is instead of giving them the button is the sort
-    /// of thing a page does when nobody has read it back.
+    /// Open the settings sheet. Only the empty states raise this, without a
+    /// client id and after a sign-in that failed: those are the ones whose
+    /// remedy can be in settings, and telling somebody where a button is
+    /// instead of giving them the button is the sort of thing a page does
+    /// when nobody has read it back.
     OpenSettings,
     /// Start signing in: the empty state's button once the user has signed
-    /// out (`SignIn::SignedOut`), the same thing the chat composer's
-    /// `Sign in` does (`RootView::start_sign_in`).
+    /// out or a sign-in has failed (`SignIn::offers_sign_in`), the same
+    /// thing the chat composer's `Sign in` does (`RootView::start_sign_in`).
     SignIn,
     /// Fetch the next page of whichever list is on screen.
     LoadMore,
@@ -539,11 +540,17 @@ impl SignIn {
     }
 
     /// Whether a `Sign in` is offered where the sign-in is said and no
-    /// worker is running to bring one: only once signed out. Anywhere else
-    /// a sign-in is on its way, or wants settings first, or has a remedy of
-    /// its own (a failed one's is `Open settings`).
+    /// worker is running to bring one: once signed out, and once a sign-in
+    /// has failed, which ends its worker — a refresh Twitch refused
+    /// mid-session, a code that ran out, the worker stopped by an error of
+    /// its own. (One refused at startup goes straight on to a new code,
+    /// whose `AwaitingCode` replaces the failure a moment later.) Sign in
+    /// tries the stored tokens first and asks for a new code only when they
+    /// are dead (`SignInStart::Stored`), so it costs a failure nothing it
+    /// still had, as Sign out then Sign in would. Anywhere else a sign-in
+    /// is on its way, or wants settings first.
     pub fn offers_sign_in(&self) -> bool {
-        matches!(self, SignIn::SignedOut)
+        matches!(self, SignIn::SignedOut | SignIn::Error(_))
     }
 
     /// Whether a sign-in is on its way or here: not once it has failed, been
@@ -1416,7 +1423,7 @@ pub(crate) fn notice(title: SharedString, detail: SharedString, error: bool) -> 
 pub(crate) fn empty_state<V: 'static>(
     sign_in: &SignIn,
     follows_loaded: bool,
-    on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + 'static,
+    on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + Clone + 'static,
     cx: &mut Context<V>,
 ) -> AnyElement {
     if let SignIn::AwaitingCode {
@@ -1455,25 +1462,36 @@ pub(crate) fn empty_state<V: 'static>(
 
     let body = notice(title, detail, matches!(sign_in, SignIn::Error(_)));
 
-    // The two states you can do something about get the thing to do, rather
+    // The states you can do something about get the thing to do, rather
     // than a sentence naming it.
+    let sign_in_pill = |cx: &mut Context<V>| {
+        let on_action = on_action.clone();
+        controls::pill("empty-sign-in", "Sign in", controls::Variant::Primary).on_click(
+            cx.listener(move |view, _event, window, cx| {
+                on_action(view, Action::SignIn, window, cx)
+            }),
+        )
+    };
+    let settings_pill = |variant, cx: &mut Context<V>| {
+        let on_action = on_action.clone();
+        controls::pill("empty-settings", "Open settings", variant).on_click(cx.listener(
+            move |view, _event, window, cx| on_action(view, Action::OpenSettings, window, cx),
+        ))
+    };
     let body = match sign_in {
-        SignIn::NeedsClientId | SignIn::Error(_) => body.child(
-            controls::pill(
-                "empty-settings",
-                "Open settings",
-                controls::Variant::Primary,
-            )
-            .on_click(cx.listener(move |view, _event, window, cx| {
-                on_action(view, Action::OpenSettings, window, cx)
-            })),
-        ),
-        SignIn::SignedOut => body.child(
-            controls::pill("empty-sign-in", "Sign in", controls::Variant::Primary).on_click(
-                cx.listener(move |view, _event, window, cx| {
-                    on_action(view, Action::SignIn, window, cx)
-                }),
-            ),
+        SignIn::NeedsClientId => body.child(settings_pill(controls::Variant::Primary, cx)),
+        SignIn::SignedOut => body.child(sign_in_pill(cx)),
+        // Sign in first: it tries the stored tokens again, which is what
+        // a worker that stopped needs, and goes on to a new code when they
+        // are dead. Settings beside it, for the failure a client id Twitch
+        // will not take is behind, which signing in again only repeats.
+        SignIn::Error(_) => body.child(
+            div()
+                .flex()
+                .flex_row()
+                .gap(px(theme::GAP_TIGHT))
+                .child(sign_in_pill(cx))
+                .child(settings_pill(controls::Variant::Pill, cx)),
         ),
         _ => body,
     };
@@ -1515,10 +1533,10 @@ pub(crate) fn browse_placeholder<V: 'static>(
 /// lists, and the guide's (`crate::guide`).
 ///
 /// A list that was never asked for because nobody is signed in gets a
-/// `Sign in` under the sentence once the user has signed out
-/// ([`SignIn::offers_sign_in`]), as the empty state does: nothing else on
-/// those pages starts one, and the sentence alone named a thing to do with
-/// nothing to do it with.
+/// `Sign in` under the sentence once the user has signed out, or a sign-in
+/// has failed ([`SignIn::offers_sign_in`]), as the empty state does:
+/// nothing else on those pages starts one, and the sentence alone named a
+/// thing to do with nothing to do it with.
 pub(crate) fn list_placeholder<V: 'static>(
     waiting: &'static str,
     error: Option<&Unanswered>,
@@ -1760,13 +1778,14 @@ mod tests {
             user_code: "ABCD".into(),
             verification_uri: "https://www.twitch.tv/activate".into(),
         };
-        // And `Sign in` only once signed out, so the settings sheet always
-        // has one of the two, or neither while there is no client id.
+        // And `Sign in` once signed out, or beside Sign out once a sign-in
+        // has failed, so the settings sheet always has a way in, or no way
+        // either way while there is no client id.
         for (sign_in, offered, coming, sign_in_offered) in [
             (SignIn::SignedIn("me".into()), true, true, false),
             (SignIn::Connecting, true, true, false),
             (awaiting, true, true, false),
-            (SignIn::Error("sign-in expired".into()), true, false, false),
+            (SignIn::Error("sign-in expired".into()), true, false, true),
             (SignIn::SignedOut, false, false, true),
             (SignIn::NeedsClientId, false, false, false),
         ] {

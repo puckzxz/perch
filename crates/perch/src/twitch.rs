@@ -29,6 +29,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures::channel::mpsc;
+use settings::writer::Landed;
 use settings::{OAuthTokens, Settings};
 use twitch_api::badges::BadgeSet;
 use twitch_api::chat::SendOutcome;
@@ -431,8 +432,8 @@ pub enum TwitchEvent {
     },
     /// A refreshed sign-in could not be written to the settings file. Not
     /// the end of the worker, which goes on with it and tries the save
-    /// again at each poll; said once, since a launch before one lands
-    /// starts signed out.
+    /// again at every poll and before every signed-in request it serves;
+    /// said once, since a launch before one lands starts signed out.
     SignInUnsaved(String),
     /// Sign-in itself failed, so nothing works.
     Error(String),
@@ -517,9 +518,12 @@ pub struct TwitchService {
 }
 
 impl TwitchService {
+    /// Start a worker, which reads `settings_path` once `landed` says the
+    /// app's saves handed over before it are on disk; see `run`.
     pub fn start(
         settings_path: PathBuf,
         start: SignInStart,
+        landed: Landed,
     ) -> (Self, mpsc::UnboundedReceiver<TwitchEvent>) {
         let (tx, rx) = mpsc::unbounded();
         let (requests_tx, requests_rx) = std::sync::mpsc::channel();
@@ -532,16 +536,18 @@ impl TwitchService {
                 // A panic ends only this thread, and the UI would go on
                 // saying signed in with nothing behind it: no follows poll,
                 // no browsing, no chat sent. Said as the end of the worker
-                // it is, which the UI already knows how to show; the panic
-                // itself is in the crash file (`diagnostics::keep_panics`).
+                // it is, which the UI already knows how to show, beside a
+                // `Sign in` that starts a new one with the stored tokens
+                // (`SignIn::offers_sign_in`); the panic itself is in the
+                // crash file (`diagnostics::keep_panics`).
                 let said = tx.clone();
                 move || {
                     let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        run(settings_path, start, tx, stop, requests_rx)
+                        run(settings_path, start, landed, tx, stop, requests_rx)
                     }));
                     if ran.is_err() {
                         let _ = said.unbounded_send(TwitchEvent::Error(
-                            "Perch's connection to Twitch stopped after an error. Restart perch to reconnect.".into(),
+                            "Perch's connection to Twitch stopped after an error. Sign in to reconnect.".into(),
                         ));
                     }
                 }
@@ -622,8 +628,9 @@ fn interruptible_sleep(total: Duration, stop: &AtomicBool) -> bool {
 /// Twitch refresh tokens are single use, so a session that is obtained and not
 /// saved locks the user out on next launch. The write goes through
 /// `Settings::save_sign_in`, which re-reads the file under the same lock the
-/// UI's saves take, so it never clobbers a preference changed meanwhile and a
-/// preference save can never clobber it.
+/// UI's saves take on their own thread (`settings::writer`), so it never
+/// clobbers a preference changed meanwhile and a preference save can never
+/// clobber it.
 ///
 /// The `stop` check is what makes the non-joining [`TwitchService::drop`] safe.
 /// A worker that is mid-request when its service is replaced — which is exactly
@@ -665,8 +672,8 @@ const STARTUP_REFRESH_WAIT: Duration = Duration::from_secs(3);
 ///
 /// A session Twitch issued that could not be saved is not the end of the
 /// worker: it is returned with `unsaved` set, for `keep_session_fresh` to
-/// save at each poll until it lands, and said once
-/// (`TwitchEvent::SignInUnsaved`).
+/// save at every poll and before every signed-in request it serves until
+/// it lands, and said once (`TwitchEvent::SignInUnsaved`).
 fn establish_session(
     settings_path: &Path,
     start: SignInStart,
@@ -1213,10 +1220,19 @@ fn recommend_error(e: twitch_api::Error) -> RecommendError {
 fn run(
     settings_path: PathBuf,
     start: SignInStart,
+    landed: Landed,
     tx: mpsc::UnboundedSender<TwitchEvent>,
     stop: Arc<AtomicBool>,
     requests: Receiver<Request>,
 ) {
+    // Not before the saves the app made ahead of this worker are on disk.
+    // The app writes the settings off its UI thread (`settings::writer`),
+    // and a new client id, or a Sign out just before this Sign in, is one
+    // of those saves: read ahead of it, the worker would start with the
+    // old client id, or sign in with the tokens just forgotten.
+    if !landed.wait_unless(|| stop.load(Ordering::Relaxed)) {
+        return;
+    }
     let Ok(settings) = Settings::load(&settings_path) else {
         let _ = tx.unbounded_send(TwitchEvent::Error("could not read settings".into()));
         return;

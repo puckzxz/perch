@@ -9,6 +9,7 @@ use gpui::{
     canvas, prelude::*, App, Context, DispatchPhase, MouseButton, MouseMoveEvent, MouseUpEvent,
     Window,
 };
+use settings::writer::Save;
 use settings::{DesktopNotifications, SheetFields};
 
 use super::{Resize, RootView};
@@ -90,16 +91,22 @@ impl RootView {
                         // opened — survives; see `adopt_sheet`.
                         this.settings.adopt_sheet(updated);
                         // A new client id invalidates any stored sign-in, so
-                        // that case drops the tokens rather than keeping them.
-                        let saved = if client_id_changed {
-                            this.settings.save_forgetting_sign_in(&this.settings_path)
+                        // that case drops the tokens rather than keeping them
+                        // — with the old worker stopped first, as Sign out
+                        // stops it. Still running, a refresh it was in the
+                        // middle of would land the old client's tokens back
+                        // over the cleared file, and the new worker would
+                        // sign in with them; stopped, `persist` declines
+                        // (see `root::account`). Written off this thread,
+                        // like every save; the new worker reads the file
+                        // only once it has landed.
+                        let save = if client_id_changed {
+                            this.stop_twitch(cx);
+                            Save::ForgettingSignIn(this.settings.clone())
                         } else {
-                            this.settings.save_preferences(&this.settings_path)
+                            Save::Preferences(this.settings.clone())
                         };
-                        if let Err(e) = saved {
-                            eprintln!("settings: could not save: {e}");
-                            this.toast(format!("Could not save settings: {e}"), cx);
-                        }
+                        this.saves.save(save);
                         this.settings_panel = None;
 
                         // By the rule leaving the page with it off stops
@@ -114,7 +121,8 @@ impl RootView {
                         // Apply immediately rather than asking for a restart,
                         // which is the entire reason this panel exists.
                         // A new worker for the new app, with everything the
-                        // old one fed forgotten; see `RootView::restart_twitch`.
+                        // old one fed forgotten; see `RootView::restart_twitch`,
+                        // whose own stop finds the old one already gone.
                         if client_id_changed {
                             this.restart_twitch(SignInStart::Stored, window, cx);
                         }
@@ -275,7 +283,7 @@ impl RootView {
         if self.resize.take().is_none() {
             return;
         }
-        self.save_settings(cx);
+        self.save_settings();
         cx.notify();
     }
 
@@ -291,7 +299,7 @@ impl RootView {
             return;
         }
         self.settings.sidebar_collapsed = !self.settings.sidebar_collapsed;
-        self.save_settings(cx);
+        self.save_settings();
         // The panes just changed width, and with it perhaps their shape.
         self.sync_quality(window, cx);
         // Folded, the recommendations are not asked for; unfolded, whatever
@@ -311,7 +319,7 @@ impl RootView {
     /// player's More says the other thing now ([`sync_pins`](Self::sync_pins)).
     pub(super) fn set_pinned(&mut self, login: String, pinned: bool, cx: &mut Context<Self>) {
         if self.settings.set_pinned(&login, pinned) {
-            self.save_settings(cx);
+            self.save_settings();
             self.ask_pane_streams();
             self.sync_pins(cx);
             cx.notify();
@@ -354,7 +362,7 @@ impl RootView {
         for chat in chats {
             chat.update(cx, |chat, cx| chat.set_display(display, cx));
         }
-        self.save_settings(cx);
+        self.save_settings();
         cx.notify();
     }
 
@@ -371,9 +379,9 @@ impl RootView {
         let epoch = self.save_epoch;
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(SAVE_SETTLE).await;
-            let _ = this.update(cx, |this: &mut RootView, cx| {
+            let _ = this.update(cx, |this: &mut RootView, _cx| {
                 if this.save_epoch == epoch {
-                    this.save_settings(cx);
+                    this.save_settings();
                 }
             });
         })
@@ -408,13 +416,10 @@ impl RootView {
         .detach();
     }
 
-    /// Where the window was when it closed, written down for next time.
-    pub(crate) fn remember_window(
-        &mut self,
-        placement: settings::WindowPlacement,
-        cx: &mut Context<Self>,
-    ) {
+    /// Where the window was when it closed, written down for next time:
+    /// handed to the writer, and waited for by `finish_saving`.
+    pub(crate) fn remember_window(&mut self, placement: settings::WindowPlacement) {
         self.settings.window = Some(placement);
-        self.save_settings(cx);
+        self.save_settings();
     }
 }

@@ -402,7 +402,9 @@ whenever another app is in front, which is the one thing a pop-out is for.
 
 - **streamlink** 8.0 or later, on `PATH` or with `STREAMLINK_PATH` pointing
   at it. An older one is passed over, and a pane says it is too old. 8.6.2 or
-  later is the one to have, for its security fixes.
+  later is the one to have, for its security fixes. Perch reads what
+  streamlink says, so a `quiet` or `logfile` line in streamlink's own config
+  file keeps streams from starting, and a pane says so.
 - **libmpv**, which is a different errand on each platform:
 
   On **macOS**, `brew install mpv streamlink` is both requirements at once —
@@ -918,6 +920,12 @@ chat offer **Sign in**, which shows a new code to enter at
 `twitch.tv/activate`. Everything else in settings stays
 as it was. The next launch starts signing in again on its own, as a first
 launch with a Client ID does.
+
+When signing in fails — the code left to run out, Twitch out of reach, the
+connection stopping after an error — Home and the settings sheet say why,
+and they and every chat offer **Sign in** (beside **Sign out** in the
+sheet), which tries the stored sign-in again before it shows a new code. Home has **Open settings**
+beside it too, for a Client ID Twitch will not take.
 
 To create the Client ID: register an application, set **OAuth Redirect URL** to
 `http://localhost` (required by the form, unused by this app) and **Client Type**
