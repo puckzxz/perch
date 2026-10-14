@@ -341,11 +341,12 @@ pub struct Settings {
     /// The channels pinned to the top of the rail, by [`channel_key`], in the
     /// order they were pinned.
     ///
-    /// Pin order rather than viewers or names, because a pin is a statement
-    /// that these few come first whoever else is on, and a group that
-    /// reshuffled itself every minute would be the live list again. Tidied on
-    /// load and on every write (see `tidy_pinned`), since the file is
-    /// hand-editable and pins can be set there by hand.
+    /// A pin says these few come first whoever else is on. Among themselves
+    /// the rail draws them as its other groups go — who is live by viewers,
+    /// then who is off by when they were last live (perch's
+    /// `sidebar::pin_order`) — and in this order where it has nothing to go
+    /// by. Tidied on load and on every write (see `tidy_pinned`), since the
+    /// file is hand-editable and pins can be set there by hand.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pinned: Vec<String>,
     /// What `recent` was before it was a list. Every build up to 0.2.1 wrote

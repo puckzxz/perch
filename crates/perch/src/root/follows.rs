@@ -511,8 +511,9 @@ impl RootView {
     /// names as well as who is live, and the rail's recommendations with
     /// them. When the last of them is let go they are put back in order —
     /// who is live by viewers, the rest by name in the rail and by when you
-    /// last watched them on Home, the recommendations ranked afresh — out of
-    /// the way of the pointer rather than under it.
+    /// last watched them on Home, the recommendations ranked afresh, and the
+    /// pins at the rail's next draw ([`order_pins`](Self::order_pins)) — out
+    /// of the way of the pointer rather than under it.
     pub(super) fn hold_live(&mut self, list: LiveList, pointed: bool, cx: &mut Context<Self>) {
         let was = self.live_held();
         match list {
@@ -531,6 +532,34 @@ impl RootView {
             self.rank_recommended();
             cx.notify();
         }
+    }
+
+    /// Put the pins in the rail's order (`sidebar::pin_order`), unless a
+    /// list of follows is held (`live_held`): then they keep their places
+    /// (see [`keep_order`]), a pin made meanwhile joins the end and one taken
+    /// off goes, and a pin whose stream starts or ends, or whose viewers pass
+    /// another's, stays put until the pointer leaves.
+    ///
+    /// Called as the rail is drawn, rather than where the follows are put in
+    /// order: what moves a pin comes from four places — a poll's numbers, the
+    /// ask about channels nobody follows, an answer about when one was last
+    /// live, a pin made or taken off — and drawn, each is in the next frame
+    /// with no list of them to keep up. A handful of pins costs nothing to
+    /// sort. Let go, `hold_live`'s notify draws them in order again.
+    pub(super) fn order_pins(&mut self) {
+        let fresh = crate::sidebar::pin_order(
+            &self.settings.pinned,
+            &self.follows,
+            &self.offline,
+            &self.pane_streams.streams,
+            &self.last_live,
+            self.follows_loaded,
+        );
+        self.pin_order = if self.live_held() {
+            keep_order(&self.pin_order, fresh, String::as_str)
+        } else {
+            fresh
+        };
     }
 
     /// Open a recording named by its link, once Twitch has said what it is.

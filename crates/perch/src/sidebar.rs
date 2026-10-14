@@ -9,13 +9,14 @@
 //! column.
 //!
 //! Four groups, top to bottom (see [`groups`]). The channels pinned there,
-//! in the order they were pinned, live or not — see
-//! [`settings::Settings::pinned`] — followed or not: a pin nobody follows is
-//! asked about by itself (`root::pane_streams`), and is live when that says
-//! so. Who else is live, by viewers. Then a few live channels you do not
-//! follow that are like the ones you watch, each saying which channel led to
-//! it — see `crate::recommended`, which says where they come from and how
-//! rarely they are asked for. Then everyone else followed, as names, each
+//! live or not — see [`settings::Settings::pinned`] — followed or not: a pin
+//! nobody follows is asked about by itself (`root::pane_streams`), and is
+//! live when that says so. Whoever of them is live comes first, by viewers,
+//! then the rest by when they were last live; see [`pin_order`]. Who else is
+//! live, by viewers. Then a few live channels you do not follow that are like
+//! the ones you watch, each saying which channel led to it — see
+//! `crate::recommended`, which says where they come from and how rarely they
+//! are asked for. Then everyone else followed, as names, each
 //! saying when it was last live, folded under a count, because that is the
 //! longest list in the app and most evenings nobody wants it. Folded is
 //! where it starts each session, and folded it builds no rows and asks for
@@ -43,6 +44,7 @@
 //! The rows measure the pointer for it with probes of their own, as every
 //! hover here is measured, and report to the root, which keeps the state.
 
+use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -126,7 +128,8 @@ pub struct Rail<'a> {
     /// the pins nobody follows among them, when asked by login
     /// (`root::pane_streams`): a pin found here is live.
     pub asked: &'a [LiveStream],
-    /// What is pinned, in pin order; see [`settings::Settings::pinned`].
+    /// What is pinned, in the order it is drawn: [`pin_order`]'s, or held
+    /// still the same way. See [`settings::Settings::pinned`].
     pub pinned: &'a [String],
     /// Live channels like the ones watched, ranked, or held still the same
     /// way; empty whenever the group is hidden. See `crate::recommended`.
@@ -304,19 +307,14 @@ impl Groups<'_> {
 ///
 /// A pinned channel is in Pinned and nowhere else, so it is one row and is
 /// counted once; Live, Recommended and Offline leave it out — a pin on a
-/// channel nobody follows can be recommended too. Pins keep pin order
-/// whoever is live — a group that reshuffled by viewers would be the live
-/// list again. A pin the follows lists do not have is live when `asked`,
-/// what the ask about channels nobody follows found on
-/// (`root::pane_streams`), has it, and `Unknown` otherwise. Before any
-/// follows list has come back every pin is `Unknown`, rather than read as
-/// offline from lists that are only empty because nothing has arrived.
-/// Logins are compared through `settings::channel_key`, the rule the pins
-/// were stored by. The recommendations arrive ranked and already without
-/// anyone followed or open (`RootView::rank_recommended`), and keep their
-/// order — and are not shown at all until a follows list has come back,
-/// whatever the root still holds: without one, nobody can say they are not
-/// followed.
+/// channel nobody follows can be recommended too. Pins are drawn in the
+/// order `pinned` gives them, which is [`pin_order`]'s or the order held
+/// under the pointer; each is what [`pin_row`] makes of it. Logins are
+/// compared through `settings::channel_key`, the rule the pins were stored
+/// by. The recommendations arrive ranked and already without anyone followed
+/// or open (`RootView::rank_recommended`), and keep their order — and are
+/// not shown at all until a follows list has come back, whatever the root
+/// still holds: without one, nobody can say they are not followed.
 pub fn groups<'a>(
     follows: &'a [LiveStream],
     offline: &'a [Channel],
@@ -331,29 +329,7 @@ pub fn groups<'a>(
     let rows = pinned
         .iter()
         .zip(&keys)
-        .map(|(pin, key)| {
-            if !follows_loaded {
-                return Row::Unknown(pin);
-            }
-            if let Some(stream) = follows
-                .iter()
-                .find(|stream| channel_key(&stream.user_login) == *key)
-            {
-                Row::Live(stream)
-            } else if let Some(channel) = offline
-                .iter()
-                .find(|channel| channel_key(&channel.login) == *key)
-            {
-                Row::Offline(channel)
-            } else if let Some(stream) = asked
-                .iter()
-                .find(|stream| channel_key(&stream.user_login) == *key)
-            {
-                Row::Live(stream)
-            } else {
-                Row::Unknown(pin)
-            }
-        })
+        .map(|(pin, key)| pin_row(pin, key, follows, offline, asked, follows_loaded))
         .collect();
     let followed_pin_live = follows_loaded
         && follows
@@ -376,6 +352,102 @@ pub fn groups<'a>(
             .filter(|channel| !is_pinned(&channel.login))
             .collect(),
     }
+}
+
+/// One pin's row, `key` being its `settings::channel_key`: live or offline as
+/// the follows lists have it; failing those, live when `asked`, what the ask
+/// about channels nobody follows found on (`root::pane_streams`), has it;
+/// and `Unknown` otherwise. Before any follows list has come back every pin
+/// is `Unknown`, rather than read as offline from lists that are only empty
+/// because nothing has arrived.
+fn pin_row<'a>(
+    pin: &'a str,
+    key: &str,
+    follows: &'a [LiveStream],
+    offline: &'a [Channel],
+    asked: &'a [LiveStream],
+    follows_loaded: bool,
+) -> Row<'a> {
+    if !follows_loaded {
+        return Row::Unknown(pin);
+    }
+    if let Some(stream) = follows
+        .iter()
+        .find(|stream| channel_key(&stream.user_login) == key)
+    {
+        Row::Live(stream)
+    } else if let Some(channel) = offline
+        .iter()
+        .find(|channel| channel_key(&channel.login) == key)
+    {
+        Row::Offline(channel)
+    } else if let Some(stream) = asked
+        .iter()
+        .find(|stream| channel_key(&stream.user_login) == key)
+    {
+        Row::Live(stream)
+    } else {
+        Row::Unknown(pin)
+    }
+}
+
+/// Where a pin goes in Pinned, first to last: the order the variants are
+/// in, then within each the order of what they hold.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+enum PinPlace {
+    /// Live, the most watched first.
+    Live(Reverse<u64>),
+    /// Offline, the most recently live first.
+    Off(Reverse<DateTime<Utc>>),
+    /// Nothing to place it by: no follows list yet, a pin nobody follows
+    /// that is not live, or an offline one Twitch has said nothing of yet,
+    /// or that has never broadcast. These keep the order they were pinned
+    /// in, the sort being stable.
+    Unplaced,
+}
+
+/// The pins in the order Pinned draws them: whoever is live first, most
+/// watched at the top, as the Live group goes; then whoever is off, most
+/// recently live first (`LastLive::at`, the time the line under the name
+/// counts from); then the rest in the order they were pinned. So the group
+/// says the same as the two below it — who is on and how big, who was on
+/// lately — for the channels that matter most.
+///
+/// Sorted afresh at every draw of the rail and held still while the pointer
+/// is on a list of follows, as everything else on the rail is: see
+/// `RootView::order_pins`. Each pin is the one `pinned` holds, so a held
+/// order and a fresh one name the same strings.
+pub fn pin_order(
+    pinned: &[String],
+    follows: &[LiveStream],
+    offline: &[Channel],
+    asked: &[LiveStream],
+    last_live: &LastLive,
+    follows_loaded: bool,
+) -> Vec<String> {
+    let mut placed: Vec<(PinPlace, &String)> = pinned
+        .iter()
+        .map(|pin| {
+            let row = pin_row(
+                pin,
+                &channel_key(pin),
+                follows,
+                offline,
+                asked,
+                follows_loaded,
+            );
+            let place = match row {
+                Row::Live(stream) => PinPlace::Live(Reverse(stream.viewer_count)),
+                Row::Offline(channel) => last_live
+                    .at(&channel.login)
+                    .map_or(PinPlace::Unplaced, |at| PinPlace::Off(Reverse(at))),
+                Row::Unknown(_) | Row::Recommended(_) => PinPlace::Unplaced,
+            };
+            (place, pin)
+        })
+        .collect();
+    placed.sort_by(|a, b| a.0.cmp(&b.0));
+    placed.into_iter().map(|(_, pin)| pin.clone()).collect()
 }
 
 /// Which group a row is drawn in. Part of its id, so the same channel can
@@ -1055,18 +1127,60 @@ mod tests {
         assert_eq!(groups.offline, [&offline[0]]);
     }
 
-    /// Pin order, not viewers: the busiest pin does not climb over the one
-    /// pinned first, and a pin that is offline keeps its place among them.
+    /// Whoever is live first, by viewers, a pin nobody follows among them;
+    /// then whoever is off, the most recently live first; then the pins
+    /// with nothing to go by, in the order they were pinned.
     #[test]
-    fn pins_keep_pin_order_whoever_is_live() {
+    fn pins_go_live_by_viewers_then_off_by_when_last_live() {
         let follows = [stream("big", 9000), stream("small", 5)];
-        let offline = [channel("asleep")];
-        let pinned = pins(&["small", "asleep", "big"]);
+        let asked = [stream("faraway", 300)];
+        let offline = [channel("lastweek"), channel("never"), channel("yesterday")];
+        let at = |when: &str| {
+            DateTime::parse_from_rfc3339(when)
+                .unwrap()
+                .with_timezone(&Utc)
+        };
+        let mut last_live = LastLive::default();
+        last_live.went_live(["lastweek"], at("2026-09-01T12:00:00Z"));
+        last_live.went_live(["yesterday"], at("2026-09-07T12:00:00Z"));
+        let pinned = pins(&[
+            "gone",
+            "lastweek",
+            "small",
+            "never",
+            "yesterday",
+            "big",
+            "faraway",
+        ]);
 
-        let groups = groups(&follows, &offline, &[], &[], &pinned, true);
-        assert_eq!(logins(&groups.pinned), ["small", "asleep", "big"]);
-        assert!(matches!(groups.pinned[1], Row::Offline(_)));
+        let order = pin_order(&pinned, &follows, &offline, &asked, &last_live, true);
+        assert_eq!(
+            order,
+            [
+                "big",
+                "faraway",
+                "small",
+                "yesterday",
+                "lastweek",
+                "gone",
+                "never"
+            ]
+        );
+        // And that is the order Pinned draws them in.
+        let groups = groups(&follows, &offline, &asked, &[], &order, true);
+        assert_eq!(logins(&groups.pinned), order);
         assert!(groups.live.is_empty());
+    }
+
+    /// Before any follows list nobody can be placed, so the pins are in the
+    /// order they were pinned, whatever the ask about channels nobody
+    /// follows has found.
+    #[test]
+    fn pins_keep_pin_order_until_the_follows_arrive() {
+        let asked = [stream("faraway", 300)];
+        let pinned = pins(&["alice", "faraway"]);
+        let order = pin_order(&pinned, &[], &[], &asked, &LastLive::default(), false);
+        assert_eq!(order, pinned);
     }
 
     /// Before any list has come back, empty lists say nothing about who is

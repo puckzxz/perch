@@ -678,7 +678,10 @@ before its **Channel page** does that (see [Chat](#chat)).
 ### The rail
 
 Down the left-hand edge of both pages, in four groups. First the channels you
-have pinned, in the order you pinned them, live or not. Then who else is live:
+have pinned, live or not: whoever of them is live at the top, the most watched
+first, then the rest by when they were last live, the most recent first. Like
+every list on the rail, they hold still while the pointer is on it and fall
+into order once it leaves. Then who else is live:
 avatar, name, what they are playing, and how many people are there. Then
 Recommended: up to five live channels you do not follow that are like the ones
 you watch, each saying which one led to it — "Like forsen" — and holding still

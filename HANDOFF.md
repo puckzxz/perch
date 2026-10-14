@@ -259,9 +259,9 @@ App modules:
 | `twitch.rs` | the worker: sign-in, follows polling, browse requests, a stopped pane's ask for its channel's past broadcasts (which a live pane's rewind rides too), the rail's anonymous ask for channels like the ones watched (`Request::Recommend`), the anonymous ask for when the offline follows were last live (`Request::LastLive`), and the anonymous ask for Shared Chat partners' names (`Request::ChannelNames`), all three answered ahead of the session's upkeep, the chats' badges from Helix (`Request::Badges`), a live chat's cheermotes from Helix (`Request::Cheermotes`), a chatter's account from Helix for a viewer card (`Request::Profile`), a channel's stream schedule from Helix (`Request::Schedule`, a 404 read as no schedule), a chat message sent (`Request::SendChat`), and the token validated at the first poll and hourly, saying whether it may send (`TwitchEvent::ChatScope`) |
 | `keys.rs` | the keymap: actions, bindings, contexts, the listing, and the keys a tooltip may name (`Hint`) |
 | `theme.rs` | **all** colour, spacing, type and motion tokens |
-| `sidebar.rs` | the follows rail down the left, beside both pages: Pinned, Live, Recommended, then Offline folded under a count, each offline row saying when it was last live where a live row says what is on, and a pin nobody follows live when the ask about it says so (`groups`, pure, tested); `pin_words`, what a pin away from the rail says; each live row's probe for its preview card, and the card hung beside the row (`preview_probe`, `preview`) |
+| `sidebar.rs` | the follows rail down the left, beside both pages: Pinned, Live, Recommended, then Offline folded under a count, each offline row saying when it was last live where a live row says what is on, and a pin nobody follows live when the ask about it says so (`groups`, pure, tested); Pinned's order, live by viewers then off by when last live (`pin_order`, pure, tested); `pin_words`, what a pin away from the rail says; each live row's probe for its preview card, and the card hung beside the row (`preview_probe`, `preview`) |
 | `rail_preview.rs` | a live rail row's preview card: when it comes up and goes (`Preview`: the wait, the warm hand-on to the next row, a press putting it away, pure, tested) and the card itself (`card`: the cached preview, viewers and uptime, title, game) |
-| `last_live.rs` | when each offline follow was last live, worked out: when to ask (`LastLive::next_ask`), what is kept, and the words ("Live 3 hours ago", `wording`, reusing `channel_page::when` past a day) (pure, tested) |
+| `last_live.rs` | when each offline follow was last live, worked out: when to ask (`LastLive::next_ask`), what is kept, and the words ("Live 3 hours ago", `wording`, reusing `channel_page::when` past a day), counted from `LastLive::at`, which Pinned's offline pins are ordered by too (pure, tested) |
 | `schedule.rs` | when an offline channel says it is on next, worked out: the asks and answers (`Schedules`, once a channel a session), the next broadcast going ahead or the break that is on (`next`), and the line ("Next stream: Tue 7:00 PM · Title · Game", "On a break until 12 Oct", `wording`) (pure, tested) |
 | `shared_chat.rs` | Shared Chat labels worked out: which partner ids to ask about (`SourceRooms::wants`, once each a session), what an answer comes to (`answered`), and whether and what a line is labelled (`label`, `Label::of`) (pure, tested) |
 | `recommended.rs` | the rail's Recommended group worked out: the seeds (`seeds`), when to ask (`Recommended::next_ask`), and what the answers come to (`suggestions`, `reason`) (pure, tested) |
@@ -3444,6 +3444,27 @@ the names (`home_offline`) goes through `follows::home_offline_after`, held
 the same way. On release `hold_live` puts the rail's back in name order with
 `twitch_api::by_name`, the one rule `followed_channels` sorts by, and Home's
 in last-watched order with `home::by_last_watched`.
+
+**The pins go as the groups under them do, and hold the same way.** Pinned
+puts whoever is live first, by viewers, then whoever is off by when they
+were last live (`LastLive::at`, the time the line under an offline name
+counts from), then any pin with nothing to place it by — no follows list
+yet, a pin nobody follows that is off, an offline one Twitch has said
+nothing of — in the order it was pinned (`sidebar::pin_order`, tested). It
+used to keep pin order whoever was live, on the reasoning that a group
+reshuffled by viewers would be the live list again; the user asked for it
+sorted, and the pins still come first whoever else is on. Unlike Home's
+names it is sorted at draw time, by `RootView::order_pins` as the rail is
+built: what moves a pin comes from four places — a poll's numbers, the ask
+about channels nobody follows, a last-live answer, a pin made or taken off —
+and the draw sees them all with no list of them to keep up. That is safe
+where Home's draw-time sort was not because what it holds is the order last
+drawn, not a list a sort then overrides: while `live_held`, the fresh order
+is merged into `RootView::pin_order` with `keep_order`, so a pin whose
+stream ends or whose viewers pass another's stays where it is, and a pin
+made meanwhile joins the end; let go, `hold_live`'s notify brings the draw
+that sorts. `keep_order` keeps exactly the fresh order's members, so the
+pins drawn are always `settings.pinned`'s, whatever order they are in.
 
 **A live rail row the pointer rests on shows its stream's card.** A row is a
 name, a game and a number; what the stream looks like and is called was a

@@ -2,7 +2,8 @@
 //! what its answers are kept as, and the words a name wears for it ("Live 3
 //! hours ago"). Pure and tested. The asking is `root::last_live`, the request
 //! is the worker's `Request::LastLive`, the drawing is Home's offline names
-//! and the rail's offline rows, and the data is
+//! and the rail's offline rows, which the rail's offline pins are ordered
+//! by too (`sidebar::pin_order`), and the data is
 //! `twitch_api::recommend::last_broadcasts`, whose docs say where it comes
 //! from: Twitch's unpublished GraphQL endpoint, asked anonymously, a hundred
 //! logins a request.
@@ -199,6 +200,15 @@ impl LastLive {
     /// live list within the minute, and "Live 2 minutes ago" on a name among
     /// the offline ones would be wrong both ways.
     pub fn words(&self, login: &str, now: DateTime<Utc>) -> Option<String> {
+        wording(&self.at(login)?.to_rfc3339(), now)
+    }
+
+    /// When `login` was last known live, which [`words`](Self::words) count
+    /// from and the rail's offline pins are ordered by
+    /// (`sidebar::pin_order`): the later of when its last stream started
+    /// and the last poll that saw it live. `None` exactly when `words` says
+    /// nothing.
+    pub fn at(&self, login: &str) -> Option<DateTime<Utc>> {
         let key = channel_key(login);
         let started = match self.answers.get(&key) {
             Some(last) if last.live => return None,
@@ -209,8 +219,7 @@ impl LastLive {
             }),
             None => None,
         };
-        let latest = started.max(self.seen_live.get(&key).copied())?;
-        wording(&latest.to_rfc3339(), now)
+        started.max(self.seen_live.get(&key).copied())
     }
 }
 
@@ -438,6 +447,7 @@ mod tests {
                 .as_deref(),
             Some("Live 2 minutes ago")
         );
+        assert_eq!(last_live.at("Alice"), Some(at("2026-09-08T11:58:00Z")));
     }
 
     /// A refusal is one line, and the last ask of the session: not even the

@@ -246,6 +246,8 @@ impl RootView {
             self.hold_live(super::follows::LiveList::Rail, false, cx);
             return None;
         }
+        // Pinned in the rail's order, or held still under the pointer.
+        self.order_pins();
         // Live panes only: a recording open beside the rail does not make
         // its channel's row "watching".
         let watching: Vec<String> = self
@@ -261,7 +263,7 @@ impl RootView {
                 // Never merged into `follows`, which three things read as
                 // who is live; the rail reads it for pins alone.
                 asked: &self.pane_streams.streams,
-                pinned: &self.settings.pinned,
+                pinned: &self.pin_order,
                 recommended: &self.recommended.shown,
                 avatars: &self.avatars,
                 last_live: &self.last_live,

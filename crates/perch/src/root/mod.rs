@@ -256,6 +256,10 @@ pub(crate) struct RootView {
     /// never while held — and a sort drawn every frame from the other would
     /// move names under the pointer; see `RootView::hold_live`.
     home_offline: Vec<Channel>,
+    /// The pins in the order the rail last drew them: `sidebar::pin_order`'s,
+    /// or held still under the pointer; see `RootView::order_pins`. Only an
+    /// order: which channels are pinned is `settings.pinned`'s to say.
+    pin_order: Vec<String>,
     /// A follows request the user asked for by hand is outstanding. Only their
     /// requests set this, so the minute-by-minute poll does not blink the
     /// control every time it runs.
@@ -621,6 +625,7 @@ impl RootView {
             follows: Vec::new(),
             offline: Vec::new(),
             home_offline: Vec::new(),
+            pin_order: Vec::new(),
             refreshing: false,
             avatars: HashMap::new(),
             follows_loaded: false,
