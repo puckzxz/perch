@@ -2210,6 +2210,19 @@ exposed in the same way. If one shows up empty with a healthy parent, place it
 the same way. The video box sidesteps a related problem by making the player a
 flex item (see the comment on `video_pane` in `watch::pane`).
 
+**A line cut to fit was measured again over cut runs, and panicked on a
+flag.** gpui 0.2.2's text element truncated the very runs its measure closure
+captured (`TextLayout::layout`), and taffy measures a line more than once a
+layout, at different widths: once cut, the runs stayed cut, and a later measure
+that kept the whole line laid the whole text over runs ending inside it. With
+plain ASCII the tail only lost its run; with a flag in a stream title (🇨🇳,
+four bytes a letter) the cut fell inside a character, DirectWrite's run slicing
+panicked (direct_write.rs:595) and perch closed. It took a signed-in session to
+find, on 15 October 2026: two panes, one titled with a flag, laid out again as a
+search docked the browse page beside them. Vendored gpui fix 8
+(`elements/text.rs`, a `PERCH PATCH` `scripts/verify-vendor.sh` checks) truncates
+a fresh copy for each measure; upstream stopped mutating the runs after 0.2.2.
+
 **Dependencies are plain crates.io versions** — `gpui 0.2.2`, `gpui-component 0.5.1`
 — reproducible from `Cargo.lock`. An earlier plan called for pinning a git rev;
 that turned out to be unnecessary.

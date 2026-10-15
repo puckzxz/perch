@@ -1,3 +1,32 @@
+--- a/gpui/src/elements/text.rs
++++ b/gpui/src/elements/text.rs
+@@ -334,7 +334,8 @@
+             .line_height
+             .to_pixels(font_size.into(), window.rem_size());
+ 
+-        let mut runs = if let Some(runs) = runs {
++        // PERCH PATCH: not `mut`; the measure below truncates a copy.
++        let runs = if let Some(runs) = runs {
+             runs
+         } else {
+             vec![text_style.to_run(text.len())]
+@@ -378,6 +379,16 @@
+                 }
+ 
+                 let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
++                // PERCH PATCH: truncate a copy of the runs, made afresh for
++                // each measure. Taffy measures a line more than once a layout,
++                // at different widths, and truncating the captured runs left
++                // them cut to the first width's line: a later measure that
++                // kept the whole line then laid its whole text over runs that
++                // ended inside it, splitting a multi-byte character (a flag
++                // in a stream title) and panicking in DirectWrite's run
++                // slicing. Upstream stopped the closure mutating them after
++                // 0.2.2.
++                let mut runs = runs.clone();
+                 let text = if let Some(truncate_width) = truncate_width {
+                     line_wrapper.truncate_line(
+                         text.clone(),
 --- a/gpui/src/platform.rs
 +++ b/gpui/src/platform.rs
 @@ -766,6 +766,26 @@

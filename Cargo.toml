@@ -66,8 +66,8 @@ image = { version = "0.25", default-features = false }
 # 54% of the machine's entire commit charge, against a 5.6 GB working set that
 # made it look like a 6 GB problem in Task Manager.
 #
-# Seven fixes, every hunk tagged `PERCH PATCH`. The first two are the leak; the
-# next four were found while proving it fixed; the last is a hover fix.
+# Eight fixes, every hunk tagged `PERCH PATCH`. The first two are the leak; the
+# next four were found while proving it fixed; then a hover fix and a crash.
 #
 #  1. A texture created oversized is marked dedicated to the one image it was
 #     sized for, and skipped when scanning for room. That is the 43.7 GB.
@@ -102,9 +102,15 @@ image = { version = "0.25", default-features = false }
 #     Windows reports the leave only as the window's `hovered` flag, with no
 #     mouse event, so the last position stayed hit and a sidebar row (or any
 #     `.hover()` style) stayed lit until the pointer came back. Not upstream.
+#  8. A text element truncates a copy of its runs on each measure. Taffy measures
+#     a line more than once a layout, and truncating the captured runs left them
+#     cut for the next measure, which then laid the whole text over runs ending
+#     inside it: a stream title with a flag in it, cut to fit and measured again
+#     wider, split the flag's bytes and panicked in DirectWrite. Upstream stopped
+#     mutating them after 0.2.2.
 #
 # `scripts/verify-vendor.sh` re-downloads the crate from crates.io and proves
-# the tree differs from it in exactly the seven files it expects, and that each
+# the tree differs from it in exactly the eight files it expects, and that each
 # fix is still present rather than merely commented.
 #
 # 0.2.2 is the newest release on crates.io and Zed's `main` still has the bug,

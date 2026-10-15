@@ -42,6 +42,7 @@ REMOVED=(
 
 # Files we expect to differ from upstream. Anything else differing is drift.
 PATCHED=(
+  src/elements/text.rs
   src/platform.rs
   src/platform/mac/metal_atlas.rs
   src/platform/windows/directx_atlas.rs
@@ -216,6 +217,8 @@ needs src/window.rs 'pub fn update_image(' \
   "exposes the in-place image update to callers"
 needs src/window.rs 'self.mouse_hit_test = if pointer_left {' \
   "hit-tests nothing under a pointer that has left the window"
+needs src/elements/text.rs 'let mut runs = runs.clone();' \
+  "truncates a copy of a line's runs rather than the ones the next measure reuses"
 
 needs src/platform/windows/directx_renderer.rs 'self.skip_draws = true;' \
   "stops drawing when the device is replaced"
