@@ -43,7 +43,8 @@ pub const RISE: f32 = 10.0;
 /// Something the palette can do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
-    /// Watch this channel, closing whatever else is open.
+    /// Watch this channel in place of the pane you are on, or alone while
+    /// nothing plays.
     Watch(String),
     /// Open it beside what is already playing.
     Add(String),
@@ -153,7 +154,7 @@ pub struct Entry {
 /// (live channels by viewers, then commands), and re-ranking it by how well a
 /// three-letter query matched would throw that away for no gain at this size.
 ///
-/// Public because Home's filter uses the same test: one idea of
+/// Public because Following's filter uses the same test: one idea of
 /// what "matches" means, wherever the user types a few letters of a name.
 pub fn matches(haystack: &str, needle: &str) -> bool {
     if needle.is_empty() {
@@ -252,7 +253,7 @@ fn resume_row(watched: &Watched) -> Entry {
 
 /// Whether a history entry answers to `query`: its channel, by the same
 /// few-letters match as every name here, or its title, containing the query
-/// whole — see [`TITLE_QUERY_MIN`]. Home's filter narrows its Continue
+/// whole — see [`TITLE_QUERY_MIN`]. Following's filter narrows its Continue
 /// watching by the same test.
 pub(crate) fn watched_matches(watched: &Watched, query: &str) -> bool {
     if matches(&watched.channel_name, query) || matches(&watched.channel_login, query) {
@@ -274,7 +275,7 @@ pub(crate) fn watched_matches(watched: &Watched, query: &str) -> bool {
 /// query they would be a hundred rows of people who are not streaming, but
 /// with a name typed they are the reason to open the palette at all — the
 /// offline list is the longest thing in the app and this is its only filter
-/// besides the one on Home.
+/// besides the one on Following.
 ///
 /// Anything typed that reads as a channel or a recording — a login, or a
 /// twitch.tv link — gets rows of its own once nothing followed answers to it
@@ -369,7 +370,7 @@ pub fn entries(
 
     if !query.is_empty() {
         // An offline channel opens its page, the way its name does on
-        // Home. It used to open a pane that could only say the
+        // Following. It used to open a pane that could only say the
         // channel was offline, which is what the row already said.
         for channel in offline {
             if !matches(&channel.display_name, query) && !matches(&channel.login, query) {
@@ -497,7 +498,14 @@ pub fn entries(
     // One row per tab, each named for the tab it opens. There used to be one
     // "Go to follows", which went to whichever tab had been left open — the
     // history, as often as not — and said otherwise.
-    let tabs = Tab::ALL.map(|tab| (Command::ShowTab(tab), format!("Go to {}", tab.label())));
+    // Each answers to its old name too (`Tab::also`).
+    let tabs = Tab::ALL.map(|tab| {
+        (
+            Command::ShowTab(tab),
+            format!("Go to {}", tab.label()),
+            tab.also(),
+        )
+    });
     let playing = !watching.is_empty();
     // A pane has the watch page to itself. Only once something is typed, as
     // the pane rows wait: `Esc` and `Z` are the everyday way back.
@@ -518,10 +526,10 @@ pub fn entries(
         ]
         .into_iter()
         .filter(|(offered, _, _)| *offered)
-        .map(|(_, command, title)| (command, title.to_string())),
+        .map(|(_, command, title)| (command, title.to_string(), None)),
     );
-    for (command, title) in commands {
-        if matches(&title, query) {
+    for (command, title, also) in commands {
+        if matches(&title, query) || also.is_some_and(|also| matches(also, query)) {
             entries.push(Entry {
                 command,
                 title: SharedString::from(title),
@@ -723,8 +731,8 @@ mod tests {
         );
     }
 
-    /// A channel that is already open still opens — solo — but the row says
-    /// which one you are looking at.
+    /// A channel that is already open still opens — it is chosen — but the
+    /// row says which one you are looking at.
     #[test]
     fn an_open_channel_says_so() {
         let follows = [stream("forsen", "Forsen")];
@@ -1001,7 +1009,7 @@ mod tests {
             .position(|entry| entry.kind == "offline")
             .unwrap();
         assert!(live < off, "an offline channel outranked a live one");
-        // Its page, as on Home — not a pane saying it is off.
+        // Its page, as on Following — not a pane saying it is off.
         assert_eq!(
             typed[off].command,
             Command::Videos {
@@ -1241,7 +1249,7 @@ mod tests {
         let found = entries("history", &[], &[], &[], &[], &[], false);
         assert!(found
             .iter()
-            .any(|entry| entry.command == Command::ShowTab(Tab::History)));
+            .any(|entry| entry.command == Command::ShowTab(Tab::Library)));
     }
 
     /// Every tab has a row that goes to it, named for it. The one row there

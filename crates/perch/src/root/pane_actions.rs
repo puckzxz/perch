@@ -159,17 +159,36 @@ impl RootView {
                 self.chat_menu = None;
                 self.reset_sizes(cx);
             }
-            // The Guide button on its bar; see `guide`.
-            PaneAction::Guide => self.toggle_guide(key, cx),
+            // The Browse button on its bar, or its header's.
+            PaneAction::Browse => self.toggle_browse(key, cx),
+            // `Past broadcasts` under its picture: the channel's page beside
+            // the panes, with this pane the one a card there plays in place
+            // of. The page comes up where the pointer was, so the rest of
+            // the press's run is heard by nothing (`run_guard`). A
+            // recording knows its channel's id, which spares the page a
+            // lookup, as a list that carries the channel does.
+            PaneAction::ChannelPage => {
+                self.take_rest_of_run();
+                let slot = &self.slots[index];
+                let login = slot.channel.clone();
+                let name = self.display_name(slot);
+                let user_id = slot
+                    .recording()
+                    .map(|video| video.user_id.clone())
+                    .filter(|id| !id.is_empty())
+                    .or_else(|| self.known_user_id(&login));
+                self.active = Some(key.to_string());
+                self.open_channel_page(login, name, user_id, window, cx);
+            }
         }
     }
 
     /// Close every menu open over a pane: a pane's chat options menu,
     /// whichever menu is open on a player's bar, a chat row's copy menu
     /// (`chat::copy_menu`), and a chat's viewer card (`chat::viewer_card`).
-    /// Returns whether any was. For `Esc`, and for the guide coming up or
-    /// going, whose button stops the press that a menu's own dismiss would
-    /// otherwise have heard.
+    /// Returns whether any was. For `Esc`, and for the browse page coming
+    /// up or going from a pane's Browse, whose button stops the press that a
+    /// menu's own dismiss would otherwise have heard.
     pub(super) fn close_menus(&mut self, cx: &mut Context<Self>) -> bool {
         let videos: Vec<_> = self
             .slots
@@ -402,9 +421,7 @@ impl RootView {
     /// takes it, guard and all, into a window of its own. The second press
     /// then reached the cell under the closed menu: its `Bring back`, which
     /// sent the pane straight back, or its header's icons, which could do
-    /// that or close it. The mini player's pop-out controls take their tile,
-    /// or the whole player, from under the pointer the same way, and leave a
-    /// card or a tile there to take the second press.
+    /// that or close it.
     ///
     /// So each of those takes the run (`take_rest_of_run`), and this stops
     /// every later press of it in the capture phase, before anything under

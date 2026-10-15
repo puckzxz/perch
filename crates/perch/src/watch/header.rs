@@ -78,13 +78,13 @@ pub fn says_buffering(buffering: bool, in_ad_break: bool) -> bool {
     buffering && !in_ad_break
 }
 
-/// Whether the header of a pane `showing` this offers the guide: when the
+/// Whether the header of a pane `showing` this offers browsing: when the
 /// pane has stopped for good — off, ended, finished, unplayable, failed — or
 /// its picture is in a window of its own. Those panes have no bar in this
-/// window, where every other pane's Guide is, and a pane whose stream has
+/// window, where every other pane's Browse is, and a pane whose stream has
 /// just ended is when "what else is on" matters most. Not while one is
 /// starting: its bar is a moment away, and the icon would come and go.
-fn offers_guide(showing: &Showing) -> bool {
+fn offers_browse(showing: &Showing) -> bool {
     match showing {
         Showing::Picture | Showing::Starting { .. } => false,
         Showing::Offline
@@ -349,28 +349,27 @@ pub(super) fn with_status(row: Div, facts: &Facts, numbers: String) -> Div {
         }))
 }
 
-/// The guide, from a pane with no bar to offer it (`offers_guide`). On the
-/// press, in the capture phase, stopped there, as the bar's Guide is and for
-/// the same reason (`video_view::bar`'s `guide_button`): the guide's own
-/// press outside, heard in the capture phase after this header, would close
-/// it and the click after open it again. Stopped there, the press begins no
-/// drag of the header either. Its id and tooltip follow whether the guide is
-/// up from this pane, as the bar's do.
-pub(super) fn guide_button<V: 'static>(
+/// Browsing, from a pane with no bar to offer it (`offers_browse`): the
+/// browse page up beside the panes, with this pane the one a card plays in
+/// place of, or put away again. On the press, in the capture phase,
+/// stopped there, as the bar's Browse is (`video_view::bar`'s
+/// `browse_button`), so the press begins no drag of the header. Its id and
+/// tooltip follow whether the browse page is up, as the bar's do.
+pub(super) fn browse_button<V: 'static>(
     slot: &Slot,
     pane: &PaneInfo,
     window_hovered: bool,
     on_pane: impl Fn(&mut V, &str, PaneAction, &mut Window, &mut Context<V>) + Clone + 'static,
     cx: &mut Context<V>,
 ) -> Option<Stateful<Div>> {
-    offers_guide(&pane.showing).then(|| {
+    offers_browse(&pane.showing).then(|| {
         let key = slot.key.clone();
-        let (id, tip) = if pane.guide_from_here {
-            ("guide-open", "Close the guide")
+        let (id, tip) = if pane.browsing {
+            ("browse-open", "Back to watching".to_string())
         } else {
-            ("guide", "Show what else is on")
+            ("browse", Hint::Browse.tooltip("Browse what else is on"))
         };
-        controls::icon_button(pane_id(&slot.key, id), Icon::Guide, Variant::OnVideo)
+        controls::icon_button(pane_id(&slot.key, id), Icon::Browse, Variant::OnVideo)
             .when(window_hovered, |button| button.tooltip(controls::tip(tip)))
             .capture_any_mouse_down(
                 cx.listener(move |view, event: &MouseDownEvent, window, cx| {
@@ -378,7 +377,7 @@ pub(super) fn guide_button<V: 'static>(
                         return;
                     }
                     cx.stop_propagation();
-                    on_pane(view, &key, PaneAction::Guide, window, cx)
+                    on_pane(view, &key, PaneAction::Browse, window, cx)
                 }),
             )
     })
@@ -600,7 +599,7 @@ pub(super) fn pane_header<V: 'static>(
             }
         }))
     });
-    let guide = guide_button(slot, pane, window_hovered, on_pane.clone(), cx);
+    let browse = browse_button(slot, pane, window_hovered, on_pane.clone(), cx);
     let pop = pop_button(slot, pane, window_hovered, on_pane.clone(), cx);
     // On a header that sits on a chat panel, and nowhere else; see
     // `chat_options`.
@@ -652,7 +651,7 @@ pub(super) fn pane_header<V: 'static>(
                 numbers,
             )
             .child(div().flex_1())
-            // The right-hand cluster: the guide and chat back, when only this
+            // The right-hand cluster: browsing and chat back, when only this
             // header can offer them, or the chat options, when it sits on
             // chat, then out or back, then the ×.
             .child(
@@ -662,7 +661,7 @@ pub(super) fn pane_header<V: 'static>(
                     .flex_row()
                     .items_center()
                     .gap(px(theme::GAP_TIGHT))
-                    .children(guide)
+                    .children(browse)
                     .children(show_chat)
                     .children(options)
                     .children(pop)
@@ -700,11 +699,11 @@ pub(super) fn pane_header<V: 'static>(
 mod tests {
     use super::*;
 
-    /// The header offers the guide on a pane with no bar in this window —
+    /// The header offers browsing on a pane with no bar in this window —
     /// stopped, or its picture elsewhere — and not on one playing or
     /// starting, whose bar has it or soon will.
     #[test]
-    fn the_header_offers_the_guide_only_where_no_bar_does() {
+    fn the_header_offers_browsing_only_where_no_bar_does() {
         let failure = SharedString::from("no");
         for showing in [
             Showing::Offline,
@@ -714,10 +713,10 @@ mod tests {
             Showing::Failed(&failure),
             Showing::Elsewhere,
         ] {
-            assert!(offers_guide(&showing), "{showing:?}");
+            assert!(offers_browse(&showing), "{showing:?}");
         }
-        assert!(!offers_guide(&Showing::Picture));
-        assert!(!offers_guide(&Showing::Starting {
+        assert!(!offers_browse(&Showing::Picture));
+        assert!(!offers_browse(&Showing::Starting {
             recording: false,
             at: None
         }));

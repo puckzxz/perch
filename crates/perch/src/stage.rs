@@ -1,11 +1,11 @@
-//! Where each pane is drawn: in the watch grid, as a tile in the mini
-//! player, in a window of its own — or nowhere, while another pane has the
-//! watch page to itself.
+//! Where each pane is drawn: in the watch grid — on the watch page, or
+//! beside the browse page — in a window of its own, or nowhere, while
+//! another pane has the grid to itself.
 //!
 //! The one owner of that answer. A pane's player is one `VideoView`, and a
 //! view drawn by two windows at once freezes in the second: it skips
 //! uploading a frame it already holds, so the second window would go on
-//! painting the first tile it was given. So every drawer asks here before it
+//! painting the first frame it was given. So every drawer asks here before it
 //! draws a player — the main window through `RootView::video_in_main`, a
 //! pop-out through `RootView::pop_out_video` — and both answers come from
 //! the same [`Stage`], which cannot say yes to both.
@@ -35,15 +35,12 @@
 pub enum Place {
     /// In the watch grid, with its bar, its menus and its double-click.
     Pane,
-    /// On the watch page while another pane has it to itself: drawn by
-    /// nothing. It plays on as it was, with its sound and its rendition, its
-    /// frames rendered small and thrown away (`VideoStream::set_offstage`),
-    /// and behaves as a tile does — no bar, no hover, no menu — until the
-    /// grid comes back.
+    /// Drawn by nothing: on the watch page while another pane has it to
+    /// itself, or with no stage drawn at all. It plays on as it was, with
+    /// its sound and its rendition, its frames rendered small and thrown
+    /// away (`VideoStream::set_offstage`), with no bar, no hover and no menu
+    /// until the grid comes back.
     Offstage,
-    /// A tile in the mini player on the browse page: no bar, no hover, and a
-    /// click that goes back to watching.
-    Tile,
     /// In a window of its own, on top of everything: the bar with play,
     /// volume, Bring back and Close, and the picture to drag the window by.
     PopOut,
@@ -65,8 +62,8 @@ pub enum MaximizeButton {
 
 /// Which panes are drawn in windows of their own, each with what its window
 /// needs, `P`, and which pane has the watch page to itself, if one does.
-/// Every other pane is drawn by the main window, as a pane or a tile by the
-/// page, or by nothing while another is maximized.
+/// Every other pane is drawn by the main window, in its grid, or by nothing
+/// while another is maximized.
 #[derive(Debug)]
 pub struct Stage<P> {
     /// The panes popped out, by key, oldest first.
@@ -177,19 +174,19 @@ impl<P> Stage<P> {
         gone
     }
 
-    /// Where the pane `key` names is drawn, with the watch page up or not:
-    /// in its own window if it is popped, whichever page is up; otherwise a
-    /// tile off the watch page; and on it, nowhere while another pane is
-    /// maximized, and in the grid the rest of the time.
-    pub fn place(&self, watching: bool, key: &str) -> Place {
+    /// Where the pane `key` names is drawn, with the panes' stage `drawn` or
+    /// not — the watch page, or beside the browse page: in its own window if
+    /// it is popped, whatever the main window shows; otherwise nowhere while
+    /// no stage is drawn or another pane is maximized, and in the grid the
+    /// rest of the time.
+    pub fn place(&self, drawn: bool, key: &str) -> Place {
         if self.is_popped(key) {
             Place::PopOut
-        } else if !watching {
-            Place::Tile
-        } else if self
-            .maximized
-            .as_deref()
-            .is_some_and(|maximized| maximized != key)
+        } else if !drawn
+            || self
+                .maximized
+                .as_deref()
+                .is_some_and(|maximized| maximized != key)
         {
             Place::Offstage
         } else {
@@ -250,8 +247,8 @@ impl<P> Stage<P> {
         self.maximized.take().is_some()
     }
 
-    /// The pane `key` names was chosen — by its number, `Tab`, a tile, the
-    /// palette: while another pane is maximized, it takes the maximize, so
+    /// The pane `key` names was chosen — by its number, `Tab`, the palette:
+    /// while another pane is maximized, it takes the maximize, so
     /// the pane the keys talk to is always the one on the page. Not a popped
     /// pane, which is on screen already, in a window of its own. Returns
     /// whether the maximize moved.
@@ -374,15 +371,15 @@ mod tests {
         assert_eq!(stage.place(true, "forsen"), Place::Pane);
     }
 
-    /// The page decides between a pane and a tile; a popped pane is in its
-    /// window on either page.
+    /// A pane is in the grid while the stage is drawn and nowhere while it
+    /// is not; a popped pane is in its window either way.
     #[test]
-    fn places_follow_the_page_unless_popped() {
+    fn places_follow_the_stage_unless_popped() {
         let stage = popped(&["forsen"]);
         assert_eq!(stage.place(true, "quin69"), Place::Pane);
-        assert_eq!(stage.place(false, "quin69"), Place::Tile);
-        for watching in [true, false] {
-            assert_eq!(stage.place(watching, "forsen"), Place::PopOut);
+        assert_eq!(stage.place(false, "quin69"), Place::Offstage);
+        for drawn in [true, false] {
+            assert_eq!(stage.place(drawn, "forsen"), Place::PopOut);
         }
     }
 
@@ -412,8 +409,8 @@ mod tests {
         assert_eq!(stage.cells(&THREE), vec![0, 1, 2]);
     }
 
-    /// The others are on the watch page but drawn nowhere; off the page,
-    /// every pane is a tile in the mini player, the maximized one included.
+    /// The others are on the stage but drawn nowhere; with no stage drawn,
+    /// every pane is, the maximized one included.
     #[test]
     fn the_others_wait_offstage() {
         let stage = maximized("quin69");
@@ -421,7 +418,7 @@ mod tests {
         assert_eq!(stage.place(true, "forsen"), Place::Offstage);
         assert_eq!(stage.place(true, "xqc"), Place::Offstage);
         for key in THREE {
-            assert_eq!(stage.place(false, key), Place::Tile, "{key} browsing");
+            assert_eq!(stage.place(false, key), Place::Offstage, "{key} undrawn");
         }
     }
 

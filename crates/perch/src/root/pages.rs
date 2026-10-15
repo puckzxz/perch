@@ -10,11 +10,11 @@ use gpui::{canvas, div, prelude::*, px, Context, Div, IntoElement, Stateful, Win
 use gpui_component::input::Input;
 
 use super::follows::LiveList;
-use super::RootView;
-use crate::browse::{Place, Tab};
+use super::{Page, RootView};
+use crate::browse::{SignIn, Tab};
 use crate::chat_display::ChatDisplay;
 use crate::watch::{NextUp, PaneInfo, Showing, Slot};
-use crate::{browse, channel_page, layout, theme, watch};
+use crate::{browse, channel_page, following, layout, theme, watch};
 
 impl RootView {
     pub(super) fn browse_page(
@@ -22,22 +22,24 @@ impl RootView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        // The body's width, and room at the foot of every list for the mini
-        // player while it is up, so the last row can scroll out from under it.
+        // The body's width, or the browse page's share of it while the panes
+        // are beside it (`docks_stage`).
         let room = layout::Room {
-            width: self.body(window).width,
-            bottom: if self.mini_player_shows() {
-                layout::mini_reserve(self.mini_slots().len())
-            } else {
-                0.0
-            },
+            width: self.browse_width(window),
         };
-        // Whether the follows are what the page is showing — Home with
+        // Whether the follows are what the page is showing — Following with
         // nothing taking it over — which is when resting the pointer on the
         // page holds them where they stand, live and offline alike.
-        let home = matches!(self.discovery.place(), Place::Tab(Tab::Home));
-        if !home {
-            self.hold_live(LiveList::Home, false, cx);
+        let following = self.following_shown();
+        if following {
+            // Its Pinned in the rail's order, sorted as the rail sorts it as
+            // it is drawn, which a folded rail is not (`order_pins`); and
+            // its Recommended asked for, which the rail asks for only while
+            // it is open (`ask_recommended`).
+            self.order_pins();
+            self.ask_recommended();
+        } else {
+            self.hold_live(LiveList::Following, false, cx);
         }
         // Whether the channel whose page is open is on right now, which is
         // what its bar offers beside the recordings: the stream, or the chat.
@@ -68,16 +70,22 @@ impl RootView {
                 .is_some_and(|page| self.settings.is_pinned(&page.login)),
         };
 
+        let lists = following::Lists {
+            live: &self.follows,
+            offline: &self.following_offline,
+            asked: &self.pane_streams.streams,
+            pinned: &self.pin_order,
+            recommended: &self.recommended.shown,
+            last_live: &self.last_live,
+            history: &self.history,
+            sign_in: &self.sign_in,
+            follows_loaded: self.follows_loaded,
+        };
         let body = browse::page(
-            &self.follows,
-            &self.home_offline,
-            &self.last_live,
+            lists,
             self.filter.read(cx).value().as_ref(),
             Input::new(&self.filter).cleanable(true).into_any_element(),
             &self.discovery,
-            &self.sign_in,
-            self.follows_loaded,
-            &self.history,
             room,
             &self.cache,
             self.can_add(),
@@ -87,7 +95,7 @@ impl RootView {
             cx,
         );
         let body = self
-            .holding(LiveList::Home, home, body, cx)
+            .holding(LiveList::Following, following, body, cx)
             .flex_1()
             .min_h_0()
             .flex()
@@ -106,8 +114,8 @@ impl RootView {
     /// The browse page's tabs, then Refresh: all that is left of the header
     /// it used to have. The app's name is gone, and the search box and the
     /// sign-in went up into the title bar, which is over both pages. There is
-    /// no "watching 2" either: whatever plays while you browse is in the mini
-    /// player, whose own controls and pictures go back to it.
+    /// no "watching 2" either: whatever plays while you browse is beside the
+    /// browse page, playing.
     ///
     /// Left-aligned, Refresh included, rather than pushed to the far end: the
     /// toasts arrive at the top-right, and the further from them Refresh sits
@@ -183,8 +191,7 @@ impl RootView {
         div()
             .id(match list {
                 LiveList::Rail => "rail-hold",
-                LiveList::Home => "home-hold",
-                LiveList::Guide => "guide-hold",
+                LiveList::Following => "following-hold",
             })
             .relative()
             .on_hover(cx.listener(|_, _: &bool, _window, cx| cx.notify()))
@@ -197,13 +204,13 @@ impl RootView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        // Home is not on screen, so it holds nothing: its probe is not
-        // painted here, and would otherwise leave its last word — the pointer
-        // was on the card that opened this page — standing for good.
-        self.hold_live(LiveList::Home, false, cx);
-        // Over the foot of the page while it is up, drawn after the panes so
-        // it covers them; see `guide_panel`.
-        let guide = self.guide_panel(window, cx);
+        // With the browse page away, Following is not on screen, so it holds
+        // nothing: its probe is not painted, and would otherwise leave its
+        // last word — the pointer was on the card that opened this page —
+        // standing for good. Beside the browse page, Following's own probe says.
+        if self.page == Page::Watch {
+            self.hold_live(LiveList::Following, false, cx);
+        }
 
         // A pane that found its channel off says when the channel is on
         // next; its schedule is asked about the first time one is drawn
@@ -270,13 +277,14 @@ impl RootView {
                     pop_out_offered: super::pop_out_offered(),
                     chat_menu: (self.chat_menu.as_deref() == Some(slot.key.as_str()))
                         .then(|| ChatDisplay::of(&self.settings)),
-                    guide_from_here: self.guide.up_from(&slot.key),
+                    browsing: self.page == Page::Browse,
                     schedule: (showing == Showing::Offline)
                         .then(|| self.schedule_words(&slot.channel))
                         .flatten()
                         .map(Into::into),
                     avatar: self.pane_avatar(slot),
                     pinned: self.settings.is_pinned(&slot.channel),
+                    past_broadcasts: matches!(self.sign_in, SignIn::SignedIn(_)),
                 }
             })
             .collect();
@@ -338,7 +346,7 @@ impl RootView {
             },
             cx,
         ));
-        stage.children(guide)
+        stage
     }
 
     /// The channel's face for the header under a pane's picture
@@ -371,7 +379,8 @@ impl RootView {
     ///
     /// Only for a channel in a Helix list the app has fetched, or in the
     /// rail's recommendations, which are live when they are listed and whose
-    /// preview is at the address any live channel's is (`guide::as_stream`).
+    /// preview is at the address any live channel's is
+    /// (`recommended::as_stream`).
     /// Nothing has fetched a preview for one opened by name, and a pane with
     /// none waits on black, as before.
     fn poster(&self, slot: &Slot) -> Option<PathBuf> {
@@ -382,7 +391,7 @@ impl RootView {
             _ => match self.stream_info(&slot.channel) {
                 Some(stream) => browse::stream_preview(&self.cache, stream),
                 None => self.recommended.channel(&slot.channel).and_then(|channel| {
-                    browse::stream_preview(&self.cache, &crate::guide::as_stream(channel))
+                    browse::stream_preview(&self.cache, &crate::recommended::as_stream(channel))
                 }),
             },
         }

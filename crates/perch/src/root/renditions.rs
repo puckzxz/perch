@@ -279,9 +279,9 @@ impl RootView {
     /// [`sync_quality`](Self::sync_quality). With several panes the window is
     /// shared, so each one asks for proportionally less.
     ///
-    /// Its cell of the watch grid, the one grid ([`grid`](Self::grid)), on
-    /// whichever page is up: a mini-player tile is not one of the sizes a
-    /// quality is chosen for. The cell's share of the body's height, seams
+    /// Its cell of the watch page's grid ([`watch_grid`](Self::watch_grid)),
+    /// on whichever page is up: a pane beside the browse page is smaller for
+    /// the while, and not one of the sizes a quality is chosen for. The cell's share of the body's height, seams
     /// included (`Grid::share_height`, which says why), at the main window's
     /// scale, which is what `window` always is. The maximized pane's cell is
     /// the whole body, the one cell that grid has while it lasts.
@@ -300,10 +300,13 @@ impl RootView {
             .stage
             .maximized()
             .is_some_and(|maximized| maximized != key);
+        // The watch page's grid, the browse page away (`watch_grid`): a pane
+        // beside the browse page is smaller for the while you browse, and its
+        // rendition is chosen for the pane you come back to.
         let grid = if maximized_away {
             layout::Grid::of(self.body(window), self.slots.len())
         } else {
-            self.grid(window)
+            self.watch_grid(window)
         };
         measured_height(own_window, grid.share_height * window.scale_factor())
     }

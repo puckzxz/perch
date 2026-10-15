@@ -630,12 +630,6 @@ pub const SWITCH_LINGER: Duration = Duration::from_millis(1500);
 /// it came to. `VideoView::on_wheel` is the reader. The same glance as
 /// `SWITCH_LINGER`, so the same length.
 pub const VOLUME_LINGER: Duration = Duration::from_millis(1500);
-/// How long a control that asks for a second press waits for it before it
-/// goes back to its first words: a viewer card's `Channel page`, when going
-/// there would stop the streams (`chat::viewer_card`). Long enough to read
-/// `Stop streams and open?` and decide, short enough that a press much
-/// later is a new one rather than a yes.
-pub const CONFIRM_LINGER: Duration = Duration::from_secs(4);
 /// How faint a waiting indicator gets at the bottom of its breath. Never zero:
 /// something that vanishes entirely looks broken rather than busy.
 pub const PULSE_FLOOR: f32 = 0.45;
@@ -667,17 +661,11 @@ pub const CHAT_WIDTH_MAX: f32 = 640.0;
 pub const VIDEO_SHARE_MIN: f32 = 0.3;
 pub const VIDEO_SHARE_MAX: f32 = 0.8;
 
-/// How wide the mini player's picture is: one tile with one stream playing,
-/// two side by side with more. Fixed, so the player grows by rows and never
-/// reaches further across the cards than this. `layout::mini_player` divides
-/// it into tiles.
-///
-/// Larger than the old 96px thumbnail on purpose — big enough to follow a
-/// game in — and render size follows the element, so a tile this wide is
-/// scaled into a buffer this wide. The rendition is not: see
-/// `RootView::go_browse`. The player is wider than this by its
-/// [`MINI_PLAYER_INSET`] either side and its border.
-pub const MINI_PLAYER_WIDTH: f32 = 320.0;
+/// The widest the browse page grows while the panes share the window with
+/// it (`layout::panel_width`): half the body up to this, so on a 4K screen
+/// the stream keeps the larger share — 2560 of 3840 — and the panel still
+/// holds four columns of cards.
+pub const PANEL_MAX_WIDTH: f32 = 1280.0;
 
 /// How wide a pane popped into a window of its own opens, in logical pixels,
 /// with its height from the stream's shape (`layout::pop_out_bounds`, the
@@ -698,24 +686,6 @@ pub const POP_OUT_MIN_HEIGHT: f32 = 144.0;
 /// 0.2.2 reports a display's whole bounds and has no work area to ask for,
 /// so this stands in for one, at a little more than a taskbar's height.
 pub const POP_OUT_EDGE: f32 = 48.0;
-/// The strip under the mini player's tiles: what is playing, and the three
-/// controls for all of it. Tall enough for an `ICON_BUTTON` with room round it.
-pub const MINI_BAR_HEIGHT: f32 = 36.0;
-/// How far inside the mini player's edge its tiles and bar sit. Enough to keep
-/// a tile's square corners inside the player's [`RADIUS_LG`] curve: gpui clips
-/// to rectangles, never to rounded corners, so a tile flush with the edge
-/// would square the player off with the picture's black.
-pub const MINI_PLAYER_INSET: f32 = 4.0;
-
-/// How wide a vertical scrollbar's track is, down the right edge of the list
-/// it scrolls: the thumb at its widest, eight pixels, with four either side.
-/// gpui-component draws it and keeps the number to itself (`WIDTH` in its
-/// `scroll/scrollbar.rs`), so it is written out here for what floats at a
-/// list's right edge and has to leave the track clear — the mini player; see
-/// `layout::mini_player_right`. Read from gpui-component 0.5.1, the version
-/// `Cargo.lock` holds, and `the_scrollbar_width_is_read_from_the_locked_library`
-/// fails once that version moves, so it is read again rather than trusted.
-pub const SCROLLBAR_WIDTH: f32 = 16.0;
 
 /// The grab area of a pane divider. Wider than the line it draws, because a
 /// 1px target is a game rather than a control.
@@ -1030,26 +1000,6 @@ mod tests {
         }
         assert_ne!(seek_muted(), accent());
         assert_ne!(seek_muted(), live());
-    }
-
-    /// [`SCROLLBAR_WIDTH`] copies a number gpui-component keeps private, so
-    /// nothing can check it against the library directly. What can be checked
-    /// is that the library is still the version it was read from: when
-    /// `Cargo.lock` moves gpui-component on, this fails until somebody has
-    /// read the new `scroll/scrollbar.rs`, set the width to what it says, and
-    /// moved the version here to match.
-    #[test]
-    fn the_scrollbar_width_is_read_from_the_locked_library() {
-        const LOCK: &str = include_str!("../../../Cargo.lock");
-        let version = LOCK
-            .lines()
-            .skip_while(|line| *line != r#"name = "gpui-component""#)
-            .nth(1);
-        assert_eq!(
-            version,
-            Some(r#"version = "0.5.1""#),
-            "gpui-component has moved; read SCROLLBAR_WIDTH from it again"
-        );
     }
 
     /// Every wash a chat row can wear, and the text drawn on it: a message's

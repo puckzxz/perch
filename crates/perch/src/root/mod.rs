@@ -18,12 +18,11 @@
 //! | `navigation` | back and forward: where the app is as a `Route`, recording each step on the trail (`crate::trail`), and the three ways along it |
 //! | `streams` | opening, restarting and closing panes, and swapping one for a recording in place |
 //! | `renditions` | what each pane plays, and when it restarts: the quality chosen against each pane's own height (`pane_height_for`), the upward re-pick when the grid changes, a pick from the pane's menu; a new rendition resolved beside the picture and kept once its player has taken over in place (`video_view::swap`) |
-//! | `panes` | where each pane is drawn, applied: `restage`, the one funnel every change of state, membership, page, pop-out or maximize ends in; `set_slot_state`, the only write of a pane's state; `video_in_main`, the only way the main window reaches a player; `retire_homeless`, the one rule for which panes stop when nothing in the main window would draw them; a pane given the watch page and every pane shown again (`toggle_maximize`, `show_all_panes`), and `choose`, which takes the maximize to the pane chosen; two panes swapping places in the order (`move_pane`), from a header dropped on a pane or `Shift+←`/`Shift+→` |
+//! | `panes` | where each pane is drawn, applied: `restage`, the one funnel every change of state, membership, page, pop-out or maximize ends in; `set_slot_state`, the only write of a pane's state; `video_in_main`, the only way the main window reaches a player; a pane given the watch page and every pane shown again (`toggle_maximize`, `show_all_panes`), and `choose`, which takes the maximize to the pane chosen; two panes swapping places in the order (`move_pane`), from a header dropped on a pane or `Shift+←`/`Shift+→` |
 //! | `pop_out` | a pane in a window of its own, on top of other apps: moving its picture there and back, the window, and `to_root`, the only way back from it |
 //! | `hearing` | which panes are heard: More's `Only this one` and `Hear all again`, through Mute all's hush, and the mirror of it every player's menu keeps (`sync_hear_only`); More's `Audio compressor`, every pane's at once (`toggle_compressor`) |
 //! | `ad_breaks` | a pane's ad-break notice: begun when streamlink says it is filtering an ad, counted down once a second, taken down when it is over |
 //! | `broadcasts` | what a stopped live pane asks about its channel's past broadcasts, and whether it can start by itself |
-//! | `guide` | the guide over the watch page: opening and closing it, what its tabs ask the worker for, a card's Watch in place of the pane it was opened from or `+ Add` beside, and the panel's shell — where it sits, the press outside that closes it, and the veil over the panes under it (`crate::veil`) |
 //! | `pane_actions` | what a pane asks for, by its key: its controls, and its player's requests; the header a pane key reveals; `run_guard`, which swallows the rest of a double-click whose first press took a player from under the pointer |
 //! | `launches` | what the command line named, at startup and from later launches |
 //! | `history` | what has been watched: noting where each recording got to, resuming there |
@@ -34,10 +33,9 @@
 //! | `shared_chat` | the chats' Shared Chat labels: hearing an unnamed partner, asking its name, handing it to every chat; and `watch_chat`, which listens to every chat made |
 //! | `badges` | the chats' badges: hearing a chat's room, asking the worker for the global and the room's badge books, handing each to the chats it is for |
 //! | `cheers` | the live chats' cheers: hearing a live chat's room, asking the worker for its cheermotes, handing the answer to the live chats in that room |
-//! | `viewer_cards` | the chats' viewer cards: hearing a card open, asking the worker who its person is, telling every open card what is known (`sync_viewer_cards`), and a card's `Watch` and `Channel page`, the second asking for a second press where leaving would stop streams |
+//! | `viewer_cards` | the chats' viewer cards: hearing a card open, asking the worker who its person is, telling every open card what is known (`sync_viewer_cards`), and a card's `Watch` and `Channel page` |
 //! | `schedule` | when an offline channel says it will be on next: asked of the worker once a session, the first time its page or a pane that found it off is drawn, and the answer kept |
 //! | `chrome` | pills, toasts, the rail |
-//! | `mini_player` | what plays on while you browse, in the corner of the page |
 //! | `title_bar` | the bar Perch draws across the top of the window: the rail button, back and forward, search, settings, and on Windows the caption buttons |
 //! | `pages` | the two pages, assembled, each only its own column |
 //!
@@ -56,12 +54,10 @@ mod cheers;
 mod chrome;
 mod commands;
 mod follows;
-mod guide;
 mod hearing;
 mod history;
 mod last_live;
 mod launches;
-mod mini_player;
 mod muted;
 mod navigation;
 mod pages;
@@ -92,8 +88,8 @@ use std::sync::Arc;
 use emotes::ImageCache;
 use futures::channel::mpsc::UnboundedReceiver;
 use gpui::{
-    div, prelude::*, AnyWindowHandle, Bounds, Context, Entity, FocusHandle, Pixels, ScrollHandle,
-    SharedString, Subscription, Task, WeakEntity, Window,
+    div, prelude::*, px, AnyWindowHandle, Bounds, Context, Entity, FocusHandle, Pixels,
+    ScrollHandle, SharedString, Subscription, Task, WeakEntity, Window,
 };
 use gpui_component::input::{InputEvent, InputState};
 use settings::history::{Forgotten, History};
@@ -107,7 +103,6 @@ use self::pop_out::PoppedOut;
 use crate::browse::{self, Discovery, SignIn};
 use crate::chat::ChatView;
 use crate::chat_badges::Library;
-use crate::guide::Guide;
 use crate::last_live::LastLive;
 use crate::launch::Launch;
 use crate::layout::Body;
@@ -228,7 +223,7 @@ pub(crate) struct RootView {
 
     page: Page,
     /// The panes, in their order: the grid's, the keys `1`–`4` and `Tab`
-    /// walk, the mini player's and the palette's. The one account of it,
+    /// walk, and the palette's. The one account of it,
     /// which a header dropped on another pane and `Shift+←`/`Shift+→`
     /// rearrange (`move_pane`) for the session: the order is never saved.
     slots: Vec<Slot>,
@@ -249,13 +244,13 @@ pub(crate) struct RootView {
     /// Everyone followed, live or not. Kept apart from `follows` all the way to
     /// the screen; see `twitch_api::Channel`.
     offline: Vec<Channel>,
-    /// The same channels as `offline`, in Home's order rather than the
-    /// rail's: by when you last watched them (`home::by_last_watched`), not
+    /// The same channels as `offline`, in Following's order rather than the
+    /// rail's: by when you last watched them (`following::by_last_watched`), not
     /// by name. Its own list because each holds still under the pointer by
     /// the same rule — sorted only where `offline` is put back in name order,
     /// never while held — and a sort drawn every frame from the other would
     /// move names under the pointer; see `RootView::hold_live`.
-    home_offline: Vec<Channel>,
+    following_offline: Vec<Channel>,
     /// The pins in the order the rail last drew them: `sidebar::pin_order`'s,
     /// or held still under the pointer; see `RootView::order_pins`. Only an
     /// order: which channels are pinned is `settings.pinned`'s to say.
@@ -308,15 +303,12 @@ pub(crate) struct RootView {
     /// Kept across a restarted worker, which only forgets `known_live`: a
     /// broadcast seen before it is no news after.
     seen_broadcasts: notifications::Seen,
-    /// Whether the pointer is over the rail, and over Home, as
+    /// Whether the pointer is over the rail, and over Following, as
     /// the last frame measured it. While either is, a poll updates the
     /// follows, live and offline, where they stand rather than sorting them —
     /// see `RootView::hold_live`.
     rail_pointed: bool,
-    home_pointed: bool,
-    /// The same for the guide's Following and Recommended, which hold by
-    /// the same rule while it is up over the watch page.
-    guide_pointed: bool,
+    following_pointed: bool,
     /// Whether the rail's offline follows are unfolded. For this session
     /// only, and folded at the start of each: unfolded, it is the longest
     /// list in the app, up to a thousand rows built every frame, and most
@@ -331,7 +323,7 @@ pub(crate) struct RootView {
     /// rows shown. For this session only; see `crate::recommended`.
     recommended: Recommended,
     /// When each offline follow was last live, by login, and the asks for
-    /// it: the words under the names on Home and in the rail. For this
+    /// it: the words under the names on Following and in the rail. For this
     /// session only; see `crate::last_live`.
     last_live: LastLive,
     /// The names of the channels Shared Chat lines were copied from, by
@@ -380,10 +372,6 @@ pub(crate) struct RootView {
     chat_send_seq: u64,
     /// Everything the browse page shows besides your follows.
     discovery: Discovery,
-    /// The guide over the watch page: whether it is up, its tab, and the
-    /// category open in it with that category's streams. For the session
-    /// only; see `crate::guide` and `guide`.
-    guide: Guide,
     /// Where the app has been, for back and forward. History only: where it
     /// is now is always read from `page` and `discovery`; see `navigation`.
     trail: Trail<Route>,
@@ -391,7 +379,7 @@ pub(crate) struct RootView {
     /// through do not record steps of their own; see `RootView::record`.
     recording: bool,
     search: Entity<InputState>,
-    /// Home's filter. Typed into, never sent anywhere: it narrows the lists
+    /// Following's filter. Typed into, never sent anywhere: it narrows the lists
     /// already on the page with the palette's own matcher.
     filter: Entity<InputState>,
     /// Scroll positions for the browse lists and the rail, held here so the
@@ -579,7 +567,7 @@ impl RootView {
         .detach();
 
         // The opposite of the search box: every keystroke, and nothing leaves
-        // the app. See `home::view`.
+        // the app. See `following::view`.
         let filter =
             cx.new(|cx| InputState::new(window, cx).placeholder("Filter follows and recordings"));
         cx.subscribe(&filter, |_: &mut RootView, _, event, cx| {
@@ -624,7 +612,7 @@ impl RootView {
             pop_out_last: None,
             follows: Vec::new(),
             offline: Vec::new(),
-            home_offline: Vec::new(),
+            following_offline: Vec::new(),
             pin_order: Vec::new(),
             refreshing: false,
             avatars: HashMap::new(),
@@ -635,8 +623,7 @@ impl RootView {
             streams_seeded: false,
             seen_broadcasts: notifications::Seen::default(),
             rail_pointed: false,
-            home_pointed: false,
-            guide_pointed: false,
+            following_pointed: false,
             rail_offline_open: false,
             rail_preview: rail_preview::Preview::default(),
             recommended: Recommended::default(),
@@ -652,7 +639,6 @@ impl RootView {
             chat_sends: HashMap::new(),
             chat_send_seq: 0,
             discovery: Discovery::default(),
-            guide: Guide::default(),
             trail: Trail::default(),
             recording: false,
             search,
@@ -728,13 +714,67 @@ impl RootView {
         )
     }
 
-    /// The watch grid as it is cut now: [`layout::Grid::of`] the body and
-    /// the [`cells`](Self::cells). The one grid the page is drawn in, a
-    /// divider drag is measured against and a pane's quality is chosen for,
-    /// so the three cannot disagree about a pane's size. Only a pane
-    /// maximized away is measured by another, the one it comes back to
-    /// (`pane_height_for`).
+    /// Whether the browse page shares the window with the panes: up, with
+    /// a pane at home to draw beside it. Browsing never puts a pane away —
+    /// it docks on the left (`layout::panel_width`) and the panes go on
+    /// playing beside it, in their own grid, where a click on one is a click
+    /// on a pane. A pane in a window of its own is on screen already, so
+    /// panes that are all popped out leave the browse page the window.
+    pub(super) fn docks_stage(&self) -> bool {
+        self.page == Page::Browse
+            && self
+                .slots
+                .iter()
+                .any(|slot| !self.stage.is_popped(&slot.key))
+    }
+
+    /// Whether the main window draws its panes: on the watch page, and beside
+    /// the browse page while it shares the window with them
+    /// ([`docks_stage`](Self::docks_stage)). Where a pane is placed
+    /// (`stage::Stage::place`) follows this and nothing else.
+    pub(super) fn stage_drawn(&self) -> bool {
+        self.page == Page::Watch || self.docks_stage()
+    }
+
+    /// How wide the browse page is: the body, or its share while the panes
+    /// are beside it ([`layout::panel_width`]).
+    pub(super) fn browse_width(&self, window: &Window) -> f32 {
+        let body = self.body(window);
+        if self.docks_stage() {
+            layout::panel_width(body.width)
+        } else {
+            body.width
+        }
+    }
+
+    /// The room the panes have: the body, less the browse page while it
+    /// shares the window with them.
+    fn stage_body(&self, window: &Window) -> Body {
+        let body = self.body(window);
+        if self.docks_stage() {
+            body.beside(layout::panel_width(body.width))
+        } else {
+            body
+        }
+    }
+
+    /// The watch grid as it is drawn now: [`layout::Grid::of`] the room the
+    /// panes have ([`stage_body`](Self::stage_body)) and the
+    /// [`cells`](Self::cells). The one grid the page is drawn in and a
+    /// divider drag is measured against, so the two cannot disagree about a
+    /// pane's size. A pane's quality is chosen for the grid it has with the
+    /// browse page away, the watch page's ([`watch_grid`](Self::watch_grid)),
+    /// so browsing beside it never chooses for it.
     fn grid(&self, window: &Window) -> layout::Grid {
+        layout::Grid::of(self.stage_body(window), self.cells().len())
+    }
+
+    /// The grid the watch page draws, the browse page away: what a pane's
+    /// quality is chosen for (`pane_height_for`). The panes are smaller while
+    /// the browse page is beside them, and a quality chosen there would be
+    /// the first thing undone on the way back to watching; and since a
+    /// rendition only ever moves up, it would not be undone at all.
+    fn watch_grid(&self, window: &Window) -> layout::Grid {
         layout::Grid::of(self.body(window), self.cells().len())
     }
 
@@ -844,20 +884,18 @@ impl Render for RootView {
         // user happens to navigate back. See `browse::release_retired_previews`.
         browse::release_retired_previews(&self.cache, window, cx);
 
-        // The guide is the watch page's, and goes down with it whichever way
-        // the page was left, rather than coming back up with it later; off
-        // that page it leaves no veil and no hold behind (`guide_not_drawn`).
-        // Before anything is drawn, so no pane's probe this frame reads a
-        // veil from the last one.
-        if self.page != Page::Watch {
-            self.shut_guide(cx);
-            self.guide_not_drawn(cx);
-        }
-
-        let page = match self.page {
-            Page::Browse => self.browse_page(window, cx).into_any_element(),
-            Page::Watch => self.watch_page(window, cx).into_any_element(),
-        };
+        // The browse page while it is up, and the panes while the main window
+        // draws them: the watch page, or beside the browse page
+        // (`docks_stage`). Two siblings rather than one page, so a pane is
+        // the same element whether browsing is beside it or not, and opening
+        // or closing the browse page remounts no player and replays no fade.
+        let browse = (self.page == Page::Browse).then(|| {
+            let width = self.docks_stage().then(|| self.browse_width(window));
+            (width, self.browse_page(window, cx).into_any_element())
+        });
+        let stage = self
+            .stage_drawn()
+            .then(|| self.watch_page(window, cx).into_any_element());
         // Drawn here, once, beside whichever page is up, rather than by each
         // page: it does not fade out and back in with the page, and the probe
         // that holds its order still while it is pointed at has one owner.
@@ -914,24 +952,23 @@ impl Render for RootView {
             .child(self.run_guard(cx))
             .children(self.title_bar(window, cx))
             .child(
-                // Everything under the bar. The modals, the toasts and the
-                // mini player are in here rather than on the root, so their
-                // `inset_0` and their offsets start below the bar by
-                // construction: a scrim cannot cover the caption buttons, and
-                // a toast cannot land on the drag strip —
-                // `block_mouse_except_scroll` does not hide a drag area from
-                // the platform's hit test, so a toast there would move the
-                // window when pressed. No id, for the reason the root has
-                // none: an id namespaces every element id beneath it.
+                // Everything under the bar. The modals and the toasts are in
+                // here rather than on the root, so their `inset_0` and their
+                // offsets start below the bar by construction: a scrim cannot
+                // cover the caption buttons, and a toast cannot land on the
+                // drag strip — `block_mouse_except_scroll` does not hide a
+                // drag area from the platform's hit test, so a toast there
+                // would move the window when pressed. No id, for the reason
+                // the root has none: an id namespaces every element id
+                // beneath it.
                 //
                 // Clipped, because starting below the bar is not the same as
-                // staying below it. Anchored to the bottom, the mini player
-                // grows upward, and in a window shorter than it and the bar
-                // together it reached over the bar, where the bar's drag and
-                // caption areas still answered the platform under its tiles:
-                // pressing a picture moved, maximised or closed the window.
-                // The clip bounds hit testing as well as painting, so nothing
-                // in here can be pressed outside it, and it adds no hitbox.
+                // staying below it: the mini player browsing once had,
+                // anchored to the bottom, grew up over the bar in a short
+                // window, where the bar's drag
+                // and caption areas still answered the platform under it. The
+                // clip bounds hit testing as well as painting, so nothing in
+                // here can be pressed outside it, and it adds no hitbox.
                 // Tooltips and a text box's menu are drawn by the window
                 // after everything else, so they still reach past it.
                 //
@@ -947,37 +984,46 @@ impl Render for RootView {
                     .flex_row()
                     .children(rail)
                     .child(
-                        // The page, and the mini player over it. The player
-                        // is placed against this column rather than the row,
-                        // so it floats over the page and never the rail: in
-                        // a narrow window, placed against the row, it reached
-                        // over the rail's last rows, which have no room at
-                        // their foot to be scrolled out from under it. The
-                        // clip keeps it off the rail in a window narrower
-                        // still, where it is cut off at its left instead.
+                        // The browse page, alone or docked beside the panes,
+                        // and the panes. Neither column has an id, nor this
+                        // row, so a pane's element ids are its own whichever
+                        // of them is drawn (see `watch::page`).
                         div()
                             .relative()
                             .flex_1()
                             .min_w_0()
                             .h_full()
                             .overflow_hidden()
-                            .child(motion::arrive(
-                                // Browse and watch share no layout at all, so
-                                // cutting between them reads as the window
-                                // being replaced rather than as moving within
-                                // one app. No movement, only a fade: anything
-                                // that slides drags the eye across the whole
-                                // page.
-                                ("page", self.page as u32),
-                                0.0,
-                                div().size_full().child(page),
-                            ))
-                            // Outside the fade, so the page changing under it
-                            // — a tab, a category, a channel — never rebuilds
-                            // it, and drawn before everything after this
-                            // column, so the toasts, the palette and the sheet
-                            // cover it.
-                            .children(self.mini_player(cx)),
+                            .flex()
+                            .flex_row()
+                            .children(browse.map(|(width, page)| {
+                                div()
+                                    .h_full()
+                                    .map(|column| match width {
+                                        Some(width) => column
+                                            .flex_none()
+                                            .w(px(width))
+                                            .border_r_1()
+                                            .border_color(theme::border()),
+                                        None => column.flex_1().min_w_0(),
+                                    })
+                                    .child(motion::arrive(
+                                        // The browse page fades in as it
+                                        // comes, alone or beside the panes,
+                                        // and not again as a tab, a category
+                                        // or a channel changes under it. No
+                                        // movement, only a fade: anything that
+                                        // slides drags the eye across the
+                                        // whole page. The panes beside it do
+                                        // not fade: they were there already.
+                                        "browse-page",
+                                        0.0,
+                                        div().size_full().child(page),
+                                    ))
+                            }))
+                            .children(
+                                stage.map(|stage| div().flex_1().min_w_0().h_full().child(stage)),
+                            ),
                     )
                     .child(self.toast_stack(cx))
                     .children(self.palette_sheet(cx))

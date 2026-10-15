@@ -11,11 +11,10 @@
 //!
 //! It also owns the few numbers more than one part of the window has to agree
 //! on: how much of the window the title bar takes, whether the rail is drawn,
-//! and where on the bar a drag begins; how the mini player is cut into tiles,
-//! how far in from the page's edge it floats, and how much room a browse list
-//! leaves at its foot so nothing ends up stuck under the player. And where a
-//! pane popped into a window of its own opens. Each is read from here rather
-//! than recomputed where it is used.
+//! and where on the bar a drag begins; how wide the browse page is while the
+//! panes share the window with it ([`panel_width`], [`Body::beside`]). And
+//! where a pane popped into a window of its own opens. Each is read from here
+//! rather than recomputed where it is used.
 
 use gpui::{point, px, size, Bounds, Pixels, Size};
 
@@ -50,6 +49,24 @@ impl Body {
     pub fn aspect(&self) -> f32 {
         self.width / self.height.max(1.0)
     }
+
+    /// The room left beside a browse panel `panel` wide: what the panes have
+    /// while the browse page shares the window with them.
+    pub fn beside(self, panel: f32) -> Self {
+        Self {
+            width: (self.width - panel).max(0.0),
+            ..self
+        }
+    }
+}
+
+/// How wide the browse page is while the panes share the window with it, in
+/// a body `body_width` wide: half of it, and no more than
+/// `theme::PANEL_MAX_WIDTH`, so on a 4K screen the stream keeps the larger
+/// share. Half rather than a fixed width, so a small window still gives the
+/// picture beside it room to be one.
+pub fn panel_width(body_width: f32) -> f32 {
+    (body_width / 2.0).min(crate::theme::PANEL_MAX_WIDTH)
 }
 
 /// How much of the window's height the title bar takes: all of
@@ -93,79 +110,11 @@ pub fn drag_top(maximized: bool) -> f32 {
 }
 
 /// What a browse list has to work with: how wide it is, which sizes its
-/// cards, and how much it leaves free at its foot, which is what keeps its
-/// last row from ending up under the mini player.
+/// cards — the body, or the panel's width while the panes share the window
+/// (`RootView::browse_width`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Room {
     pub width: f32,
-    pub bottom: f32,
-}
-
-/// How the mini player arranges what is playing: its grid, the size of each
-/// tile, and how tall the whole player is, bar included.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct MiniLayout {
-    pub cols: usize,
-    pub rows: usize,
-    /// Each tile, in definite pixels: a player inside a box with no definite
-    /// size lets the frame's own aspect decide the box (see the `img` trap in
-    /// the handoff), and a tile is exactly such a box.
-    pub tile_w: f32,
-    pub tile_h: f32,
-    /// The whole player inside its border: the tiles, the seams between their
-    /// rows and the bar under them, inset from the edge all round.
-    pub height: f32,
-}
-
-/// How many tiles sit side by side once there is more than one: two, so four
-/// streams make a square and the player stays [`theme::MINI_PLAYER_WIDTH`]
-/// wide whatever is playing.
-///
-/// [`theme::MINI_PLAYER_WIDTH`]: crate::theme::MINI_PLAYER_WIDTH
-const MINI_COLUMNS: usize = 2;
-
-/// The mini player for `panes` streams: one gets the whole width, and more
-/// share it two to a row, so the player grows by rows rather than reaching
-/// further across the cards. Tiles are 16:9, with the watch grid's seams
-/// between them.
-pub fn mini_player(panes: usize) -> MiniLayout {
-    let panes = panes.max(1);
-    let cols = panes.min(MINI_COLUMNS);
-    let rows = panes.div_ceil(cols);
-    let tile_w = cell_extent(crate::theme::MINI_PLAYER_WIDTH, cols);
-    let tile_h = tile_w / VIDEO_ASPECT;
-    let seams = crate::theme::PANE_GAP * (rows - 1) as f32;
-    MiniLayout {
-        cols,
-        rows,
-        tile_w,
-        tile_h,
-        height: tile_h * rows as f32
-            + seams
-            + crate::theme::MINI_BAR_HEIGHT
-            + 2.0 * crate::theme::MINI_PLAYER_INSET,
-    }
-}
-
-/// How far in from the page's right edge the mini player floats: its gap
-/// from the edge, measured from the inside of the browse list's scrollbar,
-/// which runs down that edge. At the gap alone the player sat over the foot
-/// of the track, and over the thumb whenever the thumb came down that far,
-/// so the list could not be dragged by its last stretch.
-pub fn mini_player_right() -> f32 {
-    crate::theme::SCROLLBAR_WIDTH + crate::theme::GAP
-}
-
-/// How much a browse list leaves free at its foot while the mini player is
-/// up over it: the player, and a gap either side of it — the one it floats
-/// at above the window's edge and one above it — so the last row can be
-/// scrolled clear. Nothing with nothing playing. The list's own padding comes
-/// on top of this, which more than covers the player's one-pixel border.
-pub fn mini_reserve(panes: usize) -> f32 {
-    if panes == 0 {
-        return 0.0;
-    }
-    mini_player(panes).height + 2.0 * crate::theme::GAP
 }
 
 /// Where a pane popped into a window of its own opens, on a display whose
@@ -846,77 +795,18 @@ mod tests {
         }
     }
 
+    /// Beside the panes the browse page takes half the body, up to its
+    /// widest, and the panes the rest: 960 of a 1920 body, 1280 of a 3840 one.
     #[test]
-    fn one_pane_gets_the_whole_mini_player() {
-        let mini = mini_player(1);
-        assert_eq!((mini.rows, mini.cols), (1, 1));
-        assert_eq!(mini.tile_w, crate::theme::MINI_PLAYER_WIDTH);
-    }
-
-    /// The player is as wide with four streams as with two: a fixed width is
-    /// what keeps it from reaching across the cards, so more streams make it
-    /// taller instead.
-    #[test]
-    fn the_mini_player_grows_by_rows_not_width() {
-        let shapes: Vec<(usize, usize)> = (1..=4)
-            .map(|panes| {
-                let mini = mini_player(panes);
-                (mini.rows, mini.cols)
-            })
-            .collect();
-        assert_eq!(shapes, [(1, 1), (1, 2), (2, 2), (2, 2)]);
-
-        for panes in 1..=4 {
-            let mini = mini_player(panes);
-            let across =
-                mini.tile_w * mini.cols as f32 + crate::theme::PANE_GAP * (mini.cols - 1) as f32;
-            assert!(
-                (across - crate::theme::MINI_PLAYER_WIDTH).abs() < 0.01,
-                "{panes} panes spread {across}px across"
-            );
-        }
-        assert!(mini_player(4).height > mini_player(2).height);
-    }
-
-    /// Tiles are the shape of the streams in them, so a picture fills its
-    /// tile rather than sitting in black bars.
-    #[test]
-    fn mini_tiles_stay_sixteen_by_nine() {
-        for panes in 1..=4 {
-            let mini = mini_player(panes);
-            assert!(
-                (mini.tile_w / mini.tile_h - VIDEO_ASPECT).abs() < 0.001,
-                "{panes} panes gave a {}x{} tile",
-                mini.tile_w,
-                mini.tile_h
-            );
-        }
-    }
-
-    #[test]
-    fn nothing_is_reserved_when_nothing_plays() {
-        assert_eq!(mini_reserve(0), 0.0);
-    }
-
-    /// The last row of a list has to be able to scroll out from under the
-    /// player: the room left is at least the player and the gap it floats at.
-    #[test]
-    fn the_reserve_clears_the_player() {
-        for panes in 1..=4 {
-            let height = mini_player(panes).height;
-            let reserve = mini_reserve(panes);
-            assert!(reserve >= height + crate::theme::GAP, "{panes} panes");
-        }
-    }
-
-    /// The player stands off the page's right edge by more than the list's
-    /// scrollbar, so the whole track is the list's to drag, down to its foot,
-    /// with the player's usual gap between them.
-    #[test]
-    fn the_mini_player_leaves_the_scrollbar_clear() {
-        let right = mini_player_right();
-        assert!(right > crate::theme::SCROLLBAR_WIDTH, "over the track");
-        assert_eq!(right - crate::theme::SCROLLBAR_WIDTH, crate::theme::GAP);
+    fn the_browse_panel_takes_half_the_body_up_to_its_widest() {
+        assert_eq!(panel_width(1920.0), 960.0);
+        assert_eq!(panel_width(3840.0), crate::theme::PANEL_MAX_WIDTH);
+        assert!(panel_width(3840.0) < 3840.0 / 2.0);
+        let body = body_of(WIDE);
+        let beside = body.beside(panel_width(body.width));
+        assert_eq!(beside.height, body.height, "the panel takes no height");
+        assert!((beside.width + panel_width(body.width) - body.width).abs() < 0.01);
+        assert_eq!(body.beside(body.width * 2.0).width, 0.0, "never negative");
     }
 
     #[test]

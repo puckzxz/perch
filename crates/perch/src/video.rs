@@ -1398,8 +1398,8 @@ impl Drop for VideoStream {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         // Deliberately not joined. Every drop site is on the UI thread - a pane
-        // closing, a quality switch, leaving the watch page with the miniplayer
-        // off - and the worker is inside `wait_for_frame` for up to its timeout
+        // closing, a quality switch, a recording swapped for the channel - and
+        // the worker is inside `wait_for_frame` for up to its timeout
         // and then inside `mpv_terminate_destroy`, which waits for mpv's own
         // threads to wind down: the demuxer's network read, the audio output
         // closing its device. A join here put all of that on the window's

@@ -24,6 +24,7 @@ use std::time::{Duration, Instant};
 
 use settings::channel_key;
 use twitch_api::recommend::{rank, SimilarChannel};
+use twitch_api::LiveStream;
 
 use crate::twitch::{RecommendError, Recommendations};
 
@@ -258,13 +259,6 @@ impl Recommended {
         self.tried.clear();
     }
 
-    /// Whether Twitch refused the query, which ends the recommendations for
-    /// the session: the guide's Recommended tab says so, rather than that
-    /// they are on their way.
-    pub fn refused(&self) -> bool {
-        self.refused
-    }
-
     /// What the answers last said about `login`, in any case, whether or not
     /// the group shows it now: its name as it writes it, its title, game and
     /// viewers. `None` for a channel no answer has named this session.
@@ -315,6 +309,26 @@ impl Recommended {
                 channel: found.channel,
             })
             .collect()
+    }
+}
+
+/// A live channel from the rail's recommendations as the cards draw one:
+/// what the answer said of it, and the preview every live channel has at
+/// the address Helix would have named, which the answer itself does not
+/// carry (`twitch_api::live_thumbnail_template`). Only for a channel no
+/// list of streams has; one that is in a list is drawn from there, picture
+/// and all.
+pub fn as_stream(channel: &SimilarChannel) -> LiveStream {
+    LiveStream {
+        id: channel.stream_id.clone(),
+        user_login: channel.login.clone(),
+        user_id: channel.user_id.clone(),
+        display_name: channel.display_name.clone(),
+        title: channel.title.clone(),
+        game_name: channel.game_name.clone(),
+        viewer_count: channel.viewer_count,
+        thumbnail_url: twitch_api::live_thumbnail_template(&channel.login),
+        started_at: String::new(),
     }
 }
 
@@ -492,7 +506,7 @@ mod tests {
             "PersistedQueryNotFound".into(),
         )));
         assert!(refused.is_some_and(|line| line.contains("PersistedQueryNotFound")));
-        assert!(state.refused());
+        assert!(state.refused);
         assert!(state.shown.is_empty());
         assert!(state.suggestions(&more, [""; 0], no_names).is_empty());
         assert_eq!(

@@ -5,29 +5,21 @@
 //! "Hover is measured"): a `canvas` probe asks where the pointer is and
 //! whether it is inside the pane's bounds. A probe inserts no hitbox, which
 //! is what lets it see through the player's own control bar, and also what
-//! lets it see through anything else drawn over the pane. With the guide up
-//! over the lower half of the watch page, the panes beneath it went on
-//! measuring the pointer as over them while it worked in the guide: their
-//! bars came up behind it, their headers came up above it, a chat under it
-//! held its rows, and crossing the guide from one pane's half to another's
-//! made each pane the active one in turn — so `Watch` replaced whichever
-//! pane the pointer had last crossed, not the one the guide was opened from.
-//! (The part of a pane above the guide is still the pane's, and crossing it
-//! still makes it active, which is why the guide keeps its own opener as
-//! well: `guide::Guide::opener`.)
+//! lets it see through anything else drawn over the pane. A person's card
+//! (`chat::viewer_card`) is such a thing: in a short chat it rises out of
+//! its list box over the pane's header and picture, or over the pane above,
+//! and with the pointer on it the pane above went on measuring the pointer
+//! as its own — it became the active one, and brought the player's bar up
+//! behind the card.
 //!
-//! So an overlay says where it is, here, and every pane probe asks
-//! [`pointer_over`] instead of testing its bounds alone: the pointer is the
-//! pane's only while it is in the window, inside the pane, and on no
-//! overlay. One veil per window: a pane's player in a window of its own
-//! measures against that window, which nothing in the main one veils.
+//! So an overlay says where it is, here, under its own [`Cover`], and every
+//! pane probe asks [`pointer_over`] instead of testing its bounds alone: the
+//! pointer is the pane's only while it is in the window, inside the pane,
+//! and on no overlay. One veil per window: a pane's player in a window of
+//! its own measures against that window, which nothing in the main one
+//! veils.
 //!
-//! Two kinds of overlay write it, each under its own [`Cover`]: the guide,
-//! and a person's card (`chat::viewer_card`), which in a short chat rises
-//! out of its list box over the pane's header and picture, or over the pane
-//! above. There the same thing happened: the pointer on the card made the
-//! pane above the active one and brought the player's bar up behind it. A
-//! card belongs to its pane, so two probes leave their own card out (the
+//! A card belongs to its pane, so two probes leave their own card out (the
 //! `own` that [`pointer_over`] is given): the pane's hover, whose pane the
 //! card is part of, and its chat's hold, which counts the pointer on its card
 //! as on the chat (`ChatView::render`). The same pane's player does not:
@@ -35,20 +27,17 @@
 //!
 //! An overlay measures itself, as everything here does: a probe in it
 //! writes its laid-out bounds ([`cover`]), and its cover is lifted
-//! ([`lift`]) on every frame it is not drawn, before any probe runs — the
-//! guide's by the root, a card's by its chat as it renders without one, as
-//! it is closed and as the chat goes. A probe that ran earlier in the frame
-//! than the overlay's reads the bounds from the frame before, which is the
-//! opening frame only — the overlay's probe then asks for one more, and
-//! every probe reads it there.
+//! ([`lift`]) on every frame it is not drawn, before any probe runs — a
+//! card's by its chat as it renders without one, as it is closed and as the
+//! chat goes. A probe that ran earlier in the frame than the overlay's reads
+//! the bounds from the frame before, which is the opening frame only — the
+//! overlay's probe then asks for one more, and every probe reads it there.
 
 use gpui::{AnyWindowHandle, App, Bounds, EntityId, Global, Pixels, Point, Window};
 
 /// What covers part of the watch page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Cover {
-    /// The guide, over the foot of the page.
-    Guide,
     /// A person's card, by the chat whose card it is.
     Card(EntityId),
 }
@@ -158,16 +147,20 @@ mod tests {
         }
     }
 
-    /// A pane covering the page, and the guide over its lower half.
+    /// A pane covering the page, and another pane's card over the lower
+    /// left of it.
     const PANE: (f32, f32, f32, f32) = (0.0, 0.0, 1000.0, 800.0);
-    const GUIDE: (f32, f32, f32, f32) = (10.0, 400.0, 980.0, 390.0);
+    const CARD: (f32, f32, f32, f32) = (10.0, 400.0, 300.0, 390.0);
 
     fn pane() -> Bounds<Pixels> {
         rect(PANE.0, PANE.1, PANE.2, PANE.3)
     }
 
-    fn guide() -> (Cover, Bounds<Pixels>) {
-        (Cover::Guide, rect(GUIDE.0, GUIDE.1, GUIDE.2, GUIDE.3))
+    fn card() -> (Cover, Bounds<Pixels>) {
+        (
+            Cover::Card(EntityId::from(9)),
+            rect(CARD.0, CARD.1, CARD.2, CARD.3),
+        )
     }
 
     /// With nothing over the page, the pane has the pointer wherever it is
@@ -178,37 +171,35 @@ mod tests {
         assert!(!reaches(point(px(1200.0), px(600.0)), pane(), [], None));
     }
 
-    /// On the guide the pointer is nobody's under it; above the guide it is
-    /// the pane's again, and so is the strip beside the guide's inset.
+    /// On the card the pointer is nobody's under it; above the card it is
+    /// the pane's again, and so is the strip beside it.
     #[test]
     fn the_veil_takes_the_pointer_from_what_is_under_it() {
         assert!(!reaches(
-            point(px(500.0), px(600.0)),
+            point(px(100.0), px(600.0)),
             pane(),
-            [guide()],
+            [card()],
             None
         ));
-        assert!(reaches(
-            point(px(500.0), px(200.0)),
-            pane(),
-            [guide()],
-            None
-        ));
-        assert!(reaches(point(px(4.0), px(600.0)), pane(), [guide()], None));
+        assert!(reaches(point(px(100.0), px(200.0)), pane(), [card()], None));
+        assert!(reaches(point(px(4.0), px(600.0)), pane(), [card()], None));
     }
 
     /// A veil away from the pane changes nothing about it.
     #[test]
     fn a_veil_elsewhere_leaves_the_pane_alone() {
-        let veil = (Cover::Guide, rect(2000.0, 0.0, 100.0, 100.0));
+        let veil = (
+            Cover::Card(EntityId::from(9)),
+            rect(2000.0, 0.0, 100.0, 100.0),
+        );
         assert!(reaches(point(px(500.0), px(600.0)), pane(), [veil], None));
     }
 
     /// Two panes stacked, the lower one's card risen over the foot of the
     /// upper. The pointer on the card is not the upper pane's, whose own
     /// chat has a card of its own to leave out, nor its player's; off the
-    /// card it is. The lower pane leaves its own card out, and the guide,
-    /// when it is up, takes the pointer from it all the same.
+    /// card it is. The lower pane leaves its own card out, and another
+    /// chat's card over it takes the pointer from it all the same.
     #[test]
     fn a_card_is_its_own_panes_and_covers_the_rest() {
         let (upper_chat, lower_chat) = (EntityId::from(1), EntityId::from(2));
@@ -233,10 +224,11 @@ mod tests {
             Some(Cover::Card(lower_chat))
         ));
         assert!(!reaches(on_both, lower, [card], None));
+        let other = (Cover::Card(upper_chat), rect(0.0, 420.0, 1000.0, 380.0));
         assert!(!reaches(
             on_both,
             lower,
-            [card, (Cover::Guide, rect(0.0, 420.0, 1000.0, 380.0))],
+            [card, other],
             Some(Cover::Card(lower_chat))
         ));
     }

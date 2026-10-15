@@ -3,15 +3,14 @@
 //!
 //! A rail row is a name, a game and a number, which is enough to find
 //! someone and not enough to choose between strangers: what they are doing
-//! right now is on the browse page's cards and in the guide, a page or a
-//! panel away. So a live row the pointer rests on for a moment
+//! right now is on the browse page's cards, a page away. So a live row the pointer rests on for a moment
 //! ([`PREVIEW_DELAY`]) brings up that card beside the rail — the picture,
 //! the title, the game, the viewers and how long the stream has been on —
 //! and it goes the moment the pointer leaves the row. A recommendation's
 //! answer carries no picture and no start, so its card has the preview
 //! every live channel has at the address Helix would have named (see
-//! `guide::as_stream`) and no uptime, with the reason it is offered after
-//! the game, as the guide's cards say it. Offline rows, and pins nobody can
+//! `recommended::as_stream`) and no uptime, with the reason it is offered
+//! after the game, as its card on Following says it. Offline rows, and pins nobody can
 //! place, show nothing: their row already says all there is.
 //!
 //! The card sits to the right of the rail, over the page, never over the
@@ -36,7 +35,6 @@ use twitch_api::LiveStream;
 
 use crate::browse::{self, format_viewers};
 use crate::controls;
-use crate::guide;
 use crate::theme;
 
 /// How long the pointer rests on a live row before its card comes up. Long
@@ -52,11 +50,11 @@ pub const PREVIEW_DELAY: Duration = Duration::from_millis(400);
 /// enough to cross a group's heading between two rows.
 pub const PREVIEW_WARM: Duration = Duration::from_millis(300);
 
-/// How wide the card is: the guide's widest card, so it reads as one of the
-/// guide's. The picture on it is the one every card fetches, from one
-/// address at one size (`browse::stream_preview`), so a channel seen on Home
-/// or in the guide has nothing more to fetch here.
-pub(crate) const PREVIEW_WIDTH: f32 = guide::CARD_MAX;
+/// How wide the card is: narrower than a browse card at its widest, since it
+/// hangs beside the rail over whatever is there. The picture on it is the one
+/// every card fetches, from one address at one size (`browse::stream_preview`),
+/// so a channel seen on Following has nothing more to fetch here.
+pub(crate) const PREVIEW_WIDTH: f32 = 280.0;
 
 /// How many lines a title may take on the card. More than a browse card's
 /// one: a card here is only ever up because somebody wants to read it, and
@@ -205,13 +203,13 @@ impl Preview {
     }
 }
 
-/// The card for `stream`, with `note` after its game: what a guide card
+/// The card for `stream`, with `note` after its game: what a browse card
 /// shows, laid out the way it lays it out, without the controls — nothing
 /// on it takes a press. The picture is the cached preview the cards draw
 /// (`browse::stream_preview`), with the viewers and the uptime on it in the
 /// same badge; a stream with no picture to fetch has the badge's words in a
 /// line under the game instead. A recommendation's has one, at the address
-/// every live channel's preview is (`guide::as_stream`). Raised and ruled
+/// every live channel's preview is (`recommended::as_stream`). Raised and ruled
 /// like a menu, since it floats over the page as one does.
 pub fn card(stream: &LiveStream, note: Option<&str>, cache: &ImageCache) -> AnyElement {
     let watching = [

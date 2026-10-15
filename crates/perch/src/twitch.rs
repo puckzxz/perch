@@ -120,7 +120,7 @@ pub enum Request {
     /// answer.
     Recommend { seeds: Vec<String> },
     /// When each of `logins` last went live, for the words under an offline
-    /// follow's name on Home and in the rail: up to a hundred logins a
+    /// follow's name on Following and in the rail: up to a hundred logins a
     /// request to Twitch's unpublished GraphQL endpoint
     /// (`twitch_api::recommend::last_broadcasts`). The root decides which
     /// logins and how often; see `crate::last_live`.

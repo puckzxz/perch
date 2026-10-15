@@ -1,7 +1,7 @@
 //! When each offline follow was last live, worked out: when to ask Twitch,
 //! what its answers are kept as, and the words a name wears for it ("Live 3
 //! hours ago"). Pure and tested. The asking is `root::last_live`, the request
-//! is the worker's `Request::LastLive`, the drawing is Home's offline names
+//! is the worker's `Request::LastLive`, the drawing is Following's offline names
 //! and the rail's offline rows, which the rail's offline pins are ordered
 //! by too (`sidebar::pin_order`), and the data is
 //! `twitch_api::recommend::last_broadcasts`, whose docs say where it comes

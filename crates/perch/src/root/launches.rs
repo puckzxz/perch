@@ -8,6 +8,7 @@
 use futures::channel::mpsc::UnboundedReceiver;
 use gpui::{Context, Task, Window};
 
+use super::streams::Opening;
 use super::RootView;
 use crate::instance;
 use crate::launch::{self, Launch};
@@ -25,10 +26,7 @@ impl RootView {
     ) {
         for target in targets.into_iter().take(MAX_PANES) {
             match target {
-                Target::Channel(channel) => {
-                    let solo = self.slots.is_empty();
-                    self.open_channel(channel, solo, window, cx);
-                }
+                Target::Channel(channel) => self.open_channel(channel, Opening::Beside, window, cx),
                 // Named by a link, so it has to be looked up first, and that
                 // needs a session; it opens once there is one, by the same
                 // rule.

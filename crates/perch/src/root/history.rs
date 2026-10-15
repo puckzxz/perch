@@ -28,8 +28,8 @@ use crate::watch::{Slot, Source, StreamState};
 const NOTE_EVERY: Duration = Duration::from_secs(15);
 
 /// How long a run of history changes is left to settle before the file is
-/// written: opening one recording solo closes three others, and that is one
-/// write rather than four.
+/// written: Stop all closes four recordings at once, and that is one write
+/// rather than four.
 const SAVE_SETTLE: Duration = Duration::from_secs(1);
 
 /// Now, as the history counts time.

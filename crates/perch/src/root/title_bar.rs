@@ -350,8 +350,8 @@ impl RootView {
         };
 
         // Home from anywhere, in one press: the watch page included, which
-        // it leaves the way `Esc` does, so whatever plays carries on in the
-        // mini player or stops with that turned off. One step on the trail,
+        // it leaves the way `Esc` does, so whatever plays carries on beside
+        // the browse page. One step on the trail,
         // so back returns. Always live, unlike the arrows: on Home already,
         // a press changes nothing and records nothing.
         let home = controls::icon_button("title-home", Icon::Home, Variant::Chrome)
@@ -359,7 +359,7 @@ impl RootView {
             .on_click(cx.listener(|this, _event, window, cx| {
                 // See the gear's handler.
                 this.focus.focus(window);
-                this.go_to_tab(Tab::Home, window, cx);
+                this.go_to_tab(Tab::Following, window, cx);
             }));
 
         // Its own width while the bar has room. In a narrow window it gives

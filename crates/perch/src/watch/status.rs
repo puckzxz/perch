@@ -1,11 +1,11 @@
 //! What a pane shows when it has no picture: one reading of the pane,
 //! [`Showing`], and the screen drawn from it.
 //!
-//! One reading because two places say it, at two lengths: the pane, in a
-//! sentence across the middle of where the picture would be, and the mini
-//! player's tile, in a word. They used to read the slot separately — a
-//! `status_message` here and a `state_word` in the mini player — so a new
-//! state had two matches to land in, and nothing to say when it missed one.
+//! One reading, so whatever says it — the pane, in a sentence across the
+//! middle of where the picture would be, and the screen's offers — reads
+//! the slot the same way. It used to be read twice, once here and once for
+//! a mini player's tile in a word, so a new state had two matches to land
+//! in, and nothing to say when it missed one.
 //!
 //! The screen is what a pane is waiting for, or what to do next. Starting,
 //! it is the picture being waited for — the channel's live preview, the one
@@ -108,9 +108,9 @@ fn player(covered: bool, starting: Showing<'_>) -> Showing<'_> {
 }
 
 impl Showing<'_> {
-    /// What a mini-player tile with no picture says instead: short, because
-    /// a tile is a few words wide. The pane says the whole of it, one click
-    /// away.
+    /// What a pane with no picture says in a word, where a sentence has no
+    /// room: over a pop-out's picture until it covers the window
+    /// (`RootView::pop_out_word`). The pane says the whole of it.
     pub fn word(&self) -> Option<&'static str> {
         match self {
             Showing::Picture => None,
@@ -120,9 +120,9 @@ impl Showing<'_> {
             Showing::Ended => Some("Ended"),
             Showing::Finished => Some("Finished"),
             Showing::Failed(_) => Some("Failed"),
-            // No tile reads it: the mini player draws only the panes the
-            // main window has (`RootView::mini_slots`). A word all the same,
-            // so a tile that ever did would not go blank.
+            // A pop-out is never asked what it says while it is elsewhere:
+            // it is the elsewhere. A word all the same, so nothing that ever
+            // did ask would go blank.
             Showing::Elsewhere => Some("Elsewhere"),
         }
     }
@@ -130,7 +130,7 @@ impl Showing<'_> {
     /// What the pane says across the middle of where its picture would be,
     /// about the channel it calls `name`.
     ///
-    /// Sentence case, like the tile's words and the pill under it. These were
+    /// Sentence case, like the pill under it. These were
     /// lowercase while every control around them was too; once the controls
     /// took capitals, a lowercase line over a `Try again` read as a fragment
     /// that had lost its start.
@@ -643,7 +643,7 @@ mod tests {
 
     /// A player whose first frame has not faded in is still the pane
     /// starting, saying what it said before the player came: where a
-    /// recording opens, and the tile's `Starting…`.
+    /// recording opens, and the word `Starting…`.
     #[test]
     fn a_player_without_its_first_frame_still_reads_as_starting() {
         for pane in [live(), recording(3723.0)] {
@@ -665,10 +665,10 @@ mod tests {
         }
     }
 
-    /// A tile has a word for everything but a picture, and a pane a sentence;
-    /// a pane with no picture always has something to say.
+    /// A pane with no picture always has something to say, in a word and in
+    /// a sentence, and a pane with one says nothing over it.
     #[test]
-    fn every_state_but_the_picture_has_a_tile_word() {
+    fn every_state_but_the_picture_says_something() {
         let reason = SharedString::from("no");
         let stopped = [
             Showing::Starting {
@@ -687,7 +687,7 @@ mod tests {
             Showing::Elsewhere,
         ];
         for state in stopped {
-            assert!(state.word().is_some(), "{state:?} has no tile word");
+            assert!(state.word().is_some(), "{state:?} has no word");
             assert!(state.sentence("Forsen").is_some(), "{state:?} says nothing");
         }
         assert_eq!(Showing::Picture.word(), None);

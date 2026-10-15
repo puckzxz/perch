@@ -8,11 +8,12 @@
 //! `volume: 0` against the channel. Here the two are kept apart: `level` is
 //! what the user chose, the slider shows and the settings remember, and the
 //! hush is a silence on top of it that never touches it. A pane reports a
-//! level only from [`Loudness::set`], so Mute all, and the compact player it
-//! is offered from, cannot save a 0.
+//! level only from [`Loudness::set`], so a hush cannot save a 0.
 //!
-//! The hush has a second way in: `Only this one`, from a pane's More menu,
-//! which holds every other pane silent through the same hush and so saves
+//! Mute all, which held every pane silent through it, was the mini player's
+//! and went with it when browsing came to dock beside the panes; the hush
+//! keeps its name. Its way in now is `Only this one`, from a pane's More
+//! menu, which holds every other pane silent through it and so saves
 //! nothing either ([`HearOnly`]).
 //!
 //! Pure and tested, because this is the one place that decides what mpv
@@ -98,20 +99,6 @@ impl Loudness {
     pub fn unhush(&mut self) -> bool {
         std::mem::replace(&mut self.hushed, false)
     }
-}
-
-/// Whether to offer Unmute all rather than Mute all: when there is something
-/// playing and every pane of it is hushed. One audible pane is enough to
-/// make muting the useful offer.
-pub fn unmute_all_offered(quiet: impl IntoIterator<Item = bool>) -> bool {
-    let mut any = false;
-    for hushed in quiet {
-        if !hushed {
-            return false;
-        }
-        any = true;
-    }
-    any
 }
 
 /// What a pane's More menu offers about hearing one pane alone: nothing,
@@ -245,18 +232,6 @@ mod tests {
         assert_eq!(loudness.audible(), 0);
         assert_eq!(loudness.level(), 40);
         assert_eq!(loudness.toggled(), 40);
-    }
-
-    #[test]
-    fn unmute_all_is_offered_only_when_every_pane_is_quiet() {
-        assert!(
-            !unmute_all_offered(Vec::<bool>::new()),
-            "nothing playing offers nothing"
-        );
-        assert!(unmute_all_offered([true]));
-        assert!(unmute_all_offered([true, true, true]));
-        assert!(!unmute_all_offered([true, false]));
-        assert!(!unmute_all_offered([false]));
     }
 
     /// A lone pane has nobody to hush; two or more offer it until one

@@ -70,15 +70,7 @@ impl RootView {
                 ChatViewEvent::ChannelPage {
                     login,
                     display_name,
-                    confirmed,
-                } => this.channel_page_from_card(
-                    chat,
-                    login.clone(),
-                    display_name.clone(),
-                    *confirmed,
-                    window,
-                    cx,
-                ),
+                } => this.channel_page_from_card(login.clone(), display_name.clone(), window, cx),
             },
         )
         .detach();

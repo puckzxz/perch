@@ -61,7 +61,6 @@ use twitch_api::{Channel, LiveStream};
 use crate::assets::Icon;
 use crate::browse::{format_viewers, Action};
 use crate::controls;
-use crate::guide;
 use crate::last_live::LastLive;
 use crate::rail_preview;
 use crate::recommended::Suggestion;
@@ -201,7 +200,7 @@ impl Row<'_> {
 
     /// What a click on the row does: watch whoever is live, followed or
     /// suggested, and open the page of anyone else, which is what a click on
-    /// an offline name does on Home.
+    /// an offline name does on Following.
     fn open(&self) -> Action {
         match self {
             Row::Live(stream) => Action::Watch(stream.user_login.clone()),
@@ -737,13 +736,13 @@ fn row<V: 'static>(
 }
 
 /// What a live row's card shows: a follow's stream as the follows poll has
-/// it, or a recommendation drawn as the guide draws one, with the reason it
-/// is offered after its game. Nothing for a row that is not live.
+/// it, or a recommendation drawn as Following draws one, with the reason
+/// it is offered after its game. Nothing for a row that is not live.
 fn preview(channel: Row<'_>, cache: &ImageCache) -> Option<gpui::AnyElement> {
     match channel {
         Row::Live(stream) => Some(rail_preview::card(stream, None, cache)),
         Row::Recommended(suggestion) => Some(rail_preview::card(
-            &guide::as_stream(&suggestion.channel),
+            &crate::recommended::as_stream(&suggestion.channel),
             Some(&suggestion.reason),
             cache,
         )),

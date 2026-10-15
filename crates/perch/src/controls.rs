@@ -101,7 +101,7 @@ pub fn full_text(
 ///
 /// What the words say is decided when the tooltip comes up and not again,
 /// so a control whose words follow a state it can change — Pause and Play,
-/// Mute all and Unmute all — keys its element id on that state as well. The
+/// Pin and Pinned — keys its element id on that state as well. The
 /// first frame drawn under the other id drops the open tooltip with the rest
 /// of the element's state, and the next one to come up says the new words;
 /// [`caption_button`] does the same for its press.
@@ -153,14 +153,6 @@ variants! {
     /// A control that destroys something. Drawn like `Quiet`, and turns the
     /// colour of the thing it is about to do only under the pointer.
     Destructive,
-    /// A control that has been pressed once and asks for a second press,
-    /// because going ahead costs something: a viewer card's `Stop streams
-    /// and open?`. A `Pill`'s shape, so it is plainly the control it was a
-    /// moment ago, its words in the accent at rest as well as under the
-    /// pointer, since the question is the thing to notice. The accent, not
-    /// `danger`: the app has no warning colour, and `danger` is what a
-    /// `Destructive` control turns under the pointer, which this is not.
-    Confirm,
     /// Furniture in the window's own frame — the title bar's gear. No fill
     /// until the pointer is on it, because a bar of filled squares along the
     /// top of the window is chrome you stare past for three hours.
@@ -170,7 +162,7 @@ variants! {
 impl Variant {
     fn background(self) -> Option<gpui::Hsla> {
         match self {
-            Variant::Pill | Variant::Primary | Variant::Confirm => Some(theme::surface_raised()),
+            Variant::Pill | Variant::Primary => Some(theme::surface_raised()),
             Variant::Selected => Some(theme::accent_dim()),
             Variant::OnVideo | Variant::Quiet | Variant::Destructive | Variant::Chrome => None,
         }
@@ -181,17 +173,14 @@ impl Variant {
             Variant::Pill | Variant::Chrome | Variant::OnVideo => theme::control_rest(),
             Variant::Selected | Variant::Primary => theme::text(),
             Variant::Quiet | Variant::Destructive => theme::text_dim(),
-            Variant::Confirm => theme::accent(),
         }
     }
 
     /// The label's colour under the pointer. One signal for a destructive
-    /// control, a question that stays the colour it asks in, and the same
-    /// lift to full text for everything else.
+    /// control, and the same lift to full text for everything else.
     fn hover_foreground(self) -> gpui::Hsla {
         match self {
             Variant::Destructive => theme::danger(),
-            Variant::Confirm => theme::accent(),
             _ => theme::text(),
         }
     }
@@ -777,7 +766,7 @@ mod tests {
     /// `Variant::ALL`, which the enum's own declaration writes.
     fn sits_on(variant: Variant) -> gpui::Hsla {
         match variant {
-            Variant::Pill | Variant::Primary | Variant::Confirm => theme::surface_raised(),
+            Variant::Pill | Variant::Primary => theme::surface_raised(),
             Variant::Selected | Variant::Quiet | Variant::Destructive | Variant::Chrome => {
                 theme::surface()
             }

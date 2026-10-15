@@ -18,8 +18,8 @@
 //!
 //! Perch's own controls draw from the same table — the title bar's rail
 //! toggle, back, forward and settings gear, the window's caption buttons, the
-//! mini player's, the rail's pin and the fold over its offline follows, the
-//! player's control bar and a pane's header — through [`Icon`], so a control
+//! rail's pin and the fold over its offline follows, the player's control bar
+//! and a pane's header — through [`Icon`], so a control
 //! names an icon by a variant the compiler checks rather than by a path
 //! string nothing does. A variant is named for what it means, not what it
 //! looks like, and a file can serve a variant and the widget library both:
@@ -49,9 +49,10 @@ macro_rules! icon {
 /// Anything not on this list is answered `None`, which is exactly what the app
 /// did for all of them until now — so an icon nobody drew degrades to the
 /// blank it already was rather than to a crash.
-const ICONS: [(&str, &[u8]); 35] = [
+const ICONS: [(&str, &[u8]); 34] = [
     icon!("arrow-left"),
     icon!("arrow-right"),
+    icon!("browse"),
     icon!("chat"),
     icon!("chat-off"),
     icon!("chevron-down"),
@@ -60,11 +61,9 @@ const ICONS: [(&str, &[u8]); 35] = [
     icon!("chevron-up"),
     icon!("circle-x"),
     icon!("close"),
-    icon!("expand"),
     icon!("eye"),
     icon!("fullscreen"),
     icon!("fullscreen-exit"),
-    icon!("guide"),
     icon!("home"),
     icon!("inbox"),
     icon!("minus"),
@@ -132,7 +131,6 @@ perch_icons! {
     Close => "close",
     Volume => "volume",
     VolumeOff => "volume-off",
-    Expand => "expand",
     Folded => "chevron-right",
     Unfolded => "chevron-down",
     Pin => "pin",
@@ -151,18 +149,19 @@ perch_icons! {
     ExternalLink => "pop-out",
     // A pane given the watch page, and the grid back: the bar's maximize
     // control, which shows what a press leaves on the page. Not the
-    // caption's `Maximize`, which is the window's, nor `Expand`, the mini
-    // player's way back, nor fullscreen's corners.
+    // caption's `Maximize`, which is the window's, nor fullscreen's
+    // corners.
     PaneMaximize => "pane-maximize",
     PaneGrid => "pane-grid",
     // A pane header's chat options: how big chat's text is drawn, and
     // whether every message carries its time. Named for the menu it opens,
     // drawn as the larger of its two options: a large T and a small one.
     ChatOptions => "text-size",
-    // The bar's Guide: what else is on, raised over the lower part of the
-    // watch page. Drawn as what a press does to the page — a frame with a
-    // panel across its lower half and two cards in it.
-    Guide => "guide",
+    // A pane's Browse: what else is on, docked beside the panes. Drawn as
+    // what a press does to the page — a frame with a panel down its left
+    // half and two cards in it. Not `PanelLeft`, the rail's, whose column
+    // is narrower and empty.
+    Browse => "browse",
 }
 
 /// What `Application::new().with_assets(..)` is handed.

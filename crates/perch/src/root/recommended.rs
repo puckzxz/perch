@@ -51,12 +51,14 @@ impl RootView {
     /// requests only once sign-in has got it into its loop, so an ask sent
     /// before then would wait there, or die with a worker that never gets
     /// that far, and nothing else could go out meanwhile. `SignedIn` calls
-    /// this again. And only while the group is on screen — the rail open, or
-    /// the guide on its Recommended tab: nobody sees it otherwise, and
-    /// unfolding the rail or showing that tab calls this. An ask the worker
-    /// could not take is not noted as made, so the next chance tries again.
-    fn ask_recommended(&mut self) {
-        let seen = !self.settings.sidebar_collapsed || self.guide.shows_recommended();
+    /// this again. And only while the group is on screen — the rail open,
+    /// or Following, whose Recommended is the same group as cards: nobody
+    /// sees it otherwise. Unfolding the rail calls this, and so does every
+    /// frame of Following (`browse_page`), which costs nothing while no ask
+    /// is due (`Recommended::next_ask`). An ask the worker could not take is
+    /// not noted as made, so the next chance tries again.
+    pub(super) fn ask_recommended(&mut self) {
+        let seen = !self.settings.sidebar_collapsed || self.following_shown();
         if !seen || !matches!(self.sign_in, SignIn::SignedIn(_)) {
             return;
         }

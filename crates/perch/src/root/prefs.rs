@@ -40,8 +40,7 @@ impl RootView {
         // open the sheet with the cursor still in the title bar's search box,
         // which sits above the scrim. The veil there only stops the pointer,
         // so typing went on reaching the box behind the sheet. `Enter` ran a
-        // search, which on the watch page left the page and, with the mini
-        // player off, stopped every stream. `Esc` could not close the sheet
+        // search behind the sheet. `Esc` could not close the sheet
         // either, because its binding stands aside for a text box like every
         // other. The palette is closed rather than left under the sheet
         // without its cursor. There, `Esc` would only have closed and reopened
@@ -74,10 +73,6 @@ impl RootView {
                     SettingsEvent::Saved(updated) => {
                         let client_id_changed =
                             this.settings.credentials.client_id != updated.client_id;
-                        // Turned off while streams are already parked on the
-                        // browse page, the setting has to act now — otherwise
-                        // it reads as broken until the next navigation.
-                        let miniplayer_off = this.settings.miniplayer && !updated.miniplayer;
                         let stream_changed = this.settings.quality != updated.quality
                             || this.settings.credentials.auth_token != updated.auth_token;
                         // Turned off, what showing them registered with
@@ -109,11 +104,6 @@ impl RootView {
                         this.saves.save(save);
                         this.settings_panel = None;
 
-                        // By the rule leaving the page with it off stops
-                        // panes by: those in windows of their own play on.
-                        if miniplayer_off {
-                            this.retire_homeless(cx);
-                        }
                         if notifications_off {
                             notifications::forget();
                         }

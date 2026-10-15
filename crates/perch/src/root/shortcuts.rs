@@ -5,7 +5,7 @@
 use gpui::{Context, Window};
 use settings::Settings;
 
-use super::{Page, RootView};
+use super::RootView;
 use crate::browse::{Action, Place};
 use crate::{keys, stage};
 
@@ -120,9 +120,8 @@ impl RootView {
     /// first, let go where it was with nothing moved — the button is still
     /// down, and the release then lands on nothing. Then a menu open over a
     /// pane — leaving the page with the menu still up was two steps taken
-    /// for one press — then the guide, then a pane given the whole page
-    /// shows every pane again (`show_all_panes`), and only then is the page
-    /// left.
+    /// for one press — then a pane given the whole page shows every pane
+    /// again (`show_all_panes`), and only then is the page left.
     pub(super) fn on_go_browse(
         &mut self,
         _: &keys::GoBrowse,
@@ -137,7 +136,7 @@ impl RootView {
             return;
         }
         // A pane's chat options menu is one of those menus too.
-        if self.close_menus(cx) || self.close_guide(cx) || self.show_all_panes(window, cx) {
+        if self.close_menus(cx) || self.show_all_panes(window, cx) {
             return;
         }
         self.go_browse(cx);
@@ -363,28 +362,16 @@ impl RootView {
         }
     }
 
-    /// `P`. On the watch page, the active pane into a window of its own, or
-    /// back from one. On the browse page, which has no active pane, the mini
-    /// player: every pane it shows out into windows of their own, as its
-    /// bar's `Pop out` does — or, with nothing left in it to pop out, every
-    /// popped pane back. Which of the two is the bar's own answer
-    /// (`mini_pop_out_offered`), so the key pops out exactly when the bar
-    /// offers to. Nothing where the pop-out is not offered, and nothing for
-    /// a pane with no player to move; see `pop_out`.
+    /// `P`: the active pane into a window of its own, or back from one, on
+    /// the watch page and beside the browse page alike, since the panes are
+    /// on screen either way. Nothing where the pop-out is not offered, and
+    /// nothing for a pane with no player to move; see `pop_out`.
     pub(super) fn on_toggle_pop_out(
         &mut self,
         _: &keys::TogglePopOut,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.page == Page::Browse {
-            if self.mini_pop_out_offered() {
-                self.pop_out_all_shown(window, cx);
-            } else {
-                self.pop_in_all(window, cx);
-            }
-            return;
-        }
         let Some(key) = self
             .active_slot()
             .map(|index| self.slots[index].key.clone())

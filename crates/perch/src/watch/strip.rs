@@ -28,8 +28,8 @@ use crate::{sidebar, theme};
 
 /// The header under the picture: the channel's face, then who is on with
 /// the numbers and the tags, what is on and its game, and at the end the
-/// pin, the guide where the pane has no bar to offer it, out or back, and
-/// the ×. It takes the rest of the column under the picture, on the page's
+/// pin, the channel's past broadcasts, browsing where the pane has no bar
+/// to offer it, out or back, and the ×. It takes the rest of the column under the picture, on the page's
 /// own ground rather than the player's black, so it reads as the pane's
 /// facts rather than as more of the picture.
 ///
@@ -53,7 +53,10 @@ pub(super) fn pane_strip<V: 'static>(
     let numbers = facts.numbers(true);
     let name = header::name_link(slot, &facts, theme::TEXT_TITLE, window_hovered, cx);
     let pin = pin_toggle(slot, pane.pinned, window_hovered, on_pane.clone(), cx);
-    let guide = header::guide_button(slot, pane, window_hovered, on_pane.clone(), cx);
+    let videos = pane
+        .past_broadcasts
+        .then(|| past_broadcasts(slot, window_hovered, on_pane.clone(), cx));
+    let browse = header::browse_button(slot, pane, window_hovered, on_pane.clone(), cx);
     let pop = header::pop_button(slot, pane, window_hovered, on_pane.clone(), cx);
     let close = header::close_button(slot, window_hovered, on_pane.clone(), cx);
     let about = about_lines(slot, &facts, window_hovered);
@@ -113,7 +116,8 @@ pub(super) fn pane_strip<V: 'static>(
                 .items_center()
                 .gap(px(theme::GAP_TIGHT))
                 .child(pin)
-                .children(guide)
+                .children(videos)
+                .children(browse)
                 .children(pop)
                 .child(close),
         )
@@ -190,6 +194,32 @@ fn pin_toggle<V: 'static>(
                 on_pane(view, &key, PaneAction::Pin(!pinned), window, cx)
             }
         }))
+}
+
+/// The channel's page, its past broadcasts and schedule, beside the pane,
+/// which plays on: the same words a browse card's corner pill says it in.
+fn past_broadcasts<V: 'static>(
+    slot: &Slot,
+    window_hovered: bool,
+    on_pane: impl Fn(&mut V, &str, PaneAction, &mut Window, &mut Context<V>) + 'static,
+    cx: &mut Context<V>,
+) -> Stateful<Div> {
+    let key = slot.key.clone();
+    controls::pill(
+        pane_id(&slot.key, "past-broadcasts"),
+        "Past broadcasts",
+        Variant::Pill,
+    )
+    .when(window_hovered, |pill| {
+        pill.tooltip(controls::tip(
+            "Their past broadcasts and schedule, beside this",
+        ))
+    })
+    .on_click(cx.listener(move |view, _event, window, cx| {
+        if !cx.has_active_drag() {
+            on_pane(view, &key, PaneAction::ChannelPage, window, cx)
+        }
+    }))
 }
 
 /// The bar over a pane's chat while its header is under the picture: what

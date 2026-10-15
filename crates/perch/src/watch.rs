@@ -7,8 +7,7 @@
 //! one up per stream count.
 //!
 //! A pane with no picture is `status`'s: the one reading of what it is
-//! showing ([`Showing`]), which the mini player's tiles read too, and the
-//! screen drawn from it: what is being waited for, or what to do next. A
+//! showing ([`Showing`]), and the screen drawn from it: what is being waited for, or what to do next. A
 //! pane's header is `header`'s, and where it goes — in the chat panel, or
 //! over the top of the picture when there is no chat on screen — is
 //! [`Placement`]. Whatever a pane asks of its owner — a close, a retry, a
@@ -491,7 +490,8 @@ impl Slot {
     /// than the pointer — a picture arriving, a menu opening, a reveal — and
     /// because a pane can be pointed at with no crossing to report:
     /// `RootView::go_watch_pane` counts every pane as pointed at already, so
-    /// the pane under the pointer after a mini-player tile's click has none.
+    /// the pane under the pointer after the palette's way back to a pane
+    /// has none.
     pub fn point(&mut self, inside: bool, picture: bool, menu_open: bool) -> Pointed {
         let entered = inside && !self.hovered;
         self.hovered = inside;
@@ -744,11 +744,10 @@ pub struct PaneInfo<'a> {
     /// is open (`RootView::chat_menu`), for the menu to mark what is chosen;
     /// `None` while it is not. Drawn only on a pane with a chat panel.
     pub chat_menu: Option<ChatDisplay>,
-    /// Whether the guide is up over the watch page from this pane
-    /// (`guide::Guide::up_from`), which the Guide icon on the header of a
-    /// pane with no picture keys its id and its tooltip on, as the bar's does
-    /// (`VideoView::guide_from_here`).
-    pub guide_from_here: bool,
+    /// Whether the browse page is up beside the panes, which the Browse
+    /// icon on the header of a pane with no picture keys its id and its
+    /// tooltip on, as the bar's does (`VideoView::browsing`).
+    pub browsing: bool,
     /// When the channel says it is on next, for a pane that found it off:
     /// "Next stream: Tue 7:00 PM · Title · Game", or "On a break until 12
     /// Oct" (`schedule::Schedules::words`). `None` for any other pane, and
@@ -763,6 +762,10 @@ pub struct PaneInfo<'a> {
     /// Whether the pane's channel is pinned to the rail, which the header
     /// under the picture says and toggles (`PaneAction::Pin`).
     pub pinned: bool,
+    /// Whether the header under the picture offers the channel's past
+    /// broadcasts (`PaneAction::ChannelPage`): signed in, as the page's
+    /// lists need the token, as a viewer card's `Channel page` is.
+    pub past_broadcasts: bool,
 }
 
 /// A recording a stopped pane offers, and where it was left if it has been
@@ -869,12 +872,15 @@ pub enum PaneAction {
     /// drawn a frame stale pins what is pinned already rather than taking
     /// it off; see `RootView::set_pinned`.
     Pin(bool),
-    /// Raise the guide over the lower part of the watch page, from this
-    /// pane, or put it away again: the Guide button on its bar, or on its
-    /// header while it has no picture and so no bar. One guide for the
-    /// page, whichever pane's button; see `crate::guide` and
-    /// `RootView::toggle_guide`.
-    Guide,
+    /// Bring the browse page up beside the panes, with this pane the one a
+    /// card plays in place of, or put it away again: the Browse button on
+    /// its bar, or on its header while it has no picture and so no bar. See
+    /// `RootView::toggle_browse`.
+    Browse,
+    /// Open the channel's page, its past broadcasts and schedule, on the
+    /// browse page beside the panes, which play on: `Past broadcasts` on
+    /// the header under the picture. See `RootView::open_channel_page`.
+    ChannelPage,
 }
 
 /// How every pane in the current grid is arranged. Identical for all of them,
@@ -1204,8 +1210,8 @@ fn pane<V: 'static>(
         .map(|chat| veil::Cover::Card(chat.entity_id()));
     let hover_probe = canvas(
         move |bounds, window, cx| {
-            // Not while the pointer is on the guide over the pane, or on
-            // another pane's card risen over it; see `crate::veil`.
+            // Not while the pointer is on another pane's card risen over
+            // it; see `crate::veil`.
             let inside = veil::pointer_over(bounds, own_card, window, cx);
             owner
                 .update(cx, |view, cx| on_hover(view, &hovered_key, inside, cx))
@@ -1317,10 +1323,10 @@ fn pane<V: 'static>(
     //
     // Only the first press of a run. The platform counts a second press near
     // the first as a double-click wherever the first one landed, and the
-    // first can have been on a mini-player tile, which put this page under
-    // the pointer with that tile's pane active: the second, landing in
-    // whichever pane fills the corner the tile was in, would hand that pane
-    // the keys instead. Any later press of a run is within a few pixels of
+    // first can have been on a control that put this page under the
+    // pointer with another pane active — Browse putting the browse page
+    // away, which grows the panes under it: the second, landing in whichever
+    // pane is there now, would hand that pane the keys instead. Any later press of a run is within a few pixels of
     // the first, so on a pane the first press already chose.
     let key = slot.key.clone();
     let cell = div()
@@ -2023,7 +2029,7 @@ mod tests {
 
     /// The pointer coming into a pane is said once, on the way in, and
     /// again only after it has left. A pane already counted as pointed at —
-    /// every pane, after a mini-player tile's click — reports no entry but
+    /// every pane, on the palette's way back to a pane — reports no entry but
     /// still raises its header.
     #[test]
     fn coming_in_is_reported_once() {

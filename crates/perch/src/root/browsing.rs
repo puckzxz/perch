@@ -3,6 +3,7 @@
 
 use gpui::{Context, Point, Window};
 
+use super::streams::Opening;
 use super::{Page, RootView};
 use twitch_api::VideoKind;
 
@@ -71,9 +72,9 @@ impl RootView {
             Place::Category(_) => discovery.streams.is_empty(),
             Place::Search(results) => results.is_empty(),
             Place::Channel(page) => page.videos().is_empty(),
-            // Home is the follows poll's and the history's, and the history
+            // Following is the follows poll's and the history's, and the history
             // is the app's own; neither has anything to ask for here.
-            Place::Tab(Tab::Home | Tab::History) => false,
+            Place::Tab(Tab::Following | Tab::Library) => false,
         };
         let request = place.first_page().filter(|_| empty);
         if let Some(request) = request {
@@ -103,7 +104,7 @@ impl RootView {
             }
             // Nothing on the history came from Twitch, so there is nothing to
             // ask again; the follows are what goes stale on that page.
-            Place::Tab(Tab::Home | Tab::History) => {
+            Place::Tab(Tab::Following | Tab::Library) => {
                 self.refresh_follows();
                 cx.notify();
                 return;
@@ -169,9 +170,9 @@ impl RootView {
     /// Run a search, or clear the results if the box is empty.
     ///
     /// The box is in the title bar, over both pages, so a search can start on
-    /// the watch page. It leaves it for the results the way `Esc` does —
-    /// whatever is playing carries on in the mini player, or stops with that
-    /// turned off — because a search is asked for to be looked at. Windowless,
+    /// the watch page. It brings the browse page up for the results the way
+    /// `Esc` does — whatever is playing carries on beside it — because a
+    /// search is asked for to be looked at. Windowless,
     /// like the box's own subscription that calls it, which is why recording
     /// a step needs no window either. New results start at the top.
     pub(super) fn run_search(&mut self, query: String, cx: &mut Context<Self>) {
@@ -208,6 +209,12 @@ impl RootView {
         cx.notify();
     }
 
+    /// Whether the browse page shows Following, nothing taking it over: up
+    /// on its own or beside the panes.
+    pub(super) fn following_shown(&self) -> bool {
+        self.page == Page::Browse && matches!(self.discovery.place(), Place::Tab(Tab::Following))
+    }
+
     pub(super) fn on_browse_action(
         &mut self,
         action: Action,
@@ -217,8 +224,8 @@ impl RootView {
         // One step on the trail, whatever the action turns out to move: a
         // card, a category, a channel's page, a context bar's back.
         self.record(|this| match action {
-            Action::Watch(channel) => this.open_channel(channel, true, window, cx),
-            Action::Add(channel) => this.open_channel(channel, false, window, cx),
+            Action::Watch(channel) => this.open_channel(channel, Opening::InPlace, window, cx),
+            Action::Add(channel) => this.open_channel(channel, Opening::Beside, window, cx),
             Action::OpenCategory(category) => {
                 this.end_search(window, cx);
                 this.discovery.channel = None;
@@ -238,7 +245,7 @@ impl RootView {
                 this.discovery.streams.clear();
                 cx.notify();
             }
-            // What was typed into Home's filter moves to the box
+            // What was typed into Following's filter moves to the box
             // that asks Twitch, and is asked there — so the results page says
             // what it is showing, and back does not return to a filter that
             // still matches nobody.
@@ -266,8 +273,8 @@ impl RootView {
                 cx.notify();
             }
             Action::ShowShelf(kind) => this.show_shelf(kind, cx),
-            Action::WatchVideo(video) => this.open_video(*video, true, window, cx),
-            Action::AddVideo(video) => this.open_video(*video, false, window, cx),
+            Action::WatchVideo(video) => this.open_video(*video, Opening::InPlace, window, cx),
+            Action::AddVideo(video) => this.open_video(*video, Opening::Beside, window, cx),
             Action::ForgetVideo(id) => this.forget_video(&id, cx),
             Action::ClearHistory => this.clear_history(cx),
             Action::ShowTab(tab) => this.show_tab(tab, window, cx),
@@ -280,9 +287,8 @@ impl RootView {
     /// Look at a channel's past broadcasts.
     ///
     /// Takes over the browse page the way a category does, and gets there
-    /// from the watch page the way `Esc` does, so whatever is playing is
-    /// treated as leaving the watch page always treats it. One step on the
-    /// trail.
+    /// from the watch page as Browse does, the panes playing on beside it
+    /// (`go_browse`). One step on the trail.
     pub(super) fn open_channel_page(
         &mut self,
         login: String,
@@ -375,7 +381,7 @@ impl RootView {
                 .next
                 .clone()
                 .map(|after| Request::Categories { after: Some(after) }),
-            Place::Tab(Tab::Home | Tab::History) => None,
+            Place::Tab(Tab::Following | Tab::Library) => None,
         };
 
         if let Some(request) = request {

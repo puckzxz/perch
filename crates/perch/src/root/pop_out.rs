@@ -12,13 +12,9 @@
 //! is measured by its own window (`PoppedOut::height`), and one brought
 //! back by its cell again.
 //!
-//! A pane goes out from its header's icon, its bar's More, `P`, the
-//! palette, or its tile in the mini player, whose bar also pops out every
-//! pane it shows, each into a window of its own ([`pop_out_all_shown`]).
-//! It comes back from its pop-out's Bring back, the `Bring back` on its
-//! cell, its header's icon, `P` in either window, or the palette.
-//!
-//! [`pop_out_all_shown`]: RootView::pop_out_all_shown
+//! A pane goes out from its header's icon, its bar's More, `P` or the
+//! palette. It comes back from its pop-out's Bring back, the `Bring back` on
+//! its cell, its header's icon, `P` in either window, or the palette.
 //!
 //! Three rules hold everything here up, each because gpui fails otherwise:
 //!
@@ -470,47 +466,17 @@ impl RootView {
         self.on_window_resized(window, cx);
     }
 
-    /// Pop out every pane the mini player shows, each into a window of its
-    /// own, stacked clear of one another (`layout::pop_out_bounds`): the mini
-    /// bar's `Pop out`, and `P` on the browse page. The mini player goes
-    /// once none is left at home (`mini_player_shows`). A pane with no
-    /// player to move stays where it is.
-    pub(super) fn pop_out_all_shown(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let shown: Vec<String> = self
-            .mini_slots()
-            .into_iter()
-            .filter(|slot| slot.video().is_some())
-            .map(|slot| slot.key.clone())
-            .collect();
-        for key in shown {
-            self.pop_out(&key, window, cx);
-        }
-    }
-
-    /// Bring every popped pane back: `P` on the browse page while the mini
-    /// player has nothing to pop out (`mini_pop_out_offered`). Each comes
-    /// back as [`pop_in`](Self::pop_in) brings one.
-    pub(super) fn pop_in_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let popped: Vec<String> = self.stage.iter().map(|(key, _)| key.to_string()).collect();
-        for key in popped {
-            self.pop_in(&key, window, cx);
-        }
-    }
-
     /// Bring the pane `key` names back from its window, as the pane the keys
     /// talk to: Bring back, the cell's own `Bring back`, the header's icon,
     /// `P` in either window, and the window's own close. `window` is the
     /// main one, whatever asked.
     ///
-    /// To somewhere it is drawn. Off the watch page with the mini player
-    /// off, the main window draws no pane at home, and `restage` stops one
-    /// that would be there with nothing drawing it; so a pane brought back
-    /// then brings the watch page up with it. Bring back is asking to see
-    /// the pane, not to stop it.
+    /// To the grid, on the watch page or beside the browse page, whichever
+    /// is up: the main window draws every pane at home on either.
     ///
-    /// Chosen as it comes (`choose`), so while another pane has the watch
-    /// page, the pane brought back takes it rather than coming home to be
-    /// drawn nowhere.
+    /// Chosen as it comes (`choose`), so while another pane has the grid,
+    /// the pane brought back takes it rather than coming home to be drawn
+    /// nowhere.
     ///
     /// Its quality is chosen for its cell again: the cell may be taller than
     /// the window it played in, and moving up is a swap in place, with no
@@ -518,9 +484,6 @@ impl RootView {
     pub(super) fn pop_in(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
         if !self.stage.is_popped(key) {
             return;
-        }
-        if !self.draws_home_panes() {
-            self.go_watch(cx);
         }
         self.come_home(key, cx);
         self.choose(key, window, cx);
@@ -603,8 +566,7 @@ impl RootView {
     }
 
     /// What a pop-out says until its picture covers it, and whether that is
-    /// the pane starting: the pane's own word, as a mini-player tile would
-    /// say it.
+    /// the pane starting: the pane's own word (`Showing::word`).
     fn pop_out_word(&self, key: &str) -> Option<(&'static str, bool)> {
         if !self.stage.is_popped(key) {
             return None;

@@ -12,7 +12,6 @@ use gpui_component::{
     input::{Input, InputState},
     scroll::{Scrollbar, ScrollbarShow},
     select::{Select, SelectState},
-    switch::Switch,
     IndexPath,
 };
 use settings::{DesktopNotifications, QualityPreference, SheetFields};
@@ -140,9 +139,6 @@ pub struct SettingsPanel {
     quality: Entity<SelectState<Vec<SharedString>>>,
     history: Entity<SelectState<Vec<SharedString>>>,
     notifications: Entity<SelectState<Vec<SharedString>>>,
-    /// Held here rather than read back off the switch: a `Switch` reports
-    /// clicks and keeps no state of its own.
-    miniplayer: bool,
     sign_in_status: SharedString,
     /// Whether `Sign out` is offered beside the status (`SignIn::can_sign_out`).
     sign_out_offered: bool,
@@ -219,7 +215,6 @@ impl SettingsPanel {
             cx.new(|cx| SelectState::new(options, Some(IndexPath::new(selected)), window, cx));
 
         Self {
-            miniplayer: fields.miniplayer,
             client_id,
             auth_token,
             quality,
@@ -295,7 +290,6 @@ impl SettingsPanel {
             auth_token: trimmed(self.auth_token.read(cx).value().to_string()),
             quality,
             chat_history: HISTORY_OPTIONS[index].1,
-            miniplayer: self.miniplayer,
             desktop_notifications,
         }));
     }
@@ -472,17 +466,6 @@ impl Render for SettingsPanel {
                         "Stream quality",
                         "Auto picks a stream that scales cleanly to the video pane. Best is usually the wrong choice: a 1440p stream in a 720px pane decodes four times the pixels and then throws them away.",
                         Select::new(&self.quality),
-                    ))
-                    .child(Self::field(
-                        "Mini player",
-                        "Keeps what you are watching playing in a small player in the corner while you browse, with its sound; Mute all there silences it without changing anyone's volume. Turned off, leaving the watch page stops the streams in this window — the cheaper answer if you go there to pick the next thing rather than to glance at the list.",
-                        Switch::new("miniplayer")
-                            .checked(self.miniplayer)
-                            .label(if self.miniplayer { "On" } else { "Off" })
-                            .on_click(cx.listener(|this: &mut Self, checked: &bool, _, cx| {
-                                this.miniplayer = *checked;
-                                cx.notify();
-                            })),
                     ))
                     .child(Self::section("Chat"))
                     .child(Self::field(

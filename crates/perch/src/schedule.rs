@@ -9,7 +9,7 @@
 //!
 //! Only where somebody is deciding about one channel: its page, open while it
 //! is off, and a pane on it that found it off. Not for every offline follow
-//! on Home or in the rail, which would be one Helix request per follow; that
+//! on Following or in the rail, which would be one Helix request per follow; that
 //! is what `crate::last_live` is for, a hundred logins a request. A channel
 //! is asked about once a session, the first time one of those views draws it
 //! while somebody is signed in, and the answer is kept for the session: a

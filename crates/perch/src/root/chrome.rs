@@ -1,8 +1,8 @@
 //! The shell's own furniture: the pills, the toasts and the follows rail.
 //! None of it is a page. The pills are drawn by the pages; the rail and the
 //! toasts by the root, beside and over whichever page is up, so they stay put
-//! when the page changes. What plays on while you browse is `mini_player`,
-//! drawn over the page the same way.
+//! when the page changes. What plays on while you browse is the panes
+//! themselves, beside the browse page (`RootView::docks_stage`).
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use gpui::{canvas, div, prelude::*, px, Context, IntoElement, SharedString, Window};
 
+use super::streams::Opening;
 use super::{Page, RootView, Toast, ToastAction};
 use crate::browse::Tab;
 use crate::{controls, layout, motion, rail_preview, sidebar, theme};
@@ -414,7 +415,7 @@ impl RootView {
                     .cursor_pointer()
                     .hover(|style| style.text_color(theme::accent()))
                     .on_click(cx.listener(move |this, _event, window, cx| {
-                        this.act_on_toast(id, true, window, cx)
+                        this.act_on_toast(id, Opening::InPlace, window, cx)
                     }))
                     .child(toast.text.clone())
                     .into_any_element()
@@ -468,7 +469,7 @@ impl RootView {
                     card.child(
                         controls::pill(("toast-add", id), "+ Add", controls::Variant::Pill)
                             .on_click(cx.listener(move |this, _event, window, cx| {
-                                this.act_on_toast(id, false, window, cx)
+                                this.act_on_toast(id, Opening::Beside, window, cx)
                             })),
                     )
                 })
@@ -476,7 +477,7 @@ impl RootView {
                     card.child(
                         controls::pill(("toast-undo", id), "Undo", controls::Variant::Pill)
                             .on_click(cx.listener(move |this, _event, window, cx| {
-                                this.act_on_toast(id, true, window, cx)
+                                this.act_on_toast(id, Opening::InPlace, window, cx)
                             })),
                     )
                 })
@@ -505,9 +506,9 @@ impl RootView {
         stack.child(report)
     }
 
-    /// Do what toast `id` offers — watch alone or add beside, or undo — and
-    /// take the toast down, since it has been answered. `solo` means nothing
-    /// to an undo.
+    /// Do what toast `id` offers — watch in place of the pane you are on or
+    /// add beside, or undo — and take the toast down, since it has been
+    /// answered. `opening` means nothing to an undo.
     ///
     /// Takes the keyboard back for the root first, as every control the root
     /// cannot hear does. A toast card blocks the pointer from the root, so
@@ -516,14 +517,20 @@ impl RootView {
     /// in, stays on screen over the watch page a toast opens. Left there,
     /// every key on that page stood aside for the box, and Space typed a
     /// space into it.
-    fn act_on_toast(&mut self, id: u64, solo: bool, window: &mut Window, cx: &mut Context<Self>) {
+    fn act_on_toast(
+        &mut self,
+        id: u64,
+        opening: Opening,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.focus.focus(window);
         let Some(index) = self.toasts.iter().position(|toast| toast.id == id) else {
             return;
         };
         let toast = self.toasts.remove(index);
         match toast.action {
-            Some(ToastAction::Watch(login)) => self.open_channel(login, solo, window, cx),
+            Some(ToastAction::Watch(login)) => self.open_channel(login, opening, window, cx),
             Some(ToastAction::Undo(forgotten)) => self.restore_history(forgotten, cx),
             None => {}
         }

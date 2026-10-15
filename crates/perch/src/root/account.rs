@@ -44,7 +44,7 @@ impl RootView {
         self.drop_chat_sends("Message may not have been sent: the sign-in stopped", cx);
         self.follows.clear();
         self.offline.clear();
-        self.home_offline.clear();
+        self.following_offline.clear();
         self.known_live.clear();
         self.streams_seeded = false;
         self.avatars.clear();
@@ -124,7 +124,7 @@ impl RootView {
     /// tokens forgotten through `Settings::sign_out` on the writer's thread
     /// (which keeps every other field the file holds, under the lock every
     /// save takes), and the app as it is with no sign-in: the follows gone,
-    /// the rail and Home saying `Signed out` with a `Sign in` beside it, and
+    /// the rail and Following saying `Signed out` with a `Sign in` beside it, and
     /// every composer the same. No worker runs, so nothing asks Twitch for a code
     /// until the user presses Sign in.
     pub(super) fn sign_out(&mut self, cx: &mut Context<Self>) {

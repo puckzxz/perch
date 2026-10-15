@@ -385,16 +385,6 @@ pub struct Settings {
     /// existed, which is how every stream always sounded.
     #[serde(default)]
     pub compressor: bool,
-    /// Whether what is playing keeps playing, in the mini player in the
-    /// corner of the browse page, while you browse. The field keeps its
-    /// one-word name, which is what settings files already on disk say.
-    ///
-    /// Off is a real answer rather than a tidiness preference: a stream in the
-    /// mini player is still decoding frames and still pulling bytes, and
-    /// somebody who goes to the follows page to *pick the next thing* would
-    /// rather it stopped. On, it is one click back into what you were watching.
-    #[serde(default = "yes")]
-    pub miniplayer: bool,
     /// Who gets a desktop notification on going live while perch is in the
     /// background: the settings sheet's Desktop notifications. A file from
     /// before it existed loads as [`DesktopNotifications::Pinned`], and so
@@ -424,13 +414,6 @@ pub struct Settings {
     pub window: Option<WindowPlacement>,
 }
 
-/// `#[serde(default)]` for a `bool` is `false`, and this one defaults to true —
-/// a settings file written before the field existed should keep the behaviour
-/// it had.
-fn yes() -> bool {
-    true
-}
-
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -450,7 +433,6 @@ impl Default for Settings {
             chat_message_times: false,
             compressor: false,
             video_share: 0.0,
-            miniplayer: true,
             desktop_notifications: DesktopNotifications::Pinned,
             sidebar_collapsed: false,
             window: None,
@@ -459,8 +441,10 @@ impl Default for Settings {
 }
 
 /// What the settings sheet shows and saves: the client id, the auth-token
-/// cookie, quality, chat history, the mini player and desktop notifications
-/// — and nothing else of [`Settings`].
+/// cookie, quality, chat history and desktop notifications — and nothing
+/// else of [`Settings`]. The mini player's switch went with the mini player
+/// (October 2026): a file that still says `miniplayer` loads, the word
+/// ignored, as any field this build does not know is.
 ///
 /// The sheet is handed these when it opens ([`SheetFields::of`]) and hands
 /// them back when it saves ([`Settings::adopt_sheet`]), so it cannot carry
@@ -478,7 +462,6 @@ pub struct SheetFields {
     pub auth_token: Option<String>,
     pub quality: QualityPreference,
     pub chat_history: usize,
-    pub miniplayer: bool,
     pub desktop_notifications: DesktopNotifications,
 }
 
@@ -490,7 +473,6 @@ impl SheetFields {
             auth_token: settings.credentials.auth_token.clone(),
             quality: settings.quality.clone(),
             chat_history: settings.chat_history,
-            miniplayer: settings.miniplayer,
             desktop_notifications: settings.desktop_notifications,
         }
     }
@@ -734,14 +716,12 @@ impl Settings {
             auth_token,
             quality,
             chat_history,
-            miniplayer,
             desktop_notifications,
         } = sheet;
         self.credentials.client_id = client_id.clone();
         self.credentials.auth_token = auth_token.clone();
         self.quality = quality.clone();
         self.chat_history = *chat_history;
-        self.miniplayer = *miniplayer;
         self.desktop_notifications = *desktop_notifications;
     }
 
@@ -1492,7 +1472,6 @@ mod tests {
         sheet.auth_token = Some("a-new-cookie".into());
         sheet.quality = QualityPreference::Fixed("720p".into());
         sheet.chat_history = 0;
-        sheet.miniplayer = false;
         sheet.desktop_notifications = DesktopNotifications::Off;
 
         let before = live.clone();
@@ -1502,7 +1481,6 @@ mod tests {
         assert_eq!(live.credentials.auth_token.as_deref(), Some("a-new-cookie"));
         assert_eq!(live.quality, QualityPreference::Fixed("720p".into()));
         assert_eq!(live.chat_history, 0);
-        assert!(!live.miniplayer);
         assert_eq!(live.desktop_notifications, DesktopNotifications::Off);
 
         assert_eq!(live.pinned, ["forsen"], "saving the sheet unpinned");
@@ -1532,7 +1510,7 @@ mod tests {
             "the sheet owns no sign-in"
         );
 
-        // Everything but the six, exactly as it was.
+        // Everything but the five, exactly as it was.
         let mut untouched = live.clone();
         untouched.adopt_sheet(&SheetFields::of(&before));
         assert_eq!(untouched, before);
@@ -1547,7 +1525,6 @@ mod tests {
         settings.credentials.auth_token = Some("a-cookie".into());
         settings.quality = QualityPreference::Fixed("1080p".into());
         settings.chat_history = 250;
-        settings.miniplayer = false;
         settings.set_pinned("forsen", true);
 
         let before = settings.clone();

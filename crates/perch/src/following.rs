@@ -1,19 +1,25 @@
-//! Home: the tab the browse page opens on, and the one that answers "what
-//! should I watch".
+//! Following: the tab the browse page opens on, and the one that answers
+//! "what should I watch".
 //!
-//! Three answers, in the order they are likely to be the one: who you follow
-//! that is live now, then the recordings you did not finish, then everyone
-//! else you follow. It used to be the Following tab, which had the first and
-//! the last; picking a twelve-hour broadcast back up meant knowing to look in
-//! the History tab, a place you go rather than one you land on.
+//! The channels you keep up with, grouped as the rail groups them
+//! (`sidebar::groups`), so the two never disagree about who goes where: the
+//! pins, who you follow that is live, the rail's recommendations and
+//! everyone else you follow — and after who is live, the recordings you did
+//! not finish. Pinned, Live now, Continue watching, Recommended, Offline. A
+//! pin is in Pinned and nowhere else, as in the rail. Picking a twelve-hour
+//! broadcast back up used to mean knowing to look in the history, a place
+//! you go rather than one you land on.
 //!
 //! Everything here is the app's already. The live cards are the ones every
-//! list of streams draws, the recordings are the History tab's own cards
+//! list of streams draws — a recommendation's saying which channel led to
+//! it, as its rail row does — the recordings are the Library tab's own cards
 //! (`history_page::entry_card`), and the offline names are the ones search
 //! results show, each saying when it was last live (`crate::last_live`).
-//! What this module adds is which of them, and in what order: [`continuing`]
-//! and [`by_last_watched`], pure and tested. Each heading carries how many
-//! are under it, after the filter ([`counted`]).
+//! What this module adds is which of them, and in what order: [`continuing`],
+//! [`by_last_watched`] and [`split_pins`], pure and tested. Each heading
+//! carries how many are under it, after the filter ([`counted`]), but
+//! Recommended's, which is a ranked handful rather than a count of anything
+//! yours.
 
 use std::collections::HashMap;
 
@@ -25,16 +31,20 @@ use twitch_api::{Channel, LiveStream};
 
 use crate::browse::{self, Action, SignIn, Tab};
 use crate::last_live::LastLive;
+use crate::recommended::{self, Suggestion};
+use crate::sidebar::{self, Row};
 use crate::{controls, history_page, layout, palette, theme};
 
 /// The most recordings Continue watching shows, however wide the window.
 ///
 /// One row is the point: this is a reminder sitting between who is live and
-/// who is not, and the History tab is a click away for the rest. Six is a
+/// who is not, and the Library tab is a click away for the rest. Six is a
 /// row at 4K, and stops an ultrawide's row turning into the whole history.
 const CONTINUING_MAX: usize = 6;
 
-/// Everything Home lists, as the root holds it.
+/// Everything Following lists, as the root holds it; the browse page's
+/// other places read the sign-in and the history from it too.
+#[derive(Clone, Copy)]
 pub struct Lists<'a> {
     /// The live follows, in the order the follows poll keeps them.
     pub live: &'a [LiveStream],
@@ -42,6 +52,15 @@ pub struct Lists<'a> {
     /// [`by_last_watched`]), or held where they stand while the pointer is on
     /// the page. Drawn in the order given.
     pub offline: &'a [Channel],
+    /// What Helix said of the channels the follows poll does not ask about,
+    /// the pins nobody follows among them (`root::pane_streams`): a pin
+    /// found here is live, as in the rail.
+    pub asked: &'a [LiveStream],
+    /// What is pinned, in the order the rail draws it
+    /// (`sidebar::pin_order`), or held still under the pointer.
+    pub pinned: &'a [String],
+    /// The rail's recommendations, ranked, or held still the same way.
+    pub recommended: &'a [Suggestion],
     /// When each offline follow was last live, as far as Twitch has said:
     /// the words beside its name.
     pub last_live: &'a LastLive,
@@ -68,7 +87,7 @@ pub struct Continuing<'a> {
 /// first, at most `row` of them — and never more than [`CONTINUING_MAX`],
 /// nor fewer than one while there is one to show.
 ///
-/// Unfinished is the History tab's own test (`history_page::unfinished`),
+/// Unfinished is the Library tab's own test (`history_page::unfinished`),
 /// so the two Continue watchings list the same recordings. Most recently
 /// watched first is the history's own order: opening a recording or getting
 /// further into it moves it to the front (`History::opened`,
@@ -138,39 +157,82 @@ pub fn by_last_watched(channels: &mut [Channel], recent: &[String], history: &Hi
 /// Which sections the page draws, and which of them wear a heading.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Sections {
+    pinned: bool,
     live: bool,
     /// "Live now" over the cards, only when something else is on the page:
     /// a list of live follows and nothing else needs no title, and drawing
-    /// one over it alone was what the Following tab never did.
+    /// one over it alone was what the tab never did.
     live_heading: bool,
     continuing: bool,
+    recommended: bool,
     offline: bool,
 }
 
 impl Sections {
-    /// From how much each section has, after the filter. Continue watching
-    /// and Offline always say what they are when they are there: the one has
-    /// "Show all" on its heading's line, and the other comes after two kinds
-    /// of card.
-    fn new(live: usize, continuing: usize, offline: usize) -> Self {
+    /// From how much each section has, after the filter. Every other
+    /// section always says what it is when it is there: Continue watching
+    /// has "Show all" on its heading's line, and the rest come before or
+    /// after another kind of card.
+    fn new(
+        pinned: usize,
+        live: usize,
+        continuing: usize,
+        recommended: usize,
+        offline: usize,
+    ) -> Self {
         Self {
+            pinned: pinned > 0,
             live: live > 0,
-            live_heading: live > 0 && (continuing > 0 || offline > 0),
+            live_heading: live > 0 && pinned + continuing + recommended + offline > 0,
             continuing: continuing > 0,
+            recommended: recommended > 0,
             offline: offline > 0,
         }
     }
 
     fn any(self) -> bool {
-        self.live || self.continuing || self.offline
+        self.pinned || self.live || self.continuing || self.recommended || self.offline
     }
+}
+
+/// Pinned as the page draws it, from the rail's rows of it in their order:
+/// who is on as cards, as Live now draws them, and everyone else as names,
+/// as Offline does — a pin no list has placed yet by its login, which is all
+/// the rail shows of it either. Only what `keep` lets through, which is the
+/// filter.
+pub fn split_pins<'a>(
+    rows: &[Row<'a>],
+    keep: impl Fn(&str, &str) -> bool,
+) -> (Vec<&'a LiveStream>, Vec<Channel>) {
+    let mut live = Vec::new();
+    let mut off = Vec::new();
+    for row in rows {
+        match *row {
+            Row::Live(stream) if keep(&stream.display_name, &stream.user_login) => {
+                live.push(stream)
+            }
+            Row::Offline(channel) if keep(&channel.display_name, &channel.login) => {
+                off.push(channel.clone())
+            }
+            Row::Unknown(login) if keep(login, login) => off.push(Channel {
+                login: login.to_string(),
+                user_id: String::new(),
+                display_name: login.to_string(),
+            }),
+            // Never a pin's row; see `sidebar::groups`.
+            Row::Recommended(_) => {}
+            _ => {}
+        }
+    }
+    (live, off)
 }
 
 /// The page.
 ///
 /// Under one scroller, so there is only ever one thing to scroll, with the
-/// filter box over it. The box narrows all three sections as it is typed: a
-/// name you follow, or a recording by its channel or its title. It is the
+/// filter box over it. The box narrows every section as it is typed: a
+/// name you follow, pinned or recommended, or a recording by its channel or
+/// its title. It is the
 /// palette's matcher, and it exists because the offline list is the longest
 /// thing in the app and the box in the title bar asks Twitch, not the app.
 ///
@@ -230,46 +292,109 @@ pub fn view<V: 'static>(
     }
 
     let filter = filter.trim();
-    let live: Vec<LiveStream> = lists
+    let keep =
+        |name: &str, login: &str| palette::matches(name, filter) || palette::matches(login, filter);
+    let groups = sidebar::groups(
+        lists.live,
+        lists.offline,
+        lists.asked,
+        lists.recommended,
+        lists.pinned,
+        lists.follows_loaded,
+    );
+    let (pinned_live, pinned_off) = split_pins(&groups.pinned, keep);
+    let live: Vec<&LiveStream> = groups
         .live
         .iter()
-        .filter(|stream| {
-            palette::matches(&stream.display_name, filter)
-                || palette::matches(&stream.user_login, filter)
-        })
-        .cloned()
+        .copied()
+        .filter(|stream| keep(&stream.display_name, &stream.user_login))
         .collect();
     let continuing = continuing(lists.history, filter, row);
-    let offline: Vec<&Channel> = lists
-        .offline
+    // Drawn as a live card from what the rail's answer said of each, with
+    // the live preview at the address every live channel's is
+    // (`recommended::as_stream`), and why it is offered after its game.
+    let suggested: Vec<(LiveStream, &str)> = groups
+        .recommended
         .iter()
-        .filter(|channel| {
-            palette::matches(&channel.display_name, filter)
-                || palette::matches(&channel.login, filter)
+        .filter(|suggestion| keep(&suggestion.channel.display_name, &suggestion.channel.login))
+        .map(|suggestion| {
+            (
+                recommended::as_stream(&suggestion.channel),
+                suggestion.reason.as_str(),
+            )
         })
         .collect();
-    let sections = Sections::new(live.len(), continuing.shown.len(), offline.len());
+    let offline: Vec<&Channel> = groups
+        .offline
+        .iter()
+        .copied()
+        .filter(|channel| keep(&channel.display_name, &channel.login))
+        .collect();
+    let sections = Sections::new(
+        pinned_live.len() + pinned_off.len(),
+        live.len(),
+        continuing.shown.len(),
+        suggested.len(),
+        offline.len(),
+    );
+    let now = Utc::now();
 
-    let mut page = browse::scroller("browse-grid", scroll, room.bottom).child(
+    let mut page = browse::scroller("browse-grid", scroll).child(
         div()
             .flex_none()
             .w(px(browse::FILTER_WIDTH))
             .child(filter_box),
     );
 
+    // Each row of cards under an id of its own: the cards are numbered
+    // within their row, and two rows on one page would otherwise share ids.
+    if sections.pinned {
+        page = page
+            .child(browse::heading(counted(
+                "Pinned",
+                pinned_live.len() + pinned_off.len(),
+            )))
+            .when(!pinned_live.is_empty(), |page| {
+                page.child(
+                    browse::cards_row(
+                        pinned_live.iter().map(|stream| (*stream, None)),
+                        room.width,
+                        cache,
+                        can_add,
+                        on_action.clone(),
+                        cx,
+                    )
+                    .id("pinned-live"),
+                )
+            })
+            .when(!pinned_off.is_empty(), |page| {
+                page.child(names_row(
+                    "pinned-off",
+                    pinned_off.iter(),
+                    lists.last_live,
+                    now,
+                    on_action.clone(),
+                    cx,
+                ))
+            });
+    }
+
     if sections.live {
         page = page
             .when(sections.live_heading, |page| {
                 page.child(browse::heading(counted("Live now", live.len())))
             })
-            .child(browse::stream_row(
-                &live,
-                room.width,
-                cache,
-                can_add,
-                on_action.clone(),
-                cx,
-            ));
+            .child(
+                browse::cards_row(
+                    live.iter().map(|stream| (*stream, None)),
+                    room.width,
+                    cache,
+                    can_add,
+                    on_action.clone(),
+                    cx,
+                )
+                .id("live-now"),
+            );
     }
 
     if sections.continuing {
@@ -283,21 +408,31 @@ pub fn view<V: 'static>(
         ));
     }
 
+    if sections.recommended {
+        page = page.child(browse::heading("Recommended")).child(
+            browse::cards_row(
+                suggested.iter().map(|(stream, why)| (stream, Some(*why))),
+                room.width,
+                cache,
+                can_add,
+                on_action.clone(),
+                cx,
+            )
+            .id("recommended"),
+        );
+    }
+
     if sections.offline {
-        let now = Utc::now();
-        let mut row = browse::wrap_row(theme::GAP_TIGHT);
-        for (index, channel) in offline.iter().enumerate() {
-            row = row.child(browse::offline_pill(
-                ("offline-follow", index),
-                channel,
-                lists.last_live.words(&channel.login, now),
+        page = page
+            .child(browse::heading(counted("Offline", offline.len())))
+            .child(names_row(
+                "offline-follow",
+                offline.iter().copied(),
+                lists.last_live,
+                now,
                 on_action.clone(),
                 cx,
             ));
-        }
-        page = page
-            .child(browse::heading(counted("Offline", offline.len())))
-            .child(row);
     }
 
     // The same notice every other empty list gets, rather than a heading over
@@ -329,13 +464,36 @@ pub fn view<V: 'static>(
     browse::scrollable(page, scroll).into_any_element()
 }
 
+/// A wrap of offline names, each saying when it was last live where Twitch
+/// has said (`browse::offline_pill`), numbered under `id`.
+fn names_row<'a, V: 'static>(
+    id: &'static str,
+    channels: impl Iterator<Item = &'a Channel>,
+    last_live: &LastLive,
+    now: chrono::DateTime<Utc>,
+    on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + Clone + 'static,
+    cx: &mut Context<V>,
+) -> gpui::Div {
+    let mut row = browse::wrap_row(theme::GAP_TIGHT);
+    for (index, channel) in channels.enumerate() {
+        row = row.child(browse::offline_pill(
+            (id, index),
+            channel,
+            last_live.words(&channel.login, now),
+            on_action.clone(),
+            cx,
+        ));
+    }
+    row
+}
+
 /// Continue watching: its heading, with "Show all" on the same line when the
 /// history has more than the row, and the row. Nothing at all when there is
 /// nothing to continue, so the section leaves no heading over an empty row.
 ///
-/// "Show all" goes to the History tab rather than unfolding here: that tab is
+/// "Show all" goes to the Library tab rather than unfolding here: that tab is
 /// the whole list, finished ones included, with the one control that clears
-/// it, and a second copy of it inside Home would be two places to keep.
+/// it, and a second copy of it inside Following would be two places to keep.
 fn continuing_section<V: 'static>(
     continuing: &Continuing,
     room: layout::Room,
@@ -380,9 +538,9 @@ fn continuing_section<V: 'static>(
         .when(continuing.more, |line| {
             line.child(
                 controls::pill("continue-all", "Show all", controls::Variant::Pill)
-                    .tooltip(controls::tip("Everything you have watched, on History"))
+                    .tooltip(controls::tip("Everything you have watched, in Library"))
                     .on_click(cx.listener(move |view, _event, window, cx| {
-                        on_action(view, Action::ShowTab(Tab::History), window, cx)
+                        on_action(view, Action::ShowTab(Tab::Library), window, cx)
                     })),
             )
         });
@@ -547,19 +705,62 @@ mod tests {
     }
 
     /// "Live now" titles the cards only when something else shares the page;
-    /// the other two headings come with their sections.
+    /// the other headings come with their sections.
     #[test]
     fn the_live_heading_shows_only_beside_another_section() {
-        let alone = Sections::new(3, 0, 0);
+        let alone = Sections::new(0, 3, 0, 0, 0);
         assert!(alone.live && !alone.live_heading);
 
-        assert!(Sections::new(3, 1, 0).live_heading);
-        assert!(Sections::new(3, 0, 5).live_heading);
+        assert!(Sections::new(1, 3, 0, 0, 0).live_heading);
+        assert!(Sections::new(0, 3, 1, 0, 0).live_heading);
+        assert!(Sections::new(0, 3, 0, 2, 0).live_heading);
+        assert!(Sections::new(0, 3, 0, 0, 5).live_heading);
 
-        let nobody_live = Sections::new(0, 2, 5);
+        let nobody_live = Sections::new(0, 0, 2, 0, 5);
         assert!(!nobody_live.live && !nobody_live.live_heading);
         assert!(nobody_live.continuing && nobody_live.offline);
 
-        assert!(!Sections::new(0, 0, 0).any());
+        assert!(!Sections::new(0, 0, 0, 0, 0).any());
+        assert!(Sections::new(1, 0, 0, 0, 0).any());
+        assert!(Sections::new(0, 0, 0, 1, 0).any());
+    }
+
+    fn live(login: &str) -> LiveStream {
+        LiveStream {
+            id: String::new(),
+            user_login: login.into(),
+            user_id: String::new(),
+            display_name: login.into(),
+            title: String::new(),
+            game_name: String::new(),
+            viewer_count: 0,
+            thumbnail_url: String::new(),
+            started_at: String::new(),
+        }
+    }
+
+    /// Pinned splits as it is drawn: who is on as cards, everyone else as
+    /// names in the rail's order, a pin nothing has placed by its login —
+    /// and the filter takes from both.
+    #[test]
+    fn pins_split_into_cards_and_names() {
+        let on = live("xqc");
+        let off = channel("forsen");
+        let rows = [
+            Row::Offline(&off),
+            Row::Live(&on),
+            Row::Unknown("handpinned"),
+        ];
+
+        let (cards, names) = split_pins(&rows, |_, _| true);
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0].user_login, "xqc");
+        let names: Vec<&str> = names.iter().map(|c| c.login.as_str()).collect();
+        assert_eq!(names, ["forsen", "handpinned"]);
+
+        let (cards, names) = split_pins(&rows, |_, login| login.starts_with('h'));
+        assert!(cards.is_empty());
+        assert_eq!(names.len(), 1);
+        assert_eq!(names[0].display_name, "handpinned");
     }
 }

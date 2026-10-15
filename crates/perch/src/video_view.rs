@@ -7,8 +7,8 @@
 //! like any other layer.
 //!
 //! This file is the player: what it starts with, its sound, its hover, where
-//! it is drawn — a pane, a mini-player tile, a window of its own, or nowhere
-//! while another pane has the watch page, its [`Place`] — and the picture,
+//! it is drawn — a pane, a window of its own, or nowhere while another pane
+//! has the grid or no grid is drawn, its [`Place`] — and the picture,
 //! with the two gestures it answers, `Alt` and the wheel for the level and a
 //! middle press for mute (`picture_gestures`). What is drawn over the
 //! picture lives beside it, in child modules that see the player's private
@@ -25,7 +25,7 @@
 //!
 //! A player draws nothing at all until its picture arrives, not even a
 //! backdrop: whoever holds it says what is happening meanwhile — the pane's
-//! status screen, under it, or a mini-player tile's word — and paints the
+//! status screen, under it — and paints the
 //! black behind it. So the first frame fades in over what was being waited
 //! for rather than out of black; see [`VideoView::covers`].
 //!
@@ -278,18 +278,16 @@ pub struct VideoView {
     /// the maximize, of which panes there are or of what is popped out
     /// cannot leave the control offering the opposite of what a press does.
     maximize: MaximizeButton,
-    /// Whether the guide is up over the watch page from this pane, which the
-    /// bar's Guide button keys its id and its tooltip on: a press then puts
-    /// it away, and otherwise raises it from here or moves it here
-    /// (`bar::guide_button`, `guide::press`).
+    /// Whether the browse page is up beside the panes, which the bar's
+    /// Browse button keys its id and its tooltip on: a press then puts it
+    /// away, and otherwise brings it up (`bar::browse_button`).
     ///
-    /// A mirror, on [`ChatButton`]'s pattern: the guide is the root's
-    /// (`crate::guide`). Written in exactly two places —
-    /// [`Start::guide_from_here`] when the player is made, and
-    /// [`set_guide_from_here`](Self::set_guide_from_here), which only
-    /// `RootView::sync_guide_buttons` calls, every time the guide comes up,
-    /// moves or goes.
-    guide_from_here: bool,
+    /// A mirror, on [`ChatButton`]'s pattern: the page is the root's.
+    /// Written in exactly two places — [`Start::browsing`] when the player
+    /// is made, and [`set_browsing`](Self::set_browsing), which only
+    /// `RootView::restage` calls, the funnel every change of the page ends
+    /// in.
+    browsing: bool,
     /// Whether the pane's channel is pinned to the rail, which More's pin
     /// row says the other of and keys its id on: `Pin to the rail` or
     /// `Unpin from the rail` (`menu::pin_row`).
@@ -372,12 +370,10 @@ pub struct VideoView {
     /// Derived from `hovered`, the open menu, a scrub and a switch under way
     /// (`switching`, `linger`) by `sync_controls`.
     controls: motion::Fade,
-    /// Where the player is drawn. Presentation only: a tile draws no control
-    /// bar, answers no hover and labels no seek bar, because the tile is a
-    /// way back to the watch page rather than a player of its own; a player
-    /// offstage is drawn by nothing, and is a tile in all of that; only a
-    /// pane opens menus and goes fullscreen on a double-click; and a pop-out
-    /// is dragged by its picture. What it sounds like is `loudness`, and
+    /// Where the player is drawn. Presentation only: a player offstage is
+    /// drawn by nothing, so it draws no control bar, answers no hover and
+    /// labels no seek bar; only a pane opens menus and goes fullscreen on a
+    /// double-click; and a pop-out is dragged by its picture. What it sounds like is `loudness`, and
     /// nothing here. Changed by [`set_place`](Self::set_place) alone.
     place: Place,
     /// A scrub in progress: where along the bar the pointer has dragged the
@@ -406,9 +402,9 @@ pub struct VideoView {
 impl EventEmitter<VideoEvent> for VideoView {}
 
 /// How a player is born, which is how its pane already is: a player rebuilt
-/// while you browse — a quality change from the settings, a restart of a pane
-/// with no picture yet — has to come up as the tile it is replacing, not as
-/// a watch-page player. A rendition swapped in place is no new player, and
+/// while its pane is away — a quality change from the settings, a restart of
+/// a pane with no picture yet — has to come up as the player it is
+/// replacing was placed. A rendition swapped in place is no new player, and
 /// keeps all of this (`swap`).
 pub struct Start {
     /// The pane's key, which names the player in the log; see
@@ -442,9 +438,9 @@ pub struct Start {
     /// What More offers about hearing one pane alone at the start; see
     /// `VideoView::hear_only`.
     pub hear_only: HearOnly,
-    /// Whether the guide is up from this pane as the player is made; see
-    /// `VideoView::guide_from_here`.
-    pub guide_from_here: bool,
+    /// Whether the browse page is up as the player is made; see
+    /// `VideoView::browsing`.
+    pub browsing: bool,
     /// Whether the pane's channel is pinned as the player is made; see
     /// `VideoView::pinned`.
     pub pinned: bool,
@@ -530,7 +526,7 @@ impl VideoView {
             root_focus: start.focus,
             chat: start.chat,
             maximize: start.maximize,
-            guide_from_here: start.guide_from_here,
+            browsing: start.browsing,
             pinned: start.pinned,
             switching: start.switching,
             linger: None,
@@ -641,8 +637,8 @@ impl VideoView {
     /// label moved.
     fn follow_pointer(&mut self, pointer: Option<Point<Pixels>>) -> bool {
         let pointing = match (pointer, self.track) {
-            // A tile draws no bar, so wherever its track was last laid out
-            // is somewhere else on the screen by now.
+            // A player offstage draws no bar, so wherever its track was
+            // last laid out is somewhere else on the screen by now.
             (Some(pointer), Some(track)) if draws_bar(self.place) => {
                 seek_bar::hover_at(&track, pointer)
             }
@@ -726,7 +722,7 @@ impl VideoView {
         }
     }
 
-    /// The gestures a picture answers that a tile's does not: `Alt` and the
+    /// The gestures a picture answers where it is drawn: `Alt` and the
     /// wheel for the level ([`on_wheel`](Self::on_wheel)), and a middle
     /// press for mute, the same as `M` and the speaker. On the press, every
     /// press of it: a second one is a second toggle, as a second press of
@@ -750,13 +746,13 @@ impl VideoView {
     }
 
     /// Move the player to `place`, drawn in the window whose focus is
-    /// `focus`: between the watch page, a tile in the mini player, a window
-    /// of its own, and offstage while another pane has the watch page. The
+    /// `focus`: between the grid, a window of its own, and offstage while
+    /// another pane has the grid or no grid is drawn. The
     /// only way a player changes place or window; `RootView::restage` is the
     /// only caller, after `Start`.
     ///
     /// How it is drawn and nothing else: the pane keeps its sound, which is
-    /// the point of the mini player, of the pop-out and of a maximize, which
+    /// the point of the pop-out and of a maximize, which
     /// hides the other panes and silences none. Everything the pointer was
     /// doing is let go ([`let_go`](Self::let_go)), since the new place will
     /// never hear the release.
@@ -1043,12 +1039,12 @@ impl VideoView {
         }
     }
 
-    /// Whether the guide is up from this pane now, from
-    /// `RootView::sync_guide_buttons`; see `VideoView::guide_from_here` for
-    /// why nothing else calls this. Repaints only on a change.
-    pub fn set_guide_from_here(&mut self, here: bool, cx: &mut Context<Self>) {
-        if self.guide_from_here != here {
-            self.guide_from_here = here;
+    /// Whether the browse page is up now, from `RootView::restage`; see
+    /// `VideoView::browsing` for why nothing else calls this. Repaints only
+    /// on a change.
+    pub fn set_browsing(&mut self, browsing: bool, cx: &mut Context<Self>) {
+        if self.browsing != browsing {
+            self.browsing = browsing;
             cx.notify();
         }
     }
@@ -1132,7 +1128,7 @@ fn covered(since_first: Option<Duration>) -> bool {
 fn draws_bar(place: Place) -> bool {
     match place {
         Place::Pane | Place::PopOut => true,
-        Place::Tile | Place::Offstage => false,
+        Place::Offstage => false,
     }
 }
 
@@ -1300,10 +1296,10 @@ impl Render for VideoView {
                 stream_size.request(width, height);
 
                 let pointer = window.mouse_position();
-                // Not while the pointer is on the guide over the picture, or
-                // on a person's card risen over it, its own pane's included:
-                // its bar would come up behind the overlay, and its seek
-                // label follow a pointer working in it; see `crate::veil`.
+                // Not while the pointer is on a person's card risen over the
+                // picture, its own pane's included: its bar would come up
+                // behind the card, and its seek label follow a pointer
+                // working in it; see `crate::veil`.
                 let inside = veil::pointer_over(bounds, None, window, cx);
                 // In logical pixels, the bar's own: the bar spans the pane.
                 let fit = bar::fit(f32::from(bounds.size.width), cluster);
@@ -1332,10 +1328,10 @@ impl Render for VideoView {
         // that frame's ratio, and so on. As a stretched flex item the image is
         // the pane's size, whatever shape the frame it holds is.
         //
-        // No backdrop here either. Both of the player's containers — the
-        // pane, a mini-player tile — paint the player's black themselves, so
-        // the letterbox is black once the picture covers the pane; until it
-        // does, it is the poster under the fading first frame.
+        // No backdrop here either. The player's container, the pane,
+        // paints the player's black itself, so the letterbox is black once
+        // the picture covers the pane; until it does, it is the poster
+        // under the fading first frame.
         let pane = div()
             .relative()
             .size_full()
@@ -1439,7 +1435,7 @@ mod tests {
     }
 
     /// Every place a player can be.
-    const PLACES: [Place; 4] = [Place::Pane, Place::PopOut, Place::Tile, Place::Offstage];
+    const PLACES: [Place; 3] = [Place::Pane, Place::PopOut, Place::Offstage];
 
     /// The bar is up while the pointer is on the player, a menu is open or
     /// the thumb is held, wherever a bar is drawn; nowhere else, and not
@@ -1487,7 +1483,7 @@ mod tests {
             ..BarHolds::default()
         };
         assert!(bar_wanted(Place::Pane, switch));
-        for place in [Place::PopOut, Place::Tile, Place::Offstage] {
+        for place in [Place::PopOut, Place::Offstage] {
             assert!(!bar_wanted(place, switch), "{place:?}");
         }
     }

@@ -9,7 +9,7 @@
 //! they are the same question asked three ways. Only categories look
 //! different, and only because box art is a different shape from a
 //! thumbnail. The history is a grid of recordings, drawn by the card a
-//! channel's page uses; see `history_page`. Home, the tab the page opens on,
+//! channel's page uses; see `history_page`. Following, the tab the page opens on,
 //! is who you follow and what you left half-watched, together; see `home`.
 
 use std::path::PathBuf;
@@ -22,14 +22,12 @@ use gpui::{
     SharedString, Stateful, Window,
 };
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
-use settings::history::History;
 use twitch_api::{Category, Channel, LiveStream, Video, VideoKind};
 
 use crate::channel_page;
 use crate::controls;
+use crate::following;
 use crate::history_page;
-use crate::home;
-use crate::last_live::LastLive;
 use crate::layout;
 use crate::motion;
 use crate::theme;
@@ -89,7 +87,7 @@ pub fn card_width(width: f32, min: f32, max: f32, gap: f32) -> f32 {
 /// apart: the columns [`card_width`] divides the row into, and so how many
 /// cards one row of a grid holds. Never fewer than one, however narrow.
 ///
-/// Its own function for Home, whose Continue watching shows one row of the
+/// Its own function for Following, whose Continue watching shows one row of the
 /// history and has to know how long a row is.
 pub fn columns(width: f32, min: f32, gap: f32) -> usize {
     let usable = (width - 2.0 * theme::PAGE_PAD).max(min);
@@ -101,30 +99,42 @@ pub fn columns(width: f32, min: f32, gap: f32) -> usize {
 /// Which of the browse page's lists is showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Tab {
-    /// Who you follow that is live, the recordings you did not finish, then
-    /// everyone else you follow: "what should I watch", answered on one
-    /// page, and the one the app opens on. It was the Following tab, which
-    /// had the follows alone; see `home`.
+    /// The channels you keep up with, grouped as the rail groups them —
+    /// pinned, live, recommended, offline — with the recordings you did not
+    /// finish among them: "what should I watch", answered on one page, and
+    /// the one the app opens on. See `following`.
     #[default]
-    Home,
+    Following,
     Popular,
     Categories,
     /// The recordings you have watched, each where you left it. The one tab
-    /// that asks Twitch nothing: it is the app's own memory.
-    History,
+    /// that asks Twitch nothing: it is the app's own memory. See
+    /// `history_page`.
+    Library,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 4] = [Tab::Home, Tab::Popular, Tab::Categories, Tab::History];
+    pub const ALL: [Tab; 4] = [Tab::Following, Tab::Popular, Tab::Categories, Tab::Library];
 
     /// The tab's name: the words on its pill, and in the palette's `Go to`
     /// row for it.
     pub fn label(self) -> &'static str {
         match self {
-            Tab::Home => "Home",
+            Tab::Following => "Following",
             Tab::Popular => "Popular",
             Tab::Categories => "Categories",
-            Tab::History => "History",
+            Tab::Library => "Library",
+        }
+    }
+
+    /// What the palette's row for the tab answers to besides its name: the
+    /// name it had before, which is also what it holds — `history` finds
+    /// the recordings you watched, `home` the page the app opens on.
+    pub fn also(self) -> Option<&'static str> {
+        match self {
+            Tab::Following => Some("Home"),
+            Tab::Library => Some("History"),
+            Tab::Popular | Tab::Categories => None,
         }
     }
 }
@@ -207,7 +217,7 @@ pub enum Place<'a> {
 impl Place<'_> {
     /// The request for the first page of this place's list: what filling it
     /// asks for, and what refreshing it asks for again. `None` for the
-    /// Home and History tabs, whose lists no browse request fills — the
+    /// Following and Library tabs, whose lists no browse request fills — the
     /// follows poll's and the app's own.
     ///
     /// The one place a place turns into a request. Filling, refreshing and
@@ -219,7 +229,7 @@ impl Place<'_> {
         match self {
             Place::Tab(Tab::Popular) => Some(Request::Popular { after: None }),
             Place::Tab(Tab::Categories) => Some(Request::Categories { after: None }),
-            Place::Tab(Tab::Home | Tab::History) => None,
+            Place::Tab(Tab::Following | Tab::Library) => None,
             Place::Category(category) => Some(Request::Category {
                 category: (*category).clone(),
                 after: None,
@@ -272,7 +282,7 @@ impl Discovery {
     }
 
     /// Which list the page is showing, as the request that fills it names
-    /// it: `None` for the Home and History tabs, which no browse request
+    /// it: `None` for the Following and Library tabs, which no browse request
     /// fills. Read off [`Place::first_page`], so it cannot name a list other
     /// than the one that request is waited on as.
     pub fn shown_key(&self) -> Option<ListKey> {
@@ -293,8 +303,7 @@ impl Discovery {
     }
 
     /// Whether `key`'s list is waiting for an answer, whichever list is on
-    /// screen: what the guide asks of the lists it shares with this page
-    /// (`crate::guide`), which are often not the one the page shows.
+    /// screen.
     pub fn is_pending(&self, key: &ListKey) -> bool {
         self.pending.contains(key)
     }
@@ -428,14 +437,15 @@ impl SearchResults {
 /// threaded through every helper.
 #[derive(Debug, Clone)]
 pub enum Action {
-    /// Watch this channel alone.
+    /// Watch this channel in place of the pane you are on, or alone while
+    /// nothing plays.
     Watch(String),
     /// Add it beside whatever is already playing.
     Add(String),
     OpenCategory(Category),
     CloseCategory,
     /// Ask Twitch for this, as though it had been typed into the title bar's
-    /// search box: what Home's filter offers when nothing matches.
+    /// search box: what Following's filter offers when nothing matches.
     Search(String),
     CloseSearch,
     /// Look at a channel's past broadcasts. The id rides along when the list
@@ -449,7 +459,8 @@ pub enum Action {
     /// Show another kind of the open channel's videos: its past broadcasts,
     /// its highlights or its uploads.
     ShowShelf(VideoKind),
-    /// Play this recording alone, or beside whatever is already playing.
+    /// Play this recording in place of the pane you are on, or beside
+    /// whatever is already playing.
     /// Boxed because a video is a dozen strings and every other action is a
     /// name.
     WatchVideo(Box<Video>),
@@ -458,7 +469,7 @@ pub enum Action {
     ForgetVideo(String),
     /// Take every recording off the history.
     ClearHistory,
-    /// Show one of the tabs, as its pill does: Home's Continue watching
+    /// Show one of the tabs, as its pill does: Following's Continue watching
     /// raises it for the whole history when it has more than one row.
     ShowTab(Tab),
     /// Open the settings sheet. Only the empty states raise this, without a
@@ -485,7 +496,7 @@ pub enum Action {
 
 impl Action {
     /// Open an offline channel's page, which is what a click on its name does
-    /// wherever the name is: Home, search results and the rail.
+    /// wherever the name is: Following, search results and the rail.
     /// The id rides along when the list had one.
     pub fn open_channel(channel: &Channel) -> Self {
         Action::OpenChannel {
@@ -680,8 +691,8 @@ fn preview_url(stream: &LiveStream) -> String {
 /// Nothing for a stream with no template to fill — one whose Helix answer
 /// left it out — rather than a request for an empty address. A
 /// recommendation always has one: the address every live channel's preview
-/// is at, which `guide::as_stream` fills in because its answer carries
-/// none.
+/// is at, which `recommended::as_stream` fills in because its answer
+/// carries none.
 pub(crate) fn stream_preview(cache: &ImageCache, stream: &LiveStream) -> Option<PathBuf> {
     if stream.thumbnail_url.is_empty() {
         return None;
@@ -696,20 +707,11 @@ pub(crate) enum CardOffers {
     /// top-right `+ Add` while there is something to add it beside
     /// (`RootView::can_add`).
     Page { can_add: bool },
-    /// The guide's, over the watch page (`crate::guide`): `Watch` at the
-    /// top-left, which a press anywhere on the card does too, and `+ Add` at
-    /// the top-right, always — at four panes it says so in a toast, as the
-    /// rail's `+` does. No past broadcasts: they are a page, and the guide is
-    /// for staying on this one. Both pills' tooltips only while the window
-    /// is `window_hovered`, since the guide reaches within a few pixels of
-    /// the window's edges (see `HANDOFF.md`, "A tooltip outlives a pointer
-    /// that leaves the window").
-    Guide { window_hovered: bool },
 }
 
 /// The line under a card's title: the game, and after it a note where the
-/// list has one — the guide's recommendations say which channel led to each
-/// ("Like forsen"), as the rail's rows do.
+/// list has one — a recommendation says which channel led to it ("Like
+/// forsen"), as the rail's rows do.
 pub(crate) fn card_meta(game: &str, note: Option<&str>) -> String {
     match note.filter(|note| !note.is_empty()) {
         Some(note) if game.is_empty() => note.to_string(),
@@ -741,36 +743,12 @@ pub(crate) fn card<V: 'static>(
     let on_corner = on_action;
     let login = stream.user_login.clone();
     let add_login = stream.user_login.clone();
-    // The top-left corner's pill: the channel's past broadcasts on the
-    // browse page, and in the guide the card's own press, said in words.
-    // Tooltips everywhere on the browse page, which has the window's own
-    // margin around it; in the guide, only while the pointer is in the
-    // window.
-    let tips = match offers {
-        CardOffers::Page { .. } => true,
-        CardOffers::Guide { window_hovered } => window_hovered,
-    };
-    let (corner_id, corner_words, corner_tip, corner) = match offers {
-        CardOffers::Page { .. } => (
-            "card-videos",
-            "Past broadcasts",
-            None,
-            Action::OpenChannel {
-                login: stream.user_login.clone(),
-                display_name: stream.display_name.clone(),
-                user_id: Some(stream.user_id.clone()).filter(|id| !id.is_empty()),
-            },
-        ),
-        CardOffers::Guide { .. } => (
-            "card-watch",
-            "Watch",
-            Some("Play in place of the pane you opened the guide from"),
-            Action::Watch(stream.user_login.clone()),
-        ),
-    };
-    let can_add = match offers {
-        CardOffers::Page { can_add } => can_add,
-        CardOffers::Guide { .. } => true,
+    // The top-left corner's pill: the channel's past broadcasts.
+    let CardOffers::Page { can_add } = offers;
+    let corner = Action::OpenChannel {
+        login: stream.user_login.clone(),
+        display_name: stream.display_name.clone(),
+        user_id: Some(stream.user_id.clone()).filter(|id| !id.is_empty()),
     };
     let thumbnail = stream_preview(cache, stream);
 
@@ -838,19 +816,20 @@ pub(crate) fn card<V: 'static>(
                 // hover before it — a touchscreen's — landed on one nobody
                 // could see.
                 .child(
-                    controls::pill((corner_id, index), corner_words, controls::Variant::Pill)
-                        .absolute()
-                        .top(px(theme::GAP_TIGHT))
-                        .left(px(theme::GAP_TIGHT))
-                        .invisible()
-                        .group_hover("card", |style| style.visible())
-                        .when_some(corner_tip.filter(|_| tips), |pill, tip| {
-                            pill.tooltip(controls::tip(tip))
-                        })
-                        .on_click(cx.listener(move |view, _event, window, cx| {
-                            cx.stop_propagation();
-                            on_corner(view, corner.clone(), window, cx)
-                        })),
+                    controls::pill(
+                        ("card-videos", index),
+                        "Past broadcasts",
+                        controls::Variant::Pill,
+                    )
+                    .absolute()
+                    .top(px(theme::GAP_TIGHT))
+                    .left(px(theme::GAP_TIGHT))
+                    .invisible()
+                    .group_hover("card", |style| style.visible())
+                    .on_click(cx.listener(move |view, _event, window, cx| {
+                        cx.stop_propagation();
+                        on_corner(view, corner.clone(), window, cx)
+                    })),
                 )
                 .when(can_add, |thumb| {
                     thumb.child(
@@ -860,9 +839,7 @@ pub(crate) fn card<V: 'static>(
                             .right(px(theme::GAP_TIGHT))
                             .invisible()
                             .group_hover("card", |style| style.visible())
-                            .when(tips, |pill| {
-                                pill.tooltip(controls::tip("Open beside what is playing"))
-                            })
+                            .tooltip(controls::tip("Open beside what is playing"))
                             .on_click(cx.listener(move |view, _event, window, cx| {
                                 // Without this the card underneath also fires
                                 // and replaces every open pane.
@@ -907,7 +884,7 @@ pub(crate) fn card<V: 'static>(
 /// carry the old list's offset onto the new one.
 #[derive(Default, Clone)]
 pub struct Scrolls {
-    pub home: ScrollHandle,
+    pub following: ScrollHandle,
     pub popular: ScrollHandle,
     pub categories: ScrollHandle,
     pub category: ScrollHandle,
@@ -922,15 +899,7 @@ pub struct Scrolls {
 /// Returns the scroller and the scrollbar for it as two elements, because the
 /// scrollbar has to sit *over* the list in a `relative` parent rather than
 /// inside it, and only the caller knows what else goes in that parent.
-///
-/// `bottom` is room left under the last row on top of the page's padding —
-/// a [`layout::Room`]'s, which is the mini player's while it is up — so the
-/// end of every list can be scrolled out from under it.
-pub(crate) fn scroller(
-    id: &'static str,
-    scroll: &ScrollHandle,
-    bottom: f32,
-) -> gpui::Stateful<gpui::Div> {
+pub(crate) fn scroller(id: &'static str, scroll: &ScrollHandle) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
         .flex_1()
@@ -941,7 +910,6 @@ pub(crate) fn scroller(
         .flex_col()
         .gap(px(theme::GAP_SECTION))
         .p(px(theme::PAGE_PAD))
-        .pb(px(theme::PAGE_PAD + bottom))
 }
 
 /// A list and its scrollbar, stacked.
@@ -975,10 +943,10 @@ pub(crate) fn wrap_row(gap: f32) -> gpui::Div {
         .content_start()
 }
 
-/// One offline follow: a name, and on Home when it was last live ("Live 3
+/// One offline follow: a name, and on Following when it was last live ("Live 3
 /// hours ago", `last_live::LastLive::words`) beside it in the dim meta
 /// colour, inside the same pill so the whole of it is the click. `None` is
-/// the name alone, as search results show it and as Home does until Twitch
+/// the name alone, as search results show it and as Following does until Twitch
 /// has said.
 ///
 /// A name rather than a card on purpose. A card is mostly a picture, and an
@@ -1044,7 +1012,7 @@ fn last_live_color(hovered: bool) -> gpui::Hsla {
     }
 }
 
-/// Home's filter box. As wide as a name, not as wide as the page.
+/// Following's filter box. As wide as a name, not as wide as the page.
 pub(crate) const FILTER_WIDTH: f32 = 260.0;
 
 pub(crate) fn heading(text: impl Into<SharedString>) -> impl IntoElement {
@@ -1063,13 +1031,33 @@ pub(crate) fn stream_row<V: 'static>(
     on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + Clone + 'static,
     cx: &mut Context<V>,
 ) -> gpui::Div {
+    cards_row(
+        streams.iter().map(|stream| (stream, None)),
+        width,
+        cache,
+        can_add,
+        on_action,
+        cx,
+    )
+}
+
+/// A row of live cards, each with the note its list gives it after the
+/// game, if any ([`card_meta`]): a recommendation's reason.
+pub(crate) fn cards_row<'a, V: 'static>(
+    streams: impl IntoIterator<Item = (&'a LiveStream, Option<&'a str>)>,
+    width: f32,
+    cache: &ImageCache,
+    can_add: bool,
+    on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + Clone + 'static,
+    cx: &mut Context<V>,
+) -> gpui::Div {
     let card_width = card_width(width, CARD_MIN, CARD_MAX, theme::GAP_SECTION);
     let mut row = wrap_row(theme::GAP_SECTION);
-    for (index, stream) in streams.iter().enumerate() {
+    for (index, (stream, note)) in streams.into_iter().enumerate() {
         row = row.child(card(
             index,
             stream,
-            None,
+            note,
             card_width,
             cache,
             CardOffers::Page { can_add },
@@ -1114,7 +1102,7 @@ fn stream_grid<V: 'static>(
     on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + Clone + 'static,
     cx: &mut Context<V>,
 ) -> AnyElement {
-    let list = scroller(id, scroll, room.bottom)
+    let list = scroller(id, scroll)
         .child(stream_row(
             &streams.items,
             room.width,
@@ -1195,7 +1183,7 @@ fn search_view<V: 'static>(
     } else {
         let shown = SEARCH_CATEGORY_LIMIT.min(results.categories.len());
         // Who is on, then who is not, then games: the order of how directly
-        // each is the thing searched for. The headings are like Home's,
+        // each is the thing searched for. The headings are like Following's,
         // because they divide the same way.
         let mut offline = wrap_row(theme::GAP_TIGHT);
         for (index, channel) in results.channels.iter().enumerate() {
@@ -1207,7 +1195,7 @@ fn search_view<V: 'static>(
                 cx,
             ));
         }
-        let list = scroller("search-results", scroll, room.bottom)
+        let list = scroller("search-results", scroll)
             .when(!results.streams.is_empty(), |list| {
                 list.child(heading("Live")).child(stream_row(
                     &results.streams,
@@ -1532,7 +1520,7 @@ pub(crate) fn browse_placeholder<V: 'static>(
 /// What a list with nothing in it shows: why it could not be had, if it
 /// failed; that it is being asked for, breathing under the id `waiting`, if
 /// it is; and otherwise `empty`, which is the answer. The browse page's
-/// lists, and the guide's (`crate::guide`).
+/// lists.
 ///
 /// A list that was never asked for because nobody is signed in gets a
 /// `Sign in` under the sentence once the user has signed out, or a sign-in
@@ -1576,20 +1564,16 @@ pub(crate) fn list_placeholder<V: 'static>(
     notice("Nothing here".into(), empty, false).into_any_element()
 }
 
-/// The whole page, in the `room` it has: the width its cards divide, and what
-/// every list leaves free at its foot for the mini player. `standing` is what
-/// a channel's page, while one is open, says of it beside its name.
+/// The whole page, in the `room` it has: the width its cards divide.
+/// `lists` is what Following draws, and where the other places read the
+/// sign-in and the history; `standing` is what a channel's page, while one
+/// is open, says of it beside its name.
 #[allow(clippy::too_many_arguments)]
 pub fn page<V: 'static>(
-    follows: &[LiveStream],
-    offline: &[Channel],
-    last_live: &LastLive,
+    lists: following::Lists,
     filter: &str,
     filter_box: AnyElement,
     discovery: &Discovery,
-    sign_in: &SignIn,
-    follows_loaded: bool,
-    history: &History,
     room: layout::Room,
     cache: &Arc<ImageCache>,
     can_add: bool,
@@ -1598,6 +1582,7 @@ pub fn page<V: 'static>(
     on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + Clone + 'static,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
+    let (sign_in, history) = (lists.sign_in, lists.history);
     // Search, categories and a channel all take over the page rather than
     // nesting inside a tab, so there is only ever one thing to scroll.
     let body = match discovery.place() {
@@ -1665,21 +1650,14 @@ pub fn page<V: 'static>(
                 .child(list)
                 .into_any_element()
         }
-        Place::Tab(Tab::Home) => home::view(
-            home::Lists {
-                live: follows,
-                offline,
-                last_live,
-                history,
-                sign_in,
-                follows_loaded,
-            },
+        Place::Tab(Tab::Following) => following::view(
+            lists,
             filter,
             filter_box,
             room,
             cache,
             can_add,
-            &scrolls.home,
+            &scrolls.following,
             on_action,
             cx,
         ),
@@ -1709,7 +1687,7 @@ pub fn page<V: 'static>(
             cx,
         ),
         Place::Tab(Tab::Categories) => {
-            let list = scroller("categories-grid", &scrolls.categories, room.bottom)
+            let list = scroller("categories-grid", &scrolls.categories)
                 .child(category_row(
                     &discovery.categories.items,
                     room.width,
@@ -1725,7 +1703,7 @@ pub fn page<V: 'static>(
                 ));
             scrollable(list, &scrolls.categories).into_any_element()
         }
-        Place::Tab(Tab::History) => history_page::view(
+        Place::Tab(Tab::Library) => history_page::view(
             history,
             room,
             cache,
@@ -2023,7 +2001,7 @@ mod tests {
     #[test]
     fn each_place_waits_on_the_list_its_first_page_fills() {
         let mut discovery = Discovery::default();
-        for tab in [Tab::Home, Tab::History] {
+        for tab in [Tab::Following, Tab::Library] {
             discovery.tab = tab;
             assert!(discovery.place().first_page().is_none(), "{tab:?}");
             assert_eq!(discovery.shown_key(), None, "{tab:?}");

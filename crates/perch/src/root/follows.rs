@@ -11,6 +11,7 @@ use settings::history::History;
 use settings::writer::Landed;
 use twitch_api::{Channel, LiveStream, Video};
 
+use super::streams::Opening;
 use super::{LinkedVideo, RootView, ToastAction};
 use crate::notifications;
 
@@ -18,9 +19,7 @@ use crate::notifications;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum LiveList {
     Rail,
-    Home,
-    /// The guide's Following and Recommended, over the watch page.
-    Guide,
+    Following,
 }
 
 /// A list of follows as it stands on screen, brought up to date by a fresh
@@ -74,13 +73,13 @@ fn offline_after(
     }
 }
 
-/// Home's copy of the offline follows once a fresh list has come in: the
+/// Following's copy of the offline follows once a fresh list has come in: the
 /// same channels as [`offline_after`], held the same way, but let go they go
-/// by when you last watched them (`home::by_last_watched`) rather than by
+/// by when you last watched them (`following::by_last_watched`) rather than by
 /// name. Sorted here, where the rail's copy would be, and never at draw time,
-/// so a channel whose stream ends while the pointer is on Home joins the end
+/// so a channel whose stream ends while the pointer is on Following joins the end
 /// of the names and stays there until the pointer leaves.
-fn home_offline_after(
+fn following_offline_after(
     shown: &[Channel],
     fresh: Vec<Channel>,
     live: &HashSet<String>,
@@ -90,7 +89,7 @@ fn home_offline_after(
 ) -> Vec<Channel> {
     let mut offline = offline_after(shown, fresh, live, held);
     if !held {
-        crate::home::by_last_watched(&mut offline, recent, history);
+        crate::following::by_last_watched(&mut offline, recent, history);
     }
     offline
 }
@@ -155,7 +154,6 @@ impl RootView {
                 // Whatever the user opened while signed out can be fetched now,
                 // and whatever a stopped pane would offer next asked for.
                 self.fill_shown();
-                self.fill_guide();
                 self.request_linked_videos();
                 self.ask_missing();
                 // And the muted stretches of the recordings opened before
@@ -173,11 +171,11 @@ impl RootView {
             TwitchEvent::Streams(streams) => self.on_streams(streams, window, cx),
             TwitchEvent::FollowedChannels { channels, complete } => {
                 // Held still under the pointer like the live list, in the
-                // rail and on Home alike, each in its own order; see
+                // rail and on Following alike, each in its own order; see
                 // `hold_live`.
                 let held = self.live_held();
-                self.home_offline = home_offline_after(
-                    &self.home_offline,
+                self.following_offline = following_offline_after(
+                    &self.following_offline,
                     channels.clone(),
                     &self.known_live,
                     held,
@@ -243,7 +241,6 @@ impl RootView {
                 self.discovery.pending.clear();
                 self.forget_asks();
                 self.fill_shown();
-                self.fill_guide();
             }
 
             // Each answer ends the wait for its own list and no other: a
@@ -269,15 +266,6 @@ impl RootView {
                     .open
                     .as_ref()
                     .is_some_and(|open| open.id == category.id);
-                // The guide's own copy, if it has the same category open; see
-                // `RootView::open_guide_category` for why one answer fills
-                // both.
-                self.guide.absorb(
-                    &category,
-                    &streams.items,
-                    streams.next.clone(),
-                    streams.append,
-                );
                 if still_open {
                     self.discovery
                         .streams
@@ -446,7 +434,7 @@ impl RootView {
         // before a repaint that would show them in both lists.
         self.offline
             .retain(|channel| !now_live.contains(&channel.login));
-        self.home_offline
+        self.following_offline
             .retain(|channel| !now_live.contains(&channel.login));
         // And when they were last live is about the stream before this one;
         // it is asked about afresh once this one ends, and until then this
@@ -482,14 +470,12 @@ impl RootView {
         cx.notify();
     }
 
-    /// Whether the pointer is over a list of follows: the rail, Home, or
-    /// the guide's Following or Recommended. The first two show the offline
-    /// follows as well as who is live, so either holds both, and the guide
-    /// holds them with the rest rather than by a rule of its own. The rail's
-    /// recommendations hold with them, by the same rule rather than a second
-    /// one for the rail alone.
+    /// Whether the pointer is over a list of follows: the rail or Following.
+    /// Both show the offline follows as well as who is live, so either holds
+    /// both. The rail's recommendations hold with them, by the same rule
+    /// rather than a second one for the rail alone.
     pub(super) fn live_held(&self) -> bool {
-        self.rail_pointed || self.home_pointed || self.guide_pointed
+        self.rail_pointed || self.following_pointed
     }
 
     /// Whether `login` is followed, live or not, as the two lists of follows
@@ -511,21 +497,20 @@ impl RootView {
     /// names as well as who is live, and the rail's recommendations with
     /// them. When the last of them is let go they are put back in order —
     /// who is live by viewers, the rest by name in the rail and by when you
-    /// last watched them on Home, the recommendations ranked afresh, and the
+    /// last watched them on Following, the recommendations ranked afresh, and the
     /// pins at the rail's next draw ([`order_pins`](Self::order_pins)) — out
     /// of the way of the pointer rather than under it.
     pub(super) fn hold_live(&mut self, list: LiveList, pointed: bool, cx: &mut Context<Self>) {
         let was = self.live_held();
         match list {
             LiveList::Rail => self.rail_pointed = pointed,
-            LiveList::Home => self.home_pointed = pointed,
-            LiveList::Guide => self.guide_pointed = pointed,
+            LiveList::Following => self.following_pointed = pointed,
         }
         if was && !self.live_held() {
             twitch_api::by_viewers(&mut self.follows);
             twitch_api::by_name(&mut self.offline);
-            crate::home::by_last_watched(
-                &mut self.home_offline,
+            crate::following::by_last_watched(
+                &mut self.following_offline,
                 &self.settings.recent,
                 &self.history,
             );
@@ -646,14 +631,13 @@ impl RootView {
             Ok(video) => {
                 // Alone if nothing is playing, beside it otherwise: the same
                 // answer the command line gives a second channel.
-                let solo = self.slots.is_empty();
                 // Where the link points, if it points anywhere; otherwise
                 // where it was left, as from any other way in.
                 let start_at = linked
                     .start_secs
                     .map(|secs| secs as f64)
                     .unwrap_or_else(|| self.resume_point(&video.id));
-                self.open_video_at(video, solo, start_at, window, cx);
+                self.open_video_at(video, Opening::Beside, start_at, window, cx);
             }
             Err(reason) => self.toast(format!("Could not open recording {id}: {reason}"), cx),
         }
@@ -750,7 +734,7 @@ mod tests {
         assert_eq!(channel_logins(&let_go), ["alice", "bob", "carol", "erin"]);
     }
 
-    /// Home's names hold the same way: a channel you watched lately whose
+    /// Following's names hold the same way: a channel you watched lately whose
     /// stream just ended joins the end while held, rather than jumping up to
     /// where you last watched it under the pointer; let go, it goes there.
     #[test]
@@ -761,10 +745,11 @@ mod tests {
         let nobody_live = HashSet::new();
         let history = History::default();
 
-        let held = home_offline_after(&shown, fresh(), &nobody_live, true, &recent, &history);
+        let held = following_offline_after(&shown, fresh(), &nobody_live, true, &recent, &history);
         assert_eq!(channel_logins(&held), ["alice", "carol", "zed"]);
 
-        let let_go = home_offline_after(&shown, fresh(), &nobody_live, false, &recent, &history);
+        let let_go =
+            following_offline_after(&shown, fresh(), &nobody_live, false, &recent, &history);
         assert_eq!(channel_logins(&let_go), ["zed", "alice", "carol"]);
     }
 

@@ -46,6 +46,20 @@ pub(super) enum How {
     Beside(Restart),
 }
 
+/// Where a channel or a recording that is opened plays.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Opening {
+    /// In place of the pane you are on, the one the keys talk to
+    /// (`active_slot`), which keeps its place in the grid, its sound's hold
+    /// and the keys (`replace_slot`); alone while nothing plays. A press on
+    /// a card, a rail row or a go-live toast, and the palette's Watch: one
+    /// press means one thing everywhere, and never closes the other panes.
+    InPlace,
+    /// In a pane of its own beside the others, refused at four: `+ Add`, a
+    /// viewer card's `Watch`, and what a launch or a link hands over.
+    Beside,
+}
+
 /// Numbers every start of every pane's stream, for the life of the
 /// process; see `Slot::generation`. One counter rather than one per pane, so
 /// a number is never handed out twice — not even after the start it went to
@@ -85,13 +99,13 @@ pub(super) fn playback(
 }
 
 impl RootView {
-    /// Open `channel`. With `solo`, it becomes the only pane; otherwise it is
-    /// added alongside whatever is already playing. One step on the trail.
+    /// Open `channel` where `opening` says: in place of the pane you are
+    /// on, or beside the panes. One step on the trail, onto the watch page.
     ///
     /// A fifth pane is refused where you are, with a toast, rather than on
     /// the watch page: the page used to flip before the count was checked,
     /// so a refused `+ Add` from the browse page took you away from it for
-    /// nothing.
+    /// nothing. One played in place is one pane for one, so never refused.
     ///
     /// A pane added beside the others shows them all again if one had the
     /// page: a new pane has to be seen, and would otherwise open offstage.
@@ -100,26 +114,29 @@ impl RootView {
     pub(super) fn open_channel(
         &mut self,
         channel: String,
-        solo: bool,
+        opening: Opening,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.record(|this| {
             if this.slot_index(&channel).is_some() {
-                // Already open, so switch to it rather than restarting it. Solo
-                // closes the others; dropping them stops their streamlink and mpv.
+                // Already open, so switch to it rather than restarting it.
                 this.show_watch_page(window, cx);
-                if solo {
-                    this.retire_slots(|slot| slot.channel == channel, cx);
-                }
                 this.restage(cx);
                 this.choose(&channel, window, cx);
                 return;
             }
 
-            if solo {
-                this.retire_slots(|_| false, cx);
-            } else if this.slots.len() >= MAX_PANES {
+            if let Some(key) = this.in_place_of(opening) {
+                this.show_watch_page(window, cx);
+                if this.settings.note_watched(&channel) {
+                    this.save_settings();
+                }
+                this.replace_with_channel(&key, channel, window, cx);
+                this.update_recommended();
+                return;
+            }
+            if this.slots.len() >= MAX_PANES {
                 this.toast(format!("Already watching {MAX_PANES} streams"), cx);
                 return;
             }
@@ -144,8 +161,8 @@ impl RootView {
         })
     }
 
-    /// Open a recording. With `solo`, it becomes the only pane; otherwise it
-    /// is added alongside whatever is already playing.
+    /// Open a recording where `opening` says: in place of the pane you are
+    /// on, or beside the panes.
     ///
     /// The mirror of [`open_channel`](Self::open_channel), keyed by the video
     /// rather than the channel — a channel's stream and one of its recordings
@@ -159,12 +176,23 @@ impl RootView {
     pub(super) fn open_video(
         &mut self,
         video: Video,
-        solo: bool,
+        opening: Opening,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let start_at = self.resume_point(&video.id);
-        self.open_video_at(video, solo, start_at, window, cx);
+        self.open_video_at(video, opening, start_at, window, cx);
+    }
+
+    /// The pane something opened `opening` replaces: the one you are on
+    /// (`active_slot`), when it is to play in place and anything is open.
+    fn in_place_of(&self, opening: Opening) -> Option<String> {
+        match opening {
+            Opening::InPlace => self
+                .active_slot()
+                .map(|index| self.slots[index].key.clone()),
+            Opening::Beside => None,
+        }
     }
 
     /// A pane on `channel` as it broadcasts, with its live chat: what opening
@@ -199,13 +227,14 @@ impl RootView {
 
     /// [`open_video`](Self::open_video), from `start_at` seconds in: where a
     /// link pointed, or where the history says it was left. One step on the
-    /// trail, and refused where you are at four panes, as `open_channel` is,
-    /// and like it shows every pane for a new one, or chooses one already
-    /// open. The pane itself is [`video_slot`](Self::video_slot)'s.
+    /// trail, played in place or refused where you are at four panes, as
+    /// `open_channel` is, and like it shows every pane for a new one, or
+    /// chooses one already open. The pane itself is
+    /// [`video_slot`](Self::video_slot)'s.
     pub(super) fn open_video_at(
         &mut self,
         video: Video,
-        solo: bool,
+        opening: Opening,
         start_at: f64,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -215,17 +244,23 @@ impl RootView {
 
             if this.slot_index(&key).is_some() {
                 this.show_watch_page(window, cx);
-                if solo {
-                    this.retire_slots(|slot| slot.key == key, cx);
-                }
                 this.restage(cx);
                 this.choose(&key, window, cx);
                 return;
             }
 
-            if solo {
-                this.retire_slots(|_| false, cx);
-            } else if this.slots.len() >= MAX_PANES {
+            if let Some(place) = this.in_place_of(opening) {
+                this.show_watch_page(window, cx);
+                // A recording counts as watching its channel, for the
+                // palette, as one opened beside does.
+                if this.settings.note_watched(&video.user_login) {
+                    this.save_settings();
+                }
+                this.replace_with_video(&place, video, start_at, Origin::Unknown, window, cx);
+                this.update_recommended();
+                return;
+            }
+            if this.slots.len() >= MAX_PANES {
                 this.toast(format!("Already watching {MAX_PANES} streams"), cx);
                 return;
             }
@@ -315,8 +350,9 @@ impl RootView {
     }
 
     /// Play `video` from `start_at` in the pane `key` names, in its place:
-    /// what a stopped live pane's last broadcast, `Watch from the start` and
-    /// a rewind ask for. See [`replace_slot`](Self::replace_slot) for what a
+    /// what a stopped live pane's last broadcast, `Watch from the start`, a
+    /// rewind and a recording opened in place of the pane you are on
+    /// (`Opening::InPlace`) ask for. See [`replace_slot`](Self::replace_slot) for what a
     /// swap keeps and drops; the live slot it drops takes the channel's live
     /// chat with it, and its `Start when they go live`. What the live pane
     /// knew of its broadcast goes onto the recording as `origin`, for its way
@@ -346,8 +382,9 @@ impl RootView {
 
     /// Play `channel` live in the pane `key` names, in its place: `LIVE` on
     /// a recording of the broadcast still going on, which goes back to the
-    /// live edge as the rewind left it. Cold, as opening the channel is, with
-    /// its live chat. See [`replace_slot`](Self::replace_slot); the
+    /// live edge as the rewind left it, and a channel opened in place of the
+    /// pane you are on (`Opening::InPlace`). Cold, as opening the channel
+    /// is, with its live chat. See [`replace_slot`](Self::replace_slot); the
     /// recording's place goes into the history first.
     pub(super) fn replace_with_channel(
         &mut self,
@@ -371,8 +408,9 @@ impl RootView {
     ///
     /// A swap, not an opening. The pane keeps its place in the grid and the
     /// keys, so nothing moves; there is no count to refuse at, since it is
-    /// one pane for one; and the trail takes no step, since the page is the
-    /// watch page before and after. The old slot is dropped, which stops its
+    /// one pane for one; and the trail takes no step of its own: on the
+    /// watch page the page is the same before and after, and a press from
+    /// the browse page takes its step in `open_channel` or `open_video_at`. The old slot is dropped, which stops its
     /// streamlink and its chat; a recording's place is written down first,
     /// as closing its pane does (`retire_slots`), while a live slot has no
     /// place in the history to write. Mute all's hold stays: it is the
@@ -387,10 +425,8 @@ impl RootView {
     /// A pane in a window of its own comes home first, as Bring back brings
     /// it (`pop_in`): its pop-out finds its player by the pane's key, which
     /// the new slot does not carry. So `LIVE` or a rewind pressed in a
-    /// pop-out closes that window and plays on in the main window, which
-    /// comes up on the watch page if it was off it with the mini player off
-    /// — there the pane would come home to nothing drawing it, and
-    /// `restage` would stop it along with the new slot. A maximized pane
+    /// pop-out closes that window and plays on in the main window, on the
+    /// watch page or beside the browse page, whichever is up. A maximized pane
     /// stays maximized, under its new key (`Stage::rename`), and the new pane
     /// is chosen (`choose`), so while another pane has the watch page, this
     /// one takes it rather than playing where nobody can see it.
@@ -407,9 +443,6 @@ impl RootView {
             return;
         }
         if self.stage.is_popped(key) {
-            if !self.draws_home_panes() {
-                self.go_watch(cx);
-            }
             self.come_home(key, cx);
         }
         let Some(index) = self.slot_index(key) else {
@@ -714,9 +747,9 @@ impl RootView {
                     // What More offers about hearing one pane alone; kept
                     // up by `sync_hear_only`.
                     hear_only: self.hear_only_now(),
-                    // Whether the guide is up from this pane, for the bar's
-                    // Guide button; kept up by `sync_guide_buttons`.
-                    guide_from_here: self.guide.up_from(key),
+                    // Whether the browse page is up, for the bar's Browse
+                    // button; kept up by `restage`.
+                    browsing: self.page == Page::Browse,
                     // Whether its channel is pinned, for More's pin row;
                     // kept up by `sync_pins`.
                     pinned: self.settings.is_pinned(&self.slots[index].channel),
@@ -827,7 +860,6 @@ impl RootView {
             self.follows.as_slice(),
             self.discovery.popular.items.as_slice(),
             self.discovery.streams.items.as_slice(),
-            self.guide.streams.items.as_slice(),
             search,
         ]
         .into_iter()
@@ -874,8 +906,7 @@ impl RootView {
     /// from whichever list knows it ([`channel_name`](Self::channel_name)),
     /// or the login when none does. A recording's own, for a recording.
     ///
-    /// One answer for the pane header, its status line, the mini player and
-    /// the palette. They used to ask different lists, so a channel you
+    /// One answer for the pane header, its status line and the palette. They used to ask different lists, so a channel you
     /// follow that was offline was "Nubzombie" in the palette and
     /// "nubzombie" in the pane it opened.
     pub(super) fn display_name(&self, slot: &Slot) -> String {
@@ -974,7 +1005,9 @@ impl RootView {
         cx.notify();
     }
 
-    /// Mute all, or unmute all: every pane held silent, or let go.
+    /// Every pane held silent by Mute all's hush, with `quiet`, or let go
+    /// of it. Mute all itself was the mini player's and went with it, so
+    /// only the letting go is asked for now.
     ///
     /// Per pane and for the session only. Each slot remembers it, so a player
     /// rebuilt under it is born quiet; a pane's first deliberate change of
@@ -994,31 +1027,43 @@ impl RootView {
         cx.notify();
     }
 
-    /// Leave the watch page.
+    /// Bring the browse page up.
     ///
-    /// With the miniplayer on, the streams keep going, with their sound, as
-    /// tiles in the mini player — cheaper to draw as well as smaller, since
-    /// render size follows the element and a small one is scaled into a small
-    /// buffer. Not cheaper to fetch: the rendition stays the one chosen for
-    /// the watch grid, because `pane_height_for` measures that grid whichever
-    /// page is up, so the tile never trades away the picture you go back to. With
-    /// the miniplayer off they stop, which is what somebody who came here to
-    /// pick the next thing wanted: a stream in a tile is still decoding and
-    /// still pulling bytes. One step on the trail — which `Alt+←` takes back
-    /// while something is still playing to go back to.
-    ///
-    /// A pane in a window of its own plays on either way: it is somewhere
-    /// else on screen, and was put there to be kept. Which panes stop is
-    /// `retire_homeless`'s, the one rule for it.
+    /// Nothing that plays stops or goes anywhere: the browse page docks on
+    /// the left of the window and the panes go on beside it, with their
+    /// sound and their pictures, in a grid of their own
+    /// (`RootView::docks_stage`) — smaller for the while, and at the
+    /// rendition chosen for the watch page, since `pane_height_for` measures
+    /// that grid whichever page is up, so browsing never trades away the
+    /// picture you go back to. It used to put them in a mini player in the
+    /// corner, or with that turned off, stop them. One step on the trail,
+    /// which `Alt+←` and `Esc` take back.
     pub(super) fn go_browse(&mut self, cx: &mut Context<Self>) {
         self.record(|this| {
             this.page = Page::Browse;
-            // A pane's chat options menu does not wait on another page to
-            // come back up with it.
-            this.chat_menu = None;
-            this.retire_homeless(cx);
             this.restage(cx);
         })
+    }
+
+    /// A pane's Browse button: the browse page up beside the panes, with
+    /// the pane `key` names the one the keys talk to — the one a card plays
+    /// in place of — or, with the page up, put away again. One step on the
+    /// trail either way. The panes move under the pointer as the page comes
+    /// or goes, so the rest of the press's run is heard by nothing
+    /// (`run_guard`).
+    ///
+    /// Every menu open over a pane closes first: the press stopped at the
+    /// button, so a menu anchored in a pane drawn after it never heard it,
+    /// and the pane it hangs from is about to move.
+    pub(super) fn toggle_browse(&mut self, key: &str, cx: &mut Context<Self>) {
+        self.take_rest_of_run();
+        self.close_menus(cx);
+        if self.page == Page::Browse {
+            self.go_watch(cx);
+        } else {
+            self.active = Some(key.to_string());
+            self.go_browse(cx);
+        }
     }
 
     /// Back to watching, when there is anything to watch. One step on the
@@ -1033,13 +1078,12 @@ impl RootView {
         })
     }
 
-    /// Go back to watching with `key` the pane the keys talk to: what a click
-    /// on a mini-player tile asks for, and the palette's quality row from the
-    /// browse page. Chosen (`choose`), so a pane that had the watch page
-    /// when it was left hands it to the one clicked.
+    /// Go back to watching with `key` the pane the keys talk to: the
+    /// palette's quality row from the browse page. Chosen (`choose`), so a
+    /// pane that had the grid when it was left hands it to the one chosen.
     ///
-    /// The pointer arrives on the watch page where the tile was, which can be
-    /// over another pane's video. A pane's hover is measured every frame and
+    /// The grid grows under a pointer that has not moved, which can be over
+    /// another pane's video. A pane's hover is measured every frame and
     /// its rising edge makes it active (`Slot::point`, from the watch page's
     /// probe), and `Slot::hovered` is whatever it was when the watch page was
     /// last up — so on the first frame that other pane would take the keys
@@ -1078,8 +1122,7 @@ impl RootView {
     /// The last pane going takes the watch page off the trail too, both ways:
     /// there is nothing there to go back to, and a step that skipped it would
     /// be a press that seemed to do nothing. Every way the last pane goes
-    /// comes through here — a close, Stop all, leaving with the mini player
-    /// off, turning it off in the settings.
+    /// comes through here — a close, Stop all.
     ///
     /// The rail's recommendations hear of it here too, for the same reason:
     /// a pane gone is a seed that may have gone with it, and a channel that

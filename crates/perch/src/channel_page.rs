@@ -502,7 +502,7 @@ pub fn view<V: 'static>(
         );
     }
 
-    let list = browse::scroller("channel-videos", scroll, room.bottom).child(shelves);
+    let list = browse::scroller("channel-videos", scroll).child(shelves);
     let list = if videos.is_empty() {
         let name = &channel.display_name;
         let nothing = match channel.kind {

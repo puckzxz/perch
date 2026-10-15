@@ -9,9 +9,9 @@
 //! ([`set`], [`on`]) that every player's render thread reads between frames,
 //! the way it reads its volume. A flag rather than a value handed to each
 //! player because players are started from several places — a pane, a
-//! rendition resolved beside it, a quality started ahead, a pop-out, the
-//! mini player — and one of them handed the old answer would play on
-//! uncompressed with the row saying otherwise.
+//! rendition resolved beside it, a quality started ahead, a pop-out — and
+//! one of them handed the old answer would play on uncompressed with the
+//! row saying otherwise.
 //!
 //! What it does is FrankerFaceZ's player compressor as the browser runs it.
 //! FFZ hands Chrome's `DynamicsCompressorNode` a threshold of −50 dB, a

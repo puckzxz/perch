@@ -23,8 +23,8 @@
 //! the chat already has, the names and lines; an answer outlives a sign-out.
 //!
 //! The card is a plain absolute child of the chat's list box, not deferred
-//! as the copy menu is, so the palette, the settings sheet and the guide all
-//! draw over it. The box has no clip, so [`place`] is what keeps it in: below
+//! as the copy menu is, so the palette and the settings sheet both draw
+//! over it. The box has no clip, so [`place`] is what keeps it in: below
 //! the pressed line where all of it fits, else on the side with more room,
 //! and in a box too short for either it rises from the box's foot, over
 //! what is above the box (the pane's header, then its picture or the pane
@@ -70,21 +70,16 @@
 //!
 //! Its controls act on the press, and only on the first press of a run, as
 //! every menu's rows do (HANDOFF, "A menu's rows act on the press"); a test
-//! below holds this file to it. `Channel page` leaves the watch page, which
-//! with the mini player off stops every pane not in a window of its own
-//! (`RootView::retire_homeless`), and Back does not bring them back. So the
-//! root decides, at the press, whether going would stop any; if it would,
-//! the pill asks instead, `Stop streams and open?` in the accent
-//! (`Variant::Confirm`), and only a second press within
-//! `theme::CONFIRM_LINGER` goes. A press anywhere else, or the wait running
-//! out, puts it back. `Channel page` is offered only signed in: the page
-//! asks Helix for its lists with the user's token, and signed out it would
-//! say only that, which is no place to stop streams for.
+//! below holds this file to it. `Channel page` opens the browse page beside
+//! the panes, which play on; it used to ask first, `Stop streams and open?`,
+//! while leaving the watch page stopped them. It is offered only signed in:
+//! the page asks Helix for its lists with the user's token, and signed out
+//! it would say only that.
 
 use chrono::Utc;
 use gpui::{
     canvas, div, img, prelude::*, px, Animation, AnimationExt, AnyElement, App, Context,
-    MouseButton, MouseDownEvent, Pixels, Point, ScrollHandle, SharedString, Task, Window,
+    MouseButton, MouseDownEvent, Pixels, Point, ScrollHandle, SharedString, Window,
 };
 use twitch_chat::ChatMessage;
 
@@ -154,10 +149,6 @@ pub(super) struct ViewerCard {
     facts: CardFacts,
     /// Where its lines are scrolled to: the newest, when it opens.
     scroll: ScrollHandle,
-    /// `Channel page` asking for a second press, with the timer that puts
-    /// it back when none comes; dropping it, with the card or on a press
-    /// elsewhere, is what cancels the timer.
-    confirming: Option<Task<()>>,
 }
 
 impl ViewerCard {
@@ -170,7 +161,6 @@ impl ViewerCard {
             opened,
             facts: CardFacts::default(),
             scroll,
-            confirming: None,
         }
     }
 }
@@ -427,31 +417,6 @@ impl ChatView {
         true
     }
 
-    /// The root's answer to a first press of `Channel page` where going
-    /// would stop streams: ask for a second one, for
-    /// [`theme::CONFIRM_LINGER`].
-    pub fn confirm_leaving(&mut self, cx: &mut Context<Self>) {
-        let Some(card) = self.cards.open_mut() else {
-            return;
-        };
-        card.confirming = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(theme::CONFIRM_LINGER).await;
-            this.update(cx, |this: &mut ChatView, cx| this.stop_confirming(cx))
-                .ok();
-        }));
-        cx.notify();
-    }
-
-    /// Put `Channel page` back to its words: the wait ran out, or a press
-    /// landed anywhere but on it.
-    fn stop_confirming(&mut self, cx: &mut Context<Self>) {
-        if let Some(card) = self.cards.open_mut() {
-            if card.confirming.take().is_some() {
-                cx.notify();
-            }
-        }
-    }
-
     /// The open card, for the chat's list box to lay over its rows: see the
     /// module.
     pub(super) fn viewer_card(
@@ -496,9 +461,9 @@ impl ChatView {
         let foot = self.card_foot(login, &name, card, cx);
 
         // Where it is, written into the veil every frame, so the panes it
-        // rises over leave the pointer on it alone, as they do the guide's
-        // (`crate::veil`); a move asks for the frame that the probes run
-        // before this one read it in, as the guide's does.
+        // rises over leave the pointer on it alone (`crate::veil`); a move
+        // asks for the frame that the probes run before this one read it
+        // in.
         let cover = veil::Cover::Card(cx.entity_id());
         let probe = canvas(
             move |bounds, window, cx| {
@@ -876,37 +841,17 @@ impl ChatView {
             )
         });
 
-        // Its id follows the question too, so the tooltip says the new words.
-        let confirming = card.confirming.is_some();
         let channel = card.facts.channel_page.then(|| {
-            let pill = if confirming {
-                controls::pill(
-                    "viewer-card-channel-confirm",
-                    "Stop streams and open?",
-                    Variant::Confirm,
-                )
-                .when(hovered, |pill| {
-                    pill.tooltip(controls::tip(
-                        "With the mini player off, leaving the watch page stops the streams here",
-                    ))
-                })
-                .on_mouse_down_out(cx.listener(
-                    |this, _: &MouseDownEvent, _window, cx| {
-                        this.stop_confirming(cx);
-                    },
-                ))
-            } else {
-                controls::pill(
-                    SharedString::from(format!("viewer-card-channel-{name}")),
-                    "Channel page",
-                    Variant::Pill,
-                )
-                .when(hovered, |pill| {
-                    pill.tooltip(controls::tip(format!(
-                        "Open {name}'s past broadcasts and schedule"
-                    )))
-                })
-            };
+            let pill = controls::pill(
+                SharedString::from(format!("viewer-card-channel-{name}")),
+                "Channel page",
+                Variant::Pill,
+            )
+            .when(hovered, |pill| {
+                pill.tooltip(controls::tip(format!(
+                    "Open {name}'s past broadcasts and schedule"
+                )))
+            });
             let (login, display_name) = (login.to_string(), name.to_string());
             pill.on_mouse_down(
                 MouseButton::Left,
@@ -917,7 +862,6 @@ impl ChatView {
                     cx.emit(ChatViewEvent::ChannelPage {
                         login: login.clone(),
                         display_name: display_name.clone(),
-                        confirmed: confirming,
                     });
                 }),
             )

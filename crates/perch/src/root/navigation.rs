@@ -99,9 +99,8 @@ impl RootView {
     /// because the search box runs its search from a subscription that has
     /// none.
     ///
-    /// A watch page left with nothing on it — the mini player off, so leaving
-    /// stopped every stream — is not recorded: it is somewhere back could
-    /// never go.
+    /// A watch page left with nothing on it — its last pane closed — is not
+    /// recorded: it is somewhere back could never go.
     pub(super) fn record<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
         if self.recording {
             return f(self);
@@ -215,8 +214,8 @@ impl RootView {
     ///
     /// Window-level because nothing narrower hears every press. The root's
     /// own mouse handlers answer only while the pointer is over the root's
-    /// unblocked hitbox, and that is false over the title bar, a toast, the
-    /// mini player and a pane's control bar — exactly where a hand resting
+    /// unblocked hitbox, and that is false over the title bar, a toast and
+    /// a pane's control bar — exactly where a hand resting
     /// on the mouse is likely to be. In the capture phase, and the press is
     /// stopped there once it has moved the app, so nothing under the pointer
     /// takes it as well. A press with nowhere to go — the trail's either end
@@ -319,7 +318,10 @@ mod tests {
     fn the_watch_page_is_its_own_route() {
         let mut discovery = Discovery::default();
         assert_eq!(route_of(Page::Watch, &discovery), Route::Watch);
-        assert_eq!(route_of(Page::Browse, &discovery), Route::Tab(Tab::Home));
+        assert_eq!(
+            route_of(Page::Browse, &discovery),
+            Route::Tab(Tab::Following)
+        );
 
         discovery.tab = Tab::Popular;
         assert_eq!(route_of(Page::Watch, &discovery), Route::Watch);
@@ -336,6 +338,6 @@ mod tests {
             "the watch page with nothing on it"
         );
         assert!(reachable(&Route::Watch, true));
-        assert!(reachable(&Route::Tab(Tab::History), false));
+        assert!(reachable(&Route::Tab(Tab::Library), false));
     }
 }

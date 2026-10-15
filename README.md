@@ -54,14 +54,14 @@ Or build it, which is the rest of this page.
 ## Running it
 
 ```
-run.cmd                    open on Home                   (Windows)
+run.cmd                    open on Following              (Windows)
 run.cmd forsen             open a channel
 run.cmd forsen xqc         open two, side by side
 run.cmd forsen --volume 30
 ```
 
 ```
-./run.sh                   open on Home                   (macOS, Linux)
+./run.sh                   open on Following              (macOS, Linux)
 ./run.sh forsen            open a channel
 ./run.sh forsen xqc        open two, side by side
 ./run.sh forsen --volume 30
@@ -91,7 +91,7 @@ build is several times slower at it.
 
 The player's controls are on a bar that comes up over the video while the
 pointer is on it, and those a key also works name the key in their tooltips;
-the quality, the guide and More have no key. The rest — the rail button,
+the quality and More have no key. The rest — the rail button,
 Home, back and forward, search and settings — sit in the bar across the top
 of the window. Neither is any use when you are not holding the mouse.
 
@@ -109,8 +109,8 @@ of the window. Neither is any use when you are not holding the mouse.
 | `Shift+→` | Move this pane one place later, swapping it with the one after |
 | `Z` | Give this pane the whole window, chat and all, or show every pane again |
 | `Ctrl+W` | Close this pane |
-| `P` | Pop this pane out into a window of its own, on top of other apps, or bring it back; on the browse page, every pane in the mini player (Windows) |
-| `Esc` | Back to browsing, or back to watching — after showing every pane again, if one has the window |
+| `P` | Pop this pane out into a window of its own, on top of other apps, or bring it back — beside the browse page too (Windows) |
+| `Esc` | Browse beside what is playing, or back to watching — after showing every pane again, if one has the window |
 | `Alt+←` | Back to where you were before — the mouse's back button too |
 | `Alt+→` | Forward again — the mouse's forward button too |
 | `Ctrl+F` | Search, from either page |
@@ -146,27 +146,27 @@ video is fullscreen too. Holding `Alt` while turning the mouse wheel over a
 picture changes that stream's volume, a step of 5% per click of the wheel, as
 `↑` and `↓` do — the wheel alone never touches the sound, so scrolling past a
 video cannot change it — and a middle click on a picture mutes or unmutes it,
-as `M` does. Both work in a pop-out too. `Esc` from the watch page goes back to
-whichever tab, category or channel you left the browse page on — and first lets
-go of a pane being dragged, then closes a pane's open menu, if there is one,
-then the guide, if it is up, and then shows every pane again, if one has the
-window. A playing pane's quality menu is in the palette as well:
+as `M` does. Both work in a pop-out too. `Esc` from the watch page brings the
+browse page up beside what is playing, on whichever tab, category or channel
+you left it on — and first lets go of a pane being dragged, then closes a
+pane's open menu, if there is one, and then shows every pane again, if one has
+the window. A playing pane's quality menu is in the palette as well:
 type `quality` and some of the pane's name, and `Choose quality for …` opens
 it. So are the two things under the bar's **More**, as `Copy link to …` and
 `Open … on twitch.tv`, and the maximize, as `Maximize …` and `Show all
 panes`.
 
 The bar over a playing pane has play, the speaker — crossed out whenever the
-pane is silent, Mute all included — and the volume at the left, and at the
-right the quality, with two panes or more the maximize, then chat, the guide
+pane is silent, **Only this one** included — and the volume at the left, and at the
+right the quality, with two panes or more the maximize, then chat, Browse
 (see below), fullscreen and **More**, which has **Only this one** with two
 panes or more, **Audio compressor**, **Playback speed** on a recording,
 **Pop out** on Windows, **Pin to the rail**, **Open on twitch.tv** and
 **Copy link**. **Pin to the rail** pins the pane's channel to the top of the
 rail — a live pane's or a recording's, followed or not (see "The rail") —
 and says **Unpin from the rail** once it is.
-**Only this one** silences every other pane the way Mute all does, without
-touching anyone's volume; until you change a silenced pane's volume, every
+**Only this one** silences every other pane without touching anyone's
+volume; until you change a silenced pane's volume, every
 pane's More then says **Hear all again**, which brings them all back.
 **Audio compressor** evens out how loud each stream is the way FrankerFaceZ's
 compressor does in the browser — a loud streamer comes down, a quiet one comes
@@ -181,9 +181,9 @@ nothing to press.
 Back and forward work the way they do in a browser. `Alt+←` and `Alt+→`, the
 arrows in the title bar or the mouse's side buttons walk back through the
 tabs, categories, searches, channel pages and the watch page you have been
-on, and forward again. The house before the arrows goes straight to Home from
-anywhere, the watch page included, which it leaves the way `Esc` does; back
-returns from it. `Esc` and the `← Back` beside a search or a channel's
+on, and forward again. The house before the arrows goes straight to
+Following from anywhere; from the watch page it brings the browse page up
+beside what is playing, the way `Esc` does, and back returns from it. `Esc` and the `← Back` beside a search or a channel's
 name still step out of whatever has taken the page over, and back takes that
 back too. The watch page drops out of the way once nothing is playing on it.
 A list you go back to is asked for again if it has been replaced since, and
@@ -247,8 +247,9 @@ it, where it has the picture's width rather than chat's 340 pixels: the
 channel's picture (for one you follow or one recommended to you), its name
 at full size, how many are watching and for how long, the title on a line of
 its own and the game under it. At its end are **Pin**, or **Pinned**, which
-unpins (as **Pin to the rail** under **More** does), the pop-out icon and
-the ×. Chat is then headed by a bar of its own, with the chat options and a
+unpins (as **Pin to the rail** under **More** does); **Past broadcasts**,
+while you are signed in, which opens the channel's page beside the pane as it
+plays on (see "Browsing beside what plays"); the pop-out icon; and the ×. Chat is then headed by a bar of its own, with the chat options and a
 button that hides chat. A window wider than that, whose picture fills its
 column by height, has no room under the picture and keeps the header on
 chat.
@@ -259,8 +260,8 @@ it — dimmed under its name, and the stream fades in over it when it arrives. A
 channel that is off says so and offers what there is instead: its last
 broadcast, as a card where there is room, which plays right there in place of
 the live pane; **Start when they go live**, a switch that is on unless you turn
-it off, there for any channel while you are signed in (see [Home](#home) for
-how soon it starts); and **Try again**. Under those it says when the channel is
+it off, there for any channel while you are signed in (see
+[Following](#following) for how soon it starts); and **Try again**. Under those it says when the channel is
 on next, if it has a schedule on Twitch — *Next stream: Tue 7:00 PM · its title
 · its game*, in your clock's format — or that it is *On a break until 12 Oct*.
 When a stream ends the pane says so — it does not simply stop on its last
@@ -271,44 +272,37 @@ recording and the schedule need a sign-in to be found. Chat stays connected
 either way, which is where the goodnights are, until a recording takes the
 pane's place and brings its own chat replay.
 
-### The guide: more to watch, without leaving
+### Browsing beside what plays
 
-The icon beside chat on a pane's bar — a frame with a panel across its lower
-half — raises the guide over the lower part of the watch page, while every
-pane goes on playing above and behind it, with its sound. A pane with no
-picture, one whose stream is off or has ended, has no bar, so its header
-offers the same icon instead. It is never more
-than half the page tall, and on a tall window only as tall as two rows of
-cards. Across its top are four tabs: **Following**, who you follow that is
-live; **Recommended**, the rail's Recommended group as cards, each saying
-which channel led to it; **Popular**; and **Categories**, where picking one
-shows its streams inside the guide, with **← Categories** to go back. Popular
-and Categories are the same lists as the browse page's tabs, with the same
-**Load more**, so whatever either has fetched the other already has. A
-recommended channel's card shows its live preview like any other; how long it
-has been on shows only once a list Perch has fetched carries the channel, since
-a recommendation does not say.
+Browse — the icon beside chat on a pane's bar, a frame with a panel down its
+left half — or `Esc` brings the browse page up on the left of the window,
+half its width at most, and the panes move over to the right, each playing on
+as it was, with its sound: a pane there has its whole picture, with its
+header and chat under it, or beside it where there is room. Nothing restarts,
+and a pane keeps the quality it was playing while its picture is smaller. A
+pane with no picture, one whose stream is off or has ended, has no bar, so
+its header offers the same icon. Browse again puts the page away and gives
+the panes the window back, and so does `Esc` from a tab; from a category, a
+search or a channel's page, `Esc` first steps out of it. With nothing
+playing, the browse page has the whole window.
 
-Rest the pointer on a card for its two offers. **Watch**, or a click anywhere
-on the card, plays that channel in place of the pane you opened the guide
-from, keeping its place in the grid, however the pointer crosses the other
-panes on its way to the card; a channel already open in another pane is
-chosen there instead. Another pane's guide icon, pressed while the guide is
-up, makes that pane the one Watch replaces. **+ Add** opens it beside the
-others, and at four panes says `Already watching 4 streams` and leaves the
-guide up. Otherwise the guide goes away once something plays; so does the ×
-at its top-right, the guide icon of the pane it was opened from, `Esc`, a
-click anywhere outside it, or leaving the watch page. It opens again on the
-tab, and inside the category, you left it on; pressing **Categories** again
-goes back from a category to the list. A narrow window that cannot fit every
-tab scrolls them sideways under the mouse wheel.
+A click on a card, a rail row or a go-live notice plays that channel in place
+of the pane you are on — the one the keys talk to, the last you pointed at or
+clicked — keeping its place in the grid, and goes back to watching; with
+nothing playing it simply opens. A channel already open in a pane is chosen
+there instead. Nothing else closes: the other panes play on. **+ Add** on a
+card, or `+` on a rail row, opens it beside the others instead, and at four
+panes says `Already watching 4 streams`. The palette's rows work the same
+way, and so does a recording's card, whose pane takes the place of the one
+you are on.
 
-While it is up the guide takes the pointer over its own area and nowhere
-else: the panes above it are pointed at and clicked as ever, and the ones
-under it stay as if the pointer were not there — their bars stay down, their
-chat keeps moving, and passing over them does not make them the pane the
-keys talk to. Opening it closes any menu open on a pane. Recommended fills in
-with the rail folded away too, while that tab is showing.
+Beside the panes is the whole browse page — its tabs, search results,
+categories and channel pages — so **Past broadcasts** under a pane's picture,
+or a viewer card's **Channel page**, opens that channel's page there while
+the pane plays on. Bringing the page up or putting it away closes any menu
+open on a pane. While it is up the keys are the page's: `Esc` steps out, and
+a pane's own keys — `Space`, `M` and the rest — wait until you are back to
+watching, all but `P`, which pops the pane you are on out or back.
 
 ### Going back in a live stream
 
@@ -357,8 +351,8 @@ Before and after are the order `1` to `4` count, row by row, rather than
 directions on the screen: in a grid of two rows, the first pane of the
 second row moved earlier goes to the end of the first. The pane you moved
 stays the one the keys talk to, nothing restarts, and each pane keeps its
-picture, its sound and its chat. `1` to `4`, `Tab`, the mini player and the
-palette follow the new order, which lasts until Perch closes: it is not
+picture, its sound and its chat. `1` to `4`, `Tab` and the palette follow
+the new order, which lasts until Perch closes: it is not
 saved. While one pane has the whole window there is nothing to rearrange.
 
 ### One pane, the whole window
@@ -377,9 +371,9 @@ too.
 
 Adding another pane, closing or popping out the one maximized, being left
 with a single pane, or a pane in its own window coming back because its
-stream stopped shows them all again. Leaving the watch page keeps the
-maximize for when you come back, and the mini player shows every pane
-meanwhile. The pane given the window has its quality chosen for its new
+stream stopped shows them all again. Browsing keeps the maximize: beside
+the browse page is the pane that has the window, while the others play on
+unseen. The pane given the window has its quality chosen for its new
 size, moving up to a sharper rendition with no black where one fits; the
 others keep theirs, and the grid coming back lowers none.
 
@@ -392,11 +386,8 @@ its number and its chat stay in the main window, whose cell says `Playing in
 its own window` and offers **Bring back**.
 
 A pane goes out from the pop-out icon in its header, **Pop out** under the
-bar's **More**, `P`, the palette's `Pop out …`, or the icon on its tile in the
-mini player. The mini player's own **Pop out**, or `P` on the browse page,
-pops out every pane it shows, each into a window of its own, stacked up from
-the screen's bottom-right corner so that none covers another; `P` there again
-brings them all back. A pane comes back from **Bring back** on its pop-out's
+bar's **More**, `P` — beside the browse page too — or the palette's `Pop out
+…`. A pane comes back from **Bring back** on its pop-out's
 bar or on its cell, the same icon in its header, `P` in either window, or the
 palette's `Bring … back`.
 
@@ -549,12 +540,9 @@ when their account was made (`Account created 14 Dec 2016 (9 years)`), the
 badges they wear, in words, and up to twenty of their messages in this chat,
 newest last, drawn as the chat draws them. At its foot, **Watch**, while they
 are live and there is room for another stream, adds them beside what is
-playing; **Channel page** opens their past broadcasts and schedule in Perch;
-and **twitch.tv** opens their channel in your browser. With the **Mini
-player** switch off, leaving the watch page stops the streams on it, so there
-**Channel page** asks first — **Stop streams and open?** — and goes only on a
-second click; a click anywhere else, or a few seconds, puts it back. Signed
-out, nobody new is looked up, so a card has only their names and messages
+playing; **Channel page** opens their past broadcasts and schedule in Perch,
+on the browse page beside what is playing; and **twitch.tv** opens their
+channel in your browser. Signed out, nobody new is looked up, so a card has only their names and messages
 unless you opened theirs signed in since Perch started; and **Channel
 page**, which needs you signed in, is not offered. A click anywhere else, the
 ×, their name again or `Esc` closes the card; right-click one of their
@@ -598,22 +586,27 @@ per request rather than a choice. **Load more** at the end of the list fetches
 the next hundred — a page you asked for, rather than a list that grows while you
 scroll past it.
 
-## Home
+## Following
 
-The browse page opens on **Home**, which answers "what should I watch": who
-you follow that is live, as cards; then *Continue watching*, the recordings you
-opened and did not finish, most recently watched first; then everyone else you
-follow, as names. Continue watching is one row of the **History** tab's own
-cards, as many as fit the window, and **Show all** beside its heading goes to
-that tab when there are more. It needs no sign-in, since the history is the
+The browse page opens on **Following**, which answers "what should I watch",
+grouped as the rail groups the same channels. First the channels you have
+pinned, in the rail's order: whoever of them is live as cards, the rest as
+names. Then who else you follow that is live, as cards; then *Continue
+watching*, the recordings you opened and did not finish, most recently watched
+first; then *Recommended*, the rail's recommendations as cards, each saying
+which channel led to it; then everyone else you follow, as names. A pinned
+channel is under Pinned and nowhere else. Continue watching is one row of the
+**Library** tab's own cards, as many as fit the window, and **Show all**
+beside its heading goes to that tab when there are more. It needs no sign-in, since the history is the
 app's own, and shows above the sign-in prompt when nobody is signed in. The
 offline names lead with the channels you watched most recently, live or
 recorded; the ones you never watched follow by name. Each says when that
 channel was last live beside its name — "Live 3 hours ago", "Live yesterday",
 "Live 2 weeks ago" — and a name opens the channel's page: its past
 broadcasts, and a control for its chat, which connects whether or not anyone
-is streaming. Each heading carries how many are under it, after the filter:
-*Live now · 23*, *Continue watching · 5*, *Offline · 103*.
+is streaming. Each heading but Recommended's carries how many are under it,
+after the filter: *Pinned · 4*, *Live now · 23*, *Continue watching · 5*,
+*Offline · 103*.
 
 When each channel was last live comes from the same unpublished Twitch query
 the recommendations use (see "The rail"), asked without your sign-in, a
@@ -636,8 +629,9 @@ Who is live is sorted by viewers, and holds still while the pointer is on it,
 the way chat does: a refresh then updates the numbers where they stand, drops
 whoever ended and adds whoever started at the end, and the list is put back in
 order once the pointer leaves — so a card is never swapped for its neighbour
-between aiming at it and clicking. The rail does the same. So do the offline
-names, on Home and in the rail: somebody whose stream ends joins the end of
+between aiming at it and clicking. The rail does the same, and so do the
+pins and the recommendations. So do the offline names, on Following and in
+the rail: somebody whose stream ends joins the end of
 them until the pointer leaves, rather than landing in the middle and pushing
 every name after them down.
 
@@ -658,8 +652,8 @@ not, Perch asks Twitch about it by itself every two minutes, in the one
 request it makes for every such channel at once (see "The rail"), so such a
 pane starts up to two minutes after the stream does.
 
-The box at the top of Home filters all three as you type, live, unfinished and
-offline, by the same few-letters-of-a-name match the palette uses; a recording
+The box at the top of Following filters every section as you type, by the
+same few-letters-of-a-name match the palette uses; a recording
 answers to its channel's name or to a word of its title. It is the opposite of
 the search box in the title bar: that one asks Twitch, this one asks the app,
 and nothing typed here leaves it — until nothing on the page matches, when it
@@ -671,24 +665,8 @@ down one side. Viewer count and uptime sit on the thumbnail; the name, title and
 game are underneath, each on one line and cut with an ellipsis where it does not
 fit. Resting the pointer on one shows the whole of it.
 
-Whatever is playing while you browse keeps playing, with its sound, in a small
-player in the bottom-right corner of the page, clear of the list's scrollbar:
-one picture, or up to four two to a row. A stream popped out into a window of
-its own stays there instead, since it is on screen already.
-Click a picture to go back to watching it; the `×` that appears on a picture
-under the pointer closes just that stream, and on Windows the pop-out icon
-beside it moves that stream into a window of its own (see "A pane in a window
-of its own"). The bar under the pictures says what is playing and has controls
-for all of it — Mute all (or Unmute all), on Windows **Pop out**, which does
-that for every stream there, Back to watching and Stop all. Mute all silences the streams without touching
-anyone's volume: it is never saved, it lasts until you change a stream's volume
-yourself, and Unmute all leaves a stream you had muted muted. Every list leaves
-room at its foot, so nothing is stuck under the player. The **Mini player**
-switch in Settings turns it off, in which case leaving the watch page stops
-the streams instead — all but those popped out, which play on in their own
-windows — which is the cheaper answer if you go to Home to pick the next
-thing rather than to glance at the list. The card a name in chat opens asks
-before its **Channel page** does that (see [Chat](#chat)).
+Whatever is playing while you browse keeps playing beside the page, with its
+sound; see "Browsing beside what plays".
 
 ### The rail
 
@@ -706,7 +684,7 @@ them away; they start folded each time Perch starts. Click a live channel,
 followed or recommended, to watch it, or `+` to open it beside what is already
 playing; click anyone else for their channel's page. Offline names get their
 pictures too, asked for once each time Perch starts, and under each name the
-same "Live 3 hours ago" Home shows, where a live row says what is on.
+same "Live 3 hours ago" Following shows, where a live row says what is on.
 
 Rest the pointer on a live row for a moment and its card comes up beside the
 rail: the stream's picture with how many are watching and for how long, its
@@ -726,7 +704,7 @@ have just opened from the list keeps its place, marked as watching, until the
 pointer leaves the rail. They are asked
 for when you open a channel they have not been asked about yet, and otherwise
 every five minutes at most, only while you are signed in and the rail is open
-or the guide is showing them.
+or Following is showing them.
 If Twitch refuses that query — most likely because it has changed it — the
 group goes away until Perch is next started; if a request fails any other way,
 the last list stays and is asked for again at the next five-minute refresh.
@@ -761,7 +739,7 @@ than aimed at. It filters what the app already knows, so it costs nothing and
 runs on every keystroke; the search box in the title bar is the one that asks
 Twitch. `qb` finds QuickyBaby. Offline follows are in it too, once you have
 typed something, and open the channel's page, as their names do on
-Home; a live channel's past broadcasts are a row of their own. A
+Following; a live channel's past broadcasts are a row of their own. A
 playing pane's quality menu is a row too, once you have typed something:
 `Choose quality for …` brings the pane's controls up with the menu open. Every
 tab is a `Go to` row, and going back to watching or stopping everything is
@@ -782,8 +760,8 @@ opened was a recording you had not finished, it leads the empty palette, so
 ## Past broadcasts
 
 Every channel has a page of what it broadcast before: click an offline name on
-Home, the **Past broadcasts** control that appears on a live card,
-or the palette's row for it — or search for it by name, since a search lists
+Following, the **Past broadcasts** control that appears on a live card or
+under a pane's picture, or the palette's row for it — or search for it by name, since a search lists
 the channels that answer to it and are not on, as names under the live ones.
 The recordings are cards like the streams are, with the length where a
 stream's card has its viewer count, and how long ago it was underneath. One
@@ -822,15 +800,15 @@ bar, and clicking it opens the speeds again. It belongs to the pane: a
 quality change keeps it, nothing saves it, and whatever the pane plays next
 starts at 1x. The chat replay keeps pace.
 
-Every recording you open is kept on the **History** tab, newest first: the ones
-you are part-way through under *Continue watching*, each saying where you left
-it, then the ones you finished. The first row of the unfinished ones is on
-Home too. Opening a recording again — from there, from its
+Every recording you open is kept on the **Library** tab, newest first: the
+ones you are part-way through under *Continue watching*, each saying where you
+left it, then the ones you finished. The first row of the unfinished ones is
+on Following too. Opening a recording again — from there, from its
 channel's page, or from the palette — picks up where you left it, and the pane
 says so while it opens; one watched to within a minute of its end starts from
 the top, and a link with a `?t=` goes where the link says. Cards on a channel's
 page carry the same bar along the bottom of the picture, so you can see which
-ones you have seen; on the History tab a highlight or an upload says which it is
+ones you have seen; on the Library tab a highlight or an upload says which it is
 under its title. **Forget** on a card's picture takes one off; **Clear
 history** takes the lot. Either says so in a toast with an **Undo**, which puts
 them back where they were, places and all. The list is `history.json` beside
@@ -941,16 +919,16 @@ Neither can do the other's job.
 
 **Sign out**, at the foot of the settings sheet beside who is signed in,
 forgets the sign-in at once and leaves the app as it is with nobody signed
-in: the follows go, and the settings sheet, Home, the browse lists and every
+in: the follows go, and the settings sheet, Following, the browse lists and every
 chat offer **Sign in**, which shows a new code to enter at
 `twitch.tv/activate`. Everything else in settings stays
 as it was. The next launch starts signing in again on its own, as a first
 launch with a Client ID does.
 
 When signing in fails — the code left to run out, Twitch out of reach, the
-connection stopping after an error — Home and the settings sheet say why,
+connection stopping after an error — Following and the settings sheet say why,
 and they and every chat offer **Sign in** (beside **Sign out** in the
-sheet), which tries the stored sign-in again before it shows a new code. Home has **Open settings**
+sheet), which tries the stored sign-in again before it shows a new code. Following has **Open settings**
 beside it too, for a Client ID Twitch will not take.
 
 To create the Client ID: register an application, set **OAuth Redirect URL** to
@@ -958,7 +936,7 @@ To create the Client ID: register an application, set **OAuth Redirect URL** to
 to **Public**. No client secret — sign-in uses the device code flow, so nothing
 secret is ever stored in the binary. Paste the Client ID into settings and the
 title bar will show a code to enter at `twitch.tv/activate`, on either page, until
-the sign-in lands; Home shows it too.
+the sign-in lands; Following shows it too.
 
 The auth-token cookie is a **full account credential**, and it is worth knowing
 exactly where it goes before you paste one in. It is stored in plain text, which

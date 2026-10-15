@@ -223,25 +223,16 @@ pub enum ChatViewEvent {
     ReturnKeys,
     /// The card's × acted on the first press of a run and took the card
     /// from under the pointer: have the rest of the run heard by nothing
-    /// (`RootView::run_guard`). `Watch` and a `Channel page` that goes move
-    /// the page too, and the root takes the run itself as it carries them
-    /// out; a `Channel page` that asks first moves nothing.
+    /// (`RootView::run_guard`). `Watch` and `Channel page` move the page
+    /// too, and the root takes the run itself as it carries them out.
     TakeRestOfRun,
     /// The card's `Watch`, offered while `login` is live and another pane
-    /// fits: add their stream beside the panes, as the guide's `+ Add`
+    /// fits: add their stream beside the panes, as a stream card's `+ Add`
     /// does, and stay on the watch page. The card has closed.
     Watch { login: String },
     /// The card's `Channel page`: open Perch's page of `login`'s past
-    /// broadcasts and schedule, which leaves the watch page. Unless
-    /// `confirmed`, the root first asks whether leaving would stop panes,
-    /// and if it would, asks the card to ask for a second press
-    /// (`ChatView::confirm_leaving`) rather than going; `confirmed` is that
-    /// second press.
-    ChannelPage {
-        login: String,
-        display_name: String,
-        confirmed: bool,
-    },
+    /// broadcasts and schedule, on the browse page, beside the panes.
+    ChannelPage { login: String, display_name: String },
 }
 
 impl EventEmitter<ChatViewEvent> for ChatView {}
@@ -1538,9 +1529,9 @@ impl Render for ChatView {
 
         // Where the pointer is, against where the list was last laid out.
         // Before `at_live` is read: releasing held rows changes it.
-        // Not while the pointer is on the guide over the chat, which would
-        // otherwise hold its rows for as long as the guide was being read,
-        // or on another pane's card; see `crate::veil`. This chat's own card
+        // Not while the pointer is on another pane's card risen over the
+        // chat, which would otherwise hold its rows for as long as the card
+        // was being read; see `crate::veil`. This chat's own card
         // is the chat's, risen out of the list box or not, so the pointer on
         // it holds the rows its lines are found among. With no card open,
         // its cover goes before any probe reads it.

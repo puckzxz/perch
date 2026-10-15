@@ -1,5 +1,5 @@
-//! The history tab: every recording opened, newest first, each one where it
-//! was left.
+//! The Library tab: every recording opened, newest first, each one where
+//! it was left — the watch history, which is what the module is named for.
 //!
 //! The thing it answers is "that twelve-hour stream I was halfway through".
 //! Without it the way back was the channel, then the recording, then the
@@ -113,7 +113,7 @@ fn byline(watched: &Watched, now: DateTime<Utc>) -> String {
 
 /// Whether `watched` is one still to pick up: not watched to its end, or near
 /// enough — see `settings::history::finished_at`. What the tab's Continue
-/// watching lists, and Home's, which is the same list cut to one row: one
+/// watching lists, and Following's, which is the same list cut to one row: one
 /// test, so the two never disagree about what is left to finish.
 pub(crate) fn unfinished(watched: &Watched) -> bool {
     !watched.finished
@@ -121,7 +121,7 @@ pub(crate) fn unfinished(watched: &Watched) -> bool {
 
 /// One history entry's card: the recording as a channel's page draws it,
 /// where it was left, said by whose it is and when, with the offer to
-/// forget it. The tab's, and Home's Continue watching, which shows the same
+/// forget it. The tab's, and Following's Continue watching, which shows the same
 /// cards and does the same things with them.
 ///
 /// `index` has to be unique on the page, since the card's element ids are
@@ -214,7 +214,7 @@ pub fn view<V: 'static>(
     } else {
         "Continue watching"
     };
-    let mut list = browse::scroller("history-grid", scroll, room.bottom).child(
+    let mut list = browse::scroller("history-grid", scroll).child(
         div()
             .flex()
             .flex_row()

@@ -6,6 +6,7 @@ use gpui::{App, Context, IntoElement, KeyDownEvent, Window};
 use gpui_component::input::Input;
 
 use super::panes::pane_keys;
+use super::streams::Opening;
 use super::{pop_out, Page, RootView};
 use crate::channel_page;
 use crate::history_page;
@@ -141,8 +142,12 @@ impl RootView {
         }
 
         match command {
-            palette::Command::Watch(channel) => self.open_channel(channel, true, window, cx),
-            palette::Command::Add(channel) => self.open_channel(channel, false, window, cx),
+            palette::Command::Watch(channel) => {
+                self.open_channel(channel, Opening::InPlace, window, cx)
+            }
+            palette::Command::Add(channel) => {
+                self.open_channel(channel, Opening::Beside, window, cx)
+            }
             palette::Command::Close(index) => self.close_slot(index, window, cx),
             palette::Command::ChooseQuality(index) => self.choose_quality(index, window, cx),
             // More's rows by name, down the route More takes, by the pane's
@@ -186,7 +191,7 @@ impl RootView {
                     .get(&id)
                     .map(|watched| history_page::video(watched, chrono::Utc::now()))
                 {
-                    self.open_video(video, true, window, cx);
+                    self.open_video(video, Opening::InPlace, window, cx);
                 }
             }
             palette::Command::ShowTab(tab) => self.go_to_tab(tab, window, cx),

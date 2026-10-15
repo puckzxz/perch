@@ -52,9 +52,8 @@
 //! keys are [`CONTEXT_POPOUT`]'s: `Space`, `M`, the arrows, `P` to bring it
 //! back and `Ctrl+W` to close it, and nothing of the watch page's — `Esc`
 //! least of all, since a stray press there would move video between
-//! windows. `P` on the watch page pops the active pane out or brings it
-//! back; on the browse page, which has no active pane, it is the mini
-//! player's, every pane it shows out or every popped pane back.
+//! windows. `P` pops the active pane out or brings it back, on the watch
+//! page and beside the browse page alike.
 
 use gpui::{actions, Action, App, KeyBinding};
 
@@ -75,9 +74,8 @@ actions!(
         ToggleSidebar,
         /// Close the active pane.
         ClosePane,
-        /// Leave the watch page, keeping the streams playing, with their
-        /// sound, in the mini player — or stopping them, with it turned off.
-        /// Once whatever is in the way has gone: a pane being dragged, which
+        /// Bring the browse page up beside the panes, which play on with
+        /// their sound. Once whatever is in the way has gone: a pane being dragged, which
         /// is let go where it was, an open menu, then a pane given the whole
         /// page, which shows every pane again first.
         GoBrowse,
@@ -113,9 +111,8 @@ actions!(
         /// Forward again along the trail, after going back.
         NavigateForward,
         /// Move the active pane into a window of its own, on top of every
-        /// other app, or bring it back from one; on the browse page, every
-        /// pane the mini player shows, or every one out back. Windows only
-        /// for now; see `root::pop_out`.
+        /// other app, or bring it back from one, from either page. Windows
+        /// only for now; see `root::pop_out`.
         TogglePopOut,
         /// Give the active pane the whole watch page, chat and all, or show
         /// every pane again from the pane that has it. The others are drawn
@@ -298,15 +295,16 @@ fn bindings() -> Vec<KeyBinding> {
         // one along, or the one before.
         KeyBinding::new("tab", NextPane, Some(&watch)),
         KeyBinding::new("shift-tab", PreviousPane, Some(&watch)),
-        // Out into a window of its own, and back: the active pane here, the
-        // mini player's panes on the browse page, which has no active pane,
-        // and the pane itself in its window. Not `escape` in the pop-out,
+        // Out into a window of its own, and back: the active pane, on the
+        // watch page and beside the browse page, and the pane itself in its
+        // window. Not `escape` in the pop-out,
         // which a stray press would turn into video jumping between windows.
         KeyBinding::new("p", TogglePopOut, Some(&watch)),
         KeyBinding::new("p", TogglePopOut, Some(&browse)),
         // The active pane given the whole page, or every pane back. The
-        // watch page's alone: the browse page draws every pane as a tile,
-        // and a pane in a window of its own is not on the page to fill it.
+        // watch page's alone: beside the browse page the panes share the
+        // window with it, and a pane in a window of its own is not on the
+        // page to fill it.
         KeyBinding::new("z", ToggleMaximize, Some(&watch)),
         // The active pane one place along the order, as a drag of its header
         // swaps it. Shift and an arrow rather than `[` and `]`, which need
@@ -451,12 +449,12 @@ pub const SHORTCUTS: [(&[&str], &str, &str); 22] = [
     (&["shift-right"], shift!("→"), "Move this pane later"),
     (&["z"], "Z", "Give this pane the window, or show them all"),
     (&["secondary-w"], secondary!("W"), "Close this pane"),
+    (&["p"], "P", "Pop this pane out, or bring it back (Windows)"),
     (
-        &["p"],
-        "P",
-        "Pop this pane out, or bring it back — every pane, from the mini player (Windows)",
+        &["escape"],
+        "Esc",
+        "Browse beside what is playing, or back to watching",
     ),
-    (&["escape"], "Esc", "Back to browsing, or to watching"),
     (
         &["alt-left"],
         alt!("←"),
@@ -536,6 +534,9 @@ hints! {
     PopOut => "p" as TogglePopOut,
     // The bar's maximize control, as `Maximize` and as `Show all panes`.
     Maximize => "z" as ToggleMaximize,
+    // A pane's Browse, on its bar or its header, while the browse page is
+    // away: `Esc` on the watch page brings it up as the press does.
+    Browse => "escape" as GoBrowse,
 }
 
 impl Hint {
@@ -788,8 +789,8 @@ mod tests {
         }
     }
 
-    /// `P` answers in all three places it means something: the watch page's
-    /// active pane, the browse page's mini player and the pop-out's own
+    /// `P` answers in all three places it means something: the active pane,
+    /// on the watch page and beside the browse page, and the pop-out's own
     /// pane. A `p` typed into the search box, which is over both pages, is
     /// the box's, and nothing behind a modal hears it.
     #[test]
