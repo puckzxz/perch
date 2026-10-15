@@ -1,6 +1,5 @@
 //! The window's title bar, which Perch draws itself in place of the
-//! platform's: the rail button, back and forward and the search box at the
-//! left, a strip to drag the window by, the settings gear — with the sign-in
+//! platform's: the rail button, Browse and the search box at the left, a strip to drag the window by, the settings gear — with the sign-in
 //! beside it while there is none — and on Windows the minimise, maximise and
 //! close buttons.
 //!
@@ -50,9 +49,9 @@ use gpui::{
 };
 use gpui_component::input::Input;
 
-use super::RootView;
+use super::{Page, RootView};
 use crate::assets::Icon;
-use crate::browse::{SignIn, Tab};
+use crate::browse::SignIn;
 use crate::controls::{self, Variant};
 use crate::keys::Hint;
 use crate::{layout, theme};
@@ -134,7 +133,7 @@ fn shape(platform: Platform, fullscreen: bool) -> Option<Shape> {
 
 /// The narrowest the bar can be with nothing that must stay on it pushed off
 /// its right end: the room kept for the traffic lights, the rail button and
-/// back and forward at the left, the least of the drag strip, the gear with
+/// Browse at the left, the least of the drag strip, the gear with
 /// its margin and the sign-in text's, and on Windows the three caption
 /// buttons.
 ///
@@ -144,11 +143,12 @@ fn shape(platform: Platform, fullscreen: bool) -> Option<Shape> {
 /// happen. The search box is not counted: it is the first thing the bar gives
 /// up (see `title_bar_leading`), and a window this narrow has no use for it.
 /// While the sign-in is said in the bar it shares the leading group's room,
-/// so the arrows can be cut short then; the caption buttons cannot. Something
+/// so Browse can be cut short then; the caption buttons cannot. Something
 /// added to the bar that must stay on screen is added here too.
 fn least_width(shape: Shape) -> f32 {
-    // Padding either side of the three buttons, and the two gaps between them.
-    let leading = 3.0 * theme::ICON_BUTTON + 4.0 * theme::GAP_TIGHT;
+    // Padding either side of the rail button and Browse, and the gap
+    // between them.
+    let leading = theme::ICON_BUTTON + theme::BROWSE_PILL_ROOM + 3.0 * theme::GAP_TIGHT;
     let gear = theme::ICON_BUTTON + 2.0 * theme::GAP_TIGHT;
     let captions = if shape.caption_buttons {
         3.0 * theme::CAPTION_BUTTON_WIDTH
@@ -298,17 +298,18 @@ impl RootView {
         Some(bar.into_any_element())
     }
 
-    /// The rail button, Home, back and forward, and the search box: the
-    /// page-level controls, at the left of the bar, before the drag strip.
+    /// The rail button, Browse and the search box: the page-level
+    /// controls, at the left of the bar, before the drag strip. Back,
+    /// forward and the way to Following were here too, and went to the
+    /// browse page's own strip, whose places they are (`tab_strip`).
     ///
     /// One group, so one veil covers them all while a modal is up: the sheet
     /// and the palette cover the page under the bar, and nothing in the bar
     /// should change that page behind them. The veil only stops the pointer;
     /// the keyboard is kept off the box by the sheet taking focus when it
-    /// opens (`toggle_settings`) and by the palette's own box having it, and
-    /// back and forward are bound on the pages and not in a modal. The gear
-    /// and the caption buttons are outside the group and stay live, and so
-    /// does the drag strip.
+    /// opens (`toggle_settings`) and by the palette's own box having it. The
+    /// gear and the caption buttons are outside the group and stay live, and
+    /// so does the drag strip.
     fn title_bar_leading(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let modal = self.modal_open();
 
@@ -320,46 +321,33 @@ impl RootView {
                 this.toggle_sidebar(window, cx);
             }));
 
-        // Back and forward, each drawn as waiting while it has nowhere to go:
-        // the arrows stay where they are rather than the box moving under
-        // the pointer, and a press on a waiting one does nothing because
-        // there is nothing there to press.
-        let back = if self.can_back() {
-            controls::icon_button("title-back", Icon::Back, Variant::Chrome)
-                .tooltip(controls::tip(Hint::Back.tooltip("Back")))
-                .on_click(cx.listener(|this, _event, window, cx| {
-                    // See the gear's handler.
-                    this.focus.focus(window);
-                    this.go_back(window, cx);
-                }))
-                .into_any_element()
-        } else {
-            controls::icon_waiting(Icon::Back).into_any_element()
+        // The browse page beside the panes, or put away again: a pane's
+        // Browse, for the pane the keys talk to already
+        // (`toggle_browse_page`). Lit while the page is up, as the open
+        // tab is. With nothing to go back to watching, the page is all
+        // there is, and the pill only says where you are. Its id and words
+        // follow which it is, so a tooltip up over one does not outlive the
+        // press that changed it.
+        let browsing = self.page == Page::Browse;
+        let (id, variant, tip) = match (browsing, self.slots.is_empty()) {
+            (false, _) => (
+                "title-browse",
+                Variant::Chrome,
+                Some(Hint::Browse.tooltip("Browse what else is on")),
+            ),
+            (true, false) => (
+                "title-browse-open",
+                Variant::Selected,
+                Some("Back to watching".to_string()),
+            ),
+            (true, true) => ("title-browse-only", Variant::Selected, None),
         };
-        let forward = if self.can_forward() {
-            controls::icon_button("title-forward", Icon::Forward, Variant::Chrome)
-                .tooltip(controls::tip(Hint::Forward.tooltip("Forward")))
-                .on_click(cx.listener(|this, _event, window, cx| {
-                    // See the gear's handler.
-                    this.focus.focus(window);
-                    this.go_forward(window, cx);
-                }))
-                .into_any_element()
-        } else {
-            controls::icon_waiting(Icon::Forward).into_any_element()
-        };
-
-        // Home from anywhere, in one press: the watch page included, which
-        // it leaves the way `Esc` does, so whatever plays carries on beside
-        // the browse page. One step on the trail,
-        // so back returns. Always live, unlike the arrows: on Home already,
-        // a press changes nothing and records nothing.
-        let home = controls::icon_button("title-home", Icon::Home, Variant::Chrome)
-            .tooltip(controls::tip("Home"))
+        let browse = controls::pill(id, "Browse", variant)
+            .when_some(tip, |pill, tip| pill.tooltip(controls::tip(tip)))
             .on_click(cx.listener(|this, _event, window, cx| {
                 // See the gear's handler.
                 this.focus.focus(window);
-                this.go_to_tab(Tab::Following, window, cx);
+                this.toggle_browse_page(cx);
             }));
 
         // Its own width while the bar has room. In a narrow window it gives
@@ -368,10 +356,14 @@ impl RootView {
         // that keeps `TITLE_BAR_DRAG_MIN`. A width rather than growing into
         // the bar, because whatever the box grew into and did not draw on
         // would be neither box nor drag strip — a dead patch of bar.
+        // With a probe over it saying where it is, for the suggestions hung
+        // under it (`search_box`).
         let search = div()
+            .relative()
             .w(px(theme::SEARCH_WIDTH))
             .min_w(px(theme::SEARCH_MIN_WIDTH))
-            .child(Input::new(&self.search).cleanable(true));
+            .child(Input::new(&self.search).cleanable(true))
+            .child(self.search_probe(cx));
 
         div()
             .relative()
@@ -398,9 +390,7 @@ impl RootView {
             .gap(px(theme::GAP_TIGHT))
             .px(px(theme::GAP_TIGHT))
             .child(rail)
-            .child(home)
-            .child(back)
-            .child(forward)
+            .child(browse)
             .child(search)
             // Last, so it is over them all. It takes the pointer without
             // doing anything with it; the modal is what to answer.

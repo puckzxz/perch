@@ -12,7 +12,10 @@
 //! It is not a second search box. The search box asks *Twitch* a question and
 //! costs a request; this filters what the app already knows — who is live, what
 //! is open, what has been watched, what it can do — and costs nothing, which is
-//! why it can run on every keystroke.
+//! why it can run on every keystroke. The search box borrows it for that: what
+//! it suggests as you type is this list's channels and recordings
+//! ([`suggestions`]), drawn as these rows ([`rows`]), under one row that asks
+//! Twitch.
 
 use gpui::{div, prelude::*, px, Context, SharedString};
 use settings::history::Watched;
@@ -84,6 +87,9 @@ pub enum Command {
     },
     /// Play a recording from the history, where it was left.
     Resume(String),
+    /// Ask Twitch for this, as the search box does on `Enter`: the first of
+    /// the box's suggestions, never one of the palette's own rows.
+    Search(String),
     /// Show one of the browse page's tabs, from wherever the app is.
     ShowTab(Tab),
     GoWatch,
@@ -154,8 +160,8 @@ pub struct Entry {
 /// (live channels by viewers, then commands), and re-ranking it by how well a
 /// three-letter query matched would throw that away for no gain at this size.
 ///
-/// Public because Following's filter uses the same test: one idea of
-/// what "matches" means, wherever the user types a few letters of a name.
+/// One idea of what "matches" means wherever the user types a few letters
+/// of a name: here, and so in the search box's suggestions too.
 pub fn matches(haystack: &str, needle: &str) -> bool {
     if needle.is_empty() {
         return true;
@@ -253,8 +259,8 @@ fn resume_row(watched: &Watched) -> Entry {
 
 /// Whether a history entry answers to `query`: its channel, by the same
 /// few-letters match as every name here, or its title, containing the query
-/// whole — see [`TITLE_QUERY_MIN`]. Following's filter narrows its Continue
-/// watching by the same test.
+/// whole — see [`TITLE_QUERY_MIN`]. The search box's suggestions find a
+/// recording by the same test, being this list's.
 pub(crate) fn watched_matches(watched: &Watched, query: &str) -> bool {
     if matches(&watched.channel_name, query) || matches(&watched.channel_login, query) {
         return true;
@@ -541,8 +547,55 @@ pub fn entries(
     entries
 }
 
-/// The list, as rows. `selected` is an index into `entries`, already clamped.
-fn rows<V: 'static>(
+/// The most the search box suggests from what Perch knows, under its row
+/// that asks Twitch: as many as the palette shows, so the two lists are one
+/// size.
+const SUGGESTIONS_MAX: usize = MAX_ROWS - 1;
+
+/// What the title bar's search box suggests for `query` as it is typed:
+/// first asking Twitch for it, which is what `Enter` has always done there,
+/// then the channels and recordings the palette would offer for it — a
+/// channel to watch or add, its past broadcasts, a recording to carry on
+/// with, a pasted link — and none of the palette's commands, which are
+/// things to do rather than things to find. Nothing for an empty query.
+#[allow(clippy::too_many_arguments)]
+pub fn suggestions(
+    query: &str,
+    follows: &[LiveStream],
+    offline: &[Channel],
+    recent: &[String],
+    history: &[Watched],
+    watching: &[OpenPane],
+    can_add: bool,
+) -> Vec<Entry> {
+    let query = query.trim();
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let ask = Entry {
+        command: Command::Search(query.to_string()),
+        title: SharedString::from(format!("Search Twitch for “{query}”")),
+        kind: "search".into(),
+    };
+    let found = entries(query, follows, offline, recent, history, watching, can_add)
+        .into_iter()
+        .filter(|entry| {
+            matches!(
+                entry.command,
+                Command::Watch(_)
+                    | Command::Add(_)
+                    | Command::Videos { .. }
+                    | Command::OpenVideo { .. }
+                    | Command::Resume(_)
+            )
+        })
+        .take(SUGGESTIONS_MAX);
+    std::iter::once(ask).chain(found).collect()
+}
+
+/// The list, as rows: the palette's, and the search box's suggestions.
+/// `selected` is an index into `entries`, already clamped.
+pub(crate) fn rows<V: 'static>(
     entries: &[Entry],
     selected: usize,
     on_run: impl Fn(&mut V, usize, &mut gpui::Window, &mut Context<V>) + Clone + 'static,
@@ -677,6 +730,33 @@ mod tests {
             thumbnail_url: String::new(),
             started_at: String::new(),
         }
+    }
+
+    /// The search box's suggestions lead with asking Twitch, which is what
+    /// `Enter` there has always done, then the palette's channels and
+    /// recordings for the same query — never its commands — and are nothing
+    /// at all for nothing typed.
+    #[test]
+    fn suggestions_ask_twitch_first_and_offer_only_things() {
+        let follows = [stream("forsen", "Forsen")];
+        let found = suggestions("for", &follows, &[], &[], &[], &[], true);
+        assert_eq!(found[0].command, Command::Search("for".into()));
+        assert!(found
+            .iter()
+            .any(|entry| entry.command == Command::Watch("forsen".into())));
+
+        // `refresh` is a login as well as a command: the channel by that name
+        // is offered, as the palette offers it, and the command is not.
+        let refresh = suggestions("refresh", &[], &[], &[], &[], &[], true);
+        assert_eq!(refresh[0].command, Command::Search("refresh".into()));
+        assert!(
+            !refresh
+                .iter()
+                .any(|entry| matches!(entry.command, Command::Refresh)),
+            "a command came along: {refresh:?}"
+        );
+
+        assert!(suggestions("  ", &follows, &[], &[], &[], &[], true).is_empty());
     }
 
     #[test]

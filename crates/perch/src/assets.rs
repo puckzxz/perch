@@ -49,7 +49,7 @@ macro_rules! icon {
 /// Anything not on this list is answered `None`, which is exactly what the app
 /// did for all of them until now — so an icon nobody drew degrades to the
 /// blank it already was rather than to a crash.
-const ICONS: [(&str, &[u8]); 34] = [
+const ICONS: [(&str, &[u8]); 33] = [
     icon!("arrow-left"),
     icon!("arrow-right"),
     icon!("browse"),
@@ -64,7 +64,6 @@ const ICONS: [(&str, &[u8]); 34] = [
     icon!("eye"),
     icon!("fullscreen"),
     icon!("fullscreen-exit"),
-    icon!("home"),
     icon!("inbox"),
     icon!("minus"),
     icon!("more"),
@@ -122,8 +121,6 @@ perch_icons! {
     Rail => "panel-left",
     Back => "arrow-left",
     Forward => "arrow-right",
-    // The title bar's way to Home from anywhere, beside back and forward.
-    Home => "home",
     Settings => "settings",
     Minimize => "minus",
     Maximize => "window-maximize",

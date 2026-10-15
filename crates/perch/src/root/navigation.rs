@@ -1,6 +1,6 @@
 //! Back and forward: where the app is, as a place the trail can hold
 //! ([`Route`]), the trail itself (`crate::trail`), and the three ways along
-//! it — the title bar's arrows, `Alt+←` and `Alt+→`, and the mouse's side
+//! it — the browse page's arrows, `Alt+←` and `Alt+→`, and the mouse's side
 //! buttons.
 //!
 //! The trail is history and nothing more. What the browse page shows is still
@@ -115,14 +115,14 @@ impl RootView {
         out
     }
 
-    /// Whether back has anywhere to go, for the title bar's arrow.
+    /// Whether back has anywhere to go, for the browse page's arrow.
     pub(super) fn can_back(&self) -> bool {
         let playing = !self.slots.is_empty();
         self.trail
             .can_back(&self.here(), |route| reachable(route, playing))
     }
 
-    /// Whether forward has anywhere to go, for the title bar's arrow.
+    /// Whether forward has anywhere to go, for the browse page's arrow.
     pub(super) fn can_forward(&self) -> bool {
         let playing = !self.slots.is_empty();
         self.trail
@@ -227,7 +227,7 @@ impl RootView {
     /// press alone.
     ///
     /// With the settings sheet or the palette up the buttons do nothing, as
-    /// the keys and the title bar's arrows do nothing: nothing navigates
+    /// the keys and the browse page's arrows do nothing: nothing navigates
     /// behind a modal.
     ///
     /// On Windows a side button over the title bar's empty strip or a caption

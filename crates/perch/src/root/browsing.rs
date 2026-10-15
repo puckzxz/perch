@@ -196,7 +196,7 @@ impl RootView {
     /// which asks again for the results already up and has no business moving
     /// the page: a refresh from the palette on the watch page refetches them
     /// where they are, as it does every other list.
-    fn ask_search(&mut self, query: String, cx: &mut Context<Self>) {
+    pub(super) fn ask_search(&mut self, query: String, cx: &mut Context<Self>) {
         // Seeded with the query before the answer arrives, so the page can say
         // what it is waiting for and can recognise a stale reply when it lands.
         self.discovery.open = None;
@@ -244,17 +244,6 @@ impl RootView {
                 this.discovery.open = None;
                 this.discovery.streams.clear();
                 cx.notify();
-            }
-            // What was typed into Following's filter moves to the box
-            // that asks Twitch, and is asked there — so the results page says
-            // what it is showing, and back does not return to a filter that
-            // still matches nobody.
-            Action::Search(query) => {
-                this.filter
-                    .update(cx, |state, cx| state.set_value("", window, cx));
-                this.search
-                    .update(cx, |state, cx| state.set_value(query.clone(), window, cx));
-                this.run_search(query, cx);
             }
             Action::CloseSearch => {
                 this.end_search(window, cx);

@@ -502,14 +502,22 @@ pub const PAGE_PAD: f32 = 20.0;
 /// looked right.
 pub const TAB_STRIP_HEIGHT: f32 = 52.0;
 /// How wide the title bar's search box is when the bar has the room: wide
-/// enough for a channel's name and a few words of a game.
-pub const SEARCH_WIDTH: f32 = 260.0;
+/// enough for what it says it searches, and for a channel's name and a few
+/// words of a game typed into it. Its suggestions hang under it this wide
+/// too (`root::search_box`).
+pub const SEARCH_WIDTH: f32 = 380.0;
 /// The least the search box shrinks to in a narrow window: still room for a
 /// name to be typed and seen. The bar's drag strip never shrinks below
 /// [`TITLE_BAR_DRAG_MIN`], so in a window narrower still the box does not
 /// take the strip's room. It is cut off at its right end instead; see
 /// `root::title_bar`.
 pub const SEARCH_MIN_WIDTH: f32 = 160.0;
+
+/// The room the title bar's Browse pill takes: its one word at the label
+/// size and its padding, a little over, for the bar's least width
+/// (`root::title_bar::least_width`), which keeps the caption buttons on
+/// screen.
+pub const BROWSE_PILL_ROOM: f32 = 64.0;
 
 /// The title bar Perch draws in place of the platform's.
 ///

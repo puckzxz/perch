@@ -17,9 +17,10 @@
 //! results show, each saying when it was last live (`crate::last_live`).
 //! What this module adds is which of them, and in what order: [`continuing`],
 //! [`by_last_watched`] and [`split_pins`], pure and tested. Each heading
-//! carries how many are under it, after the filter ([`counted`]), but
-//! Recommended's, which is a ranked handful rather than a count of anything
-//! yours.
+//! carries how many are under it ([`counted`]), but Recommended's, which is
+//! a ranked handful rather than a count of anything yours. It had a filter
+//! box of its own over the page, until the title bar's search box came to
+//! answer from what Perch knows as you type (`root::search_box`).
 
 use std::collections::HashMap;
 
@@ -33,7 +34,7 @@ use crate::browse::{self, Action, SignIn, Tab};
 use crate::last_live::LastLive;
 use crate::recommended::{self, Suggestion};
 use crate::sidebar::{self, Row};
-use crate::{controls, history_page, layout, palette, theme};
+use crate::{controls, history_page, layout, theme};
 
 /// The most recordings Continue watching shows, however wide the window.
 ///
@@ -72,36 +73,34 @@ pub struct Lists<'a> {
 }
 
 /// What Continue watching shows: the recordings, whether the history has
-/// more than fitted, and how many matched in all.
+/// more than fitted, and how many there are in all.
 #[derive(Debug, PartialEq)]
 pub struct Continuing<'a> {
     pub shown: Vec<&'a Watched>,
-    /// More matched than the row holds, which is what offers "Show all".
+    /// More than the row holds, which is what offers "Show all".
     pub more: bool,
-    /// Every unfinished recording that matched, shown or not: the count on
-    /// the heading, which says how much "Show all" has behind it.
+    /// Every unfinished recording, shown or not: the count on the heading,
+    /// which says how much "Show all" has behind it.
     pub total: usize,
 }
 
-/// The unfinished recordings that match `filter`, most recently watched
-/// first, at most `row` of them — and never more than [`CONTINUING_MAX`],
-/// nor fewer than one while there is one to show.
+/// The unfinished recordings, most recently watched first, at most `row` of
+/// them — and never more than [`CONTINUING_MAX`], nor fewer than one while
+/// there is one to show.
 ///
 /// Unfinished is the Library tab's own test (`history_page::unfinished`),
 /// so the two Continue watchings list the same recordings. Most recently
 /// watched first is the history's own order: opening a recording or getting
 /// further into it moves it to the front (`History::opened`,
-/// `History::progressed`). A filter matches as the palette's does, by the
-/// channel's name or by the title holding what was typed.
-pub fn continuing<'a>(history: &'a History, filter: &str, row: usize) -> Continuing<'a> {
+/// `History::progressed`).
+pub fn continuing(history: &History, row: usize) -> Continuing<'_> {
     let cap = row.clamp(1, CONTINUING_MAX);
-    let mut matching = history
+    let mut unfinished = history
         .videos
         .iter()
-        .filter(|watched| history_page::unfinished(watched))
-        .filter(|watched| palette::watched_matches(watched, filter));
-    let shown: Vec<&Watched> = matching.by_ref().take(cap).collect();
-    let rest = matching.count();
+        .filter(|watched| history_page::unfinished(watched));
+    let shown: Vec<&Watched> = unfinished.by_ref().take(cap).collect();
+    let rest = unfinished.count();
     Continuing {
         total: shown.len() + rest,
         more: rest > 0,
@@ -109,10 +108,9 @@ pub fn continuing<'a>(history: &'a History, filter: &str, row: usize) -> Continu
     }
 }
 
-/// A heading with how many are under it: "Live now · 23". The count is of
-/// what the section lists after the filter, so typing in the box counts
-/// down with it; Continue watching counts every match, including those
-/// behind "Show all".
+/// A heading with how many are under it: "Live now · 23". Continue
+/// watching counts every unfinished recording, including those behind "Show
+/// all".
 fn counted(label: &str, count: usize) -> String {
     format!("{label} · {count}")
 }
@@ -169,7 +167,7 @@ struct Sections {
 }
 
 impl Sections {
-    /// From how much each section has, after the filter. Every other
+    /// From how much each section has. Every other
     /// section always says what it is when it is there: Continue watching
     /// has "Show all" on its heading's line, and the rest come before or
     /// after another kind of card.
@@ -189,63 +187,40 @@ impl Sections {
             offline: offline > 0,
         }
     }
-
-    fn any(self) -> bool {
-        self.pinned || self.live || self.continuing || self.recommended || self.offline
-    }
 }
 
 /// Pinned as the page draws it, from the rail's rows of it in their order:
 /// who is on as cards, as Live now draws them, and everyone else as names,
 /// as Offline does — a pin no list has placed yet by its login, which is all
-/// the rail shows of it either. Only what `keep` lets through, which is the
-/// filter.
-pub fn split_pins<'a>(
-    rows: &[Row<'a>],
-    keep: impl Fn(&str, &str) -> bool,
-) -> (Vec<&'a LiveStream>, Vec<Channel>) {
+/// the rail shows of it either.
+pub fn split_pins<'a>(rows: &[Row<'a>]) -> (Vec<&'a LiveStream>, Vec<Channel>) {
     let mut live = Vec::new();
     let mut off = Vec::new();
     for row in rows {
         match *row {
-            Row::Live(stream) if keep(&stream.display_name, &stream.user_login) => {
-                live.push(stream)
-            }
-            Row::Offline(channel) if keep(&channel.display_name, &channel.login) => {
-                off.push(channel.clone())
-            }
-            Row::Unknown(login) if keep(login, login) => off.push(Channel {
+            Row::Live(stream) => live.push(stream),
+            Row::Offline(channel) => off.push(channel.clone()),
+            Row::Unknown(login) => off.push(Channel {
                 login: login.to_string(),
                 user_id: String::new(),
                 display_name: login.to_string(),
             }),
             // Never a pin's row; see `sidebar::groups`.
             Row::Recommended(_) => {}
-            _ => {}
         }
     }
     (live, off)
 }
 
-/// The page.
-///
-/// Under one scroller, so there is only ever one thing to scroll, with the
-/// filter box over it. The box narrows every section as it is typed: a
-/// name you follow, pinned or recommended, or a recording by its channel or
-/// its title. It is the
-/// palette's matcher, and it exists because the offline list is the longest
-/// thing in the app and the box in the title bar asks Twitch, not the app.
+/// The page, under one scroller, so there is only ever one thing to scroll.
 ///
 /// With no follows at all — signed out, signing in, the first poll still
 /// out — the page is the follows' empty state (`browse::empty_state`),
 /// sign-in included, with Continue watching over it when there is anything
 /// to continue: the history is the app's own, and needs no sign-in to play
 /// from.
-#[allow(clippy::too_many_arguments)]
 pub fn view<V: 'static>(
     lists: Lists,
-    filter: &str,
-    filter_box: AnyElement,
     room: layout::Room,
     cache: &ImageCache,
     can_add: bool,
@@ -259,9 +234,9 @@ pub fn view<V: 'static>(
     // than "nothing here". Both lists have to be empty: signed in with
     // everybody offline is not the same as not signed in, and testing only
     // the live one would hide the sign-in prompt behind a stale offline list
-    // after a client id change. No filter box here, so nothing filters.
+    // after a client id change.
     if lists.live.is_empty() && lists.offline.is_empty() {
-        let continuing = continuing(lists.history, "", row);
+        let continuing = continuing(lists.history, row);
         let empty = browse::empty_state(lists.sign_in, lists.follows_loaded, on_action.clone(), cx);
         if continuing.shown.is_empty() {
             return empty;
@@ -291,9 +266,6 @@ pub fn view<V: 'static>(
             .into_any_element();
     }
 
-    let filter = filter.trim();
-    let keep =
-        |name: &str, login: &str| palette::matches(name, filter) || palette::matches(login, filter);
     let groups = sidebar::groups(
         lists.live,
         lists.offline,
@@ -302,21 +274,15 @@ pub fn view<V: 'static>(
         lists.pinned,
         lists.follows_loaded,
     );
-    let (pinned_live, pinned_off) = split_pins(&groups.pinned, keep);
-    let live: Vec<&LiveStream> = groups
-        .live
-        .iter()
-        .copied()
-        .filter(|stream| keep(&stream.display_name, &stream.user_login))
-        .collect();
-    let continuing = continuing(lists.history, filter, row);
+    let (pinned_live, pinned_off) = split_pins(&groups.pinned);
+    let live = &groups.live;
+    let continuing = continuing(lists.history, row);
     // Drawn as a live card from what the rail's answer said of each, with
     // the live preview at the address every live channel's is
     // (`recommended::as_stream`), and why it is offered after its game.
     let suggested: Vec<(LiveStream, &str)> = groups
         .recommended
         .iter()
-        .filter(|suggestion| keep(&suggestion.channel.display_name, &suggestion.channel.login))
         .map(|suggestion| {
             (
                 recommended::as_stream(&suggestion.channel),
@@ -324,12 +290,7 @@ pub fn view<V: 'static>(
             )
         })
         .collect();
-    let offline: Vec<&Channel> = groups
-        .offline
-        .iter()
-        .copied()
-        .filter(|channel| keep(&channel.display_name, &channel.login))
-        .collect();
+    let offline = &groups.offline;
     let sections = Sections::new(
         pinned_live.len() + pinned_off.len(),
         live.len(),
@@ -339,12 +300,7 @@ pub fn view<V: 'static>(
     );
     let now = Utc::now();
 
-    let mut page = browse::scroller("browse-grid", scroll).child(
-        div()
-            .flex_none()
-            .w(px(browse::FILTER_WIDTH))
-            .child(filter_box),
-    );
+    let mut page = browse::scroller("browse-grid", scroll);
 
     // Each row of cards under an id of its own: the cards are numbered
     // within their row, and two rows on one page would otherwise share ids.
@@ -433,32 +389,6 @@ pub fn view<V: 'static>(
                 on_action.clone(),
                 cx,
             ));
-    }
-
-    // The same notice every other empty list gets, rather than a heading over
-    // nothing — and the way on from it: this box never leaves the app, so a
-    // name it cannot find is one to ask Twitch about instead.
-    if !sections.any() && !filter.is_empty() {
-        let query = filter.to_string();
-        page = page.child(
-            browse::notice(
-                format!("Nothing here matches “{filter}”").into(),
-                "This box only looks through the channels you follow and the recordings \
-                 you have watched."
-                    .into(),
-                false,
-            )
-            .child(
-                controls::pill(
-                    "filter-search",
-                    format!("Search Twitch for “{filter}”"),
-                    controls::Variant::Primary,
-                )
-                .on_click(cx.listener(move |view, _event, window, cx| {
-                    on_action(view, Action::Search(query.clone()), window, cx)
-                })),
-            ),
-        );
     }
 
     browse::scrollable(page, scroll).into_any_element()
@@ -605,12 +535,12 @@ mod tests {
             ],
         };
 
-        let wide = continuing(&history, "", 4);
+        let wide = continuing(&history, 4);
         assert_eq!(ids(&wide), ["a", "c", "d"], "a finished one was listed");
         assert!(!wide.more, "offered more when everything fitted");
         assert_eq!(wide.total, 3);
 
-        let narrow = continuing(&history, "", 2);
+        let narrow = continuing(&history, 2);
         assert_eq!(ids(&narrow), ["a", "c"]);
         assert!(narrow.more, "the third was neither shown nor offered");
         assert_eq!(narrow.total, 3, "counted only what fitted");
@@ -624,42 +554,22 @@ mod tests {
                 .map(|n| watched(&n.to_string(), "xqc", false))
                 .collect(),
         };
-        assert_eq!(continuing(&history, "", 0).shown.len(), 1);
-        assert_eq!(continuing(&history, "", 11).shown.len(), CONTINUING_MAX);
-        assert!(continuing(&history, "", 11).more);
+        assert_eq!(continuing(&history, 0).shown.len(), 1);
+        assert_eq!(continuing(&history, 11).shown.len(), CONTINUING_MAX);
+        assert!(continuing(&history, 11).more);
     }
 
     /// Nothing to continue is no section, not an empty one — including a
     /// history of nothing but finished recordings.
     #[test]
     fn nothing_unfinished_shows_nothing() {
-        assert!(continuing(&History::default(), "", 3).shown.is_empty());
+        assert!(continuing(&History::default(), 3).shown.is_empty());
         let done = History {
             videos: vec![watched("a", "xqc", true)],
         };
-        let none = continuing(&done, "", 3);
+        let none = continuing(&done, 3);
         assert!(none.shown.is_empty());
         assert!(!none.more);
-    }
-
-    /// The filter narrows it by channel, a few letters at a time, or by a
-    /// title holding what was typed; and "more" counts only what matched.
-    #[test]
-    fn the_filter_narrows_continue_watching() {
-        let history = History {
-            videos: vec![
-                watched("a", "xqc", false),
-                watched("b", "forsen", false),
-                watched("c", "xqc", false),
-            ],
-        };
-        let by_name = continuing(&history, "xq", 1);
-        assert_eq!(ids(&by_name), ["a"]);
-        assert!(by_name.more, "the other xqc recording was not offered");
-        assert_eq!(by_name.total, 2, "counted what the filter left out");
-
-        assert_eq!(ids(&continuing(&history, "forsen plays", 3)), ["b"]);
-        assert!(continuing(&history, "nobody", 3).shown.is_empty());
     }
 
     /// The settings' recents first, then the history's channels, then the
@@ -719,10 +629,6 @@ mod tests {
         let nobody_live = Sections::new(0, 0, 2, 0, 5);
         assert!(!nobody_live.live && !nobody_live.live_heading);
         assert!(nobody_live.continuing && nobody_live.offline);
-
-        assert!(!Sections::new(0, 0, 0, 0, 0).any());
-        assert!(Sections::new(1, 0, 0, 0, 0).any());
-        assert!(Sections::new(0, 0, 0, 1, 0).any());
     }
 
     fn live(login: &str) -> LiveStream {
@@ -740,8 +646,7 @@ mod tests {
     }
 
     /// Pinned splits as it is drawn: who is on as cards, everyone else as
-    /// names in the rail's order, a pin nothing has placed by its login —
-    /// and the filter takes from both.
+    /// names in the rail's order, a pin nothing has placed by its login.
     #[test]
     fn pins_split_into_cards_and_names() {
         let on = live("xqc");
@@ -752,15 +657,11 @@ mod tests {
             Row::Unknown("handpinned"),
         ];
 
-        let (cards, names) = split_pins(&rows, |_, _| true);
+        let (cards, names) = split_pins(&rows);
         assert_eq!(cards.len(), 1);
         assert_eq!(cards[0].user_login, "xqc");
-        let names: Vec<&str> = names.iter().map(|c| c.login.as_str()).collect();
-        assert_eq!(names, ["forsen", "handpinned"]);
-
-        let (cards, names) = split_pins(&rows, |_, login| login.starts_with('h'));
-        assert!(cards.is_empty());
-        assert_eq!(names.len(), 1);
-        assert_eq!(names[0].display_name, "handpinned");
+        let logins: Vec<&str> = names.iter().map(|c| c.login.as_str()).collect();
+        assert_eq!(logins, ["forsen", "handpinned"]);
+        assert_eq!(names[1].display_name, "handpinned");
     }
 }

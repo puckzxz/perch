@@ -1056,12 +1056,26 @@ impl RootView {
     /// button, so a menu anchored in a pane drawn after it never heard it,
     /// and the pane it hangs from is about to move.
     pub(super) fn toggle_browse(&mut self, key: &str, cx: &mut Context<Self>) {
+        if self.page == Page::Watch {
+            self.active = Some(key.to_string());
+        }
+        self.toggle_browse_page(cx);
+    }
+
+    /// The browse page up beside the panes, or put away again: a pane's
+    /// Browse (`toggle_browse`), and the title bar's, which leaves the keys
+    /// with the pane they talk to already. With nothing open the browse page
+    /// is all there is, and this does nothing. See `toggle_browse` for the
+    /// menus and the rest of the run.
+    pub(super) fn toggle_browse_page(&mut self, cx: &mut Context<Self>) {
+        if self.slots.is_empty() {
+            return;
+        }
         self.take_rest_of_run();
         self.close_menus(cx);
         if self.page == Page::Browse {
             self.go_watch(cx);
         } else {
-            self.active = Some(key.to_string());
             self.go_browse(cx);
         }
     }

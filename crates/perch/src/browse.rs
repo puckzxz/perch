@@ -10,7 +10,8 @@
 //! different, and only because box art is a different shape from a
 //! thumbnail. The history is a grid of recordings, drawn by the card a
 //! channel's page uses; see `history_page`. Following, the tab the page opens on,
-//! is who you follow and what you left half-watched, together; see `home`.
+//! is who you follow, grouped as the rail groups them, and what you left
+//! half-watched, together; see `following`.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -444,9 +445,6 @@ pub enum Action {
     Add(String),
     OpenCategory(Category),
     CloseCategory,
-    /// Ask Twitch for this, as though it had been typed into the title bar's
-    /// search box: what Following's filter offers when nothing matches.
-    Search(String),
     CloseSearch,
     /// Look at a channel's past broadcasts. The id rides along when the list
     /// this came from had it, and is looked up when it did not.
@@ -1012,9 +1010,6 @@ fn last_live_color(hovered: bool) -> gpui::Hsla {
     }
 }
 
-/// Following's filter box. As wide as a name, not as wide as the page.
-pub(crate) const FILTER_WIDTH: f32 = 260.0;
-
 pub(crate) fn heading(text: impl Into<SharedString>) -> impl IntoElement {
     div()
         .text_size(px(theme::TEXT_LABEL))
@@ -1571,8 +1566,6 @@ pub(crate) fn list_placeholder<V: 'static>(
 #[allow(clippy::too_many_arguments)]
 pub fn page<V: 'static>(
     lists: following::Lists,
-    filter: &str,
-    filter_box: AnyElement,
     discovery: &Discovery,
     room: layout::Room,
     cache: &Arc<ImageCache>,
@@ -1652,8 +1645,6 @@ pub fn page<V: 'static>(
         }
         Place::Tab(Tab::Following) => following::view(
             lists,
-            filter,
-            filter_box,
             room,
             cache,
             can_add,

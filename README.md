@@ -91,9 +91,10 @@ build is several times slower at it.
 
 The player's controls are on a bar that comes up over the video while the
 pointer is on it, and those a key also works name the key in their tooltips;
-the quality and More have no key. The rest — the rail button,
-Home, back and forward, search and settings — sit in the bar across the top
-of the window. Neither is any use when you are not holding the mouse.
+the quality and More have no key. The rail button, Browse, the search box
+and settings sit in the bar across the top of the window, and back and
+forward at the top of the browse page. None of them is any use when you are
+not holding the mouse.
 
 | | |
 |---|---|
@@ -140,8 +141,8 @@ or `Shift+←`, `Shift+→` or a drag of its header has moved it.
 Pause, mute and volume never bring a header up over the picture. The keys
 stand aside while the cursor is in a text box — all but `Ctrl+K`, `Ctrl+,` and
 `Ctrl+R`, which type nothing, so the palette is one keystroke away straight
-after a search. A search typed on the watch page leaves it for the results, the
-way `Esc` does. The same list is in the settings sheet. Double-clicking the
+after a search. A search typed on the watch page brings the browse page up
+beside what is playing for the results, the way `Esc` does. The same list is in the settings sheet. Double-clicking the
 video is fullscreen too. Holding `Alt` while turning the mouse wheel over a
 picture changes that stream's volume, a step of 5% per click of the wheel, as
 `↑` and `↓` do — the wheel alone never touches the sound, so scrolling past a
@@ -179,11 +180,12 @@ past broadcast with no chat to replay shows the chat icon crossed out, with
 nothing to press.
 
 Back and forward work the way they do in a browser. `Alt+←` and `Alt+→`, the
-arrows in the title bar or the mouse's side buttons walk back through the
-tabs, categories, searches, channel pages and the watch page you have been
-on, and forward again. The house before the arrows goes straight to
-Following from anywhere; from the watch page it brings the browse page up
-beside what is playing, the way `Esc` does, and back returns from it. `Esc` and the `← Back` beside a search or a channel's
+arrows at the top-left of the browse page or the mouse's side buttons walk
+back through the tabs, categories, searches, channel pages and the watch page
+you have been on, and forward again. **Browse** in the title bar brings the
+browse page up beside what is playing, the way `Esc` does, and is lit while
+it is up; pressed again, or the × at the top-right of the browse page, it
+puts the page away. `Esc` and the `← Back` beside a search or a channel's
 name still step out of whatever has taken the page over, and back takes that
 back too. The watch page drops out of the way once nothing is playing on it.
 A list you go back to is asked for again if it has been replaced since, and
@@ -604,9 +606,8 @@ recorded; the ones you never watched follow by name. Each says when that
 channel was last live beside its name — "Live 3 hours ago", "Live yesterday",
 "Live 2 weeks ago" — and a name opens the channel's page: its past
 broadcasts, and a control for its chat, which connects whether or not anyone
-is streaming. Each heading but Recommended's carries how many are under it,
-after the filter: *Pinned · 4*, *Live now · 23*, *Continue watching · 5*,
-*Offline · 103*.
+is streaming. Each heading but Recommended's carries how many are under it:
+*Pinned · 4*, *Live now · 23*, *Continue watching · 5*, *Offline · 103*.
 
 When each channel was last live comes from the same unpublished Twitch query
 the recommendations use (see "The rail"), asked without your sign-in, a
@@ -652,13 +653,6 @@ not, Perch asks Twitch about it by itself every two minutes, in the one
 request it makes for every such channel at once (see "The rail"), so such a
 pane starts up to two minutes after the stream does.
 
-The box at the top of Following filters every section as you type, by the
-same few-letters-of-a-name match the palette uses; a recording
-answers to its channel's name or to a word of its title. It is the opposite of
-the search box in the title bar: that one asks Twitch, this one asks the app,
-and nothing typed here leaves it — until nothing on the page matches, when it
-offers to ask Twitch instead.
-
 Cards are as wide as the window allows: the grid takes the room it has and
 divides it, rather than leaving whatever a fixed width could not use as a gutter
 down one side. Viewer count and uptime sit on the thumbnail; the name, title and
@@ -667,6 +661,21 @@ fit. Resting the pointer on one shows the whole of it.
 
 Whatever is playing while you browse keeps playing beside the page, with its
 sound; see "Browsing beside what plays".
+
+### The search box
+
+The box in the title bar answers twice. As you type, a list drops under it
+from what Perch already knows — the channels you follow, live or not, the
+recordings you have watched, a channel by its exact name, a pasted twitch.tv
+link — by the same few-letters-of-a-name match the palette uses; a recording
+answers to its channel's name or to a word of its title. Its first row asks
+Twitch, which is what `Enter` does unless the arrows have chosen another
+row. And once you stop typing for a moment, it asks Twitch by itself: the
+results come up on the browse page, beside what is playing, and refine in
+place as you go on typing, as one step back. A click on a row opens it the
+way the palette does — a channel plays in place of the pane you are on —
+and `Esc` puts the list away, leaving what you typed. Following's own filter
+box went with this: the search box is the one place to type a name.
 
 ### The rail
 
@@ -736,8 +745,8 @@ the right of it; the rail belongs to the window.
 
 `Ctrl+K` — a channel to open, a pane to close, a page to go to, typed rather
 than aimed at. It filters what the app already knows, so it costs nothing and
-runs on every keystroke; the search box in the title bar is the one that asks
-Twitch. `qb` finds QuickyBaby. Offline follows are in it too, once you have
+runs on every keystroke; the search box in the title bar suggests from the
+same list as you type, and is the one that asks Twitch. `qb` finds QuickyBaby. Offline follows are in it too, once you have
 typed something, and open the channel's page, as their names do on
 Following; a live channel's past broadcasts are a row of their own. A
 playing pane's quality menu is a row too, once you have typed something:

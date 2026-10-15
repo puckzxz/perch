@@ -7,12 +7,14 @@
 use std::path::PathBuf;
 
 use gpui::{canvas, div, prelude::*, px, Context, Div, IntoElement, Stateful, Window};
-use gpui_component::input::Input;
 
 use super::follows::LiveList;
 use super::{Page, RootView};
+use crate::assets::Icon;
 use crate::browse::{SignIn, Tab};
 use crate::chat_display::ChatDisplay;
+use crate::controls::{self, Variant};
+use crate::keys::Hint;
 use crate::watch::{NextUp, PaneInfo, Showing, Slot};
 use crate::{browse, channel_page, following, layout, theme, watch};
 
@@ -83,8 +85,6 @@ impl RootView {
         };
         let body = browse::page(
             lists,
-            self.filter.read(cx).value().as_ref(),
-            Input::new(&self.filter).cleanable(true).into_any_element(),
             &self.discovery,
             room,
             &self.cache,
@@ -121,7 +121,49 @@ impl RootView {
     /// toasts arrive at the top-right, and the further from them Refresh sits
     /// the narrower a window has to be before the two meet — see
     /// [`theme::TAB_STRIP_HEIGHT`] for when they do.
+    /// The browse page's own strip: back and forward along the trail, the
+    /// tabs, Refresh, and while the panes are beside the page, the × that
+    /// puts it away. Back and forward were the title bar's, beside a way to
+    /// the first tab; the redesign of 15 October 2026 gave the bar Browse
+    /// and one search box, and the page its own way about.
     fn tab_strip(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        // Each drawn as waiting while it has nowhere to go: the arrows stay
+        // where they are rather than the tabs moving under the pointer, and
+        // a press on a waiting one does nothing because there is nothing
+        // there to press.
+        let back = if self.can_back() {
+            controls::icon_button("browse-back", Icon::Back, Variant::Chrome)
+                .tooltip(controls::tip(Hint::Back.tooltip("Back")))
+                .on_click(cx.listener(|this, _event, window, cx| {
+                    this.focus.focus(window);
+                    this.go_back(window, cx);
+                }))
+                .into_any_element()
+        } else {
+            controls::icon_waiting(Icon::Back).into_any_element()
+        };
+        let forward = if self.can_forward() {
+            controls::icon_button("browse-forward", Icon::Forward, Variant::Chrome)
+                .tooltip(controls::tip(Hint::Forward.tooltip("Forward")))
+                .on_click(cx.listener(|this, _event, window, cx| {
+                    this.focus.focus(window);
+                    this.go_forward(window, cx);
+                }))
+                .into_any_element()
+        } else {
+            controls::icon_waiting(Icon::Forward).into_any_element()
+        };
+        // Back to watching, while there is a pane beside the page to go back
+        // to: what Browse does again, and `Esc` from a tab.
+        let close = self.docks_stage().then(|| {
+            controls::icon_button("browse-close", Icon::Close, Variant::Chrome)
+                .tooltip(controls::tip("Back to watching"))
+                .on_click(cx.listener(|this, _event, window, cx| {
+                    this.focus.focus(window);
+                    this.toggle_browse_page(cx);
+                }))
+        });
+
         div()
             .w_full()
             .flex_none()
@@ -135,6 +177,23 @@ impl RootView {
             .px(px(theme::PAGE_PAD))
             .border_b_1()
             .border_color(theme::border())
+            .child(
+                div()
+                    .flex_none()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(theme::GAP_TIGHT))
+                    .child(back)
+                    .child(forward),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .w(px(1.0))
+                    .h(px(theme::ICON))
+                    .bg(theme::border()),
+            )
             .child(
                 div()
                     .flex_none()
@@ -155,6 +214,8 @@ impl RootView {
                 cx,
                 |this, _window, cx| this.refresh(cx),
             ))
+            .child(div().flex_1())
+            .children(close)
     }
 
     /// A list of follows, live and offline, with a probe measuring every

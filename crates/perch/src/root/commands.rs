@@ -21,10 +21,23 @@ impl RootView {
     /// view already owns, and holding a copy would mean keeping it in step with
     /// a follows poll, a pane closing and every keystroke.
     pub(super) fn palette_entries(&self, cx: &App) -> Vec<palette::Entry> {
+        palette::entries(
+            self.palette_input.read(cx).value().as_ref(),
+            &self.follows,
+            &self.offline,
+            &self.settings.recent,
+            &self.history.videos,
+            &self.open_panes(cx),
+            self.can_add(),
+        )
+    }
+
+    /// The panes as the palette sees them, for its rows and the search
+    /// box's suggestions alike.
+    pub(super) fn open_panes(&self, cx: &App) -> Vec<palette::OpenPane> {
         let pop_out = pop_out::offered_here();
         let keys = pane_keys(&self.slots);
-        let watching: Vec<palette::OpenPane> = self
-            .slots
+        self.slots
             .iter()
             .map(|slot| palette::OpenPane {
                 login: slot.is_live().then(|| slot.channel.clone()),
@@ -52,16 +65,7 @@ impl RootView {
                 // What its maximize control offers, by the one answer.
                 maximize: self.stage.maximize_button(&slot.key, &keys),
             })
-            .collect();
-        palette::entries(
-            self.palette_input.read(cx).value().as_ref(),
-            &self.follows,
-            &self.offline,
-            &self.settings.recent,
-            &self.history.videos,
-            &watching,
-            self.can_add(),
-        )
+            .collect()
     }
 
     pub(super) fn toggle_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -195,6 +199,8 @@ impl RootView {
                 }
             }
             palette::Command::ShowTab(tab) => self.go_to_tab(tab, window, cx),
+            // Only ever the search box's: asking Twitch, as its `Enter` does.
+            palette::Command::Search(query) => self.run_search(query, cx),
             palette::Command::GoWatch => self.go_watch(cx),
             palette::Command::StopAll => self.stop_all(cx),
             palette::Command::ToggleSidebar => self.toggle_sidebar(window, cx),

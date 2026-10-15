@@ -36,7 +36,8 @@
 //! | `viewer_cards` | the chats' viewer cards: hearing a card open, asking the worker who its person is, telling every open card what is known (`sync_viewer_cards`), and a card's `Watch` and `Channel page` |
 //! | `schedule` | when an offline channel says it will be on next: asked of the worker once a session, the first time its page or a pane that found it off is drawn, and the answer kept |
 //! | `chrome` | pills, toasts, the rail |
-//! | `title_bar` | the bar Perch draws across the top of the window: the rail button, back and forward, search, settings, and on Windows the caption buttons |
+//! | `title_bar` | the bar Perch draws across the top of the window: the rail button, Browse, search, settings, and on Windows the caption buttons |
+//! | `search_box` | the title bar's search box: what it suggests as you type (the palette's channels and recordings, under asking Twitch), and the Twitch search it runs on `Enter` or once the typing pauses |
 //! | `pages` | the two pages, assembled, each only its own column |
 //!
 //! A sibling reaches the fields directly — they are private to this module,
@@ -71,6 +72,7 @@ mod renditions;
 mod rewind;
 mod saving;
 mod schedule;
+mod search_box;
 mod shared_chat;
 mod shortcuts;
 mod streams;
@@ -378,10 +380,21 @@ pub(crate) struct RootView {
     /// A step is being recorded, or replayed, so the functions it runs
     /// through do not record steps of their own; see `RootView::record`.
     recording: bool,
+    /// The title bar's search box; see `search_box`.
     search: Entity<InputState>,
-    /// Following's filter. Typed into, never sent anywhere: it narrows the lists
-    /// already on the page with the palette's own matcher.
-    filter: Entity<InputState>,
+    /// Which of the box's suggestions `Enter` runs: an index into those
+    /// worked out at render, clamped there, back to the first — asking
+    /// Twitch — on every keystroke.
+    search_selected: usize,
+    /// The suggestions put away — `Esc`, a pick, `Enter` — until the next
+    /// keystroke.
+    search_dismissed: bool,
+    /// The wait for the typing to pause before Twitch is asked; a newer
+    /// keystroke drops it (`search_typed`).
+    search_settle: Option<Task<()>>,
+    /// Where the box's left edge is in the window, as its probe last
+    /// measured it (`search_probe`): where the suggestions hang from.
+    search_left: f32,
     /// Scroll positions for the browse lists and the rail, held here so the
     /// scrollbars drawn over them read the same state the lists write.
     scrolls: browse::Scrolls,
@@ -553,28 +566,21 @@ impl RootView {
             cx,
         );
 
-        // In the title bar, over both pages; see `run_search` for what a
+        // In the title bar, over both pages; see `search_box` for what it
+        // suggests and when it asks Twitch, and `run_search` for what a
         // search from the watch page does.
-        let search =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Search channels and categories"));
-        // Searching on every keystroke would be three requests per letter.
-        cx.subscribe(&search, |this: &mut RootView, state, event, cx| {
-            if matches!(event, InputEvent::PressEnter { .. }) {
-                let query = state.read(cx).value().trim().to_string();
-                this.run_search(query, cx);
-            }
-        })
-        .detach();
-
-        // The opposite of the search box: every keystroke, and nothing leaves
-        // the app. See `following::view`.
-        let filter =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Filter follows and recordings"));
-        cx.subscribe(&filter, |_: &mut RootView, _, event, cx| {
-            if matches!(event, InputEvent::Change) {
-                cx.notify();
-            }
-        })
+        let search = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("Search channels, categories and your history")
+        });
+        cx.subscribe_in(
+            &search,
+            window,
+            |this: &mut RootView, _, event, window, cx| match event {
+                InputEvent::Change => this.search_typed(cx),
+                InputEvent::PressEnter { .. } => this.search_entered(window, cx),
+                _ => {}
+            },
+        )
         .detach();
 
         let palette_input =
@@ -642,7 +648,10 @@ impl RootView {
             trail: Trail::default(),
             recording: false,
             search,
-            filter,
+            search_selected: 0,
+            search_dismissed: false,
+            search_settle: None,
+            search_left: 0.0,
             scrolls: browse::Scrolls::default(),
             rail_scroll: ScrollHandle::new(),
             twitch: service,
@@ -941,6 +950,7 @@ impl Render for RootView {
             .on_action(cx.listener(Self::on_move_pane_earlier))
             .on_action(cx.listener(Self::on_move_pane_later))
             .on_key_down(cx.listener(Self::on_palette_key))
+            .on_key_down(cx.listener(Self::on_search_key))
             .relative()
             .size_full()
             .flex()
@@ -1026,6 +1036,7 @@ impl Render for RootView {
                             ),
                     )
                     .child(self.toast_stack(cx))
+                    .children(self.search_suggestions_panel(window, cx))
                     .children(self.palette_sheet(cx))
                     .children(self.settings_panel.clone()),
             )
