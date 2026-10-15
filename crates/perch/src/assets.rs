@@ -49,7 +49,7 @@ macro_rules! icon {
 /// Anything not on this list is answered `None`, which is exactly what the app
 /// did for all of them until now — so an icon nobody drew degrades to the
 /// blank it already was rather than to a crash.
-const ICONS: [(&str, &[u8]); 33] = [
+const ICONS: [(&str, &[u8]); 31] = [
     icon!("arrow-left"),
     icon!("arrow-right"),
     icon!("browse"),
@@ -67,8 +67,6 @@ const ICONS: [(&str, &[u8]); 33] = [
     icon!("inbox"),
     icon!("minus"),
     icon!("more"),
-    icon!("pane-grid"),
-    icon!("pane-maximize"),
     icon!("panel-left"),
     icon!("pause"),
     icon!("pin"),
@@ -144,12 +142,6 @@ perch_icons! {
     // `twitch.tv`. The pop-out's arrow out of a box, which is the glyph
     // everyone draws for it, under a name that says what it means here.
     ExternalLink => "pop-out",
-    // A pane given the watch page, and the grid back: the bar's maximize
-    // control, which shows what a press leaves on the page. Not the
-    // caption's `Maximize`, which is the window's, nor fullscreen's
-    // corners.
-    PaneMaximize => "pane-maximize",
-    PaneGrid => "pane-grid",
     // A pane header's chat options: how big chat's text is drawn, and
     // whether every message carries its time. Named for the menu it opens,
     // drawn as the larger of its two options: a large T and a small one.

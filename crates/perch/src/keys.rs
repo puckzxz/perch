@@ -532,8 +532,6 @@ hints! {
     // A pane header's pop-out and Bring back, and the pop-out's Bring back,
     // on its bar.
     PopOut => "p" as TogglePopOut,
-    // The bar's maximize control, as `Maximize` and as `Show all panes`.
-    Maximize => "z" as ToggleMaximize,
     // A pane's Browse, on its bar or its header, while the browse page is
     // away: `Esc` on the watch page brings it up as the press does.
     Browse => "escape" as GoBrowse,

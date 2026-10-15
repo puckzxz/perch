@@ -63,12 +63,12 @@ use twitch_api::MutedSegment;
 
 use crate::controls;
 use crate::keys;
-use crate::loudness::{HearOnly, Loudness};
+use crate::loudness::Loudness;
 use crate::motion;
 use crate::rewind;
 use crate::seek_bar;
 use crate::speed::Speed;
-use crate::stage::{MaximizeButton, Place};
+use crate::stage::Place;
 use crate::theme;
 use crate::veil;
 use crate::video::{SizeHandle, Stopped, VideoStream};
@@ -237,15 +237,6 @@ pub struct VideoView {
     /// ([`theme::VOLUME_LINGER`]), while it runs. Each step of the wheel
     /// replaces it, which drops — calls off — the one before.
     volume_linger: Option<Task<()>>,
-    /// What More's row for hearing one pane alone offers; see
-    /// [`HearOnly`]. A mirror, on [`ChatButton`]'s pattern, of the panes'
-    /// hushes, which are the root's: written in exactly two places —
-    /// [`Start::hear_only`] when the player is made, and
-    /// [`set_hear_only`](Self::set_hear_only), which only
-    /// `RootView::sync_hear_only` calls, after every change of a pane's hush
-    /// and from `restage`, which every change of which panes there are ends
-    /// in.
-    hear_only: HearOnly,
     /// Whether the stream on screen was waiting on the network at its last
     /// wake ([`is_buffering`](Self::is_buffering)): kept so the root is told
     /// only when that changes.
@@ -254,10 +245,10 @@ pub struct VideoView {
     /// The menu open over the control bar, if any: one at a time, so opening
     /// one is closing whichever was open (`menu::toggled`).
     menu: Option<Menu>,
-    /// Whether the run of presses going on began on a menu row, or on the
-    /// bar's maximize control, whose later presses — the second of a
-    /// double-click — go nowhere; see `VideoView::run_guard`. Both change
-    /// what is under the pointer before the run is over.
+    /// Whether the run of presses going on began on a menu row, whose later
+    /// presses — the second of a double-click — go nowhere; see
+    /// `VideoView::run_guard`. A row changes what is under the pointer
+    /// before the run is over.
     row_run: bool,
     /// The focus of the window drawing this player — the root's in the main
     /// window, the pop-out's own in a pop-out — which a press on the bar or
@@ -266,18 +257,6 @@ pub struct VideoView {
     root_focus: FocusHandle,
     /// What the bar's chat glyph offers; see [`ChatButton`].
     chat: ChatButton,
-    /// What the bar's maximize control offers, or More's row once it has
-    /// folded: to give the pane the watch page, to show every pane again,
-    /// or nothing.
-    ///
-    /// A mirror, on [`ChatButton`]'s pattern: which pane is maximized is the
-    /// root's (`crate::stage`), and the player cannot see it. Written in
-    /// exactly two places — [`Start::maximize`] when the player is made, and
-    /// [`set_maximize`](Self::set_maximize), which only `RootView::restage`
-    /// calls, the funnel every change of the stage ends in — so a change of
-    /// the maximize, of which panes there are or of what is popped out
-    /// cannot leave the control offering the opposite of what a press does.
-    maximize: MaximizeButton,
     /// Whether the browse page is up beside the panes, which the bar's
     /// Browse button keys its id and its tooltip on: a press then puts it
     /// away, and otherwise brings it up (`bar::browse_button`).
@@ -309,8 +288,8 @@ pub struct VideoView {
     /// the next switch.
     linger: Option<Task<()>>,
     /// What the bar has room for at the pane's width, measured by the probe
-    /// (`bar::fit`): the volume figure and slider, and the quality pill and
-    /// the maximize control, which fold into More when they do not fit.
+    /// (`bar::fit`): the volume figure and slider, and the quality pill,
+    /// which folds into More when it does not fit.
     fit: bar::Fit,
     /// Whether the pane is wide enough for a live stream's timeline, measured
     /// by the probe with `fit` (`bar::timeline_fits`). A recording's seek row
@@ -419,9 +398,6 @@ pub struct Start {
     pub focus: FocusHandle,
     /// What the pane's chat is at the start; see [`ChatButton`].
     pub chat: ChatButton,
-    /// What its maximize control offers at the start; see
-    /// `VideoView::maximize`.
-    pub maximize: MaximizeButton,
     /// What a pick is switching the pane to at the start, if one is under
     /// way; see [`Switching`]. Almost always none: a new player is a cold
     /// start, which ends whatever was resolving beside the old one.
@@ -435,9 +411,6 @@ pub struct Start {
     /// A recording's muted stretches, as far as the root knows them; see
     /// `VideoView::muted`.
     pub muted: Vec<MutedSegment>,
-    /// What More offers about hearing one pane alone at the start; see
-    /// `VideoView::hear_only`.
-    pub hear_only: HearOnly,
     /// Whether the browse page is up as the player is made; see
     /// `VideoView::browsing`.
     pub browsing: bool,
@@ -518,14 +491,12 @@ impl VideoView {
             volume_slider,
             wheel: Wheel::default(),
             volume_linger: None,
-            hear_only: start.hear_only,
             buffering: false,
             qualities,
             menu: None,
             row_run: false,
             root_focus: start.focus,
             chat: start.chat,
-            maximize: start.maximize,
             browsing: start.browsing,
             pinned: start.pinned,
             switching: start.switching,
@@ -742,6 +713,17 @@ impl VideoView {
             .on_mouse_down(
                 MouseButton::Middle,
                 cx.listener(|this, _: &MouseDownEvent, window, cx| this.toggle_mute(window, cx)),
+            )
+            // The pane's menu (`crate::channel_menu`), which the root draws
+            // in the main window: only from a pane there, since a pop-out's
+            // pointer is in a window of its own.
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, event: &MouseDownEvent, _window, cx| {
+                    if this.place == Place::Pane {
+                        cx.emit(VideoEvent::Pane(PaneAction::Menu(event.position)));
+                    }
+                }),
             )
     }
 
@@ -984,16 +966,6 @@ impl VideoView {
         }
     }
 
-    /// What More offers about hearing one pane alone now, from
-    /// `RootView::sync_hear_only`; see `VideoView::hear_only` for why
-    /// nothing else calls this. Repaints only on a change.
-    pub fn set_hear_only(&mut self, hear_only: HearOnly, cx: &mut Context<Self>) {
-        if self.hear_only != hear_only {
-            self.hear_only = hear_only;
-            cx.notify();
-        }
-    }
-
     /// When the picture on screen last moved again after standing still,
     /// its first frame included: what ends a pane's ad-break notice
     /// (`ad_break::AdBreak::over`), read by the root as it ticks.
@@ -1055,16 +1027,6 @@ impl VideoView {
     pub fn set_pinned(&mut self, pinned: bool, cx: &mut Context<Self>) {
         if self.pinned != pinned {
             self.pinned = pinned;
-            cx.notify();
-        }
-    }
-
-    /// What the pane's maximize control offers now, from
-    /// `RootView::restage`; see `VideoView::maximize` for why nothing else
-    /// calls this.
-    pub fn set_maximize(&mut self, maximize: MaximizeButton, cx: &mut Context<Self>) {
-        if self.maximize != maximize {
-            self.maximize = maximize;
             cx.notify();
         }
     }
@@ -1286,7 +1248,7 @@ impl Render for VideoView {
         }
 
         let stream_size = self.stream.size_handle();
-        let cluster = bar::cluster(self.place, self.maximize);
+        let cluster = bar::cluster(self.place);
         let this = cx.entity().downgrade();
         let probe = canvas(
             move |bounds, window, cx| {

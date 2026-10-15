@@ -52,10 +52,12 @@ use chrono::{DateTime, Utc};
 use emotes::ImageCache;
 use gpui::{
     anchored, canvas, deferred, div, img, point, prelude::*, px, relative, Context, ElementId,
-    ScrollHandle, SharedString, Window,
+    MouseButton, MouseDownEvent, Point, ScrollHandle, SharedString, Window,
 };
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 use settings::channel_key;
+
+use crate::channel_menu;
 use twitch_api::{Channel, LiveStream};
 
 use crate::assets::Icon;
@@ -195,6 +197,21 @@ impl Row<'_> {
             Row::Offline(channel) => &channel.display_name,
             Row::Unknown(login) => login,
             Row::Recommended(suggestion) => &suggestion.channel.display_name,
+        }
+    }
+
+    /// Who the row is, for its right-click menu (`crate::channel_menu`).
+    fn menu_channel(&self) -> channel_menu::Channel {
+        let user_id = match self {
+            Row::Live(stream) => Some(stream.user_id.clone()),
+            Row::Offline(channel) => Some(channel.user_id.clone()),
+            Row::Recommended(suggestion) => Some(suggestion.channel.user_id.clone()),
+            Row::Unknown(_) => None,
+        };
+        channel_menu::Channel {
+            login: self.login().to_string(),
+            display_name: self.name().to_string(),
+            user_id: user_id.filter(|id| !id.is_empty()),
         }
     }
 
@@ -534,6 +551,12 @@ fn row<V: 'static>(
     let offers_pin = channel.offers_pin();
     let pinned = group == Group::Pinned;
     let open = channel.open();
+    let menu = Action::ChannelMenu {
+        channel: channel.menu_channel(),
+        live: channel.live().is_some(),
+        at: Point::default(),
+    };
+    let on_menu = on_action.clone();
     let on_click = on_action.clone();
     let on_pin = on_action.clone();
     let on_add = on_action;
@@ -601,6 +624,18 @@ fn row<V: 'static>(
         .active(|style| style.bg(theme::pressed()))
         .on_click(
             cx.listener(move |view, _event, window, cx| on_click(view, open.clone(), window, cx)),
+        )
+        // Its menu (`crate::channel_menu`), where the right button was
+        // pressed.
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |view, event: &MouseDownEvent, window, cx| {
+                let mut menu = menu.clone();
+                if let Action::ChannelMenu { at, .. } = &mut menu {
+                    *at = event.position;
+                }
+                on_menu(view, menu, window, cx)
+            }),
         )
         .child(div().flex_none().child(face))
         .child(

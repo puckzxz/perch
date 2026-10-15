@@ -270,6 +270,10 @@ impl RootView {
             // Moves a row, not the app: nothing is recorded, since `record`
             // only takes a step when where the app is has changed.
             Action::SetPinned { login, pinned } => this.set_pinned(login, pinned, cx),
+            // Nor does a menu, until a row of it is pressed.
+            Action::ChannelMenu { channel, live, at } => {
+                this.open_channel_menu(channel, live, false, None, at, cx)
+            }
         })
     }
 

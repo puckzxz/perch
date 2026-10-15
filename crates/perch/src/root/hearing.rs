@@ -1,5 +1,6 @@
 //! Which panes are heard: `Only this one` and `Hear all again`, from a
-//! pane's More menu, and the mirror of it every player's menu keeps.
+//! pane's right-click menu (`crate::channel_menu`), which reads what it
+//! offers from the panes' hushes as it is drawn.
 //!
 //! Both go through Mute all's hush (`set_quiet_all`, `VideoView::set_hushed`)
 //! and nothing else, so neither ever writes a level, saves one, or moves a
@@ -19,7 +20,7 @@ use crate::compressor;
 use crate::loudness::{self, HearOnly};
 
 impl RootView {
-    /// More's row, pressed on the pane `key` names: with one pane alone
+    /// The pane menu's row, pressed on the pane `key` names: with one pane alone
     /// heard, every pane heard again; otherwise this pane heard and every
     /// other held silent.
     ///
@@ -40,7 +41,6 @@ impl RootView {
                 view.update(cx, |video, cx| video.set_hushed(quiet, cx));
             }
         }
-        self.sync_hear_only(cx);
         cx.notify();
     }
 
@@ -64,23 +64,9 @@ impl RootView {
         );
     }
 
-    /// What every pane's More offers about hearing one alone, from the
-    /// panes' hushes now; see `loudness::hear_only`.
+    /// What a pane's menu offers about hearing one alone, from the panes'
+    /// hushes now; see `loudness::hear_only`.
     pub(super) fn hear_only_now(&self) -> HearOnly {
         loudness::hear_only(self.slots.iter().map(|slot| slot.quiet))
-    }
-
-    /// Tell every player what More offers now (`VideoView::hear_only`), the
-    /// one writer of that mirror after a player is made. Called after every
-    /// change of a pane's hush — Mute all and its undoing, a level somebody
-    /// set, which ends a pane's hush, and the two rows here — and from
-    /// `restage`, which every change of which panes there are ends in.
-    pub(super) fn sync_hear_only(&mut self, cx: &mut Context<Self>) {
-        let offer = self.hear_only_now();
-        for slot in &self.slots {
-            if let Some(view) = slot.video() {
-                view.update(cx, |video, cx| video.set_hear_only(offer, cx));
-            }
-        }
     }
 }

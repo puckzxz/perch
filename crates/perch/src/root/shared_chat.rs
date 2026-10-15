@@ -71,6 +71,11 @@ impl RootView {
                     login,
                     display_name,
                 } => this.channel_page_from_card(login.clone(), display_name.clone(), window, cx),
+                ChatViewEvent::ChannelMenu {
+                    login,
+                    display_name,
+                    position,
+                } => this.open_chat_name_menu(login.clone(), display_name.clone(), *position, cx),
             },
         )
         .detach();

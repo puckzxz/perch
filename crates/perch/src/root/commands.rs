@@ -62,7 +62,7 @@ impl RootView {
                 popped: self.stage.is_popped(&slot.key),
                 // A player to move, where the pop-out is offered at all.
                 can_pop_out: pop_out && slot.video().is_some(),
-                // What its maximize control offers, by the one answer.
+                // What its maximize offers, by the one answer.
                 maximize: self.stage.maximize_button(&slot.key, &keys),
             })
             .collect()

@@ -2,8 +2,8 @@
 //! opens in, and its rows.
 //!
 //! Three of them: the quality; More — what else there is to do with the
-//! pane, which also carries the quality and the maximize control when the
-//! bar is too narrow for them; and a recording's speeds, which open in
+//! pane, which also carries the quality when the bar is too narrow for it;
+//! and a recording's speeds, which open in
 //! More's place from its speed row. Hand-rolled rather than gpui-component's `DropdownMenu`, which
 //! serves only that library's own `Button`. One is open at a time, all of
 //! them open from the bar's right-hand cluster (`bar::button_row`), and `Esc`
@@ -20,7 +20,7 @@ use gpui::{
     ElementId, MouseButton, MouseDownEvent, SharedString, Stateful, Window,
 };
 
-use super::{bar, Switching, VideoEvent, VideoView};
+use super::{Switching, VideoEvent, VideoView};
 use crate::compressor;
 use crate::motion;
 use crate::seek_bar;
@@ -36,10 +36,11 @@ use crate::watch::PaneAction;
 pub enum Menu {
     /// The renditions this stream offers, under the settings' choice.
     Quality,
-    /// The rest: hear this pane alone or every pane again, the audio
-    /// compressor, a recording's speed, pop the pane out, pin its channel to
-    /// the rail or take it off, open it on twitch.tv, copy its link — and the
-    /// quality and the maximize control, while the bar has no room for them.
+    /// The rest: the audio compressor, a recording's speed, pop the pane
+    /// out, pin its channel to the rail or take it off, open it on
+    /// twitch.tv, copy its link — and the quality, while the bar has no room
+    /// for it. What only two panes or more need is on the pane's right-click
+    /// menu (`crate::channel_menu`).
     More,
     /// A recording's speeds (`crate::speed`), opened in More's place from
     /// its speed row, or from the speed on the seek row.
@@ -240,10 +241,8 @@ impl VideoView {
             .collect()
     }
 
-    /// More: what the bar has folded away first — the quality while its
-    /// pill has, then the maximize control once it has too — ruled off from
-    /// the rest; then, with two panes or more, `Only this one` or `Hear all
-    /// again`; then `Audio compressor · Off` or `· On`; then a recording's
+    /// More: the quality first while the bar has folded its pill away,
+    /// ruled off from the rest; then `Audio compressor · Off` or `· On`; then a recording's
     /// `Playback speed · 1x`, which opens the speeds in its place; then `Pop
     /// out`; then `Pin to the rail` or `Unpin from the rail` ([`pin_row`]);
     /// then the pane's way out to twitch.tv and its link. All but the
@@ -268,17 +267,6 @@ impl VideoView {
                 cx,
             ));
         }
-        // The bar's maximize control, in the words it has there, while the
-        // bar has no room for it (`bar::fit` folds it after the pill).
-        if let Some(control) = bar::maximize_control(self.maximize).filter(|_| !self.fit.maximize) {
-            folded.push(menu_row(
-                control.row_id,
-                control.words.into(),
-                false,
-                |_this, _window, cx| cx.emit(VideoEvent::Pane(PaneAction::Maximize)),
-                cx,
-            ));
-        }
         let ruled = folded.len();
         let mut rows: Vec<Stateful<Div>> = folded
             .into_iter()
@@ -289,21 +277,6 @@ impl VideoView {
                 })
             })
             .collect();
-        // Hearing this pane alone, and back: `Only this one` hushes every
-        // other pane the way Mute all does, and once one pane alone is heard
-        // every pane's row says `Hear all again` instead (`HearOnly`, a
-        // mirror the root keeps). Nothing with one pane. The root works out
-        // which a press means from the panes as they are, so a row drawn a
-        // frame stale cannot do the opposite of what is heard.
-        if let Some((id, words)) = self.hear_only.row() {
-            rows.push(menu_row(
-                id,
-                words.into(),
-                false,
-                |_this, _window, cx| cx.emit(VideoEvent::Pane(PaneAction::HearOnly)),
-                cx,
-            ));
-        }
         // The compressor, saying whether it is on. Every pane's at once, so
         // the root turns it (`crate::compressor`); read as the menu is drawn,
         // which is how a row on one pane says what another pane's turned.

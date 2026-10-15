@@ -310,7 +310,7 @@ impl RootView {
     /// panes or more on the page, so not while one is maximized and the
     /// move would be to somewhere nobody can see. Nor while a header is
     /// being dragged: that is a move already, and this one would end it.
-    fn move_active(&mut self, delta: isize, cx: &mut Context<Self>) {
+    pub(super) fn move_active(&mut self, delta: isize, cx: &mut Context<Self>) {
         if self.cells().len() < 2 || self.pane_move.is_some() {
             return;
         }

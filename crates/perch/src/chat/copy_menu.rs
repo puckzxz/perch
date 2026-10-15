@@ -49,13 +49,16 @@ use crate::theme;
 
 /// What under the pointer a right-click on a row landed on, as far as the
 /// menu cares: a link, by where it points, an emote, by its name (with
-/// whatever is stacked on it, as it was written: `Emote::typed`), or the
-/// row itself, anywhere else on it.
+/// whatever is stacked on it, as it was written: `Emote::typed`), a name —
+/// the speaker's, or an `@mention` of a login — which opens the menu about
+/// that person's channel instead (`crate::channel_menu`), or the row itself,
+/// anywhere else on it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Target {
     Row,
     Link(String),
     Emote(String),
+    Name { login: String, display_name: String },
 }
 
 /// One row of the menu: its words, what it puts on the clipboard, and the
@@ -180,6 +183,20 @@ impl ChatView {
         move |event: &MouseDownEvent, _window: &mut gpui::Window, cx: &mut gpui::App| {
             view.update(cx, |this, cx| {
                 let target = this.pressed.take().unwrap_or(Target::Row);
+                // A name is a channel named: the root's menu about it, in
+                // place of the row's, which keeps its `Copy name`.
+                if let Target::Name {
+                    login,
+                    display_name,
+                } = target
+                {
+                    cx.emit(ChatViewEvent::ChannelMenu {
+                        login,
+                        display_name,
+                        position: event.position,
+                    });
+                    return;
+                }
                 this.open_menu(seq, &target, event.position, cx);
             })
             .ok();

@@ -506,12 +506,22 @@ pub(super) fn close_button<V: 'static>(
 pub(super) fn handle<V: 'static>(
     slot: &Slot,
     movable: bool,
-    on_pane: impl Fn(&mut V, &str, PaneAction, &mut Window, &mut Context<V>) + 'static,
+    on_pane: impl Fn(&mut V, &str, PaneAction, &mut Window, &mut Context<V>) + Clone + 'static,
     cx: &mut Context<V>,
 ) -> Stateful<Div> {
     let owner = cx.entity().downgrade();
+    let on_menu = on_pane.clone();
+    let key = slot.key.clone();
     div()
         .id(pane_id(&slot.key, "header"))
+        // The pane's menu, about the channel it plays (`crate::channel_menu`),
+        // as on its picture.
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |view, event: &MouseDownEvent, window, cx| {
+                on_menu(view, &key, PaneAction::Menu(event.position), window, cx)
+            }),
+        )
         .when(movable, |header| {
             header.on_drag(
                 PaneDrag {

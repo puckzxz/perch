@@ -159,23 +159,20 @@ panes`.
 
 The bar over a playing pane has play, the speaker — crossed out whenever the
 pane is silent, **Only this one** included — and the volume at the left, and at the
-right the quality, with two panes or more the maximize, then chat, Browse
-(see below), fullscreen and **More**, which has **Only this one** with two
-panes or more, **Audio compressor**, **Playback speed** on a recording,
-**Pop out** on Windows, **Pin to the rail**, **Open on twitch.tv** and
-**Copy link**. **Pin to the rail** pins the pane's channel to the top of the
+right the quality, then chat, Browse (see below), fullscreen and **More**,
+which has **Audio compressor**, **Playback speed** on a recording, **Pop
+out** on Windows, **Pin to the rail**, **Open on twitch.tv** and **Copy
+link**. **Pin to the rail** pins the pane's channel to the top of the
 rail — a live pane's or a recording's, followed or not (see "The rail") —
-and says **Unpin from the rail** once it is.
-**Only this one** silences every other pane without touching anyone's
-volume; until you change a silenced pane's volume, every
-pane's More then says **Hear all again**, which brings them all back.
+and says **Unpin from the rail** once it is. What only two panes or more
+need is on the pane's right-click menu (see "Right-click a channel").
 **Audio compressor** evens out how loud each stream is the way FrankerFaceZ's
 compressor does in the browser — a loud streamer comes down, a quiet one comes
 up — for every pane at once, and is remembered. As on Twitch with FFZ, a
 pane's volume goes in before the compressor, so it works gently at the volume
 you listen at and harder near the top of the slider, where turning a loud
 pane down changes it less. A narrow pane drops the volume's figure first, then
-its slider, then folds the quality into More, and the maximize after it. A
+its slider, then folds the quality into More. A
 past broadcast with no chat to replay shows the chat icon crossed out, with
 nothing to press.
 
@@ -306,6 +303,27 @@ open on a pane. While it is up the keys are the page's: `Esc` steps out, and
 a pane's own keys — `Space`, `M` and the rest — wait until you are back to
 watching, all but `P`, which pops the pane you are on out or back.
 
+### Right-click a channel
+
+Wherever a channel is named — a card, an offline name, a row of the rail, a
+name in chat — the right button opens one menu about it, in the same words
+everywhere: **Watch** and **Add beside** while it is live (Add only with room
+for another pane), **Pin to the rail** or **Unpin from the rail**, **Past
+broadcasts** while you are signed in, **Open on twitch.tv** and **Copy
+link**. On a name in chat it also has **Copy name**; the rest of the line
+keeps its own copy menu (see [Chat](#chat)). A click still does what it
+always did; the menu is where everything else is.
+
+A pane's own menu — the right button on its picture or its header — is
+about the channel it plays, and has what only two panes or more need:
+**Only this one**, which silences every other pane without touching
+anyone's volume, and once one pane alone is heard every pane's menu says
+**Hear all again** instead, until you change a silenced pane's volume;
+**Maximize**, or **Show all panes** on the pane that has the window (see
+"One pane, the whole window"); and **Move earlier** and **Move later** (see
+"Panes in another order"). Then **Pop out** on Windows, or **Bring back**,
+and **Close**. A press anywhere else, or `Esc`, puts the menu away.
+
 ### Going back in a live stream
 
 Above the bar on a live pane is a timeline of the broadcast so far, from
@@ -348,7 +366,8 @@ With two panes or more on the page, drag a pane by its header onto another
 pane and the two swap places. Nothing follows the pointer; the pane it is
 over is outlined, and letting go anywhere else, or pressing `Esc`, leaves
 everything where it was. `Shift+←` and `Shift+→` do the same from the
-keyboard, swapping the pane you are on with the one before or after it.
+keyboard, swapping the pane you are on with the one before or after it, and
+so do **Move earlier** and **Move later** on a pane's right-click menu.
 Before and after are the order `1` to `4` count, row by row, rather than
 directions on the screen: in a grid of two rows, the first pane of the
 second row moved earlier goes to the end of the first. The pane you moved
@@ -359,15 +378,15 @@ saved. While one pane has the whole window there is nothing to rearrange.
 
 ### One pane, the whole window
 
-With two panes or more, `Z` or the maximize on a pane's bar gives that pane
-the whole of the watch page, its chat included, as if it were the only one.
+With two panes or more, `Z`, or **Maximize** on a pane's right-click menu,
+gives that pane the whole of the watch page, its chat included, as if it were the only one.
 The others are not drawn at all — no strip of names, no thumbnails, which
 would take room from the pane you chose — and go on playing as they were,
 each with its own sound. `1` to `4` and `Tab` move the maximize to the pane
 they choose, so the keys always act on the pane you can see, and so does
 picking a pane's quality from the palette, bringing one back from its own
-window or opening one that is already open. `Z` or the same control again
-shows every pane, back where it was, and so does `Esc`, before a second
+window or opening one that is already open. `Z` again, or **Show all panes**
+on the pane's menu, shows every pane, back where it was, and so does `Esc`, before a second
 `Esc` leaves the page; the palette has `Maximize …` and `Show all panes`
 too.
 
@@ -527,7 +546,9 @@ out or banned, chat says so — `ronni was timed out for 10 minutes`, `ronni was
 banned` — and every message of theirs on screen, a resub's note included, is
 greyed the same way.
 
-Right-click a message to copy it: **Copy message** copies the text as it was
+Right-click a message to copy it — anywhere but on a name, which opens the
+menu about that person's channel instead (see "Right-click a channel"):
+**Copy message** copies the text as it was
 sent, emote names and all; **Copy name** the name; **Copy link**, when the
 message has one, the link you clicked on or else its first; and **Copy emote
 name**, when you clicked on an emote — with whatever is drawn over it or done

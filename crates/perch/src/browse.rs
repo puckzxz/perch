@@ -19,12 +19,13 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use emotes::ImageCache;
 use gpui::{
-    div, img, prelude::*, px, AnyElement, App, Context, ImgResourceLoader, Resource, ScrollHandle,
-    SharedString, Stateful, Window,
+    div, img, prelude::*, px, AnyElement, App, Context, ImgResourceLoader, MouseButton,
+    MouseDownEvent, Pixels, Point, Resource, ScrollHandle, SharedString, Stateful, Window,
 };
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 use twitch_api::{Category, Channel, LiveStream, Video, VideoKind};
 
+use crate::channel_menu;
 use crate::channel_page;
 use crate::controls;
 use crate::following;
@@ -482,6 +483,14 @@ pub enum Action {
     SignIn,
     /// Fetch the next page of whichever list is on screen.
     LoadMore,
+    /// A right-click on a channel named here — a card, an offline name, a
+    /// rail row — at this point in the window: its menu (`crate::channel_menu`),
+    /// with `live` what the place it was on said.
+    ChannelMenu {
+        channel: channel_menu::Channel,
+        live: bool,
+        at: Point<Pixels>,
+    },
     /// Pin this channel to the top of the rail, or take it off: the rail's
     /// own pin, on a followed channel's row or a pinned one's, and the pin on
     /// a channel's page, followed or not. A pane's More does the same through
@@ -738,7 +747,13 @@ pub(crate) fn card<V: 'static>(
 ) -> impl IntoElement {
     let on_click = on_action.clone();
     let on_add = on_action.clone();
+    let on_menu = on_action.clone();
     let on_corner = on_action;
+    let menu_channel = channel_menu::Channel {
+        login: stream.user_login.clone(),
+        display_name: stream.display_name.clone(),
+        user_id: Some(stream.user_id.clone()).filter(|id| !id.is_empty()),
+    };
     let login = stream.user_login.clone();
     let add_login = stream.user_login.clone();
     // The top-left corner's pill: the channel's past broadcasts.
@@ -793,6 +808,17 @@ pub(crate) fn card<V: 'static>(
         .on_click(cx.listener(move |view, _event, window, cx| {
             on_click(view, Action::Watch(login.clone()), window, cx)
         }))
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |view, event: &MouseDownEvent, window, cx| {
+                let menu = Action::ChannelMenu {
+                    channel: menu_channel.clone(),
+                    live: true,
+                    at: event.position,
+                };
+                on_menu(view, menu, window, cx)
+            }),
+        )
         .child(
             div()
                 .relative()
@@ -961,10 +987,16 @@ pub(crate) fn offline_pill<V: 'static>(
     id: impl Into<gpui::ElementId>,
     channel: &Channel,
     last_live: Option<String>,
-    on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + 'static,
+    on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + Clone + 'static,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
     let action = Action::open_channel(channel);
+    let on_menu = on_action.clone();
+    let menu_channel = channel_menu::Channel {
+        login: channel.login.clone(),
+        display_name: channel.display_name.clone(),
+        user_id: Some(channel.user_id.clone()).filter(|id| !id.is_empty()),
+    };
     controls::pill(
         id,
         SharedString::from(channel.display_name.clone()),
@@ -992,6 +1024,17 @@ pub(crate) fn offline_pill<V: 'static>(
     })
     .on_click(
         cx.listener(move |view, _event, window, cx| on_action(view, action.clone(), window, cx)),
+    )
+    .on_mouse_down(
+        MouseButton::Right,
+        cx.listener(move |view, event: &MouseDownEvent, window, cx| {
+            let menu = Action::ChannelMenu {
+                channel: menu_channel.clone(),
+                live: false,
+                at: event.position,
+            };
+            on_menu(view, menu, window, cx)
+        }),
     )
 }
 

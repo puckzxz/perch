@@ -78,7 +78,7 @@ impl RootView {
                 }
             }
             PaneAction::ToggleChat => self.toggle_chat(index, cx),
-            // More's `Only this one`, or `Hear all again`; see `hearing`.
+            // Its menu's `Only this one`, or `Hear all again`; see `hearing`.
             PaneAction::HearOnly => self.hear_only(key, cx),
             // More's `Audio compressor`; every pane's, see `hearing`.
             PaneAction::ToggleCompressor => self.toggle_compressor(cx),
@@ -161,6 +161,9 @@ impl RootView {
             }
             // The Browse button on its bar, or its header's.
             PaneAction::Browse => self.toggle_browse(key, cx),
+            // A right-click on its picture or its header: its menu, about
+            // the channel it plays, with its own rows (`channel_menus`).
+            PaneAction::Menu(position) => self.open_pane_menu(key, position, cx),
             // `Past broadcasts` under its picture: the channel's page beside
             // the panes, with this pane the one a card there plays in place
             // of. The page comes up where the pointer was, so the rest of
@@ -207,18 +210,19 @@ impl RootView {
         closed
     }
 
-    /// Close every chat's copy menu (`chat::copy_menu`); returns whether
-    /// one was open. For `Esc` with the other menus, and for the palette or
-    /// the settings sheet opening: the copy menu is drawn deferred, over
-    /// everything the window draws, the modals and their scrim included, so
-    /// left open it would float over the modal and take its presses.
+    /// Close every chat's copy menu (`chat::copy_menu`), and the channel
+    /// menu (`channel_menus`); returns whether one was open. For `Esc` with
+    /// the other menus, and for the palette or the settings sheet opening:
+    /// both are drawn deferred, over everything the window draws, the modals
+    /// and their scrim included, so left open one would float over the modal
+    /// and take its presses.
     pub(super) fn close_copy_menus(&mut self, cx: &mut Context<Self>) -> bool {
+        let mut closed = self.close_channel_menu(cx);
         let chats: Vec<_> = self
             .slots
             .iter()
             .filter_map(|slot| slot.chat.clone())
             .collect();
-        let mut closed = false;
         for chat in chats {
             closed |= chat.update(cx, |chat, cx| chat.close_menu(cx));
         }
@@ -355,9 +359,7 @@ impl RootView {
                 // pane: the player has already let its hush go.
                 let index = self.slot_index(owner);
                 if let Some(index) = index {
-                    if std::mem::replace(&mut self.slots[index].quiet, false) {
-                        self.sync_hear_only(cx);
-                    }
+                    self.slots[index].quiet = false;
                 }
                 let channel = index.map(|index| self.slots[index].channel.clone());
                 if let Some(channel) = channel {

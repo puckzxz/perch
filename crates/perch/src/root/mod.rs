@@ -20,9 +20,10 @@
 //! | `renditions` | what each pane plays, and when it restarts: the quality chosen against each pane's own height (`pane_height_for`), the upward re-pick when the grid changes, a pick from the pane's menu; a new rendition resolved beside the picture and kept once its player has taken over in place (`video_view::swap`) |
 //! | `panes` | where each pane is drawn, applied: `restage`, the one funnel every change of state, membership, page, pop-out or maximize ends in; `set_slot_state`, the only write of a pane's state; `video_in_main`, the only way the main window reaches a player; a pane given the watch page and every pane shown again (`toggle_maximize`, `show_all_panes`), and `choose`, which takes the maximize to the pane chosen; two panes swapping places in the order (`move_pane`), from a header dropped on a pane or `Shift+←`/`Shift+→` |
 //! | `pop_out` | a pane in a window of its own, on top of other apps: moving its picture there and back, the window, and `to_root`, the only way back from it |
-//! | `hearing` | which panes are heard: More's `Only this one` and `Hear all again`, through Mute all's hush, and the mirror of it every player's menu keeps (`sync_hear_only`); More's `Audio compressor`, every pane's at once (`toggle_compressor`) |
+//! | `hearing` | which panes are heard: a pane menu's `Only this one` and `Hear all again`, through Mute all's hush, read from the hushes as the menu is drawn (`hear_only_now`); More's `Audio compressor`, every pane's at once (`toggle_compressor`) |
 //! | `ad_breaks` | a pane's ad-break notice: begun when streamlink says it is filtering an ad, counted down once a second, taken down when it is over |
 //! | `broadcasts` | what a stopped live pane asks about its channel's past broadcasts, and whether it can start by itself |
+//! | `channel_menus` | the right-click menu about a channel (`crate::channel_menu`): opened on a card, an offline name, a rail row, a name in chat or a pane, what it knows each time it is drawn, and a pick carried out — a pane's by its key, as its own controls go |
 //! | `pane_actions` | what a pane asks for, by its key: its controls, and its player's requests; the header a pane key reveals; `run_guard`, which swallows the rest of a double-click whose first press took a player from under the pointer |
 //! | `launches` | what the command line named, at startup and from later launches |
 //! | `history` | what has been watched: noting where each recording got to, resuming there |
@@ -50,6 +51,7 @@ mod ad_breaks;
 mod badges;
 mod broadcasts;
 mod browsing;
+mod channel_menus;
 mod chat_send;
 mod cheers;
 mod chrome;
@@ -457,6 +459,11 @@ pub(crate) struct RootView {
     /// Enter, and re-subscribing on every `Ctrl+K` would stack those up.
     palette_input: Entity<InputState>,
     palette_open: bool,
+    /// The right-click menu about a channel, while it is open; see
+    /// `channel_menus`. Numbered by how many have opened, which keys each
+    /// one's arrival.
+    channel_menu: Option<channel_menus::OpenChannelMenu>,
+    channel_menus_opened: u64,
     /// Which row Enter would run. An index into the entries computed at render,
     /// clamped there — the list changes under it on every keystroke.
     palette_selected: usize,
@@ -665,6 +672,8 @@ impl RootView {
             resize: None,
             palette_input,
             palette_open: false,
+            channel_menu: None,
+            channel_menus_opened: 0,
             palette_selected: 0,
             settings_panel: None,
             toasts: Vec::new(),
@@ -1037,6 +1046,7 @@ impl Render for RootView {
                     )
                     .child(self.toast_stack(cx))
                     .children(self.search_suggestions_panel(window, cx))
+                    .children(self.channel_menu_view(cx))
                     .children(self.palette_sheet(cx))
                     .children(self.settings_panel.clone()),
             )

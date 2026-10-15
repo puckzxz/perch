@@ -722,7 +722,6 @@ impl RootView {
                         self.slots[index].chat_hidden,
                         self.slots[index].chat.is_some(),
                     ),
-                    maximize: self.maximize_button_of(key),
                     // Nothing, but for a pick still resolving beside the
                     // player this one replaces, which the bar goes on saying.
                     switching: self.slots[index]
@@ -744,9 +743,6 @@ impl RootView {
                         .recording()
                         .map(|video| video.muted_segments.clone())
                         .unwrap_or_default(),
-                    // What More offers about hearing one pane alone; kept
-                    // up by `sync_hear_only`.
-                    hear_only: self.hear_only_now(),
                     // Whether the browse page is up, for the bar's Browse
                     // button; kept up by `restage`.
                     browsing: self.page == Page::Browse,
@@ -1023,7 +1019,6 @@ impl RootView {
                 view.update(cx, |video, cx| video.set_hushed(quiet, cx));
             }
         }
-        self.sync_hear_only(cx);
         cx.notify();
     }
 

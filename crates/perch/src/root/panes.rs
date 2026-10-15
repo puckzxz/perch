@@ -8,9 +8,8 @@
 //! what the slots are now: a popped pane that has closed or stopped comes
 //! home, a maximize ends once its pane has gone or a popped pane comes home
 //! to a cell it would hide, and every player is told where it is drawn,
-//! which window's focus takes its keys back and what its maximize control
-//! offers — and no player is told by anything else (`VideoView::set_place`,
-//! `VideoView::set_maximize`), so the two cannot disagree.
+//! which window's focus takes its keys back — and no player is told by
+//! anything else (`VideoView::set_place`), so the two cannot disagree.
 //!
 //! And the maximize itself, as the root drives it: giving a pane the watch
 //! page and showing every pane again
@@ -24,7 +23,7 @@ use gpui::{App, Context, Entity, FocusHandle, Window};
 
 use super::{Page, RootView};
 use crate::motion;
-use crate::stage::{MaximizeButton, Place};
+use crate::stage::Place;
 use crate::video_view::VideoView;
 use crate::watch::{self, Showing, Slot, StreamState};
 
@@ -41,13 +40,6 @@ impl RootView {
     /// (`stage_drawn`) — or nowhere while another pane is maximized.
     pub(super) fn place_of(&self, key: &str) -> Place {
         self.stage.place(self.stage_drawn(), key)
-    }
-
-    /// What the maximize control of the pane `key` names offers; see
-    /// `stage::MaximizeButton`. For a player being made (`Start::maximize`),
-    /// which `restage` then keeps told.
-    pub(super) fn maximize_button_of(&self, key: &str) -> MaximizeButton {
-        self.stage.maximize_button(key, &pane_keys(&self.slots))
     }
 
     /// The focus of the window the pane `key` names is drawn in: its
@@ -173,9 +165,8 @@ impl RootView {
     }
 
     /// Tell every player where it is drawn, in which window's focus, and
-    /// what its maximize control offers; see `VideoView::set_place`, which
-    /// does nothing for a player already told, and `VideoView::set_maximize`,
-    /// the control's mirror, which nothing else writes after `Start`.
+    /// whether the browse page is up beside it; see `VideoView::set_place`,
+    /// which does nothing for a player already told.
     ///
     /// Each pane whose cell is off the screen — every one with no grid
     /// drawn, and with one every one but the maximized pane's while one is — also
@@ -205,18 +196,17 @@ impl RootView {
         let browsing = self.page == Page::Browse;
         let keys = pane_keys(&self.slots);
         let cells = self.stage.cells(&keys);
-        let told: Vec<(Place, MaximizeButton, bool)> = keys
+        let told: Vec<(Place, bool)> = keys
             .iter()
             .enumerate()
             .map(|(index, key)| {
                 (
                     self.stage.place(watching, key),
-                    self.stage.maximize_button(key, &keys),
                     watching && cells.contains(&index),
                 )
             })
             .collect();
-        for (slot, (place, button, on_screen)) in self.slots.iter_mut().zip(told) {
+        for (slot, (place, on_screen)) in self.slots.iter_mut().zip(told) {
             if let Some(view) = slot.video() {
                 let focus = self
                     .stage
@@ -224,7 +214,6 @@ impl RootView {
                     .map_or_else(|| self.focus.clone(), |popped| popped.focus.clone());
                 view.update(cx, |video, cx| {
                     video.set_place(place, focus, cx);
-                    video.set_maximize(button, cx);
                     video.set_browsing(browsing, cx);
                 });
             }
@@ -239,15 +228,12 @@ impl RootView {
                 }
             }
         }
-        // Which panes there are decides whether More offers hearing one
-        // alone at all.
-        self.sync_hear_only(cx);
     }
 
     /// Give the pane `key` names the whole watch page, chat and all, or, on
     /// the pane that has it, show every pane again: `Z` on the active pane,
-    /// its bar's control or More's row, and the palette's `Maximize …`. What
-    /// a press does is what the control offers (`Stage::toggle_maximize`),
+    /// its menu's row (`crate::channel_menu`), and the palette's `Maximize
+    /// …`. What a press does is what the row offers (`Stage::toggle_maximize`),
     /// so nothing for a lone pane or one in a window of its own.
     ///
     /// The other panes are drawn as nothing while it lasts, and play on as
@@ -329,8 +315,8 @@ impl RootView {
     /// Nothing is restarted or told anything. Every cell in the grid is as
     /// tall as every other, and a pane's quality is chosen by its height
     /// (`pane_height_for`), so no pane's rendition changes with its place;
-    /// nor does where it is drawn, nor its maximize control, which are
-    /// `restage`'s and read no order. And nothing is remounted, since every
+    /// nor does where it is drawn, which is `restage`'s and reads no
+    /// order. And nothing is remounted, since every
     /// id in a pane is its key's (`watch::page`).
     pub(super) fn move_pane(&mut self, from: &str, onto: &str, cx: &mut Context<Self>) {
         self.pane_move = None;

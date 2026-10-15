@@ -30,7 +30,7 @@ use chrono::{DateTime, Utc};
 use emotes::ImageCache;
 use gpui::{
     canvas, div, prelude::*, px, AnyElement, Context, CursorStyle, ElementId, Entity, IntoElement,
-    MouseButton, MouseDownEvent, Pixels, SharedString, Task, Window,
+    MouseButton, MouseDownEvent, Pixels, Point, SharedString, Task, Window,
 };
 use settings::history::Watched;
 use streamlink::{StreamEvent, StreamSupervisor};
@@ -812,9 +812,9 @@ pub enum PaneAction {
     /// in either window, and the palette's row.
     PopIn,
     /// Give it the whole watch page, chat and all, or, on the pane that has
-    /// it, show every pane again: its bar's maximize control, More's row
-    /// once that has folded, and the palette's `Maximize …`. `Z` does the
-    /// same for the active pane; see `RootView::toggle_maximize`.
+    /// it, show every pane again: its menu's row (`crate::channel_menu`)
+    /// and the palette's `Maximize …`. `Z` does the same for the active
+    /// pane; see `RootView::toggle_maximize`.
     Maximize,
     /// Its header has started to be dragged ([`PaneDrag`]): every other
     /// pane on the page offers itself to be dropped on until the drag ends.
@@ -859,8 +859,8 @@ pub enum PaneAction {
     /// pointer's way to what `Ctrl+0` does (`RootView::reset_sizes`).
     ResetSizes,
     /// Hear this pane alone, every other held silent by Mute all's hush, or,
-    /// once one pane alone is heard, every pane again: More's `Only this
-    /// one` and `Hear all again`; see `RootView::hear_only`.
+    /// once one pane alone is heard, every pane again: its menu's `Only
+    /// this one` and `Hear all again`; see `RootView::hear_only`.
     HearOnly,
     /// Turn the audio compressor on or off, for every pane at once: More's
     /// `Audio compressor` row. See `crate::compressor` and
@@ -881,6 +881,9 @@ pub enum PaneAction {
     /// browse page beside the panes, which play on: `Past broadcasts` on
     /// the header under the picture. See `RootView::open_channel_page`.
     ChannelPage,
+    /// Open the pane's menu at this point in the window: a right-click on
+    /// its picture or its header. See `crate::channel_menu`.
+    Menu(Point<Pixels>),
 }
 
 /// How every pane in the current grid is arranged. Identical for all of them,

@@ -119,7 +119,7 @@ pub struct OpenPane {
     /// Whether it could be popped out: it has a player to move, and the
     /// pop-out is offered on this platform at all (`root::pop_out`).
     pub can_pop_out: bool,
-    /// What its maximize control offers (`stage::Stage::maximize_button`):
+    /// What its maximize offers (`stage::Stage::maximize_button`):
     /// a pane that can be given the page has a row for it, and one that has
     /// it means `Show all panes` is offered.
     pub maximize: MaximizeButton,

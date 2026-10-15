@@ -46,9 +46,10 @@ pub enum Place {
     PopOut,
 }
 
-/// What a pane's maximize control offers, on its bar or folded into More,
-/// and what the palette offers for it: the one answer to that question
-/// ([`Stage::maximize_button`]), so the control, `Z` and the palette agree.
+/// What a pane's maximize offers, on its right-click menu
+/// (`crate::channel_menu`), and what the palette offers for it: the one
+/// answer to that question ([`Stage::maximize_button`]), so the menu, `Z`
+/// and the palette agree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MaximizeButton {
     /// Nothing: fewer than two panes, so nothing to give the page over

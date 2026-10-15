@@ -35,7 +35,7 @@ use std::sync::Arc;
 use emotes::{EmoteLoader, EmoteSets, ImageCache, Token};
 use gpui::{
     div, list, point, prelude::*, px, AnyElement, Context, Entity, EventEmitter, ListAlignment,
-    ListState, MouseButton, MouseDownEvent, Pixels, RetainAllImageCache, SharedString,
+    ListState, MouseButton, MouseDownEvent, Pixels, Point, RetainAllImageCache, SharedString,
     Subscription, Task, Window,
 };
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
@@ -233,6 +233,14 @@ pub enum ChatViewEvent {
     /// The card's `Channel page`: open Perch's page of `login`'s past
     /// broadcasts and schedule, on the browse page, beside the panes.
     ChannelPage { login: String, display_name: String },
+    /// A right-click on a name, the speaker's or a mention's, at this point
+    /// in the window: the root's menu about that channel
+    /// (`crate::channel_menu`), in place of the row's copy menu.
+    ChannelMenu {
+        login: String,
+        display_name: String,
+        position: Point<Pixels>,
+    },
 }
 
 impl EventEmitter<ChatViewEvent> for ChatView {}
@@ -1226,6 +1234,17 @@ impl ChatView {
                     }
                     (None, Kind::Mention) => {
                         let press = card.clone().map(|login| Self::name_press(login, cx));
+                        // The right button says whose name it was, for the
+                        // row's listener, which opens the channel's menu.
+                        let named = card.clone().map(|login| {
+                            Self::press_target(
+                                Target::Name {
+                                    display_name: login.clone(),
+                                    login,
+                                },
+                                cx,
+                            )
+                        });
                         div()
                             .flex_none()
                             .font_weight(theme::weight_title())
@@ -1234,6 +1253,9 @@ impl ChatView {
                                 mention
                                     .cursor_pointer()
                                     .on_mouse_down(MouseButton::Left, press)
+                            })
+                            .when_some(named, |mention, named| {
+                                mention.on_mouse_down(MouseButton::Right, named)
                             })
                             .child(text)
                             .into_any_element()
@@ -1334,6 +1356,17 @@ impl ChatView {
         // a name that is only drawn.
         let press = twitch_chat::is_login(&message.login)
             .then(|| Self::name_press(message.login.clone(), cx));
+        // As a mention's: whose name it was, for the row's right-button
+        // listener, which opens the channel's menu.
+        let named = twitch_chat::is_login(&message.login).then(|| {
+            Self::press_target(
+                Target::Name {
+                    login: message.login.clone(),
+                    display_name: message.display_name.clone(),
+                },
+                cx,
+            )
+        });
         let line = Self::word_line()
             .children(time)
             .children(source.map(|label| self.source_tag(row, label)))
@@ -1346,6 +1379,9 @@ impl ChatView {
                     .when_some(press, |name, press| {
                         name.cursor_pointer()
                             .on_mouse_down(MouseButton::Left, press)
+                    })
+                    .when_some(named, |name, named| {
+                        name.on_mouse_down(MouseButton::Right, named)
                     })
                     .child(SharedString::from(name)),
             );
