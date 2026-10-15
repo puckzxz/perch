@@ -81,7 +81,7 @@ const AVATAR: f32 = 30.0;
 
 /// Twitch serves profile pictures at a handful of sizes; this is the smallest
 /// that still looks right on a HiDPI display at [`AVATAR`].
-const AVATAR_REQUEST: u32 = 70;
+pub(crate) const AVATAR_REQUEST: u32 = 70;
 
 /// The group a row's hover-revealed controls watch for the pointer.
 const ROW_GROUP: &str = "rail-row";

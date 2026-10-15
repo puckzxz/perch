@@ -137,7 +137,7 @@ variants! {
     /// A pill that is currently the answer — the open tab, the chosen quality.
     Selected,
     /// On top of live video, where a filled background would be one more thing
-    /// covering the picture. Rests at `text_muted` on the bar's wash and lifts
+    /// covering the picture. Rests at `control_rest` on the bar's wash and lifts
     /// to full text under the pointer: the hover fill alone is a white wash at
     /// four percent, which on a dark bar over a moving picture is all but
     /// invisible, so the label's own lift is the cue that it will take the
@@ -178,7 +178,7 @@ impl Variant {
 
     fn foreground(self) -> gpui::Hsla {
         match self {
-            Variant::Pill | Variant::Chrome | Variant::OnVideo => theme::text_muted(),
+            Variant::Pill | Variant::Chrome | Variant::OnVideo => theme::control_rest(),
             Variant::Selected | Variant::Primary => theme::text(),
             Variant::Quiet | Variant::Destructive => theme::text_dim(),
             Variant::Confirm => theme::accent(),
@@ -467,7 +467,7 @@ pub fn caption_button(
                         .path(icon.path())
                         .flex_none()
                         .size(px(theme::CAPTION_GLYPH))
-                        .text_color(theme::text_muted())
+                        .text_color(theme::control_rest())
                         .when(window_hovered, |glyph| {
                             glyph.group_hover(CAPTION_GROUP, move |style| {
                                 style.text_color(hover_glyph)
@@ -583,14 +583,15 @@ pub fn destructive(
 /// hover - so it reads as a fact about the pane rather than as a button that
 /// would change it. The controls that change it are on the video's bar,
 /// whose tooltips name their keys, and every key is listed in the settings
-/// sheet.
+/// sheet. On a neutral chip (`theme::tag_fill`), not the accent's wash it
+/// once wore, which made a state look like a chosen control.
 pub fn tag(label: impl Into<SharedString>) -> gpui::Div {
     div()
         .flex_none()
         .px(px(theme::GAP_TIGHT))
         .py(px(theme::TAG_PAD_Y))
         .rounded(px(theme::RADIUS))
-        .bg(theme::accent_dim())
+        .bg(theme::tag_fill())
         .text_size(px(theme::TEXT_META))
         .font_weight(theme::weight_label())
         .line_height(px(theme::LINE_TIGHT))
@@ -601,7 +602,7 @@ pub fn tag(label: impl Into<SharedString>) -> gpui::Div {
 /// Where something came from, said in a word in front of it: the channel a
 /// Shared Chat line was copied from, before the speaker's name
 /// (`ChatView::source_tag`). A [`tag`]'s shape and size, quieter: the
-/// raised surface rather than the accent's wash, and the dim tier, as
+/// raised surface rather than the tag's chip, and the dim tier, as
 /// [`waiting`] is, because it rides on every copied line of a busy shared
 /// chat and is supporting information rather than a state to notice.
 ///

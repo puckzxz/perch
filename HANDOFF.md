@@ -220,10 +220,11 @@ App modules:
 | `guide.rs` | the guide over the watch page, worked out and drawn: its tabs and what each shows (`Guide::shows`, `Shows`), the requests that fill them — the browse page's own, by the same keys (`Shows::first_page`, `Guide::first_page_due`, `Guide::next_page`) — where a card's Watch and `+ Add` play (`opening`) and whether the guide closes after (`closes_after`), how big the panel is (`panel`: two rows of cards, never more than half the page), a recommendation as a card (`as_stream`), and the panel's contents from the browse page's cards, rows and Load more (pure parts tested) |
 | `veil.rs` | what the overlays on the watch page cover, so the panes' measured hover leaves the pointer alone there, each under its own `Cover`: the guide's probe and an open viewer card's write their bounds (`cover`), the root lifts the guide's on every frame it is not drawn and a chat its card's on every render without one, as it closes and as the chat goes (`lift`), and every pane probe — the pane's, the player's, the chat's hold — asks `pointer_over`, the pane's hover and the chat's hold leaving their own card out (`reaches`, tested) |
 | `watch.rs` | the grid of panes; `Slot` lives here, made by `Slot::new`, with `PendingStart`, a start of its stream resolving beside the picture, and `WarmStart`, a streamlink started ahead for the pane's quality menu (`Slot::warm`), and `PaneAction`, everything a pane asks of the root; the band a header rides over the picture on, and when it is up (`Slot::point`, `band_wanted`, tested); the layer a dragged header is dropped on (`drop_layer`, `PaneDrag`) |
-| `watch/header.rs` | a pane's header — name, the red `LIVE` badge on a live pane, numbers, what is on, `muted`/`paused`/`buffering` and an ad break's tag (`says_buffering`, the one rule for when `buffering` shows, which a pop-out's word over its picture follows too, tested), the chat options icon on a header that sits on chat, the pop-out icon that turns into Bring back, and the × — each icon naming its key — the handle a pane is dragged by onto another, and `Placement`, the one rule for where it goes: the chat panel, or over the picture with no chat on screen (tested) |
+| `watch/header.rs` | a pane's header — name, the red `LIVE` badge on a live pane, numbers, what is on, `muted`/`paused`/`buffering` and an ad break's tag (`says_buffering`, the one rule for when `buffering` shows, which a pop-out's word over its picture follows too, tested), the chat options icon on a header that sits on chat, the pop-out icon that turns into Bring back, and the × — each icon naming its key — the handle a pane is dragged by onto another, and `Placement`, the one rule for where it goes: the chat panel, or over the picture with no chat on screen (tested); what it says worked out once as `Facts` (`numbers`, tested), and its controls as builders the strip under the picture shares (`name_link`, `with_status`, `guide_button`, `pop_button`, `chat_options`, `close_button`, `handle`) |
+| `watch/strip.rs` | a beside pane's header laid out wide under its picture, where its column has black there to give (`layout::header_under_picture`): the channel's face, its name at a title's size, the numbers with `watching`, the title and the game on lines of their own, and `Pin`/`Pinned`, out or back and the ×; and `chat_bar`, the bar that then heads its chat, with the chat options and hiding chat |
 | `watch/chat_menu.rs` | a pane's chat options menu, hung over its chat, or risen from the foot of a chat box too short for it (`placed`): the text sizes and `Time on every message` (with its state in words), and `Reset pane sizes` ruled off at the foot (`PaneAction::ResetSizes`, `RootView::reset_sizes`, shared with `Ctrl+0`), which pane's is open (`toggled`, one at a time), rows that act on the press (tested) |
 | `watch/status.rs` | a pane with no picture: `Showing`, the one reading of its state that the pane's sentence and the mini player's word both come from, and the screen drawn from it under the player — a starting pane's poster, a stopped one's next steps and what room it has for them (`next_up_room`), and `Elsewhere`, a pane whose picture is in a window of its own, with `Bring back` (tested) |
-| `layout.rs` | derives grid shape from window aspect, as `Grid::of`, the one grid the watch page, the divider drag and each pane's quality read; `quality_height`, the height a pane asks a rendition for; the page's `Body`, the title bar's height and drag edge, and the mini player's tiles, how far in it floats clear of the scrollbar, and the `Room` a browse list leaves for it; where a pop-out opens, stacked clear of where the open ones really are (`pop_out_bounds`) (pure, tested) |
+| `layout.rs` | derives grid shape from window aspect, as `Grid::of`, the one grid the watch page, the divider drag and each pane's quality read; `quality_height`, the height a pane asks a rendition for; `header_under_picture`, whether a beside pane's column has room under its picture for the header, and the picture's box then (tested); the page's `Body`, the title bar's height and drag edge, and the mini player's tiles, how far in it floats clear of the scrollbar, and the `Room` a browse list leaves for it; where a pop-out opens, stacked clear of where the open ones really are (`pop_out_bounds`) (pure, tested) |
 | `video_view.rs` | the player element: its sound, its hover, the picture and the gestures on it (`Alt` and the wheel, a middle press), and when the picture last moved again after standing still (`resumed_at`, the stream on screen's own count, kept by its render thread); drawn as a pane, a mini-player tile, in a pop-out or not at all while another pane is maximized (`stage::Place`), moved between them only by `set_place`, and belonging to no window |
 | `video_view/swap.rs` | a rendition swapped in place: the new stream started beside the one on screen inside the same view, held to it by `align` (tested) and promoted once it has a picture and, on a recording, has caught up; `route`, the one rule a stream's frame wakes and its streamlink events reach the right start by (tested) |
 | `video_view/bar.rs` | the control bar over a playing picture: the seek row on a recording, or a live broadcast's timeline where the pane is wide enough for it (`timeline_fits`, tested), the icons and their key-naming tooltips, Guide (which acts on the press, in the capture phase, `guide_button`), the quality pill (`pill_face`, tested — what plays, or a pick under way, breathing), the maximize control (`maximize_control`), what fits at the pane's width (`fit`, tested — the maximize folds into More after the quality pill), the one anchor menus open from; a recording's speed after its length while it is not `1x` (`speed_tag`, which on a pane toggles the speeds on the press, as Guide acts); a pop-out's own right-hand end, Bring back and Close |
@@ -2715,15 +2716,30 @@ unconsidered.
   (`theme::over_white`), by
   `every_tier_drawn_on_a_picture_reads_over_a_white_frame`. Two washes, two
   jobs: `video_chrome()` (`#000000e0`) carries every tier — text 13.3,
-  `text_muted` 5.8, `text_dim` 4.7, accent 5.2, danger 6.8:1 — and is what
-  the player's control bar sits on; `overlay()` (`#000000cc`) carries
-  `text()` alone (10.2:1), because `text_muted`, `text_dim` and the accent
-  all fail on it over white, and is for badges and the dim over a starting
-  pane's poster, under the pane's name in `text()`. `Variant::OnVideo`
-  rests at `text_muted` and lifts to `text()` under the pointer — the hover
-  wash alone is four percent white and all but invisible on the bar — and
-  `controls.rs`'s `sits_on` measures it on that white frame under
-  `video_chrome()`, not on black, where light text never fails.
+  `text_muted` 7.7, `control_rest` 5.8, `text_dim` 4.7, accent 5.2, danger
+  6.8:1 — and is what the player's control bar sits on; `overlay()`
+  (`#000000cc`) carries `text()` alone (10.2:1), because `control_rest`,
+  `text_dim` and the accent all fail on it over white, and is for badges and
+  the dim over a starting pane's poster, under the pane's name in `text()`.
+  `Variant::OnVideo` rests at `control_rest` and lifts to `text()` under the
+  pointer — the hover wash alone is four percent white and all but invisible
+  on the bar — and `controls.rs`'s `sits_on` measures it on that white frame
+  under `video_chrome()`, not on black, where light text never fails.
+- **Three text tiers that step evenly, and controls quieter than what they
+  sit beside** (October 2026). `text_muted` was `#9a97a5`, 6.5:1 on the chat
+  surface against `text_dim`'s 5.3:1: too close to read as two tiers, so a
+  card's title and its game came out the same grey. It is `#b3b0bd` now
+  (8.7:1), so text, `text_muted` and `text_dim` step 15, 8.7 and 5.3. A
+  control's words and glyph at rest kept the old grey as `control_rest` —
+  every `Pill`, `Chrome` and `OnVideo` variant and the caption buttons — so
+  chrome still recedes behind what is read
+  (`a_resting_control_is_quieter_than_supporting_text`). And a passive tag
+  (`muted`, `paused`, `buffering`, `replay`, `ad break`) sits on a neutral
+  chip, `theme::tag_fill`, rather than the accent's wash it wore, so the
+  accent means something to press, something chosen or progress, and a
+  state no longer looks like a selected control
+  (`a_tag_reads_on_its_neutral_chip`). Chat's event washes keep the accent
+  for now.
 - **Motion** — three durations named by job (`MOTION_HOVER`, `MOTION_ENTER`,
   `MOTION_VIDEO`) plus the waiting pulse, and two easings (`ease_fade` for
   two-way changes, `ease_enter` for arrivals). Motion says *that something
@@ -2832,6 +2848,40 @@ header rests over it. The split:
   offers chat back (`Show chat`, the chat glyph crossed out), and the status
   screen starts `theme::BAND_ROOM` down so the resting band never covers its
   words.
+- **Under the picture, where there is black to give** (`watch/strip.rs`,
+  October 2026). One stream is how Perch is mostly watched, and beside its
+  chat a 16:9 picture in a window of ordinary shape used to sit centred over
+  black above and below — 151 px at 1920 by 1080, and as much at 4K
+  maximized — while its header, in the 340 px chat column beside it, cut the
+  channel's name to six letters once `LIVE`, the numbers, `muted` and three
+  icons had their room. Where that black can hold the header
+  (`layout::header_under_picture`, `theme::STRIP_ROOM`), the picture's box is
+  the picture, at the top of its column, and the header goes under it laid
+  out wide, the strip: the channel's face (`PaneInfo::avatar`, the rail's
+  cached picture of a followed or recommended channel, `None` for anyone
+  else), its name at `TEXT_TITLE`, the badge, the numbers with `watching`,
+  the tags, the title at `TEXT_BODY` on a line of its own and the game under
+  it; then `Pin`/`Pinned` (`Variant::Selected` while pinned, its press
+  unpinning, `PaneAction::Pin` saying which it was offered as), the guide on
+  a pane with no bar, out or back, and the ×. The picture is the size it was
+  either way — the column's width at the stream's shape — so its render size
+  and its quality do not move. The strip is the same handle and the same
+  marked rule as the compact header (`header::handle`); both are built from
+  `header::Facts` and the header's own builders, so the two cannot come to
+  say different things. Chat is then headed by `strip::chat_bar`: `Chat`,
+  the chat options, whose menu hangs under it as it did under the header,
+  and hiding chat (the chevron, `C`), which the player's bar offers only
+  while the pointer is on the picture. The picture's box and the strip
+  stand in one column with no id, so the player's element path is the
+  pane's whichever way the header goes, and a resize across the line moves
+  the header and nothing else. A column the picture fills by height — a
+  wider window, a 4:3 or vertical stream — has no black under it, and keeps
+  the compact header on chat; so does every stacked cell, whose header
+  already sits between its picture and its chat, and a pane with chat hidden,
+  whose header rides the band. `Past broadcasts` and a `⋯` on the strip,
+  as the October 2026 mockups have them, wait for browsing that does not
+  leave the watch page: today a channel's page from here stops every stream
+  with the mini player off.
 - **Over the video**, only while the pointer is on it or one of its menus is
   open, or on a pane while a quality somebody picked is under way and for a
   moment after (`video_view::bar_wanted`): the control bar
@@ -5450,6 +5500,35 @@ by the follows poll's own step, and an ended one knows its broadcast (see
 "Pins from anywhere" under Browsing). Pins on Home were asked about and the
 user was not sure, so they were left out.
 
+**A redesign built around one stream** was mocked up and liked on 15
+October 2026, and its first phase is built: the header under the picture
+where a beside pane has black to give (see "Under the picture" under "Where
+controls live"), and a palette whose text tiers step evenly, with controls
+quieter than what they sit beside and passive tags on a neutral chip (see
+"Design system"). What it left, in the order it was drawn:
+
+1. **Browsing that never leaves the stream.** A panel that docks on the
+   left of the watch page, half its width at most, with the stream beside
+   it as a stacked pane — its picture whole, its header and chat under it —
+   rather than a browse page the watch page gives way to. It is the guide
+   grown into the browse page: the same four tabs everywhere (Following,
+   Popular, Categories, Library), search results and channel pages inside
+   it, and the same panel at full width when nothing plays. The strip's
+   `Past broadcasts` waits on it. It retires the mini player and the guide,
+   and with them the reason a viewer card's `Channel page` asks first, so
+   it reopens "Product decisions" (the mini player, the rail and Home):
+   confirm with the user before building.
+2. **The title bar as Browse and one search box**: back, forward and Home
+   move into the panel, and the search box answers from what Perch knows as
+   you type and from Twitch after a pause, so Home's filter goes. That is
+   the omnibox parked as keyboard work; the case for it now is the mouse.
+3. **One right-click menu wherever a channel is named** — a pane, a card, a
+   rail row, a name in chat — with Watch, Add beside, Pin, the channel's
+   page, twitch.tv and Copy link; on a pane also what only two panes or
+   more need (`Only this one`, the maximize, swapping), which then leaves
+   the bar. A click on a card or a rail row plays it in place of the pane
+   you are on rather than closing every pane.
+
 Left over from phase 1, smallest first:
 
 - The passive words the casing pass left alone — chat's notices, chat's
@@ -5933,6 +6012,16 @@ None of these is being worked on; all of them are real.
       the header and the picture with every row in sight and taking its
       press, `Reset pane sizes` among them; checked only against taffy's
       layout in a throwaway crate.
+    - the header under the picture (`watch::strip`), signed in. Seen
+      working on 15 October 2026 in a scratch copy signed out, through the
+      stand-in streamlink: at 1920 × 1080 one pane's picture at the top
+      with the strip under it and chat headed by its bar; at 2560 × 1080
+      the compact header on chat, as before; at 1400 × 1600 two panes,
+      each with its strip, the active one's rule under it. Not yet seen:
+      the title and game lines and the channel's face (a signed-out copy
+      has no list to read them from), `Pin` turning `Pinned` and back, the
+      chat options menu hanging under the chat bar, and the chevron hiding
+      chat.
 37. **What emotes stacked together leave out stays out, and stacks and
     effects are seen only by their tests.** A wide overlay on a narrow emote
     is fitted into the emote's box rather than spilling over the words beside

@@ -483,6 +483,31 @@ pub fn stacked_video_height(cell_width: f32, cell_height: f32, aspect: f32, shar
     (cell_width / aspect).min(cell_height * crate::theme::VIDEO_SHARE_MAX)
 }
 
+/// How tall a beside pane's picture box is when the pane's header goes under
+/// the picture rather than on its chat, or `None` when the picture's column,
+/// `column_width` by `column_height`, leaves no room for it there.
+///
+/// Beside its chat, a picture takes its column's width, and a column taller
+/// than the stream's shape used to centre it over black above and below —
+/// 151 px of it at 1920 by 1080, and as much at 4K maximized — while the
+/// pane's name was cut short to fit a 340 px chat column beside it. Where
+/// that black can hold the header (`theme::STRIP_ROOM`), the picture sits at
+/// the top of the column at its own shape and the header takes the rest
+/// under it (`watch::strip`). The picture is the size it was either way, the
+/// column's width at the stream's shape, so neither what it renders at nor
+/// the quality chosen for it changes. A column the picture fills by height —
+/// a window wider than the stream, a vertical stream — has no black under
+/// it to give, and its header stays on chat.
+pub fn header_under_picture(column_width: f32, column_height: f32, aspect: f32) -> Option<f32> {
+    let aspect = if aspect.is_finite() && aspect > 0.0 {
+        aspect
+    } else {
+        VIDEO_ASPECT
+    };
+    let picture = column_width / aspect;
+    (column_height - picture >= crate::theme::STRIP_ROOM).then_some(picture)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -494,6 +519,56 @@ mod tests {
     /// The box a 16:9 stream gets in a cell tall enough not to cap it.
     fn video_box_height(cell_width: f32) -> f32 {
         stacked_video_height(cell_width, f32::MAX, VIDEO_ASPECT, 0.0)
+    }
+
+    /// One pane at 1920 by 1080 and at 4K maximized, the rail folded and the
+    /// title bar's 40 px off the top, beside a 340 px chat: the picture keeps
+    /// the column's width, and the 151 px of black that used to sit above
+    /// and below it is room for the header under it.
+    #[test]
+    fn the_header_goes_under_a_picture_with_black_below_it() {
+        let picture = header_under_picture(1920.0 - 340.0, 1080.0 - 40.0, VIDEO_ASPECT)
+            .expect("a 1920 by 1080 window has room under the picture");
+        assert!((picture - 888.75).abs() < 0.01, "{picture}");
+        let picture = header_under_picture(3840.0 - 340.0, 2160.0 - 40.0, VIDEO_ASPECT)
+            .expect("4K maximized has room under the picture");
+        assert!((picture - 1968.75).abs() < 0.01, "{picture}");
+    }
+
+    /// A picture that fills its column by height has no black under it to
+    /// give: a window wider than the stream, a 4:3 stream or a vertical one.
+    #[test]
+    fn the_header_stays_on_chat_where_the_picture_fills_the_column() {
+        assert_eq!(
+            header_under_picture(2560.0 - 340.0, 1040.0, VIDEO_ASPECT),
+            None
+        );
+        assert_eq!(header_under_picture(1580.0, 1040.0, 4.0 / 3.0), None);
+        assert_eq!(header_under_picture(1580.0, 1040.0, 9.0 / 16.0), None);
+    }
+
+    /// The header goes under the picture at exactly its room and not a
+    /// pixel short of it, and a stream that has not said its shape is taken
+    /// as 16:9, as everywhere else.
+    #[test]
+    fn the_header_needs_its_whole_room_under_the_picture() {
+        let width = 1600.0;
+        let picture = width / VIDEO_ASPECT;
+        let room = crate::theme::STRIP_ROOM;
+        assert_eq!(
+            header_under_picture(width, picture + room, VIDEO_ASPECT),
+            Some(picture)
+        );
+        assert_eq!(
+            header_under_picture(width, picture + room - 1.0, VIDEO_ASPECT),
+            None
+        );
+        for unknown in [0.0, f32::NAN, f32::INFINITY] {
+            assert_eq!(
+                header_under_picture(width, picture + room, unknown),
+                Some(picture)
+            );
+        }
     }
 
     #[test]

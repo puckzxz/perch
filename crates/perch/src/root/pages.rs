@@ -275,6 +275,8 @@ impl RootView {
                         .then(|| self.schedule_words(&slot.channel))
                         .flatten()
                         .map(Into::into),
+                    avatar: self.pane_avatar(slot),
+                    pinned: self.settings.is_pinned(&slot.channel),
                 }
             })
             .collect();
@@ -337,6 +339,25 @@ impl RootView {
             cx,
         ));
         stage.children(guide)
+    }
+
+    /// The channel's face for the header under a pane's picture
+    /// (`watch::strip`): the picture the rail shows for it — a followed
+    /// channel's, at the rail's size, or a recommended one's as it came —
+    /// through the same cache entry, so it costs no download the rail has
+    /// not made. Anyone else has none, and neither does a face not on disk
+    /// yet.
+    fn pane_avatar(&self, slot: &Slot) -> Option<PathBuf> {
+        let login = settings::channel_key(&slot.channel);
+        let url = match self.avatars.get(&login) {
+            Some(url) => twitch_api::profile_image_at(url, crate::sidebar::AVATAR_REQUEST),
+            None => self
+                .recommended
+                .channel(&login)
+                .map(|channel| channel.profile_image_url.clone())
+                .filter(|url| !url.is_empty())?,
+        };
+        self.cache.get_or_request(&url)
     }
 
     /// The picture a starting pane is waiting for: the channel's live

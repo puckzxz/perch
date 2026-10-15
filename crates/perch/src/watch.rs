@@ -22,6 +22,7 @@
 mod chat_menu;
 mod header;
 mod status;
+mod strip;
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -753,6 +754,15 @@ pub struct PaneInfo<'a> {
     /// Oct" (`schedule::Schedules::words`). `None` for any other pane, and
     /// for a channel with no schedule or none known yet.
     pub schedule: Option<SharedString>,
+    /// The channel's face, for the header under the picture
+    /// (`strip::pane_strip`): the rail's picture of a channel followed or
+    /// recommended, from the same cache entry (`RootView::pane_avatar`).
+    /// `None` for anyone else, or before it is on disk, and the strip
+    /// starts at the name.
+    pub avatar: Option<PathBuf>,
+    /// Whether the pane's channel is pinned to the rail, which the header
+    /// under the picture says and toggles (`PaneAction::Pin`).
+    pub pinned: bool,
 }
 
 /// A recording a stopped pane offers, and where it was left if it has been
@@ -1081,6 +1091,19 @@ fn pane<V: 'static>(
         aspect,
         layout.video_share,
     );
+    // Beside its chat, the picture at the top of its column and the header
+    // under it, where the column has the black to give: the picture's box
+    // then, or `None` to keep the header on chat as it was
+    // (`layout::header_under_picture`, `strip`).
+    let under = (placement == Placement::Panel && !layout.portrait)
+        .then(|| {
+            layout::header_under_picture(
+                layout.cell_width - layout.chat_width,
+                layout.cell_height,
+                aspect,
+            )
+        })
+        .flatten();
 
     // The status screen, and the player over it. The screen is drawn until
     // the picture has faded all the way in, and the player draws nothing
@@ -1092,6 +1115,8 @@ fn pane<V: 'static>(
         // the header resting over its top when there is no chat panel.
         let (width, height) = if layout.portrait {
             (layout.cell_width, video_height)
+        } else if let Some(box_height) = under {
+            (layout.cell_width - layout.chat_width, box_height)
         } else if placement == Placement::Panel {
             (layout.cell_width - layout.chat_width, layout.cell_height)
         } else {
@@ -1123,23 +1148,40 @@ fn pane<V: 'static>(
         .as_ref()
         .is_some_and(|view| view.read(cx).has_picture());
 
-    // Built once, and drawn in one place: the panel, or the band over the
-    // picture. Never both, since its elements' ids are the pane's.
-    let header = header::pane_header(
-        slot,
-        info,
-        placement,
-        layout.mark_active && active,
-        layout.movable,
-        picture,
-        window_hovered,
-        on_pane.clone(),
-        cx,
-    );
-    let (in_panel, on_picture) = match placement {
-        Placement::Panel => (Some(header), None),
-        Placement::OverPicture => (None, Some(header)),
+    // Built once, and drawn in one place: the panel, under the picture, or
+    // the band over it. Never two, since its elements' ids are the pane's.
+    let header = match under {
+        Some(_) => strip::pane_strip(
+            slot,
+            info,
+            layout.mark_active && active,
+            layout.movable,
+            window_hovered,
+            on_pane.clone(),
+            cx,
+        )
+        .into_any_element(),
+        None => header::pane_header(
+            slot,
+            info,
+            placement,
+            layout.mark_active && active,
+            layout.movable,
+            picture,
+            window_hovered,
+            on_pane.clone(),
+            cx,
+        )
+        .into_any_element(),
     };
+    let (in_panel, under_picture, on_picture) = match (placement, under) {
+        (Placement::Panel, Some(_)) => (None, Some(header), None),
+        (Placement::Panel, None) => (Some(header), None, None),
+        (Placement::OverPicture, _) => (None, None, Some(header)),
+    };
+    // With the header under the picture, chat is headed by a bar of its own,
+    // which carries the chat options the header gave up.
+    let chat_bar = under.map(|_| strip::chat_bar(slot, info, window_hovered, on_pane.clone(), cx));
     // The chat options menu, while it is open on this pane: over the top of
     // its chat, under the header that opened it, or risen over that header
     // from the foot of a chat box too short for it (`chat_menu::placed`).
@@ -1239,6 +1281,8 @@ fn pane<V: 'static>(
             // it.
             if layout.portrait {
                 pane.flex_none().h(px(video_height)).w_full()
+            } else if let Some(box_height) = under {
+                pane.flex_none().h(px(box_height)).w_full()
             } else {
                 pane.flex_1().min_w_0()
             }
@@ -1319,13 +1363,16 @@ fn pane<V: 'static>(
                 // header's own bottom rule as the only line between them.
                 pane.flex_1().min_h_0().w_full().pt(px(0.))
             } else {
+                // Room above the header on chat; none above chat's own bar,
+                // which meets the title bar's rule as the picture does.
                 pane.flex_none()
                     .w(px(layout.chat_width))
                     .h_full()
-                    .pt(px(theme::GAP_TIGHT))
+                    .when(under.is_none(), |pane| pane.pt(px(theme::GAP_TIGHT)))
             }
         })
         .children(in_panel)
+        .children(chat_bar)
         // Chat is placed in the room under its header, not flowed into it: a
         // layer over that room, which chat's own `size_full` is sized
         // against. Flowed - chat a block inside this `flex_1` box - taffy
@@ -1347,6 +1394,23 @@ fn pane<V: 'static>(
                 .children(chat_menu),
         );
 
+    // With the header under the picture, the picture's box and the header
+    // stand in one column, which has no id of its own, so the player's
+    // element path is the pane's whichever way the header goes and a window
+    // resized across the line moves nothing but the header.
+    let video_column = match under_picture {
+        Some(strip) => div()
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .bg(theme::bg())
+            .child(video_pane)
+            .child(strip)
+            .into_any_element(),
+        None => video_pane.into_any_element(),
+    };
+
     cell.map(|cell| {
         if layout.portrait {
             cell.flex_col()
@@ -1354,7 +1418,7 @@ fn pane<V: 'static>(
             cell.flex_row()
         }
     })
-    .child(video_pane)
+    .child(video_column)
     .child(divider(&slot.key, layout.portrait, on_resize, cx))
     .child(chat_pane)
     .children(drop_zone)

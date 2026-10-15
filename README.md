@@ -195,7 +195,8 @@ Every pane has an × in its header, a lone one included, and like the bar's
 icons it names its key, `Ctrl+W`; closing the last pane goes back to the
 browse page. On Windows a playing pane's header also has the icon that pops
 it out into a window of its own, and brings it back, `P` (see below). A
-header sitting on chat also has the chat options (see [Chat](#chat)).
+header sitting on chat also has the chat options (see [Chat](#chat)); a
+header under the picture leaves them to the bar at the top of the chat.
 
 A pane's header says `muted` or `paused` when either is true, so a channel
 that opens silent says so without the pointer having to be on the video. With
@@ -238,6 +239,19 @@ been going, and what they are doing — the stream's title and its game, on a li
 of their own. Both are cut to fit; rest the pointer on them for the whole thing.
 A live pane has a red `LIVE` badge after its name, so a glance down the page
 says which panes are live; a recording says `replay` there instead.
+
+Beside its chat, a picture in a window of ordinary shape leaves black above
+and below it — one stream at 1920 by 1080, or at 4K maximized — so there the
+picture sits at the top of its column and the header takes the space under
+it, where it has the picture's width rather than chat's 340 pixels: the
+channel's picture (for one you follow or one recommended to you), its name
+at full size, how many are watching and for how long, the title on a line of
+its own and the game under it. At its end are **Pin**, or **Pinned**, which
+unpins (as **Pin to the rail** under **More** does), the pop-out icon and
+the ×. Chat is then headed by a bar of its own, with the chat options and a
+button that hides chat. A window wider than that, whose picture fills its
+column by height, has no room under the picture and keeps the header on
+chat.
 
 While a pane starts it shows the channel's latest picture — the one its card on
 the browse page shows, when a list there has the channel or the rail recommends
@@ -464,7 +478,8 @@ per row — in a channel where fifteen messages share a minute, a column of
 identical timestamps is not a ruler. It is written the way your system writes a
 time, twelve-hour or twenty-four, in your language.
 
-The icon with the two Ts in a pane's header, beside its pop-out and its ×,
+The icon with the two Ts in a pane's header, beside its pop-out and its × —
+or on the bar at the top of the chat, when the header is under the picture —
 opens the chat options: the text size — **Small**, **Default**, **Large** or
 **Larger** — and **Time on every message**, which starts every message with its
 time in place of the once-a-minute breaks. They apply to every chat at once and

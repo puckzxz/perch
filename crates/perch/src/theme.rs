@@ -207,10 +207,11 @@ pub fn scrim() -> Hsla {
 /// Darker than [`scrim`], because this one is not dimming what is behind it —
 /// it is making its own contrast on top of an image that could be any colour at
 /// all in the next frame. But not dark enough for every tier: over the worst
-/// picture, a white frame, only [`text`] passes on it (10.2:1). `text_muted`
-/// (4.4), `text_dim` (3.6) and the accent (4.0) all fall under the bar there,
-/// so nothing but full-strength text is ever drawn on this wash. Controls and
-/// quieter tiers go on [`video_chrome`], which carries them all.
+/// picture, a white frame, only [`text`] (10.2:1) and, since it was raised,
+/// [`text_muted`] (5.9) pass on it. [`control_rest`] (4.4), `text_dim` (3.6)
+/// and the accent (4.0) all fall under the bar there, so nothing but
+/// full-strength text is ever drawn on this wash. Controls and quieter tiers
+/// go on [`video_chrome`], which carries them all.
 pub fn overlay() -> Hsla {
     rgba(0x000000cc).into()
 }
@@ -222,8 +223,8 @@ pub fn overlay() -> Hsla {
 ///
 /// Denser than [`overlay`] because it carries every tier, not just full text,
 /// and each one is measured against the worst picture there is — a white frame
-/// under the wash: text 13.3, text_muted 5.8, text_dim 4.7, accent 5.2 and
-/// danger 6.8:1. `every_tier_drawn_on_a_picture_reads_over_a_white_frame` holds
+/// under the wash: text 13.3, text_muted 7.7, control_rest 5.8, text_dim 4.7,
+/// accent 5.2 and danger 6.8:1. `every_tier_drawn_on_a_picture_reads_over_a_white_frame` holds
 /// it there. One wash for everything on a picture, so two strips over the same
 /// frame never disagree about how dark the video behind them is.
 pub fn video_chrome() -> Hsla {
@@ -294,8 +295,27 @@ pub fn text() -> Hsla {
     rgb(0xe8e6ed).into()
 }
 
-/// Labels, metadata, anything supporting.
+/// Labels, metadata, anything supporting: the viewers and uptime beside a
+/// name, the title under a card's name, a rail row's game.
+///
+/// Raised in October 2026 from `#9a97a5`, which measured 6.5:1 on
+/// [`surface`] against [`text_dim`]'s 5.3:1: too close to read as two tiers,
+/// so a card's title and its game came out the same grey. At 8.7:1 the
+/// three tiers step evenly (15, 8.7, 5.3). A control's words and glyph at
+/// rest kept the old value, as [`control_rest`], so what you press still
+/// recedes behind what you read.
 pub fn text_muted() -> Hsla {
+    rgb(0xb3b0bd).into()
+}
+
+/// A control's words and glyph at rest — a pill, an icon on the player's bar
+/// or a pane's header, the title bar's gear, the window's caption buttons —
+/// before the pointer lifts it to [`text`] (`controls::Variant`). Quieter
+/// than [`text_muted`] on purpose: chrome is what you stare past for three
+/// hours, and information is what you came to read. 5.8:1 on the player's
+/// [`video_chrome`] over a white frame, which is where the quietest control
+/// sits.
+pub fn control_rest() -> Hsla {
     rgb(0x9a97a5).into()
 }
 
@@ -336,6 +356,16 @@ pub fn accent() -> Hsla {
 
 pub fn accent_dim() -> Hsla {
     rgba((ACCENT << 8) | 0x33).into()
+}
+
+/// Behind a pane's passive word — `muted`, `paused`, `buffering`, `replay`,
+/// `ad break` (`controls::tag`). A neutral chip rather than the accent's
+/// wash it used to be, so the accent means something to press, something
+/// chosen or progress, and a state reads as a state rather than as a
+/// selected control. Solid, so it is the same chip on the chat panel, under
+/// the picture and on the band over it, and [`text`] on it measures 12.1:1.
+pub fn tag_fill() -> Hsla {
+    rgb(0x26262f).into()
 }
 
 /// Live: the dot beside a number of people watching now, and the fill of the
@@ -767,6 +797,25 @@ const DEFAULT_LINE: f32 = 1.618;
 pub const VIDEO_CARD_TEXT: f32 =
     PANEL_PAD * 2.0 + TEXT_BODY * DEFAULT_LINE + GAP_TIGHT + LINE_TIGHT;
 
+/// The least room a beside pane's picture leaves at the foot of its column
+/// for the pane's header to go there instead of on its chat
+/// (`layout::header_under_picture`, `watch::strip`): the strip's padding,
+/// the name's row as tall as an icon button, the title's line and the
+/// game's. A window wider than the picture's shape has less, and the header
+/// stays on chat as it always was.
+pub const STRIP_ROOM: f32 =
+    PANEL_PAD * 2.0 + ICON_BUTTON + GAP_WORD + LINE_BODY + GAP_WORD + LINE_TIGHT + 1.0;
+
+/// The channel's face at the head of the strip under a picture. The viewer
+/// card's size, and at the rail's request (`sidebar::AVATAR_REQUEST`), so
+/// it is the rail's cached picture rather than another download.
+pub const STRIP_AVATAR: f32 = 40.0;
+
+/// The bar over a pane's chat when its header is under the picture
+/// (`watch::strip::chat_bar`): `Chat`, the chat options and hiding chat,
+/// on an icon button's height with a little room above and below.
+pub const CHAT_BAR_HEIGHT: f32 = ICON_BUTTON + GAP_WORD * 2.0;
+
 /// The live indicator's diameter. Small enough to read as a status mark
 /// beside a number rather than as a control.
 pub const LIVE_DOT: f32 = 6.0;
@@ -832,9 +881,10 @@ mod tests {
     /// which is how a token named for placeholders ends up holding content.
     #[test]
     fn every_text_tier_is_legible() {
-        let tiers: [(&str, Hsla); 4] = [
+        let tiers: [(&str, Hsla); 5] = [
             ("text", text()),
             ("text_muted", text_muted()),
+            ("control_rest", control_rest()),
             ("text_dim", text_dim()),
             ("danger", danger()),
         ];
@@ -855,15 +905,16 @@ mod tests {
     ///
     /// Every tier passes on [`video_chrome`], which is why the control bar and
     /// anything else carrying quieter text over video use it. On [`overlay`]
-    /// only full-strength text passes; `text_muted`, `text_dim` and the accent
-    /// all fall under the bar there, which is why badges carry `text()` and
-    /// nothing else.
+    /// only full-strength text is drawn: `control_rest`, `text_dim` and the
+    /// accent all fall under the bar there, which is why badges carry
+    /// `text()` and nothing else.
     #[test]
     fn every_tier_drawn_on_a_picture_reads_over_a_white_frame() {
         let chrome = over_white(video_chrome());
-        let tiers: [(&str, Hsla); 5] = [
+        let tiers: [(&str, Hsla); 6] = [
             ("text", text()),
             ("text_muted", text_muted()),
+            ("control_rest", control_rest()),
             ("text_dim", text_dim()),
             ("accent", accent()),
             ("danger", danger()),
@@ -881,6 +932,25 @@ mod tests {
             ratio >= MIN_CONTRAST,
             "text reads {ratio:.2}:1 on overlay over a white frame"
         );
+    }
+
+    /// A passive word's chip is neutral, never the accent's wash it was, and
+    /// full-strength text reads on it.
+    #[test]
+    fn a_tag_reads_on_its_neutral_chip() {
+        assert_ne!(tag_fill(), accent_dim(), "a state is not a selection");
+        let ratio = contrast(text(), tag_fill());
+        assert!(
+            ratio >= MIN_CONTRAST,
+            "a tag's word reads {ratio:.2}:1 on its chip"
+        );
+    }
+
+    /// What you read outranks what you press at rest, so the chrome around
+    /// a picture recedes behind the facts about it.
+    #[test]
+    fn a_resting_control_is_quieter_than_supporting_text() {
+        assert!(contrast(control_rest(), surface()) < contrast(text_muted(), surface()));
     }
 
     /// The tiers have to stay *apart*, or three names for one grey is all they
