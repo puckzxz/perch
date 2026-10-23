@@ -120,8 +120,14 @@ impl RootView {
     /// first, let go where it was with nothing moved — the button is still
     /// down, and the release then lands on nothing. Then a menu open over a
     /// pane — leaving the page with the menu still up was two steps taken
-    /// for one press — then a pane given the whole page shows every pane
-    /// again (`show_all_panes`), and only then is the page left.
+    /// for one press — then fullscreen, then a pane given the whole page
+    /// shows every pane again (`show_all_panes`), and only then is the page
+    /// left, which stops what plays at home (`go_browse`).
+    ///
+    /// Fullscreen goes before the page because `Esc` is how every player
+    /// and browser leaves it, and the page left behind it now ends the
+    /// stream: an `Esc` meant for fullscreen used to bring the browse page
+    /// up inside it instead, harmless while browsing stopped nothing.
     pub(super) fn on_go_browse(
         &mut self,
         _: &keys::GoBrowse,
@@ -136,7 +142,14 @@ impl RootView {
             return;
         }
         // A pane's chat options menu is one of those menus too.
-        if self.close_menus(cx) || self.show_all_panes(window, cx) {
+        if self.close_menus(cx) {
+            return;
+        }
+        if window.is_fullscreen() {
+            window.toggle_fullscreen();
+            return;
+        }
+        if self.show_all_panes(window, cx) {
             return;
         }
         self.go_browse(cx);
@@ -337,9 +350,9 @@ impl RootView {
 
     /// One step out on the browse page: a channel's page, a search or a
     /// category closes first, since it took the page over; with none open,
-    /// back to whatever is playing. `Esc` on the watch page goes the other
-    /// way, which makes the key a toggle between the two pages when nothing
-    /// else is in the way.
+    /// back to the watch page, which is there only while a pane plays in a
+    /// window of its own, since leaving it stops the rest (`go_browse`).
+    /// `Esc` on the watch page goes the other way.
     ///
     /// Out rather than back: it goes to what is under the takeover, however
     /// you got to it, where `Alt+←` goes to wherever you were before. Both
@@ -362,10 +375,11 @@ impl RootView {
         }
     }
 
-    /// `P`: the active pane into a window of its own, or back from one, on
-    /// the watch page and beside the browse page alike, since the panes are
-    /// on screen either way. Nothing where the pop-out is not offered, and
-    /// nothing for a pane with no player to move; see `pop_out`.
+    /// `P`: the active pane into a window of its own, or back from one. On
+    /// the browse page the only panes left are in windows of their own, so
+    /// there it brings one back, and the watch page with it (`pop_in`).
+    /// Nothing where the pop-out is not offered, and nothing for a pane with
+    /// no player to move; see `pop_out`.
     pub(super) fn on_toggle_pop_out(
         &mut self,
         _: &keys::TogglePopOut,

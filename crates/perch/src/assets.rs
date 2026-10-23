@@ -49,10 +49,9 @@ macro_rules! icon {
 /// Anything not on this list is answered `None`, which is exactly what the app
 /// did for all of them until now — so an icon nobody drew degrades to the
 /// blank it already was rather than to a crash.
-const ICONS: [(&str, &[u8]); 31] = [
+const ICONS: [(&str, &[u8]); 30] = [
     icon!("arrow-left"),
     icon!("arrow-right"),
-    icon!("browse"),
     icon!("chat"),
     icon!("chat-off"),
     icon!("chevron-down"),
@@ -137,20 +136,15 @@ perch_icons! {
     ChatOff => "chat-off",
     More => "more",
     PopIn => "pop-in",
-    PopOut => "pop-out",
     // Somewhere outside the app, opened in the browser: a viewer card's
-    // `twitch.tv`. The pop-out's arrow out of a box, which is the glyph
-    // everyone draws for it, under a name that says what it means here.
+    // `twitch.tv`. An arrow out of a box, which is the glyph everyone draws
+    // for it, under a name that says what it means here. It was the pane
+    // header's pop-out too, until popping out went into the pane's menu.
     ExternalLink => "pop-out",
     // A pane header's chat options: how big chat's text is drawn, and
     // whether every message carries its time. Named for the menu it opens,
     // drawn as the larger of its two options: a large T and a small one.
     ChatOptions => "text-size",
-    // A pane's Browse: what else is on, docked beside the panes. Drawn as
-    // what a press does to the page — a frame with a panel down its left
-    // half and two cards in it. Not `PanelLeft`, the rail's, whose column
-    // is narrower and empty.
-    Browse => "browse",
 }
 
 /// What `Application::new().with_assets(..)` is handed.

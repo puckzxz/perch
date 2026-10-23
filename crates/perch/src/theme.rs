@@ -587,6 +587,10 @@ pub const GAP_TIGHT: f32 = 6.0;
 pub const GAP: f32 = 10.0;
 /// Between distinct sections.
 pub const GAP_SECTION: f32 = 18.0;
+/// Between the shelves of a browse page, each under its heading: twice a
+/// section's gap, so a heading reads as the start of something rather than
+/// as one more row of the grid above it.
+pub const GAP_SHELF: f32 = GAP_SECTION * 2.0;
 /// Seam between panes in the watch grid. Deliberately thin: it separates
 /// pictures, and anything wider reads as a border around each one.
 pub const PANE_GAP: f32 = 3.0;
@@ -638,6 +642,12 @@ pub const SWITCH_LINGER: Duration = Duration::from_millis(1500);
 /// it came to. `VideoView::on_wheel` is the reader. The same glance as
 /// `SWITCH_LINGER`, so the same length.
 pub const VOLUME_LINGER: Duration = Duration::from_millis(1500);
+/// How long a control that asks for a second press waits for it before it
+/// goes back to its first words: a viewer card's `Channel page`, when going
+/// there would stop the streams (`chat::viewer_card`). Long enough to read
+/// `Stop streams and open?` and decide, short enough that a press much
+/// later is a new one rather than a yes.
+pub const CONFIRM_LINGER: Duration = Duration::from_secs(4);
 /// How faint a waiting indicator gets at the bottom of its breath. Never zero:
 /// something that vanishes entirely looks broken rather than busy.
 pub const PULSE_FLOOR: f32 = 0.45;
@@ -668,12 +678,6 @@ pub const CHAT_WIDTH_MAX: f32 = 640.0;
 /// chat too short to read a sentence in.
 pub const VIDEO_SHARE_MIN: f32 = 0.3;
 pub const VIDEO_SHARE_MAX: f32 = 0.8;
-
-/// The widest the browse page grows while the panes share the window with
-/// it (`layout::panel_width`): half the body up to this, so on a 4K screen
-/// the stream keeps the larger share — 2560 of 3840 — and the panel still
-/// holds four columns of cards.
-pub const PANEL_MAX_WIDTH: f32 = 1280.0;
 
 /// How wide a pane popped into a window of its own opens, in logical pixels,
 /// with its height from the stream's shape (`layout::pop_out_bounds`, the
@@ -775,24 +779,11 @@ const DEFAULT_LINE: f32 = 1.618;
 pub const VIDEO_CARD_TEXT: f32 =
     PANEL_PAD * 2.0 + TEXT_BODY * DEFAULT_LINE + GAP_TIGHT + LINE_TIGHT;
 
-/// The least room a beside pane's picture leaves at the foot of its column
-/// for the pane's header to go there instead of on its chat
-/// (`layout::header_under_picture`, `watch::strip`): the strip's padding,
-/// the name's row as tall as an icon button, the title's line and the
-/// game's. A window wider than the picture's shape has less, and the header
-/// stays on chat as it always was.
-pub const STRIP_ROOM: f32 =
-    PANEL_PAD * 2.0 + ICON_BUTTON + GAP_WORD + LINE_BODY + GAP_WORD + LINE_TIGHT + 1.0;
-
-/// The channel's face at the head of the strip under a picture. The viewer
-/// card's size, and at the rail's request (`sidebar::AVATAR_REQUEST`), so
-/// it is the rail's cached picture rather than another download.
-pub const STRIP_AVATAR: f32 = 40.0;
-
-/// The bar over a pane's chat when its header is under the picture
-/// (`watch::strip::chat_bar`): `Chat`, the chat options and hiding chat,
-/// on an icon button's height with a little room above and below.
-pub const CHAT_BAR_HEIGHT: f32 = ICON_BUTTON + GAP_WORD * 2.0;
+/// The channel's face at the head of a pane's details, at the top of its
+/// chat panel (`watch::header`). The viewer card's size, and at the rail's
+/// request (`sidebar::AVATAR_REQUEST`), so it is the rail's cached picture
+/// rather than another download.
+pub const HEADER_AVATAR: f32 = 40.0;
 
 /// The live indicator's diameter. Small enough to read as a status mark
 /// beside a number rather than as a control.

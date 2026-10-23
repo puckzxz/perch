@@ -9,9 +9,9 @@ use std::path::PathBuf;
 use gpui::{canvas, div, prelude::*, px, Context, Div, IntoElement, Stateful, Window};
 
 use super::follows::LiveList;
-use super::{Page, RootView};
+use super::RootView;
 use crate::assets::Icon;
-use crate::browse::{SignIn, Tab};
+use crate::browse::Tab;
 use crate::chat_display::ChatDisplay;
 use crate::controls::{self, Variant};
 use crate::keys::Hint;
@@ -24,10 +24,9 @@ impl RootView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        // The body's width, or the browse page's share of it while the panes
-        // are beside it (`docks_stage`).
+        // The body's width: the browse page has the whole of it.
         let room = layout::Room {
-            width: self.browse_width(window),
+            width: self.body(window).width,
         };
         // Whether the follows are what the page is showing — Following with
         // nothing taking it over — which is when resting the pointer on the
@@ -79,6 +78,7 @@ impl RootView {
             pinned: &self.pin_order,
             recommended: &self.recommended.shown,
             last_live: &self.last_live,
+            offline_open: self.following_offline_open,
             history: &self.history,
             sign_in: &self.sign_in,
             follows_loaded: self.follows_loaded,
@@ -111,21 +111,18 @@ impl RootView {
             .child(body)
     }
 
-    /// The browse page's tabs, then Refresh: all that is left of the header
-    /// it used to have. The app's name is gone, and the search box and the
-    /// sign-in went up into the title bar, which is over both pages. There is
-    /// no "watching 2" either: whatever plays while you browse is beside the
-    /// browse page, playing.
+    /// The browse page's own strip: back and forward along the trail, the
+    /// tabs, then Refresh — all that is left of the header it used to have.
+    /// The app's name is gone, and the search box and the sign-in went up
+    /// into the title bar, which is over both pages. Back and forward were
+    /// the title bar's, beside a way to the first tab; the redesign of 15
+    /// October 2026 gave the bar Browse and one search box, and the page its
+    /// own way about.
     ///
     /// Left-aligned, Refresh included, rather than pushed to the far end: the
     /// toasts arrive at the top-right, and the further from them Refresh sits
     /// the narrower a window has to be before the two meet — see
     /// [`theme::TAB_STRIP_HEIGHT`] for when they do.
-    /// The browse page's own strip: back and forward along the trail, the
-    /// tabs, Refresh, and while the panes are beside the page, the × that
-    /// puts it away. Back and forward were the title bar's, beside a way to
-    /// the first tab; the redesign of 15 October 2026 gave the bar Browse
-    /// and one search box, and the page its own way about.
     fn tab_strip(&self, cx: &mut Context<Self>) -> impl IntoElement {
         // Each drawn as waiting while it has nowhere to go: the arrows stay
         // where they are rather than the tabs moving under the pointer, and
@@ -153,16 +150,6 @@ impl RootView {
         } else {
             controls::icon_waiting(Icon::Forward).into_any_element()
         };
-        // Back to watching, while there is a pane beside the page to go back
-        // to: what Browse does again, and `Esc` from a tab.
-        let close = self.docks_stage().then(|| {
-            controls::icon_button("browse-close", Icon::Close, Variant::Chrome)
-                .tooltip(controls::tip("Back to watching"))
-                .on_click(cx.listener(|this, _event, window, cx| {
-                    this.focus.focus(window);
-                    this.toggle_browse_page(cx);
-                }))
-        });
 
         div()
             .w_full()
@@ -214,8 +201,6 @@ impl RootView {
                 cx,
                 |this, _window, cx| this.refresh(cx),
             ))
-            .child(div().flex_1())
-            .children(close)
     }
 
     /// A list of follows, live and offline, with a probe measuring every
@@ -265,13 +250,11 @@ impl RootView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        // With the browse page away, Following is not on screen, so it holds
-        // nothing: its probe is not painted, and would otherwise leave its
-        // last word — the pointer was on the card that opened this page —
-        // standing for good. Beside the browse page, Following's own probe says.
-        if self.page == Page::Watch {
-            self.hold_live(LiveList::Following, false, cx);
-        }
+        // On the watch page Following is not on screen, so it holds nothing:
+        // its probe is not painted, and would otherwise leave its last word —
+        // the pointer was on the card that opened this page — standing for
+        // good.
+        self.hold_live(LiveList::Following, false, cx);
 
         // A pane that found its channel off says when the channel is on
         // next; its schedule is asked about the first time one is drawn
@@ -335,17 +318,13 @@ impl RootView {
                     next: self.next_up(slot, showing),
                     looking: slot.archives.waiting(),
                     start_offered: slot.is_live() && self.start_offered(&slot.channel),
-                    pop_out_offered: super::pop_out_offered(),
                     chat_menu: (self.chat_menu.as_deref() == Some(slot.key.as_str()))
                         .then(|| ChatDisplay::of(&self.settings)),
-                    browsing: self.page == Page::Browse,
                     schedule: (showing == Showing::Offline)
                         .then(|| self.schedule_words(&slot.channel))
                         .flatten()
                         .map(Into::into),
                     avatar: self.pane_avatar(slot),
-                    pinned: self.settings.is_pinned(&slot.channel),
-                    past_broadcasts: matches!(self.sign_in, SignIn::SignedIn(_)),
                 }
             })
             .collect();
@@ -410,8 +389,8 @@ impl RootView {
         stage
     }
 
-    /// The channel's face for the header under a pane's picture
-    /// (`watch::strip`): the picture the rail shows for it — a followed
+    /// The channel's face for a pane's details, at the top of its chat
+    /// (`watch::header`): the picture the rail shows for it — a followed
     /// channel's, at the rail's size, or a recommended one's as it came —
     /// through the same cache entry, so it costs no download the rail has
     /// not made. Anyone else has none, and neither does a face not on disk

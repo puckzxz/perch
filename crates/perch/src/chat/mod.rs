@@ -223,16 +223,25 @@ pub enum ChatViewEvent {
     ReturnKeys,
     /// The card's × acted on the first press of a run and took the card
     /// from under the pointer: have the rest of the run heard by nothing
-    /// (`RootView::run_guard`). `Watch` and `Channel page` move the page
-    /// too, and the root takes the run itself as it carries them out.
+    /// (`RootView::run_guard`). `Watch` and a `Channel page` that goes move
+    /// the page too, and the root takes the run itself as it carries them
+    /// out; a `Channel page` that asks first moves nothing.
     TakeRestOfRun,
     /// The card's `Watch`, offered while `login` is live and another pane
     /// fits: add their stream beside the panes, as a stream card's `+ Add`
     /// does, and stay on the watch page. The card has closed.
     Watch { login: String },
     /// The card's `Channel page`: open Perch's page of `login`'s past
-    /// broadcasts and schedule, on the browse page, beside the panes.
-    ChannelPage { login: String, display_name: String },
+    /// broadcasts and schedule, which leaves the watch page. Unless
+    /// `confirmed`, the root first asks whether leaving would stop panes,
+    /// and if it would, asks the card to ask for a second press
+    /// (`ChatView::confirm_leaving`) rather than going; `confirmed` is that
+    /// second press.
+    ChannelPage {
+        login: String,
+        display_name: String,
+        confirmed: bool,
+    },
     /// A right-click on a name, the speaker's or a mention's, at this point
     /// in the window: the root's menu about that channel
     /// (`crate::channel_menu`), in place of the row's copy menu.

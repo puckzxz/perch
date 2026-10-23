@@ -66,7 +66,8 @@ monitor at 100% scale with a vertical one beside it, and the mouse first —
   rather than the keyboard. When adding a
   stream without leaving the watch page turned out to be the real gap, the
   answer was a button on the pane, not the palette: first the guide over the
-  watch page, then the browse page docked beside the panes.
+  watch page, then the browse page docked beside the panes, which went again
+  (see "Browsing stops what plays", below).
 - **The vertical monitor is a real setup, not an edge case.** Two streams
   there stacked with each chat beside a squeezed picture until somebody looked
   ("Known limits", item 8), so a layout change is looked at in a tall window
@@ -93,16 +94,34 @@ monitor at 100% scale with a vertical one beside it, and the mouse first —
   "A pane given the window").
 - **A pop-out that stays on top of other apps is in**, Windows only until a
   Mac has been seen ("Known limits", item 30).
-- **Browsing never stops what plays.** The redesign built around one stream,
-  mocked up and approved on 15 October 2026, docks the browse page on the
-  left of the window beside the panes rather than giving the watch page up
-  to it (see "Browsing beside the panes" under "Where controls live"). It
-  retired the mini player, which the user usually closed and ran switched
-  off — so leaving the watch page stopped every stream — and the guide over
-  the watch page, which the docked page grew out of; with them went the
-  settings sheet's `Mini player` switch and the viewer card's second press
-  for `Channel page`. A click on a card, a rail row or a go-live toast plays
-  in place of the pane you are on rather than closing every pane.
+- **Browsing stops what plays.** The browse page is a page of its own with
+  the whole window, and leaving the watch page for it stops every pane at
+  home; a pane in a window of its own plays on (see "The browse page" under
+  "Where controls live"). The user's words, 22 October 2026: if they are
+  looking for another stream, they want the current one to end. It had gone
+  the other way for a week: the redesign built around one stream, mocked up
+  and approved on 15 October 2026, docked the browse page on the left of the
+  window beside the panes, half the body at most, and the panes played on
+  beside it. In use the user found it weird — at the 2560 by 1440 they had
+  perch maximized on, one press of Browse shrank the stream to about a third
+  of its area and moved its chat from beside the picture to a 1280-wide band
+  under it, and pressed again moved it all back. Before that there was a
+  mini player in the browse page's corner, which the user usually closed and
+  ran switched off, so leaving the watch page stopped every stream then too;
+  and briefly a guide over the watch page. The mini player, its `Mini player`
+  switch and the guide stay retired; the viewer card's second press for
+  `Channel page` came back (see "A name opens its person's card" under
+  Chat). A click on a card, a rail row or a go-live toast plays in place of
+  the pane you are on rather than closing every pane, as the redesign made
+  it.
+- **A pane's details sit at the top of its chat.** The same redesign put a
+  beside pane's details under its picture, in the black a 16:9 picture
+  leaves in a window of ordinary shape, the picture pinned to the top of its
+  column and chat headed by a bar of its own; the user did not like the
+  viewing page that made, and chose the details at the top of chat on lines
+  of their own, the picture centred, and the strip's own controls — the
+  pin, `Past broadcasts`, out and back — behind a ⋯ that opens the pane's
+  menu (22 October 2026; see "Pane header" under "Where controls live").
 
 **The rail and Following.** Popular and Categories left the rail and stay
 browse tabs; Recommended came in, read from Twitch's unofficial `SideNav`
@@ -164,11 +183,11 @@ header's passive tags stay lowercase (`muted`, `paused`, `buffering`,
   should go to twitch.tv or to Perch's own channel page, the user asked for
   both, with good UX for it: the card must never silently end what they are
   watching. So `Watch` adds the person beside the panes while they are live,
-  `Channel page` asked for a second press where leaving the watch page would
-  stop streams (the mini player off, which is how the user ran), in the
-  accent, as the user asked for where the app has no warning colour, and
-  `twitch.tv` opens the browser. Since browsing docks beside the panes and
-  stops nothing, `Channel page` opens the page at once. The user's first call was
+  `Channel page` asks for a second press where leaving the watch page would
+  stop streams, in the accent, as the user asked for where the app has no
+  warning colour, and `twitch.tv` opens the browser. For the week browsing
+  docked beside the panes and stopped nothing, `Channel page` opened the page
+  at once; since browsing stops what plays again, it asks again. The user's first call was
   that all three work signed out, on the reading that none needs the token;
   the channel page's lists do, and signed out it says only that. Asked again
   on 14 October 2026, the user chose to hide `Channel page` signed out: it is
@@ -223,27 +242,26 @@ App modules:
 | `launch.rs` | what a launch's arguments ask for, read the one way at startup and on a handover; a launch whose first argument is one of perch's own `perch:` links is that link and nothing else (pure, tested) |
 | `notifications/` | the desktop notification when a followed channel goes live with the window in the background: who is told (`who`, by the setting, the pins, the focus, the first poll and `Seen`, the broadcast each channel was last seen with; pure, tested) and what it says (`Notice`, and `batch`, which caps a poll at three), then the Windows half — a WinRT toast under perch's AppUserModelID, the HKCU keys that make it showable and its click open `perch://watch/<login>`, and `forget`, which takes them out when the setting goes Off. Nothing off Windows. See "Desktop notifications" under Windows packaging |
 | `trail.rs` | back and forward: the places behind and ahead, what a step passes over, and forgetting a place that is gone (pure, tested) |
-| `stage.rs` | where each pane is drawn — a pane, on the watch page or beside the browse page, a window of its own, or nowhere while another pane has the watch page (`Place`) — which panes are popped out and which one is maximized (`Stage`), the cells the watch grid draws (`cells`) and what a pane's maximize offers, on its menu (`MaximizeButton`): the one owner of the answer both windows ask before drawing a player; and where a pane moved one place along the order goes (`moved`) (pure, tested) |
+| `stage.rs` | where each pane is drawn — a pane on the watch page, a window of its own, or nowhere while another pane has the watch page (`Place`) — which panes are popped out and which one is maximized (`Stage`), the cells the watch grid draws (`cells`) and what a pane's maximize offers, on its menu (`MaximizeButton`): the one owner of the answer both windows ask before drawing a player; and where a pane moved one place along the order goes (`moved`) (pure, tested) |
 | `os_window.rs` | what Perch asks of a window that gpui does not: its platform handle (`hwnd`, the one place a gpui window is asked for it — `instance::bring_forward` comes forward on it rather than looking it up itself), and keeping a pop-out above every other app (`keep_on_top`, Windows only) |
-| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `account` (the sign-in as the user drives it: the settings sheet's Sign out, Sign in, Sign in again for the chat scope, and `restart_twitch`, the worker started over, which a new client id does too), `chat_send` (sending chat: what each live chat's composer is told about the user, `sync_chat_access`, a message handed to the worker under a number of the root's, `send_chat`, and its answer handed back to the chat it came from, `on_chat_sent`), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams` (opening, restarting, closing — where an opening plays, `Opening`: in place of the pane you are on, which a press on a card, a rail row, a toast or the palette's Watch asks for, or beside the panes — and `replace_with_video` and `replace_with_channel`, a recording swapped in for a live pane in place and the channel back in a recording's, both through `replace_slot`, which an opening in place goes through too; and `toggle_browse`, a pane's Browse), `renditions` (what each pane plays, and when it restarts: the quality chosen against each pane's own height, `pane_height_for`, the upward re-pick when the grid changes, `sync_quality`, a pick from the pane's own menu, and how each changes what plays, `change_rendition` — beside a picture that covers the pane, to take over in place, and cold otherwise; and the root's half of that swap: what a start resolving beside a pane does with its events, `pending_event`, and what the pane keeps once its player has taken over or been given up on, `on_swapped` and `on_swap_failed`; and `set_pending`, the only write of a pane's pending start, which tells its player what a pick is switching it to and which a test holds the root to; and `beside_rendition`, the rendition a start beside a live picture names from the pane's menu, so streamlink skips its probe; tested), `warm` (streamlink started ahead for a live pane's quality menu: `quality_menu` on `VideoEvent::QualityMenu`, up to four renditions nearest what plays, `to_warm`, tested, each a `watch::WarmStart` on the slot whose `Ready` is kept until a pick takes it, `take_warm` and `adopt_warm` from `start_stream`, let go a grace after the menu closes, at its age while the menu stays open (`expire_warm`), with the player, or by a cold start; none for what a pick is already starting), `panes` (where each pane is drawn, applied: `restage`, the one funnel every change of a pane's state, of which panes there are, of the page, of what is popped out and of what is maximized ends in; `set_slot_state`, the only write of a pane's state, which a test holds the root to; `video_in_main`, the only way the main window reaches a player, which a test holds the pages to; and the maximize as the root drives it, `toggle_maximize`, `show_all_panes`, and `choose`, which takes it to the pane chosen; and `move_pane`, two panes swapping places in the order, from a header dropped on a pane or `Shift+←`/`Shift+→`), `pop_out` (a pane's picture in a window of its own, on top of other apps: the `PopOut` view, which says an ad break's tag or `buffering` over the picture itself, since the pane's header in the main window cannot see its player and is behind whatever the pop-out sits on (`pop_out_badge`), opening and closing it through `cx.defer`, `to_root`, the only way back to the root from it, and `offered`, Windows only), `broadcasts` (what a stopped live pane asks about its channel's past broadcasts, whether it may offer to start by itself, `start_offered`, and `start_due`, the one step by which a list of who is live starts the stopped panes it carries, the follows poll's and the ask about channels nobody follows alike, over `due_to_start`, tested), `rewind` (a live pane's timeline: when each live player's broadcast began, `sync_live_since`, a press on it carried out at once or when the ask for the archive is answered, and the archive opened in the pane's place; and the way back: whether each recording's broadcast is still on, `still_live` and `sync_back_to_live`, and `LIVE` pressed, `back_to_live`), `hearing` (which panes are heard: a pane menu's `Only this one` and `Hear all again` through Mute all's hush, read from the hushes as the menu is drawn, `hear_only_now`; and More's `Audio compressor`, every pane's at once, `toggle_compressor`), `channel_menus` (the channel menu as the root runs it: opened on a card, an offline name or a rail row, `browse::Action::ChannelMenu`, a name in chat, `ChatViewEvent::ChannelMenu`, or a pane, `PaneAction::Menu`, which also makes it the active pane; what it knows each time it is drawn, `channel_menu_facts`; and a pick, a pane's by its key as its own controls go, `pane_menu_pick`), `ad_breaks` (a pane's ad-break notice: begun on `StreamEvent::AdBreak`, ticked once a second by a timer the slot owns, taken down when it is over), `pane_actions` (what a pane asks for, by its key: a press on it or one of its controls, which takes the keys back for the root first, and its player's requests; the moment a pane key brings a pane's header up over its picture; `copy`, the one place the clipboard is written; and `run_guard`, which swallows the rest of a double-click whose first press took a player out from under the pointer — More's `Pop out` — where the player's own guard cannot follow), `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `saving` (writing the settings and the history down: each save a copy handed to the one writer thread, `settings::writer`, which writes them in the order they were made; a failed one said; and `finish_saving`, the wait for the last saves as the window closes), `muted` (a recording's muted stretches: heard from every Helix answer that lists videos, `hear_muted`, given to a pane that opens one without them, as the history's do, `with_muted`, asked for once through `Request::Video` only when nothing was heard, also when sign-in lands, `ask_muted_for_open`, an answer claimed by a pane's question before a link's, `Muted::claim`, tested, and taken onto every pane playing it and its player's seek bar, `take_muted`), `prefs`, `recommended` (the rail's Recommended group: when to ask the worker, what its answer becomes, and the hooks that call it), `last_live` (when the offline follows were last live: when to ask the worker, and what its answer does), `shared_chat` (Shared Chat labels: each chat watched as it is made, live or a replay (`watch_chat`), its word about a partner it cannot name turned into one ask per id, and the names handed to every chat), `badges` (chat badges: a chat's word about its room answered with the badges known for it, the global and per-room books asked for once each, and every answer handed to the chats it is for), `cheers` (cheers: a live chat's word about its room answered with the cheermotes known for it, each room asked for once a session, and the answer handed to the live chats in that room; a replay is never asked for), `viewer_cards` (a chat's viewer card as the root runs it: the account of the person on it asked for when it opens, `on_card_opened`, and every open card told what is known, `tell_card` and `sync_viewer_cards`, after every worker event and every `restage`; its `Watch`, through `Action::Add`, and its `Channel page`, the channel's page beside the panes, `channel_page_from_card`), `pane_streams` (what the channels nothing else asks about are doing, in one Helix ask by login for all of them, `ask_pane_streams`: a live pane playing a channel no fetched list carries, or starting one nobody is known to follow — opened by name, from a link or from Recommended — so it has a timeline, a header and a poster, held while a list comes to carry it (`PaneStreams::keep`); a stopped live pane on a channel nobody follows, so it starts when the channel does, through `start_due`, and an ended one keeps its broadcast's id; and a pin nobody follows, so its rail row says it is live. Which channels, `covered`, panes before pins under Helix's hundred, and when, `PaneStreams::due`, all of them together every two minutes and at once for one newly wanted, are tested; the answers are kept there alone, never in the follows, and are the last list `stream_info` reads, and `listed_stream` is every list but them), `schedule` (when an offline channel says it is on next: `ask_schedule`, called while drawing an offline channel's page and a pane that found its channel off, once a channel a session, and `on_schedule`), `chrome` (pills, toasts, the rail, and its preview cards' state and timer, `point_rail_row`), `title_bar` (the bar Perch draws across the top of the window — the rail button, Browse, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `search_box` (the title bar's search box as the root drives it: what it suggests as you type, `palette::suggestions` under the box, the arrows and `Esc` read on the way past, and the Twitch search on `Enter` or once the typing pauses, `search_settled`, a search already up asked again in place), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`, and so is the browse page docked beside the panes, `docks_stage`, the two columns id-less siblings so no pane remounts as the page comes or goes) |
+| `root/` | the app: `RootView` and its state in `mod.rs`, then one `impl` block per concern — `shortcuts`, `commands` (the palette), `follows` (the worker's events), `account` (the sign-in as the user drives it: the settings sheet's Sign out, Sign in, Sign in again for the chat scope, and `restart_twitch`, the worker started over, which a new client id does too), `chat_send` (sending chat: what each live chat's composer is told about the user, `sync_chat_access`, a message handed to the worker under a number of the root's, `send_chat`, and its answer handed back to the chat it came from, `on_chat_sent`), `browsing`, `navigation` (back and forward: where the app is as a `Route`, each step recorded on the trail, and the arrows, keys and side buttons that walk it), `streams` (opening, restarting, closing — where an opening plays, `Opening`: in place of the pane you are on, which a press on a card, a rail row, a toast or the palette's Watch asks for, or beside the panes — and `replace_with_video` and `replace_with_channel`, a recording swapped in for a live pane in place and the channel back in a recording's, both through `replace_slot`, which an opening in place goes through too; and `go_browse`, the browse page up, which stops every pane at home through `retire_homeless`, and `toggle_browse_page`, the title bar's Browse), `renditions` (what each pane plays, and when it restarts: the quality chosen against each pane's own height, `pane_height_for`, the upward re-pick when the grid changes, `sync_quality`, a pick from the pane's own menu, and how each changes what plays, `change_rendition` — beside a picture that covers the pane, to take over in place, and cold otherwise; and the root's half of that swap: what a start resolving beside a pane does with its events, `pending_event`, and what the pane keeps once its player has taken over or been given up on, `on_swapped` and `on_swap_failed`; and `set_pending`, the only write of a pane's pending start, which tells its player what a pick is switching it to and which a test holds the root to; and `beside_rendition`, the rendition a start beside a live picture names from the pane's menu, so streamlink skips its probe; tested), `warm` (streamlink started ahead for a live pane's quality menu: `quality_menu` on `VideoEvent::QualityMenu`, up to four renditions nearest what plays, `to_warm`, tested, each a `watch::WarmStart` on the slot whose `Ready` is kept until a pick takes it, `take_warm` and `adopt_warm` from `start_stream`, let go a grace after the menu closes, at its age while the menu stays open (`expire_warm`), with the player, or by a cold start; none for what a pick is already starting), `panes` (where each pane is drawn, applied: `restage`, the one funnel every change of a pane's state, of which panes there are, of the page, of what is popped out and of what is maximized ends in; `retire_homeless`, the one rule that stops a pane at home with nothing to draw it — every one, on leaving the watch page, and one that comes home to the browse page — and `leaving_stops_panes`, the question asked before leaving (tested from the sources); `set_slot_state`, the only write of a pane's state, which a test holds the root to; `video_in_main`, the only way the main window reaches a player, which a test holds the pages to; and the maximize as the root drives it, `toggle_maximize`, `show_all_panes`, and `choose`, which takes it to the pane chosen; and `move_pane`, two panes swapping places in the order, from a header dropped on a pane or `Shift+←`/`Shift+→`), `pop_out` (a pane's picture in a window of its own, on top of other apps: the `PopOut` view, which says an ad break's tag or `buffering` over the picture itself, since the pane's header in the main window cannot see its player and is behind whatever the pop-out sits on (`pop_out_badge`), opening and closing it through `cx.defer`, `to_root`, the only way back to the root from it, and `offered`, Windows only), `broadcasts` (what a stopped live pane asks about its channel's past broadcasts, whether it may offer to start by itself, `start_offered`, and `start_due`, the one step by which a list of who is live starts the stopped panes it carries, the follows poll's and the ask about channels nobody follows alike, over `due_to_start`, tested), `rewind` (a live pane's timeline: when each live player's broadcast began, `sync_live_since`, a press on it carried out at once or when the ask for the archive is answered, and the archive opened in the pane's place; and the way back: whether each recording's broadcast is still on, `still_live` and `sync_back_to_live`, and `LIVE` pressed, `back_to_live`), `hearing` (which panes are heard: a pane menu's `Only this one` and `Hear all again` through Mute all's hush, read from the hushes as the menu is drawn, `hear_only_now`; and More's `Audio compressor`, every pane's at once, `toggle_compressor`), `channel_menus` (the channel menu as the root runs it: opened on a card, an offline name or a rail row, `browse::Action::ChannelMenu`, a name in chat, `ChatViewEvent::ChannelMenu`, or a pane, `PaneAction::Menu`, which also makes it the active pane, at the pointer, or under a pane header's ⋯, `PaneAction::MenuButton` and `toggle_pane_menu`, which a second press closes (`MenuAt`, tested); what it knows each time it is drawn, `channel_menu_facts`; and a pick, a pane's by its key as its own controls go, `pane_menu_pick`), `ad_breaks` (a pane's ad-break notice: begun on `StreamEvent::AdBreak`, ticked once a second by a timer the slot owns, taken down when it is over), `pane_actions` (what a pane asks for, by its key: a press on it or one of its controls, which takes the keys back for the root first, and its player's requests; the moment a pane key brings a pane's header up over its picture; `copy`, the one place the clipboard is written; and `run_guard`, which swallows the rest of a double-click whose first press took a player out from under the pointer — More's `Pop out` — where the player's own guard cannot follow), `launches` (what the command line named, now and from later launches), `history` (where each recording was left, and resuming there), `saving` (writing the settings and the history down: each save a copy handed to the one writer thread, `settings::writer`, which writes them in the order they were made; a failed one said; and `finish_saving`, the wait for the last saves as the window closes), `muted` (a recording's muted stretches: heard from every Helix answer that lists videos, `hear_muted`, given to a pane that opens one without them, as the history's do, `with_muted`, asked for once through `Request::Video` only when nothing was heard, also when sign-in lands, `ask_muted_for_open`, an answer claimed by a pane's question before a link's, `Muted::claim`, tested, and taken onto every pane playing it and its player's seek bar, `take_muted`), `prefs`, `recommended` (the rail's Recommended group: when to ask the worker, what its answer becomes, and the hooks that call it), `last_live` (when the offline follows were last live: when to ask the worker, and what its answer does), `shared_chat` (Shared Chat labels: each chat watched as it is made, live or a replay (`watch_chat`), its word about a partner it cannot name turned into one ask per id, and the names handed to every chat), `badges` (chat badges: a chat's word about its room answered with the badges known for it, the global and per-room books asked for once each, and every answer handed to the chats it is for), `cheers` (cheers: a live chat's word about its room answered with the cheermotes known for it, each room asked for once a session, and the answer handed to the live chats in that room; a replay is never asked for), `viewer_cards` (a chat's viewer card as the root runs it: the account of the person on it asked for when it opens, `on_card_opened`, and every open card told what is known, `tell_card` and `sync_viewer_cards`, after every worker event and every `restage`; its `Watch`, through `Action::Add`, and its `Channel page`, the channel's page, asking the card for a second press first where leaving would stop streams, `channel_page_from_card`), `pane_streams` (what the channels nothing else asks about are doing, in one Helix ask by login for all of them, `ask_pane_streams`: a live pane playing a channel no fetched list carries, or starting one nobody is known to follow — opened by name, from a link or from Recommended — so it has a timeline, a header and a poster, held while a list comes to carry it (`PaneStreams::keep`); a stopped live pane on a channel nobody follows, so it starts when the channel does, through `start_due`, and an ended one keeps its broadcast's id; and a pin nobody follows, so its rail row says it is live. Which channels, `covered`, panes before pins under Helix's hundred, and when, `PaneStreams::due`, all of them together every two minutes and at once for one newly wanted, are tested; the answers are kept there alone, never in the follows, and are the last list `stream_info` reads, and `listed_stream` is every list but them), `schedule` (when an offline channel says it is on next: `ask_schedule`, called while drawing an offline channel's page and a pane that found its channel off, once a channel a session, and `on_schedule`), `chrome` (pills, toasts, the rail, and its preview cards' state and timer, `point_rail_row`), `title_bar` (the bar Perch draws across the top of the window — the rail button, Browse, the search box, the gear, the caption buttons on Windows — and which platform gets which shape of it), `search_box` (the title bar's search box as the root drives it: what it suggests as you type, `palette::suggestions` under the box, the arrows and `Esc` read on the way past, and the Twitch search on `Enter` or, but on the watch page while something plays there, once the typing pauses, `search_settled`, a search already up asked again in place), `pages` (each page only its own column; the rail beside it is drawn once by `mod.rs`) |
 | `target.rs` | what a typed or pasted thing means: a login, or a twitch.tv link to a channel or a recording; `link`, its inverse and the one place a twitch.tv URL is written, and `moment`, the second a link to a recording starts at; and perch's own `perch://watch/<login>` link, written by `app_link` for a notification to open and read back by `parse_app_link` (pure, tested) |
-| `browse.rs` | the picker page: Following, Popular, Categories, Library, search; which of them is on screen (`Discovery::place`) and which lists are still being waited on (`is_loading`); the stream card (`card`, offering what `CardOffers` says, its note after the game where its list has one, `card_meta`) and a row of them (`cards_row`) |
+| `browse.rs` | the picker page: Following, Popular, Categories, Library, search; which of them is on screen (`Discovery::place`) and which lists are still being waited on (`is_loading`); the stream card (`card`, offering what `CardOffers` says, two lines under its picture — the name with the game and its list's note after it, `name_line` and `card_meta`, then the title) and a row of them (`cards_row`), each card a whole number of pixels wide (`card_width`, tested); a shelf's heading (`heading`) |
 | `channel_page.rs` | one channel's past broadcasts, and when each was; its bar's pin to the rail, followed or not, and what the bar says of the channel now (`Standing`); the recording card both pages use, and a stopped pane too; a recording's poster, and `archive_of`, which finds the recording of a broadcast that just ended (tested) |
 | `history_page.rs` | the Library tab — the watch history, which the module is named for — its entry card and its test for unfinished (both reused by Following), and the one translation between a video and a history entry |
-| `following.rs` | Following, the tab the app opens on, grouped as the rail groups it (`sidebar::groups`): Pinned, its live pins as cards and the rest as names (`split_pins`, tested), live follows, Continue watching (one row of the history), Recommended as cards with the reason after the game, offline follows by when last watched, each saying when it was last live; the filter over every section, and and the counts on the headings (`counted`) |
+| `following.rs` | Following, the tab the app opens on, grouped as the rail groups it (`sidebar::groups`): Pinned, its live pins as cards and the rest as names (`split_pins`, tested), live follows, Continue watching (one row of the history), Recommended as cards with the reason after the game, offline follows by when last watched, each saying when it was last live, folded under their heading and count for the session (`offline_heading`, `Action::ToggleOffline`); each a shelf under its heading (`shelf`), the shelves `theme::GAP_SHELF` apart |
 | `veil.rs` | what the overlays on the watch page cover, so the panes' measured hover leaves the pointer alone there, each under its own `Cover`: an open viewer card's probe writes its bounds (`cover`), its chat lifts it on every render without one, as it closes and as the chat goes (`lift`), and every pane probe — the pane's, the player's, the chat's hold — asks `pointer_over`, the pane's hover and the chat's hold leaving their own card out (`reaches`, tested) |
 | `watch.rs` | the grid of panes; `Slot` lives here, made by `Slot::new`, with `PendingStart`, a start of its stream resolving beside the picture, and `WarmStart`, a streamlink started ahead for the pane's quality menu (`Slot::warm`), and `PaneAction`, everything a pane asks of the root; the band a header rides over the picture on, and when it is up (`Slot::point`, `band_wanted`, tested); the layer a dragged header is dropped on (`drop_layer`, `PaneDrag`) |
-| `watch/header.rs` | a pane's header — name, the red `LIVE` badge on a live pane, numbers, what is on, `muted`/`paused`/`buffering` and an ad break's tag (`says_buffering`, the one rule for when `buffering` shows, which a pop-out's word over its picture follows too, tested), the chat options icon on a header that sits on chat, the pop-out icon that turns into Bring back, and the × — each icon naming its key — the handle a pane is dragged by onto another, and `Placement`, the one rule for where it goes: the chat panel, or over the picture with no chat on screen (tested); what it says worked out once as `Facts` (`numbers`, tested), and its controls as builders the strip under the picture shares (`name_link`, `with_status`, `browse_button`, `pop_button`, `chat_options`, `close_button`, `handle`) |
-| `watch/strip.rs` | a beside pane's header laid out wide under its picture, where its column has black there to give (`layout::header_under_picture`): the channel's face, its name at a title's size, the numbers with `watching`, the title and the game on lines of their own, and `Pin`/`Pinned`, `Past broadcasts` signed in (`PaneAction::ChannelPage`), out or back and the ×; and `chat_bar`, the bar that then heads its chat, with the chat options and hiding chat |
+| `watch/header.rs` | a pane's header — name, the red `LIVE` badge on a live pane, numbers, what is on, `muted`/`paused`/`buffering` and an ad break's tag (`says_buffering`, the one rule for when `buffering` shows, which a pop-out's word over its picture follows too, tested), the chat options icon on a header that sits on chat, the ⋯ that opens the pane's menu under it (`menu_button`), and the × — each icon naming its key — the handle a pane is dragged by onto another, and `Placement`, the one rule for where it goes: the chat panel, or over the picture with no chat on screen (tested); what it says worked out once as `Facts` (`numbers`, `about_line`, tested), drawn in two shapes, the details at the top of the chat panel (`details`: the face, the name at a title's size, the badge, numbers and tags on a line of their own, the title and the game under them) and compact on the band over the picture (`compact`) |
 | `watch/chat_menu.rs` | a pane's chat options menu, hung over its chat, or risen from the foot of a chat box too short for it (`placed`): the text sizes and `Time on every message` (with its state in words), and `Reset pane sizes` ruled off at the foot (`PaneAction::ResetSizes`, `RootView::reset_sizes`, shared with `Ctrl+0`), which pane's is open (`toggled`, one at a time), rows that act on the press (tested) |
 | `watch/status.rs` | a pane with no picture: `Showing`, the one reading of its state that the pane's sentence comes from, and the screen drawn from it under the player — a starting pane's poster, a stopped one's next steps and what room it has for them (`next_up_room`), and `Elsewhere`, a pane whose picture is in a window of its own, with `Bring back` (tested) |
-| `layout.rs` | derives grid shape from window aspect, as `Grid::of`, the one grid the watch page, the divider drag and each pane's quality read; `quality_height`, the height a pane asks a rendition for; `header_under_picture`, whether a beside pane's column has room under its picture for the header, and the picture's box then (tested); the page's `Body`, and the part of it the panes have beside the docked browse page (`Body::beside`, `panel_width`: half the body, `PANEL_MAX_WIDTH` at most), the title bar's height and drag edge, and the `Room` a browse list has; where a pop-out opens, stacked clear of where the open ones really are (`pop_out_bounds`) (pure, tested) |
+| `layout.rs` | derives grid shape from window aspect, as `Grid::of`, the one grid the watch page, the divider drag and each pane's quality read; `quality_height`, the height a pane asks a rendition for; the page's `Body`, the title bar's height and drag edge, and the `Room` a browse list has; where a pop-out opens, stacked clear of where the open ones really are (`pop_out_bounds`) (pure, tested) |
 | `video_view.rs` | the player element: its sound, its hover, the picture and the gestures on it (`Alt` and the wheel, a middle press), and when the picture last moved again after standing still (`resumed_at`, the stream on screen's own count, kept by its render thread); drawn as a pane, in a pop-out or not at all while another pane is maximized (`stage::Place`), moved between them only by `set_place`, and belonging to no window |
 | `video_view/swap.rs` | a rendition swapped in place: the new stream started beside the one on screen inside the same view, held to it by `align` (tested) and promoted once it has a picture and, on a recording, has caught up; `route`, the one rule a stream's frame wakes and its streamlink events reach the right start by (tested) |
-| `video_view/bar.rs` | the control bar over a playing picture: the seek row on a recording, or a live broadcast's timeline where the pane is wide enough for it (`timeline_fits`, tested), the icons and their key-naming tooltips, Browse (which acts on the press, in the capture phase, `browse_button`), the quality pill (`pill_face`, tested — what plays, or a pick under way, breathing), what fits at the pane's width (`fit`, tested), the one anchor menus open from; a recording's speed after its length while it is not `1x` (`speed_tag`, which on a pane toggles the speeds on the press, as Browse acts); a pop-out's own right-hand end, Bring back and Close |
+| `video_view/bar.rs` | the control bar over a playing picture: the seek row on a recording, or a live broadcast's timeline where the pane is wide enough for it (`timeline_fits`, tested), the icons and their key-naming tooltips, the quality pill (`pill_face`, tested — what plays, or a pick under way, breathing), what fits at the pane's width (`fit`, tested), the one anchor menus open from; a recording's speed after its length while it is not `1x` (`speed_tag`, which on a pane toggles the speeds on the press, in the capture phase); a pop-out's own right-hand end, Bring back and Close |
 | `video_view/menu.rs` | the bar's menus, the quality, More (with the quality once the bar has folded its pill, `Audio compressor · Off` or `· On`, a recording's `Playback speed · 1x`, `Pop out` where the pop-out is offered, and `Pin to the rail` or `Unpin from the rail`, `pin_row`, tested) and a recording's speeds, opened in More's place (`speed_row`, tested): which is open (`Menu`, one at a time), the box, rows that act on the press (tested), and `run_guard`, which swallows the rest of a double-click a row took (tested); `set_menu`, the one write of the open menu (a test counts them), which says the quality menu opening or closing to the root (`quality_menu_flip`, tested) — after `Pop out`, which takes the player out of the window, the root's `run_guard` does |
 | `loudness.rs` | one pane's level and the Mute all hush over it: what mpv hears, and the only level ever reported to be remembered; what a pane's menu offers about hearing one pane alone, worked out from the panes' hushes (`HearOnly`, `hear_only`) (pure, tested) |
-| `channel_menu.rs` | the one right-click menu wherever a channel is named — a card, an offline name, a rail row, a name in chat, a pane: what it offers (`entries`, from `Facts` the root works out as it is drawn, with a pane's own part, `PaneFacts`; pure, tested) and the menu drawn at the pointer, deferred and anchored, rows acting on the press (`view`) |
+| `channel_menu.rs` | the one right-click menu wherever a channel is named — a card, an offline name, a rail row, a name in chat, a pane, whose header's ⋯ opens it too: what it offers (`entries`, from `Facts` the root works out as it is drawn, with a pane's own part, `PaneFacts`; pure, tested) and the menu drawn at the pointer or under the ⋯, deferred and anchored by the corner the root says, rows acting on the press (`view`) |
 | `compressor.rs` | the audio compressor, every pane's at once: the mpv `af` chain (`chain`: ffmpeg's `sidechaincompress` listening 6 ms ahead, fitted to what FrankerFaceZ's compressor puts out in Chrome — tested against Chrome's curve and makeup — and hearing each pane at its volume, as FFZ's hears the player's, `drive`), what each player's render loop still owes its chain, new words or the volume told by command (`Applied`, tested), the process-wide flag every player's render thread reads between frames as it reads its volume (`set`, `on`), and More's row (`row`) (pure, tested) |
 | `wheel.rs` | `Alt` and the wheel over a picture, turned into volume steps: one per click of a notched wheel, a click's worth at a time for a touchpad or trackpad (`Wheel`) (pure, tested) |
 | `ad_break.rs` | a pane's ad-break notice: what its header tag says (`ad break · 0:25`), when it ticks, and when it is over — its length run out, or the picture moving again after standing still, which each player's render thread counts from every new frame, offstage ones included (`FrameClock`) (pure, tested) |
@@ -599,11 +617,10 @@ rest of the quality code): its cell of the one grid, in physical pixels
 the seams left in (`Grid::share_height`), as panes always were. The cell as
 cut is a pixel or two shorter in two rows, and renditions are picked by exact
 heights, so measuring that would move a pane at the edge to a softer
-rendition. A pane beside the browse page is not one of the sizes it
-chooses for: `pane_height_for` measures the watch page's grid
-(`watch_grid`) whichever page is up, so the smaller picture beside the page
-never feeds it, the rendition playing there is the one you go back to, and
-going back to watching never restarts a stream.
+rendition. `pane_height_for` measures the watch page's grid (`grid`)
+whichever page is up; while the browse page docked beside the panes that
+kept the smaller picture beside it from lowering what played, and now it
+keeps a popped pane's cell at home the size it comes back to.
 A player that is started cold — a quality change from the settings, a
 re-pick of a pane with no picture yet — is born where its pane is drawn
 (`video_view::Start::place`, from `RootView::place_of`): in its pane, as the
@@ -1161,8 +1178,9 @@ What took deciding:
   (`replace_slot` does what `pop_in` does): the pop-out finds its player
   by the pane's key, which the new slot does not carry. So `LIVE`, or a
   rewind, pressed in a pop-out closes that window and the pane plays on in
-  the main window, on the watch page or beside the browse page, whichever
-  is up. The new pane is chosen (`choose`), so
+  the main window, which comes up on the watch page first if the browse
+  page was up, where a pane at home would be stopped (`retire_homeless`).
+  The new pane is chosen (`choose`), so
   while another pane is maximized this one takes the watch page rather
   than playing where nobody sees it.
 - **The recording's place goes into the history first,** as a close writes
@@ -1663,9 +1681,9 @@ Two things worth keeping in mind:
   covered two cards and let clicks through to them, then a docked
   now-playing bar with room for a 96px thumbnail, then the mini player,
   which blocked the pointer from its own box and had every list leave room
-  at its foot — until browsing docked beside the panes and nothing played
-  over the grid at all (see "Browsing beside the panes" under "Where
-  controls live").
+  at its foot — until browsing docked beside the panes for a week, and then
+  stopped what played, and nothing plays over the grid at all (see "The
+  browse page" under "Where controls live").
 - **`block_mouse_except_scroll` for overlays on the browse page**, so the wheel
   still reaches the grid underneath; plain `occlude` for the modal, where the
   page behind should not scroll either.
@@ -2223,6 +2241,17 @@ search docked the browse page beside them. Vendored gpui fix 8
 (`elements/text.rs`, a `PERCH PATCH` `scripts/verify-vendor.sh` checks) truncates
 a fresh copy for each measure; upstream stopped mutating the runs after 0.2.2.
 
+**A row of widths cut to fill it adds up in `f32`, and a hair over wraps.**
+A browse row's cards are as wide as the row divided by its columns
+(`browse::card_width`), and taffy breaks a wrapping row by adding its items
+and gaps in `f32`. Seven cards of 2412 / 7 px and six 18 px gaps came to a
+hair over the 2520 px they were cut from, so the seventh card wrapped and
+every row of Following ended in an empty column — on the user's 2560 px
+window, the day the cards widened to seven a row (22 October 2026). Nine of
+264 px had added up exactly, which is why it never showed before. A card's
+width is floored to a whole pixel, leaving less than a pixel a card of
+slack at the row's end, and a test holds every row to never overfilling.
+
 **Dependencies are plain crates.io versions** — `gpui 0.2.2`, `gpui-component 0.5.1`
 — reproducible from `Cargo.lock`. An earlier plan called for pinning a git rev;
 that turned out to be unnecessary.
@@ -2283,7 +2312,8 @@ UI thread, `mpv-render` is `video.rs`, `worker`/`demux`/`vo`/`core` are libmpv,
 static page repainting sixty times a second is a bug and looks identical to a
 busy one in a CPU number. And `child_pct` is streamlink and its python, because
 Task Manager folds a parent's children into its row — so a stream left playing
-beside the browse page reads as perch using CPU when none of it is perch's.
+in a pop-out while you browse reads as perch using CPU when none of it is
+perch's.
 
 What it said the first time it ran, which is the baseline to compare against:
 
@@ -2295,12 +2325,12 @@ What it said the first time it ran, which is the baseline to compare against:
 
 The first row is the important one: gpui does not repaint a page that has not
 changed, so an idle perch is genuinely idle. Every bit of the rest is the
-*stream*, and going back to the follows page does not stop one — the pane
-plays on beside the browse page, still with its sound, and mpv keeps
-decoding at full source resolution, because the render size follows the
-element but the decode does not. The second row was measured with the old
-96px thumbnail; a pane beside the browse page is far larger, so measure
-again before quoting it.
+*stream*: mpv keeps decoding at full source resolution wherever a pane is
+drawn, because the render size follows the element but the decode does not.
+The second row was measured with the old 96px thumbnail, when a stream
+played on behind the follows page; going to the browse page stops a pane at
+home now (`go_browse`), so only a pane in a window of its own plays on
+there, and that row is a pop-out's to measure again.
 
 **A windowed app still gets console windows from its children.** streamlink is a
 console-subsystem program, so every one we spawn came with its own console — and
@@ -2584,10 +2614,11 @@ unconsidered.
   primary control was filled rather than bordered. A picture rather than a
   word is `icon_button`, the same variants in a square, and the title bar's
   gear wears `Variant::Chrome` — no fill until the pointer is on it.
-  `Variant::Confirm` was a control that cost something, pressed once and
+  `Variant::Confirm` is a control that costs something, pressed once and
   asking for a second press — a viewer card's `Stop streams and open?`, its
-  words in the accent, since the app has no warning colour — and went when
-  browsing stopped stopping streams;
+  words in the accent, since the app has no warning colour; it went for the
+  week browsing docked beside the panes and stopped nothing, and came back
+  with browsing stopping what plays;
   `pill_with_icon` is a pill with a glyph after its words, `twitch.tv` and
   the arrow out of a box (`theme::PILL_GLYPH`, under the pill's line).
   `icon_waiting` is that square with nothing to offer — back with nowhere to
@@ -2601,7 +2632,10 @@ unconsidered.
   `group_heading`, the box the rail's `Pinned`, `Live` and `Recommended`
   headings sit in, so the fold and the headings above it share one recipe
   rather than two that had to be restyled together. None of the headings
-  carries an icon, so the third, added later, does not either. What a
+  carries an icon, so the third, added later, does not either. Following's
+  Offline folds by a heading of its own (`following::offline_heading`), at a
+  shelf heading's size (`browse::heading`) with its count and the chevron
+  after the words, so every heading on that page starts at one edge. What a
   control says under the pointer is `tip`, one line of words with any key in
   it from `keys::Hint`, or `full_text` for the rest of a line cut short —
   never a `gpui_component` `Tooltip` built at the call site — and a control
@@ -2809,31 +2843,48 @@ key that has just chosen the pane. A pane with no picture — starting,
 offline, ended, a player before its first frame — is not a picture, and its
 header rests over it. The split:
 
-- **Pane header**, one per pane (`watch/header.rs`): the channel name — which
-  opens twitch.tv, for the site's chat and whatever else the app does not do —
-  then the red `LIVE` badge *when the pane is actually showing a live
-  picture*, where a recording's says `replay` (it was the browse cards' live
-  dot in front of the name, until the badge, which says at a glance which
-  panes are live, replaced it), viewer count, uptime,
-  `muted` and `paused`, and at the end of a right-hand cluster its icons. On a
-  header sitting on a chat panel, and nowhere else, first the chat options
-  (`Icon::ChatOptions`, a large T and a small one), which open the menu that
-  sets how every chat is drawn and puts the pane sizes back (see "Chat
-  display options" under Chat); it is the menu's anchor, as the bar's
-  cluster is the bar's menus', its id follows whether the menu is open, and
-  it gives no tooltip while it is. Then, where
-  the pop-out is offered (`root::pop_out_offered`), out into a window of its
-  own on a playing pane and `Bring back` on a popped one
-  (`header::PopOutButton`), both naming `P` through `keys::Hint::PopOut` and
-  each with its own id, so a tooltip never outlives the press that changed it;
-  then the pane's ×, a `Destructive` icon whose tooltip names `Ctrl+W` through
-  `keys::Hint::Close`. With more than one pane its bottom border
+- **Pane header**, one per pane (`watch/header.rs`), from one set of facts
+  (`header::Facts`) in two shapes. On the chat panel — at the top of chat
+  beside the picture, between the picture and chat when stacked — it is the
+  pane's details at their size (`header::details`): the channel's face
+  (`PaneInfo::avatar`, the rail's cached picture of a followed or
+  recommended channel, `None` for anyone else, and the header starts at the
+  name), its name at `TEXT_TITLE` — which opens twitch.tv, for the site's
+  chat and whatever else the app does not do — with the pane's controls at
+  the end of the name's line; on a line of its own under the name, the red
+  `LIVE` badge *when the pane is actually showing a live picture*, where a
+  recording's says `replay` (it was the browse cards' live dot in front of
+  the name, until the badge, which says at a glance which panes are live,
+  replaced it), the numbers saying what they count (`8.8k watching · 3h
+  12m`), `muted`, `paused`, `buffering` and an ad break's tag; then the
+  title at `TEXT_BODY` on a line of its own and the game under it, or a
+  recording's title and when it was, each clamped to its line with the
+  whole of both a hover away through `controls::full_text`. The name has a
+  line of its own so it is not cut short, as it was to six letters when the
+  badge, the numbers, `muted` and three icons shared the 340 px column's one
+  row with it. Over the picture, with chat hidden or none to show, it is
+  compact (`header::compact`): the name at `TEXT_BODY`, the badge, the
+  numbers in the card's shape (`358 · 8h 20m`) and the tags on one row with
+  the controls at its end, and what is on joined on one line under it.
+  The controls: on a header sitting on a chat panel, and nowhere else,
+  first the chat options (`Icon::ChatOptions`, a large T and a small one),
+  which open the menu that sets how every chat is drawn and puts the pane
+  sizes back (see "Chat display options" under Chat); it is the menu's
+  anchor, as the bar's cluster is the bar's menus', its id follows whether
+  the menu is open, and it gives no tooltip while it is. Then the ⋯
+  (`header::menu_button`), which opens the pane's menu (see "The channel
+  menu") hung under it by its top right corner, at the ⋯'s lower right as a
+  probe in the button measured it; a second press puts it away — the press
+  outside the menu closes it in the capture phase, before the ⋯ hears the
+  press, so the root keeps whose menu a press closed until the next frame
+  (`channel_menu_dismissed`, `toggle_pane_menu`). The menu holds what the
+  header and the strip under the picture once had as icons and pills of
+  their own: the pin, `Past broadcasts`, out into a window of its own and
+  back. Then the pane's ×, a `Destructive` icon whose tooltip names
+  `Ctrl+W` through `keys::Hint::Close`. With more than one pane its bottom border
   marks the one the keyboard is talking to, and the whole header is a
   handle: dragged onto another pane, the two swap places
-  (`RootView::move_pane`; see the GPUI traps and Keyboard). Under that row,
-  what is actually on: the title and the game, joined the way the numbers
-  above them are, clamped to one line, with the whole of both a hover away
-  through `controls::full_text`. The live numbers go when the stream ends —
+  (`RootView::move_pane`; see the GPUI traps and Keyboard). The live numbers go when the stream ends —
   they come from a list that will not know for another minute, and an uptime
   still counting beside "ended the stream" is the same lie the frozen last
   frame used to tell. Where it goes is one rule, `watch::Placement::of`, the
@@ -2860,47 +2911,25 @@ header rests over it. The split:
   offers chat back (`Show chat`, the chat glyph crossed out), and the status
   screen starts `theme::BAND_ROOM` down so the resting band never covers its
   words.
-- **Under the picture, where there is black to give** (`watch/strip.rs`,
-  October 2026). One stream is how Perch is mostly watched, and beside its
-  chat a 16:9 picture in a window of ordinary shape used to sit centred over
-  black above and below — 151 px at 1920 by 1080, and as much at 4K
-  maximized — while its header, in the 340 px chat column beside it, cut the
-  channel's name to six letters once `LIVE`, the numbers, `muted` and three
-  icons had their room. Where that black can hold the header
-  (`layout::header_under_picture`, `theme::STRIP_ROOM`), the picture's box is
-  the picture, at the top of its column, and the header goes under it laid
-  out wide, the strip: the channel's face (`PaneInfo::avatar`, the rail's
-  cached picture of a followed or recommended channel, `None` for anyone
-  else), its name at `TEXT_TITLE`, the badge, the numbers with `watching`,
-  the tags, the title at `TEXT_BODY` on a line of its own and the game under
-  it; then `Pin`/`Pinned` (`Variant::Selected` while pinned, its press
-  unpinning, `PaneAction::Pin` saying which it was offered as), `Past
-  broadcasts` while signed in (`PaneInfo::past_broadcasts`,
-  `PaneAction::ChannelPage`: the channel's page beside the panes, with this
-  pane the one a card there replaces), Browse on a pane with no bar, out or
-  back, and the ×. The picture is the size it was
-  either way — the column's width at the stream's shape — so its render size
-  and its quality do not move. The strip is the same handle and the same
-  marked rule as the compact header (`header::handle`); both are built from
-  `header::Facts` and the header's own builders, so the two cannot come to
-  say different things. Chat is then headed by `strip::chat_bar`: `Chat`,
-  the chat options, whose menu hangs under it as it did under the header,
-  and hiding chat (the chevron, `C`), which the player's bar offers only
-  while the pointer is on the picture. The picture's box and the strip
-  stand in one column with no id, so the player's element path is the
-  pane's whichever way the header goes, and a resize across the line moves
-  the header and nothing else. A column the picture fills by height — a
-  wider window, a 4:3 or vertical stream — has no black under it, and keeps
-  the compact header on chat; so does every stacked cell, whose header
-  already sits between its picture and its chat, and a pane with chat hidden,
-  whose header rides the band. The `⋯` the October 2026 mockups have on the
-  strip is the right-click menu instead, on the strip as on the picture.
+- **Not under the picture.** For a week of October 2026 (`watch/strip.rs`,
+  gone) a beside pane whose column had black under its picture — 151 px at
+  1920 by 1080, 103 px maximized on a screen of ordinary shape with a
+  taskbar — put its header there, laid out wide, with the picture pinned to
+  the top of its column and chat headed by a bar of its own (`Chat`, the
+  chat options, hiding chat); a window of another shape kept the header on
+  chat, so the header moved with the window. The user did not like the
+  viewing page it made (22 October 2026). The details went back to the top
+  of the chat panel, on lines of their own, and the picture is centred again
+  in the column beside chat, over black above and below where the window is
+  taller than the stream's shape; its box, and so its render size and its
+  quality, are what they were either way. The strip's `Pin`/`Pinned` and
+  `Past broadcasts` are rows of the pane's menu, behind the ⋯.
 - **Over the video**, only while the pointer is on it or one of its menus is
   open, or on a pane while a quality somebody picked is under way and for a
   moment after (`video_view::bar_wanted`): the control bar
   (`video_view/bar.rs`). At the left play or pause, the speaker — crossed out
   whenever the pane is silent, a hush included — the volume slider and
-  its figure; at the right the quality pill, then chat, Browse, fullscreen
+  its figure; at the right the quality pill, then chat, fullscreen
   and More. Chat is crossed
   out while hidden, and drawn still, with a `No chat replay` tooltip, for a
   recording that has none, so the cluster keeps its shape. More pops the pane
@@ -2924,10 +2953,7 @@ header rests over it. The split:
   press toggles mute (`VideoView::picture_gestures`). Every
   icon lifts under the pointer and its tooltip says what a press does, and the
   key that does the same where there is one, from `keys::Hint`; More has no
-  key, so its tooltip is its name; Browse says `Browse what else is on
-  (Esc)` while the browse page is away (`keys::Hint::Browse`) and `Back to
-  watching` while it is up, keyed on `VideoView::browsing` (a mirror only
-  `Start` and `RootView::sync_presentation` write); and the quality pill is
+  key, so its tooltip is its name; and the quality pill is
   words with no tooltip. While a pick is under way the pill names it instead
   and breathes, with a `Switching to …` tooltip, and the menu marks the row
   it was made from (the swap trap under Video). A narrow pane drops the
@@ -2938,9 +2964,11 @@ header rests over it. The split:
   (below), not here: the bar keeps to what one stream needs.
   `bar::RIGHT_BUTTONS` counts the cluster's buttons —
   `button_row` lays them out as an array that long — so a control added there
-  narrows the bar sooner — the guide's button took the fourth square, and
-  Browse has it now —
-  and never a pop-out, which is the header's and More's, since this cluster
+  narrows the bar sooner — the guide's button took a fourth square, and
+  Browse had it while the browse page docked beside the panes, with the
+  pane pressed the one a card replaced; since browsing stops what plays,
+  Browse is the title bar's alone and the cluster has three again —
+  and never a pop-out, which is More's and the pane menu's, since this cluster
   has no room and never drops a button. What is the pane's rather than the
   player's — chat, the link, popping out, the pin — goes up as
   `VideoEvent::Pane` and is resolved by key in `root/pane_actions.rs`, the
@@ -2956,7 +2984,8 @@ header rests over it. The split:
   mention's (`chat::copy_menu::Target::Name`, which the row's own listener
   turns into `ChatViewEvent::ChannelMenu` in place of its copy menu), a
   pane's picture (`VideoView::picture_gestures`, in the main window only)
-  or its header or strip (`header::handle`, `PaneAction::Menu`): `Watch`
+  or its header (`header::handle`, `PaneAction::Menu`), and the left button
+  on the ⋯ in a pane's header (`PaneAction::MenuButton`): `Watch`
   and `Add beside` while it is live — `Add` only while another pane fits
   and none plays it — `Pin to the rail` or `Unpin from the rail`, `Past
   broadcasts` signed in, `Open on twitch.tv` and `Copy link`, and from chat
@@ -2970,48 +2999,48 @@ header rests over it. The split:
   pane's `Copy link` is a recording's at its moment. What it offers is
   worked out each time it is drawn (`channel_menu::entries`, pure and
   tested), so no row is offered from a stale answer. Drawn as the chat's
-  copy menu is, deferred and anchored at the pointer, its rows acting on the
-  press, the first of a run; a pick takes the rest of the run for the root.
+  copy menu is, deferred and anchored, its rows acting on the press, the
+  first of a run; a pick takes the rest of the run for the root. Anchored
+  by its top left at the pointer, or by its top right under the ⋯
+  (`channel_menus::MenuAt`): the ⋯ is at the right of its pane, and a menu
+  opened at the pointer there would switch its anchor to fit the window
+  and come down over the ⋯, where a second press would land on its first
+  row.
   One menu at a time: opening it closes every other, and it closes on a
   press outside it, `Esc`, a modal coming up (`close_copy_menus`) and the
   pane it is about going.
-- **Browsing beside the panes** (`RootView::docks_stage`, drawn by
-  `root/mod.rs`'s render): with a pane at home, the browse page comes up on
-  the left of the window, `layout::panel_width` wide — half the body,
-  `theme::PANEL_MAX_WIDTH` at most — ruled off from the panes, which keep
-  the rest (`Body::beside`, `RootView::stage_body`) and play on as they
-  were, with their sound. The two columns are id-less siblings in one row,
-  outside the page fade, so a pane's element path is the same on either
-  page and nothing remounts as the browse page comes or goes; only the
-  browse column arrives (`motion::arrive`). The grid beside it is `Grid::of`
-  on the narrower body, so a lone pane at 1920 by 1080 stacks — its picture
-  whole, its header and chat under it — and its quality is chosen for the
-  watch page's grid (`pane_height_for`, `watch_grid`), so a smaller picture
-  for the while never lowers what plays. It comes from Browse on any pane's
-  bar (`Icon::Browse`, a frame with a panel down its left half), or on the
-  header of a pane with no bar — one stopped, or with its picture in a
-  pop-out (`header::offers_browse`, tested) — and from `Esc` on the watch
-  page; Browse again, or `Esc` from a tab (`on_step_out`), puts it away.
-  `RootView::toggle_browse` makes the pane pressed the one the keys talk to,
-  closes every pane's menu (Browse acts on the press, in the capture phase,
-  and stops it there, so no menu's own dismiss hears it) and takes the rest
-  of the run (`run_guard`), since the panes move under the pointer. Every
-  player is told whether the page is up (`VideoView::browsing`), for its
-  Browse button's words and id. With every pane popped out, or none open,
-  the browse page has the whole window. A click on a card, a rail row, a
-  go-live toast or the palette's Watch plays in place of the pane you are on
-  (`streams::Opening::InPlace`, through `replace_slot`, which keeps its
-  place, its hush and a maximize, and chooses a pane already playing the
-  channel instead) and goes back to watching; `+ Add`, a rail row's `+`, a
-  viewer card's `Watch`, a launch and a link open beside
-  (`Opening::Beside`, refused at four). `Past broadcasts` under a pane's
-  picture opens the channel's page here, with that pane the one a card
-  replaces, and so does a viewer card's `Channel page`. While the page is
+- **The browse page** (`RootView::go_browse`, drawn by `root/mod.rs`'s
+  render): a page of its own with the whole body, and leaving the watch page
+  for it stops every pane at home (`retire_homeless`, the one rule for it,
+  which `restage` also runs for a pane that comes home to the browse page);
+  a pane in a window of its own plays on, and is the only kind there is
+  while the page is up (see "Browsing stops what plays" under "Product
+  decisions"). It comes from Browse in the title bar
+  (`toggle_browse_page`), `Esc` on the watch page once nothing else claims
+  it (see Keyboard), a search's results (`run_search`), and a channel's page
+  — `Past broadcasts` on a pane's menu, an offline name in the rail, a
+  viewer card's `Channel page`, which asks for a second press first where
+  leaving would stop streams (see "A name opens its person's card" under
+  Chat). Whatever leaves asks `leaving_stops_panes` when it wants to say so
+  or wait: Browse's tooltip says `Stop watching and browse`, and a search
+  typed on the watch page waits for `Enter` rather than leaving by itself
+  when the typing pauses (`search_settled`). Back from the browse page goes
+  to the watch page only while a pane plays in a window of its own, since
+  the last pane closing takes the watch page off the trail; Bring back
+  (`pop_in`) and a recording swapped in for a popped pane (`replace_slot`)
+  bring the watch page up first, so the pane comes home to somewhere it is
+  drawn. A click on a card, a rail row, a go-live toast or the palette's
+  Watch plays in place of the pane you are on (`streams::Opening::InPlace`,
+  through `replace_slot`, which keeps its place, its hush and a maximize,
+  and chooses a pane already playing the channel instead) and goes to
+  watching; `+ Add`, a rail row's `+`, a viewer card's `Watch`, a launch and
+  a link open beside (`Opening::Beside`, refused at four). While the page is
   up the keys are its own (`keys::CONTEXT_BROWSE`): `P` is bound on both
-  pages, and the rest of a pane's keys wait. It took the place of the guide
-  over the foot of the watch page and of the mini player in the browse
-  page's corner (see "Browsing never stops what plays" under "Product
-  decisions").
+  pages, and brings a popped pane back with the watch page. For a week of
+  October 2026 the page docked on the left beside the panes, half the body
+  at most, and the panes played on beside it in a grid of their own, a lone
+  one stacked, with Browse on every pane's bar; before that it was a page
+  of its own with the mini player in its corner (see "Product decisions").
 - **Under the video**, the status screen (`watch/status.rs`), absolute over
   the whole pane and drawn before the player, until the picture covers the
   pane. A player draws nothing before its first frame — no backdrop, no word
@@ -3036,10 +3065,12 @@ header rests over it. The split:
   being asked for, absent when none matched), `Try again`, `Close` and the
   switch.
 - **The title bar** (`root/title_bar.rs`), on both pages and gone in
-  fullscreen: the rail button, Browse — the browse page up beside the panes
-  or put away (`toggle_browse_page`, for the pane the keys talk to), lit
-  while it is up, `Variant::Selected`, and only saying where you are with
-  nothing open — and the search box at the left, then the drag strip, then
+  fullscreen: the rail button, Browse — the browse page up, which stops what
+  plays at home, its tooltip `Stop watching and browse` whenever it would
+  (`leaving_stops_panes`), or from the browse page back to a pane in a
+  window of its own (`toggle_browse_page`); lit while the page is up,
+  `Variant::Selected`, and only saying where you are with nothing open —
+  and the search box at the left, then the drag strip, then
   — while nobody is signed in — what the sign-in is waiting for in words
   ("Enter CODE at twitch.tv/activate" has to stay up on either page while
   you go and do it), the gear, and on Windows the caption buttons. The gear
@@ -3062,15 +3093,17 @@ header rests over it. The split:
   paused `SEARCH_SETTLE` (600 ms) on three letters or more; with results up
   already the new query is asked in place (`ask_search`, as a refresh asks),
   so a run of typing is one step on the trail. A search from the watch page
-  brings the browse page up for the results the way `Esc` does
-  (`run_search`), and `Ctrl+F` reaches the box from either page.
+  brings the browse page up for the results the way Browse does, stopping
+  what plays (`run_search`); so there, while something plays, a pause in the
+  typing asks nothing, and only `Enter` or a press on the row asking Twitch
+  leaves (`search_settled`). `Ctrl+F` reaches the box from either page.
 - **The browse page's tab strip** (`RootView::tab_strip`): back and
   forward — each drawn waiting while the trail has nowhere to go that way —
   then the four tabs, then Refresh, left-aligned so the toasts at the
   top-right reach Refresh only in a narrow window — and the browse toast
-  offset (`TAB_STRIP_HEIGHT`) keeps them off it even then — and, while the
-  panes are beside the page, an × at its right end that puts the page away,
-  as Browse does.
+  offset (`TAB_STRIP_HEIGHT`) keeps them off it even then. While the page
+  docked beside the panes it had an × at its right end that put the page
+  away; a page of its own has nothing to put away to.
 - **The rail** (`sidebar.rs`): a row is a click — a live channel plays in
   place of the pane you are on, followed or recommended, anyone else opens
   their page — and under the
@@ -3094,10 +3127,12 @@ header rests over it. The split:
   and nothing else: no quality, chat, fullscreen or More, and no
   double-click. Its pane's chat and
   header stay in the main window, whose cell offers `Bring back` too. The
-  ways out are the header's icon, More's `Pop out`, `P` on either page and
-  the palette; the ways back are the pop-out's Bring back, the cell's, the header's icon, `P`
-  in either window and the palette. The window's own close (`Alt+F4`, the
-  taskbar) brings the pane back; the bar's Close and `Ctrl+W` close it.
+  ways out are the pane menu's `Pop out` (the ⋯ or the right button), More's,
+  `P` and the palette; the ways back are the pop-out's Bring back, the
+  cell's, the pane menu's, `P` in either window and the palette. The window's own close (`Alt+F4`, the
+  taskbar) brings the pane back; the bar's Close and `Ctrl+W` close it. A
+  popped pane plays on while the browse page is up, where every pane at home
+  stops; brought back from there, it brings the watch page up with it.
 - **A pane given the window** (`stage.rs`, `root/panes.rs`), with two panes
   or more: `Z`, its menu's `Maximize` and the palette's `Maximize …` give
   one pane the whole watch page, chat and all. The grid draws its cell alone (`Stage::cells`), through the same
@@ -3133,8 +3168,7 @@ header rests over it. The split:
   keys; and
   should the pane the keys talked to have closed meanwhile, they fall back on
   the first cell the grid draws (`RootView::active_slot`), never on a pane
-  drawn nowhere. Browsing keeps it: beside the browse page is the pane
-  that has the window, the others playing on unseen. For the session
+  drawn nowhere. Browsing ends it with the panes it stops. For the session
   only.
 
 The watch page used to float a back pill and, with the rail folded away, the
@@ -3371,7 +3405,7 @@ watched it, usually near the top since you had probably watched it live,
 shifting every name after it under the pointer. Each of those is a pure
 function with tests, in `following.rs` and `root/follows.rs`.
 
-**Each offline name says when it was last live, and each heading how many.**
+**Each offline name says when it was last live, and Offline how many.**
 "Live 3 hours ago" sits beside the name inside Following's pill (`text_dim`,
 lifting to `text_muted` with the name under the pointer, since `text_dim` on
 the hovered pill measures 4.44:1), and on the rail's offline rows as the
@@ -3402,12 +3436,28 @@ the first day and then hand over to `channel_page::when` ("Live yesterday",
 "Live 3 days ago", "Live last week", "Live on 1 Jul"). A channel Twitch
 already says is live, or one that never broadcast, says nothing. The answers
 live on the root (`RootView::last_live`) keyed by `channel_key` and go to
-`following::Lists` and `sidebar::Rail`. The headings read "Pinned · 4",
-"Live now · 23", "Continue watching · 5", "Offline · 103"
-(`following::counted`); Continue watching counts every unfinished
-recording, including those behind "Show all" (`Continuing::total`), and
-Recommended carries no count, being a ranked handful rather than anything
-of yours. "Live now" still only appears beside another section.
+`following::Lists` and `sidebar::Rail`. "Live now" still only appears beside
+another section.
+
+**Following is shelves, and Offline starts folded.** Each section is a shelf
+under its heading (`following::shelf`, `browse::heading` at `TEXT_TITLE` in
+`text()`), the shelves `theme::GAP_SHELF` apart, twice the gap between rows
+inside one; and Offline is folded under its heading and its count for the
+session (`following::offline_heading`, `browse::Action::ToggleOffline`,
+`RootView::following_offline_open`), as the rail's offline group is. The
+user found the page cluttered on 22 October 2026: nine cards of 260 px to a
+row at 2560 px, three lines under each, every heading a control label's
+size in `text_dim` with a count after it ("Live now · 23"), and under the
+cards a wall of a hundred offline names, most of the page. Since then a card
+is at least 320 px (`browse::CARD_MIN`), seven to that row, with two lines
+under its picture — the name with the game and any note after it, then the
+title (`browse::name_line`) — the headings carry no count but folded
+Offline's, and the offline names keep their pills and their "Live 3 hours
+ago" (asked, and left as they were). The cards are every list's, so Popular,
+a category, a search and Library got the same size and lines. A stopped
+pane's last-broadcast card keeps the old least of 260 (`browse::CARD_LEAST`),
+the width a card's title stays worth reading at, which is a question about
+the card rather than about a grid's density.
 
 **Forgetting can be taken back.** `History::forget` and `clear` return what
 they took — each entry with the place it stood (`history::Forgotten`) — and
@@ -4337,8 +4387,8 @@ the GPUI traps).
 It closes on a press anywhere outside it, heard in the capture phase so that
 press still lands (another name moves it), on the same name pressed again (see
 "A toggle that a press outside also closes" under the GPUI traps), on its ×,
-on `Esc` through `RootView::close_menus`, when a pane's Browse brings the
-browse page up or puts it away, with the
+on `Esc` through `RootView::close_menus`, when the title bar's Browse brings
+the browse page up, with the
 chat hidden or put off the screen (`let_go_hold`), on a replay's seek
 (`Reset`), and with the pane. With a copy menu from one of its lines up, a
 press outside the card closes the menu alone, so a menu row hanging past the
@@ -4352,12 +4402,17 @@ stream card's `+ Add` does; `Channel page`, Perch's page of their past broadcast
 and schedule, only signed in, since the page asks Helix for its lists with the
 user's token and signed out says only that (`CardFacts::channel_page`); and
 `twitch.tv` with an arrow out of a box (`Icon::ExternalLink`, the pop-out's
-file), through `target::link`. `Channel page` opens the page on the browse
-page beside the panes, which play on (`channel_page_from_card`). It used to
-leave the watch page, which with the mini player off stopped every pane, so
-it asked for a second press first — `Stop streams and open?`, in the accent
-— until browsing docked beside the panes and stopped nothing. `Watch`,
-`Channel page` and the × take the rest of the press's run (`run_guard`). The two pills whose tooltips name the person
+file), through `target::link`. `Channel page` leaves the watch page, which
+stops every pane at home (`go_browse`), and Back does not bring them back,
+so where it would stop any (`leaving_stops_panes`, decided at the press by
+`channel_page_from_card`) it asks for a second press first — `Stop streams
+and open?`, in the accent (`controls::Variant::Confirm`) — and only a second
+press within `theme::CONFIRM_LINGER` goes (`ChatView::confirm_leaving`); a
+press anywhere else, or the wait running out, puts it back. It asked so
+while the mini player could be off, stopped asking for the week browsing
+docked beside the panes and stopped nothing, and asks again since browsing
+stops what plays. `Watch`, a `Channel page` that goes and the × take the
+rest of the press's run (`run_guard`). The two pills whose tooltips name the person
 key their ids on the name, which can change while the card is open (Helix's
 display name landing on a mention's card). Nothing on the card acts on the
 person (see "Product decisions").
@@ -4824,13 +4879,19 @@ all, since a stray press would move video between windows. Its player hands
 the keys back to that handle, not the root's (`VideoView::set_place`). The
 three chords scoped to the app alone match in there too and do nothing, since
 nothing in the pop-out handles them. `P` pops the active pane out, or
-brings it back, on the watch page and beside the browse page alike, since
-the panes are on screen either way (`on_toggle_pop_out`).
+brings it back, on either page; on the browse page the only panes are in
+windows of their own, and it brings one back with the watch page
+(`on_toggle_pop_out`, `pop_in`).
 
 **`Esc` on the watch page takes back one thing at a time.** A pane's header
 being dragged is let go first, where it was, with nothing moved; then an
-open menu closes, then a pane given the whole page shows every pane again
-(`show_all_panes`), and only then is the page left (`on_go_browse`). While a
+open menu closes, then fullscreen is left, then a pane given the whole page
+shows every pane again (`show_all_panes`), and only then is the page left
+(`on_go_browse`), which stops what plays at home (`go_browse`). Fullscreen
+comes before the page because `Esc` is how every player and browser leaves
+it, and the page left behind it ends the stream: while browsing docked
+beside the panes and stopped nothing, an `Esc` meant for fullscreen brought
+the browse page up inside fullscreen instead, which was only odd. While a
 pane has the page, choosing another — `1`–`4`, `Tab`, its
 palette row `Choose quality for …` — moves the maximize to it
 (`RootView::choose`), so `Space`, `M` and `Ctrl+W` always act on the pane on
@@ -4838,8 +4899,8 @@ screen, or on a popped one in its own window, never on one drawn nowhere;
 once the pane they talked to has closed, they fall back on the first cell
 the grid draws, the maximized pane's while one has the page
 (`RootView::active_slot`), not on the first pane. `Z`
-is bound on the watch page alone: the browse page draws every pane as a
-tile, and a pop-out's pane is not on the page to fill it.
+is bound on the watch page alone: the browse page draws no pane, and a
+pop-out's pane is not on the page to fill it.
 
 **The title bar's search box outlives a change of page.** While the box was
 in the browse header, leaving that page took it off screen and
@@ -5437,9 +5498,10 @@ The guide (phase 4) was built, and its button took the
 right-hand cluster's fourth square, `bar::RIGHT_BUTTONS` — which is why
 phase 3's maximize control stood before the cluster and folded into More
 after the quality pill rather than joining it, and why the pop-out went in
-the pane header and More. Browse has that square now, the guide having
-grown into the browse page docked beside the panes, and the maximize went
-to a pane's right-click menu with the redesign's last phase. The Recommended group in the rail, read from Twitch's unofficial
+the pane header and More. Browse had that square while the guide's
+successor, the browse page, docked beside the panes; since browsing stops
+what plays it is the title bar's alone and the square is gone. The maximize
+went to a pane's right-click menu with the redesign's last phase. The Recommended group in the rail, read from Twitch's unofficial
 `SideNav` query with the unpublished-query risk the chat replay already
 carries, is built (see "Browsing" and "Known limits"); the palette does not
 show recommendations yet, and `recommended::Recommended::shown` is what it
@@ -5490,9 +5552,9 @@ user was not sure, so they were left out, until the redesign put the rail's
 Pinned on Following.
 
 **A redesign built around one stream** was mocked up and liked on 15
-October 2026. Its first phase is built: the header under the picture
-where a beside pane has black to give (see "Under the picture" under "Where
-controls live"), and a palette whose text tiers step evenly, with controls
+October 2026. Its first phase was built: the header under the picture
+where a beside pane has black to give (taken back since; see "Not under the
+picture" under "Where controls live"), and a palette whose text tiers step evenly, with controls
 quieter than what they sit beside and passive tags on a neutral chip (see
 "Design system"). So is its second, browsing that never leaves the stream,
 the user having approved retiring the mini player and the guide for it:
@@ -5502,8 +5564,8 @@ header and chat under it; Browse on a pane's bar where the guide's button
 was; a click on a card, a rail row or a toast playing in place of the pane
 you are on; `Past broadcasts` on the strip; and the tabs as Following —
 grouped as the rail is, Pinned and Recommended included — Popular,
-Categories and Library (see "Browsing beside the panes" under "Where
-controls live", and "Browsing never stops what plays" under "Product
+Categories and Library (the docking taken back since; see "The browse page"
+under "Where controls live", and "Browsing stops what plays" under "Product
 decisions"). So is its third, the title bar as Browse and one search box:
 back and forward on the browse page's own strip with an × to put it away,
 and the box answering from what Perch knows as you type and from Twitch
@@ -5515,6 +5577,21 @@ left the bar and More with it (see "The channel menu" under "Where controls
 live"). What it left: a recording's card (on a channel's page, in Library,
 Continue watching) names a channel and has no menu yet, nor do the palette's
 rows or a viewer card's name.
+
+**Two of the redesign's parts were taken back on 22 October 2026**, after a
+week of use. The browse page docked beside the panes is a page of its own
+again, and leaving the watch page for it stops what plays, a pane in a
+window of its own apart (see "Browsing stops what plays" under "Product
+decisions" and "The browse page" under "Where controls live"); with it went
+Browse on a pane's bar, Browse on the header of a pane with no bar, and the
+× on the browse page's strip, and the viewer card's second press came back.
+`Esc` leaves fullscreen before it leaves the page, and a search typed on the
+watch page waits for `Enter`. And a pane's details went from under its
+picture to the top of its chat, on lines of their own, with the picture
+centred and a ⋯ for the pane's menu (see "Pane header" under "Where controls
+live"). Following was tidied at the same time: shelves under clearer
+headings, wider cards with two lines under them, and Offline folded (see
+"Following is shelves" under Browsing).
 
 Left over from phase 1, smallest first:
 
@@ -5946,7 +6023,8 @@ None of these is being worked on; all of them are real.
       while popped and the CPU log with one open (see "Working on it"), two
       or more stacking clear of each other, and its quality following its
       size, and the re-pick on bringing one back; its other entry points
-      (the header icon, More's row, `P` beside the browse page);
+      (the pane menu's row, More's, `P` from the browse page, which brings
+      the watch page up with it);
     - phase 2's signed-in parts: an offline pane's last broadcast as a card
       or pill, `Start when they go live` starting a pane, `Watch from the
       start`, the live poster; and the failed screen when mpv cannot open;
@@ -5999,16 +6077,15 @@ None of these is being worked on; all of them are real.
       the header and the picture with every row in sight and taking its
       press, `Reset pane sizes` among them; checked only against taffy's
       layout in a throwaway crate.
-    - the header under the picture (`watch::strip`), signed in. Seen
-      working on 15 October 2026 in a scratch copy signed out, through the
-      stand-in streamlink: at 1920 × 1080 one pane's picture at the top
-      with the strip under it and chat headed by its bar; at 2560 × 1080
-      the compact header on chat, as before; at 1400 × 1600 two panes,
-      each with its strip, the active one's rule under it. Not yet seen:
-      the title and game lines and the channel's face (a signed-out copy
-      has no list to read them from), `Pin` turning `Pinned` and back, the
-      chat options menu hanging under the chat bar, and the chevron hiding
-      chat.
+    - the details at the top of chat (`header::details`), seen on 22
+      October 2026 on the user's sign-in, in a scratch copy at 2560 × 1392
+      and 1080 × 1900: the face, the name, `LIVE` with the numbers and
+      `muted`, the title and the game, the picture centred beside them;
+      two panes side by side and stacked, each header between its picture
+      and its chat, the active one's rule under it; the ⋯ hanging the pane's
+      menu under it and a second press putting it away. Not yet seen: the
+      compact header's ⋯ on the band over a picture (the band comes up only
+      under the real pointer), a recording's header, and the tooltips.
 37. **What emotes stacked together leave out stays out, and stacks and
     effects are seen only by their tests.** A wide overlay on a narrow emote
     is fitted into the emote's box rather than spilling over the words beside
@@ -6091,31 +6168,30 @@ None of these is being worked on; all of them are real.
     not looked up this session has no picture or age and no gap for them,
     and `Channel page` is not offered; a lookup that
     failed (the network off) asks again when the card is opened again;
-    `Channel page` opening the page beside the panes; and the log for
+    `Channel page` asking `Stop streams and open?` while something plays,
+    going on the second press and putting itself back after four seconds or
+    a press elsewhere (restored on 22 October 2026 from the code it had
+    before browsing docked, and not seen since); and the log for
     `viewer card:` lines. Known edges: the card
     stays where it opened rather than following its row; a line that
     arrives while it is open lands at the foot of the well without scrolling
     to it; and an `@mention` of a word that is a login nobody has
     (`@everyone`) costs one ask and shows no account.
-40. **Browsing beside the panes has been seen signed out only.** On 15
-    October 2026 a scratch copy with a stand-in stream showed, at 1920 by
-    1080, one pane and two docking beside the browse page and playing on
-    through `Esc` there and back, unrestarted, and the Library tab beside
-    them. Not yet seen: Following's Pinned and Recommended sections, a card,
-    a rail row and a go-live toast playing in place of the pane you are on,
-    `Past broadcasts` under a picture, a viewer card's `Channel page` beside
-    the panes, the bar's Browse button (the bar comes up only under the real
-    pointer), and a window as tall as the vertical monitor. And while the
-    page is up the keys are the browse page's: a pane's own keys — `Space`,
-    `M`, the arrows, `1`–`4`, `Z` — wait until you are back to watching, all
-    but `P`. The title bar's Browse and the search box's suggestions, the
-    Twitch search after a pause and the browse page's own back, forward and
-    × were seen working there too; a suggestion played in place was not,
-    since signed out nothing follows or has been watched. So was a pane's
-    right-click menu, on its picture and its header, with two panes:
-    `Move later`, `Maximize`, `Show all panes` offered on the maximized
-    pane, and `Esc` putting it away; the menu on a card, a rail row and a
-    name in chat was not, having nothing to open on signed out.
+40. **Browsing that stops what plays has been seen in part.** On 22
+    October 2026, on the user's sign-in in a scratch copy at 2560 × 1392:
+    the title bar's Browse taking the watch page down and the browse page
+    up with the whole window, the pane's streamlink gone with it; a card
+    playing from Following; a search typed on the watch page with two panes
+    playing, its suggestions up and both streams still running two seconds
+    after the typing stopped; Following's shelves, seven cards a row,
+    Offline folded and unfolded. Not yet seen: `Esc` leaving fullscreen
+    before the page (a test copy in fullscreen takes over a monitor the
+    user is working on), Bring back and `P` from the browse page bringing
+    the watch page up, `LIVE` pressed in a pop-out while the browse page is
+    up, and the viewer card's second press (item 39). Earlier, signed out on
+    15 October 2026, a pane's right-click menu on its picture and its header
+    was seen with two panes: `Move later`, `Maximize`, `Show all panes` on
+    the maximized pane, and `Esc` putting it away.
 
 ## Things not to redo
 
@@ -6368,3 +6444,14 @@ None of these is being worked on; all of them are real.
   relay, hits end of file without it, and `stream_stopped` ends the pane and
   drops the new start with it. The old supervisor goes in `on_swapped`,
   once its player has stopped; see the swap trap under Video.
+- Do not dock the browse page beside the panes again, nor keep what plays
+  at home going behind it, without asking the user. It docked on the left,
+  half the window, for a week of October 2026, and in use they found it
+  weird: one press shrank the stream to a third of its area and moved its
+  chat under it. Going to browse is looking for another stream, and they
+  want the one on to end (see "Product decisions"). A pop-out plays on.
+- Do not move a pane's details under its picture again. For a week of
+  October 2026 a beside pane's header went into the black under its
+  picture, the picture pinned to the top of its column; the user did not
+  like the viewing page it made, and chose the details at the top of chat,
+  the picture centred.

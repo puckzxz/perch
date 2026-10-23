@@ -1,28 +1,42 @@
 //! A pane's header: who is on, how many are watching, how long for, what
 //! they are doing, whether it is muted, paused or in an ad break, and the
-//! pane's own icons — how every chat is drawn, on a header that sits on chat
-//! (`chat_menu`), out into a window of its own and back, and its ×. Where it
-//! goes is [`Placement`]. It is also what a pane is dragged by, onto another
+//! pane's own controls — how every chat is drawn, on a header that sits on
+//! chat (`chat_menu`), the pane's menu behind a ⋯, and its ×. Where it goes
+//! is [`Placement`]. It is also what a pane is dragged by, onto another
 //! pane, to swap the two.
 //!
-//! It is the same header in both places. Above (or below) chat it sits on
-//! the chat panel, where it costs nothing: chat is already a panel. With
-//! chat hidden, or with no chat to show, there is no panel, and it rides the
-//! top of the picture instead, on the same wash the control bar uses — up
-//! while the pointer is on the pane, for a moment after a pane key, and at
-//! rest over a pane with no picture to cover. That band, its fade and its
-//! hold on the pointer are `watch::pane`'s; this file is only the header.
+//! Two shapes, from one set of facts ([`Facts`]). On the chat panel — at the
+//! top of chat beside the picture, between the picture and chat when stacked
+//! — it is the pane's details at their size: the channel's face, its name at
+//! a title's size on a line of its own, then the badge, the numbers and the
+//! tags, then what is on and its game, each on a line of its own
+//! ([`details`]). The panel is a panel already, so the header costs the
+//! picture nothing there. With chat hidden, or no chat to show, there is no
+//! panel, and it rides the top of the picture instead, compact, on the wash
+//! the control bar uses ([`compact`]) — up while the pointer is on the pane,
+//! for a moment after a pane key, and at rest over a pane with no picture
+//! to cover. That band, its fade and its hold on the pointer are
+//! `watch::pane`'s; this file is only the header.
 //!
-//! A beside pane whose column has black under its picture puts the same
-//! facts there instead, laid out wide (`super::strip`); what the header says
-//! is [`Facts`], worked out once for either shape, and its controls are the
-//! builders below, shared by both.
+//! For a week of October 2026 a beside pane's details went under its
+//! picture, where its column had black to give, with the picture pinned to
+//! the top and chat headed by a bar of its own. The user did not like it,
+//! and they came back to the chat panel — laid out on lines of their own,
+//! so the name is never cut to its first six letters by the badge, the
+//! numbers and three icons, as it was there before. What the details under
+//! the picture had as controls of their own — the pin, the channel's past
+//! broadcasts, out into a window of its own and back — are rows of the
+//! pane's menu, behind the ⋯ (`crate::channel_menu`).
+
+use std::cell::Cell;
+use std::rc::Rc;
 
 use gpui::{
-    div, prelude::*, px, Context, Div, MouseButton, MouseDownEvent, SharedString, Stateful, Window,
+    canvas, div, img, prelude::*, px, AnyElement, Context, Div, ElementId, MouseButton,
+    MouseDownEvent, Pixels, Point, SharedString, Stateful, Window,
 };
 
-use super::{pane_id, PaneAction, PaneDrag, PaneInfo, Showing, Slot, StreamState};
+use super::{pane_id, PaneAction, PaneDrag, PaneInfo, Slot, StreamState};
 use crate::assets::Icon;
 use crate::controls::{self, Variant};
 use crate::keys::Hint;
@@ -31,12 +45,12 @@ use crate::{browse, channel_page, theme};
 /// Where a pane's header goes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Placement {
-    /// In the chat panel: above chat beside the picture, under the picture
-    /// when stacked — or, where a beside column has black under its
-    /// picture, in that black instead (`layout::header_under_picture`),
-    /// with chat headed by its own bar (`super::strip`).
+    /// At the top of the chat panel: above chat beside the picture, between
+    /// the picture and chat when stacked, as the pane's details at their
+    /// size ([`details`]).
     Panel,
-    /// Over the top of the picture, because there is no panel for it.
+    /// Over the top of the picture, compact ([`compact`]), because there is
+    /// no panel for it.
     OverPicture,
 }
 
@@ -55,19 +69,6 @@ impl Placement {
     }
 }
 
-/// What a pane's header offers for a window of the pane's own: the
-/// proposal's "header gains pop out and close as icons", beside the ×.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PopOutButton {
-    /// Nothing: the pop-out is not offered here, or the pane has no player
-    /// to move — starting, or stopped.
-    Hidden,
-    /// Move the picture into a window of its own.
-    PopOut,
-    /// Bring it back from one.
-    PopIn,
-}
-
 /// Whether a pane says `buffering`, its live picture `buffering` (waiting on
 /// the network, `VideoView::is_buffering`), with or without an ad break up
 /// (`in_ad_break`): only without, since an ad break holds the picture still
@@ -78,41 +79,9 @@ pub fn says_buffering(buffering: bool, in_ad_break: bool) -> bool {
     buffering && !in_ad_break
 }
 
-/// Whether the header of a pane `showing` this offers browsing: when the
-/// pane has stopped for good — off, ended, finished, unplayable, failed — or
-/// its picture is in a window of its own. Those panes have no bar in this
-/// window, where every other pane's Browse is, and a pane whose stream has
-/// just ended is when "what else is on" matters most. Not while one is
-/// starting: its bar is a moment away, and the icon would come and go.
-fn offers_browse(showing: &Showing) -> bool {
-    match showing {
-        Showing::Picture | Showing::Starting { .. } => false,
-        Showing::Offline
-        | Showing::Unavailable
-        | Showing::Ended
-        | Showing::Finished
-        | Showing::Failed(_)
-        | Showing::Elsewhere => true,
-    }
-}
-
-impl PopOutButton {
-    /// Where the pop-out is `offered`: Bring back for a pane whose picture
-    /// is `popped`, whatever it is doing there, and Pop out for one at home
-    /// that is `playing`, which is the pane `RootView::pop_out` takes.
-    fn of(offered: bool, popped: bool, playing: bool) -> Self {
-        match (offered, popped, playing) {
-            (false, _, _) => PopOutButton::Hidden,
-            (true, true, _) => PopOutButton::PopIn,
-            (true, false, true) => PopOutButton::PopOut,
-            (true, false, false) => PopOutButton::Hidden,
-        }
-    }
-}
-
 /// Everything a header says about its pane, worked out once and drawn in
-/// whichever shape the pane has room for: compact on chat or over the
-/// picture ([`pane_header`]), or wide under the picture (`super::strip`).
+/// whichever shape the pane has: its details on the chat panel
+/// ([`details`]), or compact over the picture ([`compact`]).
 pub(super) struct Facts {
     /// What the pane calls its channel.
     pub(super) name: SharedString,
@@ -267,8 +236,8 @@ impl Facts {
 ///
 /// It gives way, with the numbers and the ad-break tag, when the row runs
 /// out: a live pane that is muted and paused has the red badge and two tags
-/// beside its name, and at the chat's narrower widths a long name held
-/// flex_none pushed the pop-out icon and the × past the edge. The tooltip
+/// beside its name in the compact header, and at the chat's narrower widths
+/// a long name held flex_none pushed the icons past the edge. The tooltip
 /// still names the channel in full. The numbers' pattern, which cuts the
 /// line rather than wrapping it. A click that ends a drag of the header is
 /// no click on the name; see [`pane_header`].
@@ -301,9 +270,10 @@ pub(super) fn name_link<V: 'static>(
         .child(facts.name.clone())
 }
 
-/// What follows the name on its row, onto `row`: a recording's kind or a
-/// live pane's red badge, the `numbers`, then `muted`, `paused`,
-/// `buffering` and an ad break's tag.
+/// What follows the name, onto `row`: a recording's kind or a live pane's
+/// red badge, the `numbers`, then `muted`, `paused`, `buffering` and an ad
+/// break's tag — on the name's row in the compact header, and on a row of
+/// their own under the name in the details.
 pub(super) fn with_status(row: Div, facts: &Facts, numbers: String) -> Div {
     row
         // Which kind of recording, since the three play alike: `replay` for
@@ -337,9 +307,8 @@ pub(super) fn with_status(row: Div, facts: &Facts, numbers: String) -> Div {
             |row| row.child(controls::tag("buffering")),
         )
         // The one tag that gives way, with the numbers, when the row runs
-        // out: a narrow header on chat that is muted or paused as well has no
-        // room for it beside the icons, and flex_none it pushed the pop-out
-        // icon and the × past the edge.
+        // out: a narrow header that is muted or paused as well has no room
+        // for it, and flex_none it pushed the icons past the edge.
         .children(facts.ad_break.clone().map(|words| {
             controls::tag(words)
                 .flex_shrink()
@@ -349,89 +318,19 @@ pub(super) fn with_status(row: Div, facts: &Facts, numbers: String) -> Div {
         }))
 }
 
-/// Browsing, from a pane with no bar to offer it (`offers_browse`): the
-/// browse page up beside the panes, with this pane the one a card plays in
-/// place of, or put away again. On the press, in the capture phase,
-/// stopped there, as the bar's Browse is (`video_view::bar`'s
-/// `browse_button`), so the press begins no drag of the header. Its id and
-/// tooltip follow whether the browse page is up, as the bar's do.
-pub(super) fn browse_button<V: 'static>(
-    slot: &Slot,
-    pane: &PaneInfo,
-    window_hovered: bool,
-    on_pane: impl Fn(&mut V, &str, PaneAction, &mut Window, &mut Context<V>) + Clone + 'static,
-    cx: &mut Context<V>,
-) -> Option<Stateful<Div>> {
-    offers_browse(&pane.showing).then(|| {
-        let key = slot.key.clone();
-        let (id, tip) = if pane.browsing {
-            ("browse-open", "Back to watching".to_string())
-        } else {
-            ("browse", Hint::Browse.tooltip("Browse what else is on"))
-        };
-        controls::icon_button(pane_id(&slot.key, id), Icon::Browse, Variant::OnVideo)
-            .when(window_hovered, |button| button.tooltip(controls::tip(tip)))
-            .capture_any_mouse_down(
-                cx.listener(move |view, event: &MouseDownEvent, window, cx| {
-                    if event.button != MouseButton::Left || event.click_count > 1 {
-                        return;
-                    }
-                    cx.stop_propagation();
-                    on_pane(view, &key, PaneAction::Browse, window, cx)
-                }),
-            )
-    })
-}
-
-/// Out into a window of its own, or back from it: what `P` does for the pane
-/// the keys talk to, offered on every pane that can go or come back. Its id
-/// follows what a press does, so a tooltip that came up over Pop out does
-/// not go on saying so once `P` has popped the pane; see `controls::tip`.
-pub(super) fn pop_button<V: 'static>(
-    slot: &Slot,
-    pane: &PaneInfo,
-    window_hovered: bool,
-    on_pane: impl Fn(&mut V, &str, PaneAction, &mut Window, &mut Context<V>) + Clone + 'static,
-    cx: &mut Context<V>,
-) -> Option<Stateful<Div>> {
-    let pop = PopOutButton::of(
-        pane.pop_out_offered,
-        matches!(pane.showing, Showing::Elsewhere),
-        matches!(slot.state, StreamState::Playing(_)),
-    );
-    let (id, icon, words, action) = match pop {
-        PopOutButton::Hidden => return None,
-        PopOutButton::PopOut => ("pop-out", Icon::PopOut, "Pop out", PaneAction::PopOut),
-        PopOutButton::PopIn => ("pop-in", Icon::PopIn, "Bring back", PaneAction::PopIn),
-    };
-    let key = slot.key.clone();
-    Some(
-        controls::icon_button(pane_id(&slot.key, id), icon, Variant::OnVideo)
-            .when(window_hovered, |button| {
-                button.tooltip(controls::tip(Hint::PopOut.tooltip(words)))
-            })
-            .on_click(cx.listener(move |view, _event, window, cx| {
-                if !cx.has_active_drag() {
-                    on_pane(view, &key, action.clone(), window, cx)
-                }
-            })),
-    )
-}
-
 /// How every chat is drawn, its text size and the time on every message:
 /// the chat options menu (`chat_menu`), offered over a pane's chat and
 /// nowhere else, since with no chat on screen there is nothing to see a
-/// change in — on the header when it sits on chat, or on the bar that heads
-/// chat when the header is under the picture (`super::strip::chat_bar`). No
-/// key, like the menu's rows: the pointer is how anyone reaches it.
+/// change in — on the header when it sits on chat. No key, like the menu's
+/// rows: the pointer is how anyone reaches it.
 ///
 /// The icon is the menu's anchor, as the bar's right-hand cluster is the
 /// anchor of the bar's menus: a press anywhere outside it closes the menu,
 /// and a press on it is not "elsewhere", so it toggles rather than closing
 /// the menu and opening it straight again. Its id follows whether the menu
-/// is open, as Pop out's follows what a press does, so a tooltip up before
-/// the press does not linger over the menu; and while the menu is open
-/// there is none, since it would come up over the rows.
+/// is open, as a pill's follows its state, so a tooltip up before the press
+/// does not linger over the menu; and while the menu is open there is none,
+/// since it would come up over the rows.
 pub(super) fn chat_options<V: 'static>(
     slot: &Slot,
     pane: &PaneInfo,
@@ -471,6 +370,50 @@ pub(super) fn chat_options<V: 'static>(
             }))
         })
         .child(button)
+}
+
+/// The pane's menu (`crate::channel_menu`), from the ⋯ at the end of its
+/// header: what the right button opens on its picture or its header, for a
+/// pointer that does not reach for the right button — `Pin to the rail`,
+/// `Past broadcasts`, `Pop out` or `Bring back`, and the rest. Hung under
+/// the ⋯, its top right corner at the ⋯'s lower right, which a probe
+/// measures as the header is painted, since a press says only where the
+/// pointer was; a second press on the ⋯ puts the menu away
+/// (`RootView::toggle_pane_menu`). On the press, as a right-click opens the
+/// menu, and only the first press of a run, as the menu's rows act.
+pub(super) fn menu_button<V: 'static>(
+    slot: &Slot,
+    name: &SharedString,
+    window_hovered: bool,
+    on_pane: impl Fn(&mut V, &str, PaneAction, &mut Window, &mut Context<V>) + 'static,
+    cx: &mut Context<V>,
+) -> Div {
+    let key = slot.key.clone();
+    // Where the ⋯'s lower right corner was painted, for the press to hang
+    // the menu from. The probe sets it as the frame is laid out, before the
+    // press's listener is registered with the same frame.
+    let corner: Rc<Cell<Option<Point<Pixels>>>> = Rc::default();
+    let measured = corner.clone();
+    let probe = canvas(
+        move |bounds, _window, _cx| measured.set(Some(bounds.bottom_right())),
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .size_full();
+    let tip = format!("More for {name}");
+    let button = controls::icon_button(pane_id(&slot.key, "menu"), Icon::More, Variant::OnVideo)
+        .when(window_hovered, |button| button.tooltip(controls::tip(tip)))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |view, event: &MouseDownEvent, window, cx| {
+                if event.click_count > 1 {
+                    return;
+                }
+                let under = corner.get().unwrap_or(event.position);
+                on_pane(view, &key, PaneAction::MenuButton(under), window, cx)
+            }),
+        );
+    div().relative().flex_none().child(button).child(probe)
 }
 
 /// The pane's ×, on every pane, a lone one included. It used to go when only
@@ -541,17 +484,17 @@ pub(super) fn handle<V: 'static>(
 
 /// Everything true about a stream that is not playback: who it is, how many
 /// people are there, how long it has been going, what they are doing — and
-/// the pane's icons, which name their keys: out into a window of its own or
-/// back (`P`), where that is offered, and its × (`Ctrl+W`).
+/// the pane's controls, which name their keys where they have one.
 ///
-/// In a panel it is static information on a panel, where it costs nothing.
-/// Over the picture it is the same information on the picture, which is
-/// exactly what you end up staring past for three hours, so it comes and
-/// goes there with the pointer; see [`Placement`]. `marked` underlines it as
-/// the pane the keys talk to. `picture` says whether the pane has a picture
-/// up, which with the header over the top of the pane decides who offers
-/// chat back: the bar does when there is a picture, and this header does
-/// when there is not, since without a picture there is no bar.
+/// On the chat panel it is static information on a panel, where it costs
+/// nothing, laid out at its size ([`details`]). Over the picture it is the
+/// same information on the picture, which is exactly what you end up
+/// staring past for three hours, so it is compact there and comes and goes
+/// with the pointer ([`compact`]); see [`Placement`]. `marked` underlines it
+/// as the pane the keys talk to. `picture` says whether the pane has a
+/// picture up, which with the header over the top of the pane decides who
+/// offers chat back: the bar does when there is a picture, and this header
+/// does when there is not, since without a picture there is no bar.
 ///
 /// With two panes or more on the page (`movable`) the whole header is a
 /// handle: dragged onto another pane, it swaps the two
@@ -583,16 +526,157 @@ pub(super) fn pane_header<V: 'static>(
     window_hovered: bool,
     on_pane: impl Fn(&mut V, &str, PaneAction, &mut Window, &mut Context<V>) + Clone + 'static,
     cx: &mut Context<V>,
-) -> impl IntoElement {
+) -> AnyElement {
     let facts = Facts::of(slot, pane, cx);
+    let handle = handle(slot, movable, on_pane.clone(), cx);
+    match placement {
+        Placement::Panel => details(
+            handle,
+            slot,
+            pane,
+            &facts,
+            marked,
+            window_hovered,
+            on_pane,
+            cx,
+        )
+        .into_any_element(),
+        Placement::OverPicture => compact(
+            handle,
+            slot,
+            &facts,
+            marked,
+            picture,
+            window_hovered,
+            on_pane,
+            cx,
+        )
+        .into_any_element(),
+    }
+}
+
+/// The header on the chat panel, the pane's details at their size: the
+/// channel's face where the rail has one (`PaneInfo::avatar`), its name at
+/// a title's size with the pane's controls at the end of its line — the
+/// chat options, the ⋯ and the × — then on a line of its own the badge, the
+/// numbers saying what they count, and the tags, then the title on a line
+/// of its own at the size you read, and the game under it. On `handle`, the
+/// header's own element.
+#[allow(clippy::too_many_arguments)]
+fn details<V: 'static>(
+    handle: Stateful<Div>,
+    slot: &Slot,
+    pane: &PaneInfo,
+    facts: &Facts,
+    marked: bool,
+    window_hovered: bool,
+    on_pane: impl Fn(&mut V, &str, PaneAction, &mut Window, &mut Context<V>) + Clone + 'static,
+    cx: &mut Context<V>,
+) -> Stateful<Div> {
+    let name = name_link(slot, facts, theme::TEXT_TITLE, window_hovered, cx);
+    let options = chat_options(slot, pane, window_hovered, on_pane.clone(), cx);
+    let menu = menu_button(slot, &facts.name, window_hovered, on_pane.clone(), cx);
+    let close = close_button(slot, window_hovered, on_pane, cx);
+    // A line of their own, so there is room to say what the first number
+    // counts, which the compact header leaves to the badge in front of it.
+    let status = with_status(
+        div()
+            .w_full()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(theme::GAP_TIGHT)),
+        facts,
+        facts.numbers(true),
+    );
+    let about = about_lines(slot, facts, window_hovered);
+
+    handle
+        .flex_none()
+        .w_full()
+        .flex()
+        .flex_col()
+        .gap(px(theme::GAP_TIGHT))
+        .px(px(theme::ROW_PAD_X))
+        .pt(px(theme::GAP))
+        .pb(px(theme::PANEL_PAD))
+        .border_b_1()
+        // Which pane the keyboard is talking to, with more than one to tell
+        // apart; see `compact`.
+        .border_color(if marked {
+            theme::accent()
+        } else {
+            theme::border()
+        })
+        .child(
+            div()
+                .w_full()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(theme::GAP))
+                .children(pane.avatar.clone().map(|path| {
+                    img(path)
+                        .flex_none()
+                        .size(px(theme::HEADER_AVATAR))
+                        .rounded_full()
+                }))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .child(
+                            div()
+                                .w_full()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(theme::GAP_TIGHT))
+                                .child(name)
+                                .child(div().flex_1())
+                                .child(
+                                    div()
+                                        .flex_none()
+                                        .flex()
+                                        .flex_row()
+                                        .items_center()
+                                        .gap(px(theme::GAP_WORD))
+                                        .child(options)
+                                        .child(menu)
+                                        .child(close),
+                                ),
+                        )
+                        .child(status),
+                ),
+        )
+        .children(about)
+}
+
+/// The header over the top of the picture, compact: the name, the badge,
+/// the numbers in the browse card's shape and the tags on one row with the
+/// controls at its end — chat back where only this header can offer it,
+/// the ⋯ and the × — and what is on, joined on one line under it. The
+/// band it rides is `theme::BAND_ROOM` tall, worked out from this shape.
+#[allow(clippy::too_many_arguments)]
+fn compact<V: 'static>(
+    handle: Stateful<Div>,
+    slot: &Slot,
+    facts: &Facts,
+    marked: bool,
+    picture: bool,
+    window_hovered: bool,
+    on_pane: impl Fn(&mut V, &str, PaneAction, &mut Window, &mut Context<V>) + Clone + 'static,
+    cx: &mut Context<V>,
+) -> Stateful<Div> {
     let about = facts.about.clone();
     let about_line = facts.about_line();
 
     // Over a pane with no picture there is no bar, so nothing else on screen
     // brings hidden chat back to the pointer: `C` would, and a pointer has to
     // be able to as well.
-    let offer_chat = placement == Placement::OverPicture && !picture && slot.chat.is_some();
-    let show_chat = offer_chat.then(|| {
+    let show_chat = (!picture && slot.chat.is_some()).then(|| {
         let on_pane = on_pane.clone();
         let key = slot.key.clone();
         controls::icon_button(
@@ -609,28 +693,21 @@ pub(super) fn pane_header<V: 'static>(
             }
         }))
     });
-    let browse = browse_button(slot, pane, window_hovered, on_pane.clone(), cx);
-    let pop = pop_button(slot, pane, window_hovered, on_pane.clone(), cx);
-    // On a header that sits on a chat panel, and nowhere else; see
-    // `chat_options`.
-    let options = (placement == Placement::Panel)
-        .then(|| chat_options(slot, pane, window_hovered, on_pane.clone(), cx));
-    let close = close_button(slot, window_hovered, on_pane.clone(), cx);
-    // What follows the name: the badge, the numbers and the tags. The
-    // numbers in the browse card's shape, "358 · 8h 20m", for the card's
+    let menu = menu_button(slot, &facts.name, window_hovered, on_pane.clone(), cx);
+    let close = close_button(slot, window_hovered, on_pane, cx);
+    // The numbers in the browse card's shape, "358 · 8h 20m", for the card's
     // reason: the `LIVE` badge before them already says what the first one
-    // counts, and a header 340px wide has no room to say it again in words
-    // once `muted` has to fit too.
+    // counts, and a row over the picture has the name and the tags too.
     let numbers = facts.numbers(false);
-    let name = name_link(slot, &facts, theme::TEXT_BODY, window_hovered, cx);
+    let name = name_link(slot, facts, theme::TEXT_BODY, window_hovered, cx);
 
-    handle(slot, movable, on_pane, cx)
+    handle
         .flex_none()
         .w_full()
         .flex()
         // A column, because what is on is a line of its own under who is on.
         // It does not fit beside them: the first row is already the name,
-        // the numbers, `muted`, `paused` and the ×.
+        // the numbers, `muted`, `paused` and the controls.
         .flex_col()
         .gap(px(theme::GAP_WORD))
         .px(px(theme::ROW_PAD_X))
@@ -643,10 +720,10 @@ pub(super) fn pane_header<V: 'static>(
         // tell apart. Over the picture the rule is there unmarked too, only
         // clear, so the header is the same height marked or not and a pane
         // key's reveal never moves a line of it.
-        .border_color(match (marked, placement) {
-            (true, _) => theme::accent(),
-            (false, Placement::Panel) => theme::border(),
-            (false, Placement::OverPicture) => theme::border_clear(),
+        .border_color(if marked {
+            theme::accent()
+        } else {
+            theme::border_clear()
         })
         .child(
             with_status(
@@ -657,13 +734,10 @@ pub(super) fn pane_header<V: 'static>(
                     .items_center()
                     .gap(px(theme::GAP_TIGHT))
                     .child(name),
-                &facts,
+                facts,
                 numbers,
             )
             .child(div().flex_1())
-            // The right-hand cluster: browsing and chat back, when only this
-            // header can offer them, or the chat options, when it sits on
-            // chat, then out or back, then the ×.
             .child(
                 div()
                     .flex_none()
@@ -671,20 +745,17 @@ pub(super) fn pane_header<V: 'static>(
                     .flex_row()
                     .items_center()
                     .gap(px(theme::GAP_TIGHT))
-                    .children(browse)
                     .children(show_chat)
-                    .children(options)
-                    .children(pop)
+                    .child(menu)
                     .child(close),
             ),
         )
         .when(!about.is_empty(), |header| {
             // The title and the game share one line, joined like the numbers
-            // above, rather than taking one each — a pane header is 340px
-            // wide, and a row of chrome here costs a row of chat in every
-            // pane on the page. A title is routinely longer than that line,
-            // so the whole of it — and the game under it — is a hover away,
-            // through the same builder the browse cards use.
+            // above, rather than taking one each: over the picture, a row of
+            // chrome is a row of the picture. A title is routinely longer
+            // than that line, so the whole of it — and the game under it — is
+            // a hover away, through the same builder the browse cards use.
             header.child(
                 // `w_full`, not `min_w_0`: this one is a child of a flex
                 // column, where a definite width is what the measure pass
@@ -705,57 +776,51 @@ pub(super) fn pane_header<V: 'static>(
         })
 }
 
+/// What is on, under who is on, in the details: the title on a line of its
+/// own at the size you read, and the game under it in the supporting tier —
+/// or a recording's title and when it was. Each cut to its line, with the
+/// whole of both a hover away on the title, through the builder the browse
+/// cards use.
+fn about_lines(slot: &Slot, facts: &Facts, window_hovered: bool) -> Vec<Stateful<Div>> {
+    let mut lines = facts.about.iter().cloned();
+    let title = lines.next();
+    let rest = lines.next();
+    let whole = facts.about.clone();
+    title
+        .map(|title| {
+            line(pane_id(&slot.key, "about"), title)
+                .text_size(px(theme::TEXT_BODY))
+                .line_height(px(theme::LINE_BODY))
+                .text_color(theme::text())
+                .when(window_hovered, |line| {
+                    line.tooltip(controls::full_text(whole))
+                })
+        })
+        .into_iter()
+        .chain(rest.map(|rest| {
+            line(pane_id(&slot.key, "about-more"), rest)
+                .text_size(px(theme::TEXT_META))
+                .line_height(px(theme::LINE_TIGHT))
+                .text_color(theme::text_muted())
+        }))
+        .collect()
+}
+
+/// One line of the details' text, cut with an ellipsis where it runs out:
+/// `w_full`, since a child of a flex column needs a definite width before
+/// gpui's measure pass will ellipsise it.
+fn line(id: impl Into<ElementId>, text: SharedString) -> Stateful<Div> {
+    div()
+        .id(id)
+        .w_full()
+        .text_ellipsis()
+        .line_clamp(1)
+        .child(text)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The header offers browsing on a pane with no bar in this window —
-    /// stopped, or its picture elsewhere — and not on one playing or
-    /// starting, whose bar has it or soon will.
-    #[test]
-    fn the_header_offers_browsing_only_where_no_bar_does() {
-        let failure = SharedString::from("no");
-        for showing in [
-            Showing::Offline,
-            Showing::Unavailable,
-            Showing::Ended,
-            Showing::Finished,
-            Showing::Failed(&failure),
-            Showing::Elsewhere,
-        ] {
-            assert!(offers_browse(&showing), "{showing:?}");
-        }
-        assert!(!offers_browse(&Showing::Picture));
-        assert!(!offers_browse(&Showing::Starting {
-            recording: false,
-            at: None
-        }));
-    }
-
-    /// A pane out offers to come back, whatever it is doing out there; one
-    /// at home offers to go only with a player to move; and where the
-    /// pop-out is not offered, no header says a word about it.
-    #[test]
-    fn the_header_offers_a_window_only_to_a_pane_that_can_go_or_come_back() {
-        assert_eq!(PopOutButton::of(true, false, true), PopOutButton::PopOut);
-        assert_eq!(PopOutButton::of(true, true, true), PopOutButton::PopIn);
-        assert_eq!(
-            PopOutButton::of(true, true, false),
-            PopOutButton::PopIn,
-            "restarting in its window"
-        );
-        assert_eq!(
-            PopOutButton::of(true, false, false),
-            PopOutButton::Hidden,
-            "starting or stopped at home"
-        );
-        for (popped, playing) in [(false, false), (false, true), (true, false), (true, true)] {
-            assert_eq!(
-                PopOutButton::of(false, popped, playing),
-                PopOutButton::Hidden
-            );
-        }
-    }
 
     /// A picture waiting on the network says so, unless an ad break holds
     /// it still and says why; a picture that is not waiting says nothing,
@@ -786,8 +851,9 @@ mod tests {
     }
 
     /// The numbers say what the first one counts only where there is room
-    /// to, under the picture; the compact header keeps the card's shape.
-    /// Either part can be missing, and with neither there is nothing.
+    /// to, on a line of their own in the details; the compact header keeps
+    /// the card's shape. Either part can be missing, and with neither there
+    /// is nothing.
     #[test]
     fn the_numbers_say_watching_only_where_there_is_room() {
         let both = facts(Some("8.8k"), Some("3h 12m"));
@@ -796,5 +862,19 @@ mod tests {
         assert_eq!(facts(Some("358"), None).numbers(true), "358 watching");
         assert_eq!(facts(None, Some("25m")).numbers(true), "25m");
         assert_eq!(facts(None, None).numbers(true), "");
+    }
+
+    /// The title and the game, or a recording's title and when it was, go
+    /// on one line in the compact header, joined like the numbers, with the
+    /// parts there are.
+    #[test]
+    fn the_compact_header_joins_what_is_on() {
+        let mut both = facts(None, None);
+        both.about = vec!["first playthrough".into(), "Silent Hill f".into()];
+        assert_eq!(both.about_line(), "first playthrough · Silent Hill f");
+        let mut title = facts(None, None);
+        title.about = vec!["first playthrough".into()];
+        assert_eq!(title.about_line(), "first playthrough");
+        assert_eq!(facts(None, None).about_line(), "");
     }
 }

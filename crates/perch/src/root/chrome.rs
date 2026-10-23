@@ -1,8 +1,8 @@
 //! The shell's own furniture: the pills, the toasts and the follows rail.
 //! None of it is a page. The pills are drawn by the pages; the rail and the
 //! toasts by the root, beside and over whichever page is up, so they stay put
-//! when the page changes. What plays on while you browse is the panes
-//! themselves, beside the browse page (`RootView::docks_stage`).
+//! when the page changes. Nothing plays on at home while you browse: going
+//! there stops what played (`RootView::go_browse`).
 
 use std::cell::Cell;
 use std::rc::Rc;

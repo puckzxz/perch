@@ -1,6 +1,5 @@
-//! Where each pane is drawn: in the watch grid — on the watch page, or
-//! beside the browse page — in a window of its own, or nowhere, while
-//! another pane has the grid to itself.
+//! Where each pane is drawn: in the watch grid on the watch page, in a
+//! window of its own, or nowhere, while another pane has the grid to itself.
 //!
 //! The one owner of that answer. A pane's player is one `VideoView`, and a
 //! view drawn by two windows at once freezes in the second: it skips
@@ -175,11 +174,10 @@ impl<P> Stage<P> {
         gone
     }
 
-    /// Where the pane `key` names is drawn, with the panes' stage `drawn` or
-    /// not — the watch page, or beside the browse page: in its own window if
-    /// it is popped, whatever the main window shows; otherwise nowhere while
-    /// no stage is drawn or another pane is maximized, and in the grid the
-    /// rest of the time.
+    /// Where the pane `key` names is drawn, with the panes' stage, the watch
+    /// page, `drawn` or not: in its own window if it is popped, whatever the
+    /// main window shows; otherwise nowhere while no stage is drawn or
+    /// another pane is maximized, and in the grid the rest of the time.
     pub fn place(&self, drawn: bool, key: &str) -> Place {
         if self.is_popped(key) {
             Place::PopOut

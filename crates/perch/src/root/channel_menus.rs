@@ -1,15 +1,16 @@
 //! The channel menu (`crate::channel_menu`) as the root runs it: opening it
 //! where a channel is named — a card, an offline name or a rail row
 //! (`browse::Action::ChannelMenu`), a name in chat
-//! (`ChatViewEvent::ChannelMenu`), a pane (`PaneAction::Menu`) — what it
-//! knows of the channel each time it is drawn, and carrying out a pick.
+//! (`ChatViewEvent::ChannelMenu`), a pane (`PaneAction::Menu`) or the ⋯ in a
+//! pane's header (`PaneAction::MenuButton`) — what it knows of the channel
+//! each time it is drawn, and carrying out a pick.
 //!
 //! One menu at a time across the window: opening it closes every other menu
 //! (`close_menus`), and it closes with them, on `Esc` and whenever a modal
 //! comes up (`close_copy_menus`), since like the copy menu it is drawn
 //! deferred, over everything, the modals included.
 
-use gpui::{AnyElement, Context, Pixels, Point, Window};
+use gpui::{AnyElement, Context, Corner, Pixels, Point, Window};
 
 use super::panes::pane_keys;
 use super::streams::Opening;
@@ -30,13 +31,36 @@ pub(super) struct OpenChannelMenu {
     live: bool,
     from_chat: bool,
     pane: Option<String>,
-    position: Point<Pixels>,
+    at: MenuAt,
     /// Which opening this is, keying its arrival (`channel_menu::view`).
     opened: u64,
 }
 
+/// Where the menu hangs from, in the window.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum MenuAt {
+    /// Its top left corner at the pointer, as a right-click opens it,
+    /// switched to another corner where the window has no room that way.
+    Pointer(Point<Pixels>),
+    /// Its top right corner at this point, a button's lower right: under
+    /// the ⋯ at the end of a pane's header, which is at the right of its
+    /// pane, so the menu reaches back over the pane rather than past it,
+    /// and never covers the ⋯ a second press would land on.
+    Under(Point<Pixels>),
+}
+
+impl MenuAt {
+    /// The point, and which corner of the menu is at it.
+    fn corner(self) -> (Point<Pixels>, Corner) {
+        match self {
+            MenuAt::Pointer(at) => (at, Corner::TopLeft),
+            MenuAt::Under(at) => (at, Corner::TopRight),
+        }
+    }
+}
+
 impl RootView {
-    /// Open the menu about `channel` at `position`, in place of any other
+    /// Open the menu about `channel` where `at` says, in place of any other
     /// menu.
     pub(super) fn open_channel_menu(
         &mut self,
@@ -44,7 +68,7 @@ impl RootView {
         live: bool,
         from_chat: bool,
         pane: Option<String>,
-        position: Point<Pixels>,
+        at: MenuAt,
         cx: &mut Context<Self>,
     ) {
         self.close_menus(cx);
@@ -54,22 +78,37 @@ impl RootView {
             live,
             from_chat,
             pane,
-            position,
+            at,
             opened: self.channel_menus_opened,
         });
         cx.notify();
     }
 
-    /// A right-click on the pane `key` names, on its picture or its header:
-    /// its menu, about the channel it plays, with the pane's own rows. The
-    /// pane becomes the one the keys talk to, as a press on it would have
-    /// made it.
-    pub(super) fn open_pane_menu(
+    /// The ⋯ at the end of the pane `key` names' header: its menu, hung
+    /// under the ⋯ (`under`, the ⋯'s lower right corner), or nothing when
+    /// the press that reached the ⋯ has just put that same menu away — it
+    /// was open, and the press outside it closed it in the capture phase
+    /// before the ⋯ heard the press (`channel_menu_dismissed`) — so a
+    /// second press on the ⋯ closes what the first opened rather than
+    /// opening it again.
+    pub(super) fn toggle_pane_menu(
         &mut self,
         key: &str,
-        position: Point<Pixels>,
+        under: Point<Pixels>,
         cx: &mut Context<Self>,
     ) {
+        if self.channel_menu_dismissed.as_deref() == Some(key) {
+            self.channel_menu_dismissed = None;
+            return;
+        }
+        self.open_pane_menu(key, MenuAt::Under(under), cx);
+    }
+
+    /// A right-click on the pane `key` names, on its picture or its header,
+    /// or a press on its header's ⋯: its menu, about the channel it plays,
+    /// with the pane's own rows. The pane becomes the one the keys talk to,
+    /// as a press on it would have made it.
+    pub(super) fn open_pane_menu(&mut self, key: &str, at: MenuAt, cx: &mut Context<Self>) {
         let Some(index) = self.slot_index(key) else {
             return;
         };
@@ -87,7 +126,7 @@ impl RootView {
         };
         let live = slot.is_live();
         self.active = Some(key.to_string());
-        self.open_channel_menu(channel, live, false, Some(key.to_string()), position, cx);
+        self.open_channel_menu(channel, live, false, Some(key.to_string()), at, cx);
     }
 
     /// A right-click on a name in chat: the menu about that person's
@@ -106,7 +145,7 @@ impl RootView {
             display_name,
             user_id,
         };
-        self.open_channel_menu(channel, live, true, None, position, cx);
+        self.open_channel_menu(channel, live, true, None, MenuAt::Pointer(position), cx);
     }
 
     /// Close the menu, if it is open. Returns whether it was.
@@ -175,13 +214,20 @@ impl RootView {
             return None;
         }
         let rows = channel_menu::entries(self.channel_menu_facts(menu));
-        let (position, opened) = (menu.position, menu.opened);
+        let ((position, corner), opened) = (menu.at.corner(), menu.opened);
         Some(channel_menu::view(
             &rows,
             position,
+            corner,
             opened,
             |this: &mut RootView, pick, window, cx| this.channel_menu_pick(pick, window, cx),
             |this: &mut RootView, _window, cx| {
+                // Which pane's menu this press put away, for its ⋯, which
+                // hears the same press after this (`toggle_pane_menu`).
+                this.channel_menu_dismissed = this
+                    .channel_menu
+                    .as_ref()
+                    .and_then(|menu| menu.pane.clone());
                 this.close_channel_menu(cx);
             },
             cx,
@@ -262,5 +308,23 @@ impl RootView {
             Pick::Watch | Pick::Add | Pick::CopyName => return,
         };
         self.on_pane_action(key, action, window, cx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::{point, px, Corner};
+
+    use super::MenuAt;
+
+    /// A right-click hangs the menu by its top left at the pointer, and the
+    /// ⋯ hangs it by its top right under the button: it reaches back over
+    /// the pane rather than past the window's edge, and never covers the ⋯
+    /// a second press would land on.
+    #[test]
+    fn the_menu_hangs_from_the_pointer_or_under_the_button() {
+        let at = point(px(100.0), px(40.0));
+        assert_eq!(MenuAt::Pointer(at).corner(), (at, Corner::TopLeft));
+        assert_eq!(MenuAt::Under(at).corner(), (at, Corner::TopRight));
     }
 }

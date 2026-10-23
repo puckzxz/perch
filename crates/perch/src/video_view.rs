@@ -257,16 +257,6 @@ pub struct VideoView {
     root_focus: FocusHandle,
     /// What the bar's chat glyph offers; see [`ChatButton`].
     chat: ChatButton,
-    /// Whether the browse page is up beside the panes, which the bar's
-    /// Browse button keys its id and its tooltip on: a press then puts it
-    /// away, and otherwise brings it up (`bar::browse_button`).
-    ///
-    /// A mirror, on [`ChatButton`]'s pattern: the page is the root's.
-    /// Written in exactly two places — [`Start::browsing`] when the player
-    /// is made, and [`set_browsing`](Self::set_browsing), which only
-    /// `RootView::restage` calls, the funnel every change of the page ends
-    /// in.
-    browsing: bool,
     /// Whether the pane's channel is pinned to the rail, which More's pin
     /// row says the other of and keys its id on: `Pin to the rail` or
     /// `Unpin from the rail` (`menu::pin_row`).
@@ -411,9 +401,6 @@ pub struct Start {
     /// A recording's muted stretches, as far as the root knows them; see
     /// `VideoView::muted`.
     pub muted: Vec<MutedSegment>,
-    /// Whether the browse page is up as the player is made; see
-    /// `VideoView::browsing`.
-    pub browsing: bool,
     /// Whether the pane's channel is pinned as the player is made; see
     /// `VideoView::pinned`.
     pub pinned: bool,
@@ -497,7 +484,6 @@ impl VideoView {
             row_run: false,
             root_focus: start.focus,
             chat: start.chat,
-            browsing: start.browsing,
             pinned: start.pinned,
             switching: start.switching,
             linger: None,
@@ -1007,16 +993,6 @@ impl VideoView {
     pub fn set_muted(&mut self, muted: Vec<MutedSegment>, cx: &mut Context<Self>) {
         if self.muted != muted {
             self.muted = muted;
-            cx.notify();
-        }
-    }
-
-    /// Whether the browse page is up now, from `RootView::restage`; see
-    /// `VideoView::browsing` for why nothing else calls this. Repaints only
-    /// on a change.
-    pub fn set_browsing(&mut self, browsing: bool, cx: &mut Context<Self>) {
-        if self.browsing != browsing {
-            self.browsing = browsing;
             cx.notify();
         }
     }

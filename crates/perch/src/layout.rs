@@ -11,10 +11,9 @@
 //!
 //! It also owns the few numbers more than one part of the window has to agree
 //! on: how much of the window the title bar takes, whether the rail is drawn,
-//! and where on the bar a drag begins; how wide the browse page is while the
-//! panes share the window with it ([`panel_width`], [`Body::beside`]). And
-//! where a pane popped into a window of its own opens. Each is read from here
-//! rather than recomputed where it is used.
+//! and where on the bar a drag begins; and where a pane popped into a window
+//! of its own opens. Each is read from here rather than recomputed where it
+//! is used.
 
 use gpui::{point, px, size, Bounds, Pixels, Size};
 
@@ -49,24 +48,6 @@ impl Body {
     pub fn aspect(&self) -> f32 {
         self.width / self.height.max(1.0)
     }
-
-    /// The room left beside a browse panel `panel` wide: what the panes have
-    /// while the browse page shares the window with them.
-    pub fn beside(self, panel: f32) -> Self {
-        Self {
-            width: (self.width - panel).max(0.0),
-            ..self
-        }
-    }
-}
-
-/// How wide the browse page is while the panes share the window with it, in
-/// a body `body_width` wide: half of it, and no more than
-/// `theme::PANEL_MAX_WIDTH`, so on a 4K screen the stream keeps the larger
-/// share. Half rather than a fixed width, so a small window still gives the
-/// picture beside it room to be one.
-pub fn panel_width(body_width: f32) -> f32 {
-    (body_width / 2.0).min(crate::theme::PANEL_MAX_WIDTH)
 }
 
 /// How much of the window's height the title bar takes: all of
@@ -110,8 +91,7 @@ pub fn drag_top(maximized: bool) -> f32 {
 }
 
 /// What a browse list has to work with: how wide it is, which sizes its
-/// cards — the body, or the panel's width while the panes share the window
-/// (`RootView::browse_width`).
+/// cards — the body's width, the browse page having the whole of it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Room {
     pub width: f32,
@@ -432,31 +412,6 @@ pub fn stacked_video_height(cell_width: f32, cell_height: f32, aspect: f32, shar
     (cell_width / aspect).min(cell_height * crate::theme::VIDEO_SHARE_MAX)
 }
 
-/// How tall a beside pane's picture box is when the pane's header goes under
-/// the picture rather than on its chat, or `None` when the picture's column,
-/// `column_width` by `column_height`, leaves no room for it there.
-///
-/// Beside its chat, a picture takes its column's width, and a column taller
-/// than the stream's shape used to centre it over black above and below —
-/// 151 px of it at 1920 by 1080, and as much at 4K maximized — while the
-/// pane's name was cut short to fit a 340 px chat column beside it. Where
-/// that black can hold the header (`theme::STRIP_ROOM`), the picture sits at
-/// the top of the column at its own shape and the header takes the rest
-/// under it (`watch::strip`). The picture is the size it was either way, the
-/// column's width at the stream's shape, so neither what it renders at nor
-/// the quality chosen for it changes. A column the picture fills by height —
-/// a window wider than the stream, a vertical stream — has no black under
-/// it to give, and its header stays on chat.
-pub fn header_under_picture(column_width: f32, column_height: f32, aspect: f32) -> Option<f32> {
-    let aspect = if aspect.is_finite() && aspect > 0.0 {
-        aspect
-    } else {
-        VIDEO_ASPECT
-    };
-    let picture = column_width / aspect;
-    (column_height - picture >= crate::theme::STRIP_ROOM).then_some(picture)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -468,56 +423,6 @@ mod tests {
     /// The box a 16:9 stream gets in a cell tall enough not to cap it.
     fn video_box_height(cell_width: f32) -> f32 {
         stacked_video_height(cell_width, f32::MAX, VIDEO_ASPECT, 0.0)
-    }
-
-    /// One pane at 1920 by 1080 and at 4K maximized, the rail folded and the
-    /// title bar's 40 px off the top, beside a 340 px chat: the picture keeps
-    /// the column's width, and the 151 px of black that used to sit above
-    /// and below it is room for the header under it.
-    #[test]
-    fn the_header_goes_under_a_picture_with_black_below_it() {
-        let picture = header_under_picture(1920.0 - 340.0, 1080.0 - 40.0, VIDEO_ASPECT)
-            .expect("a 1920 by 1080 window has room under the picture");
-        assert!((picture - 888.75).abs() < 0.01, "{picture}");
-        let picture = header_under_picture(3840.0 - 340.0, 2160.0 - 40.0, VIDEO_ASPECT)
-            .expect("4K maximized has room under the picture");
-        assert!((picture - 1968.75).abs() < 0.01, "{picture}");
-    }
-
-    /// A picture that fills its column by height has no black under it to
-    /// give: a window wider than the stream, a 4:3 stream or a vertical one.
-    #[test]
-    fn the_header_stays_on_chat_where_the_picture_fills_the_column() {
-        assert_eq!(
-            header_under_picture(2560.0 - 340.0, 1040.0, VIDEO_ASPECT),
-            None
-        );
-        assert_eq!(header_under_picture(1580.0, 1040.0, 4.0 / 3.0), None);
-        assert_eq!(header_under_picture(1580.0, 1040.0, 9.0 / 16.0), None);
-    }
-
-    /// The header goes under the picture at exactly its room and not a
-    /// pixel short of it, and a stream that has not said its shape is taken
-    /// as 16:9, as everywhere else.
-    #[test]
-    fn the_header_needs_its_whole_room_under_the_picture() {
-        let width = 1600.0;
-        let picture = width / VIDEO_ASPECT;
-        let room = crate::theme::STRIP_ROOM;
-        assert_eq!(
-            header_under_picture(width, picture + room, VIDEO_ASPECT),
-            Some(picture)
-        );
-        assert_eq!(
-            header_under_picture(width, picture + room - 1.0, VIDEO_ASPECT),
-            None
-        );
-        for unknown in [0.0, f32::NAN, f32::INFINITY] {
-            assert_eq!(
-                header_under_picture(width, picture + room, unknown),
-                Some(picture)
-            );
-        }
     }
 
     #[test]
@@ -793,20 +698,6 @@ mod tests {
                 "a 16:9 picture in a {cell_aspect:.3} cell is narrower than the cell in its box"
             );
         }
-    }
-
-    /// Beside the panes the browse page takes half the body, up to its
-    /// widest, and the panes the rest: 960 of a 1920 body, 1280 of a 3840 one.
-    #[test]
-    fn the_browse_panel_takes_half_the_body_up_to_its_widest() {
-        assert_eq!(panel_width(1920.0), 960.0);
-        assert_eq!(panel_width(3840.0), crate::theme::PANEL_MAX_WIDTH);
-        assert!(panel_width(3840.0) < 3840.0 / 2.0);
-        let body = body_of(WIDE);
-        let beside = body.beside(panel_width(body.width));
-        assert_eq!(beside.height, body.height, "the panel takes no height");
-        assert!((beside.width + panel_width(body.width) - body.width).abs() < 0.01);
-        assert_eq!(body.beside(body.width * 2.0).width, 0.0, "never negative");
     }
 
     #[test]

@@ -8,9 +8,9 @@
 //!
 //! A pane with no picture is `status`'s: the one reading of what it is
 //! showing ([`Showing`]), and the screen drawn from it: what is being waited for, or what to do next. A
-//! pane's header is `header`'s, and where it goes — in the chat panel, or
-//! over the top of the picture when there is no chat on screen — is
-//! [`Placement`]. Whatever a pane asks of its owner — a close, a retry, a
+//! pane's header is `header`'s, and where it goes — at the top of the chat
+//! panel, or over the top of the picture when there is no chat on screen —
+//! is [`Placement`]. Whatever a pane asks of its owner — a close, a retry, a
 //! press that makes it the active one, a recording to play in its place, its
 //! header dropped on another pane to swap the two — is a [`PaneAction`],
 //! addressed by the pane's key.
@@ -21,7 +21,6 @@
 mod chat_menu;
 mod header;
 mod status;
-mod strip;
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -736,36 +735,21 @@ pub struct PaneInfo<'a> {
     /// followed channel, the ask about channels nobody follows
     /// (`root::pane_streams`) otherwise; see `RootView::start_offered`.
     pub start_offered: bool,
-    /// Whether the pop-out is offered on this platform at all
-    /// (`root::pop_out_offered`): where it is not, the header offers
-    /// neither to pop the pane out nor to bring it back.
-    pub pop_out_offered: bool,
     /// What every chat is drawn with, while this pane's chat options menu
     /// is open (`RootView::chat_menu`), for the menu to mark what is chosen;
     /// `None` while it is not. Drawn only on a pane with a chat panel.
     pub chat_menu: Option<ChatDisplay>,
-    /// Whether the browse page is up beside the panes, which the Browse
-    /// icon on the header of a pane with no picture keys its id and its
-    /// tooltip on, as the bar's does (`VideoView::browsing`).
-    pub browsing: bool,
     /// When the channel says it is on next, for a pane that found it off:
     /// "Next stream: Tue 7:00 PM · Title · Game", or "On a break until 12
     /// Oct" (`schedule::Schedules::words`). `None` for any other pane, and
     /// for a channel with no schedule or none known yet.
     pub schedule: Option<SharedString>,
-    /// The channel's face, for the header under the picture
-    /// (`strip::pane_strip`): the rail's picture of a channel followed or
+    /// The channel's face, for the header at the top of the chat panel
+    /// (`header::pane_header`): the rail's picture of a channel followed or
     /// recommended, from the same cache entry (`RootView::pane_avatar`).
-    /// `None` for anyone else, or before it is on disk, and the strip
+    /// `None` for anyone else, or before it is on disk, and the header
     /// starts at the name.
     pub avatar: Option<PathBuf>,
-    /// Whether the pane's channel is pinned to the rail, which the header
-    /// under the picture says and toggles (`PaneAction::Pin`).
-    pub pinned: bool,
-    /// Whether the header under the picture offers the channel's past
-    /// broadcasts (`PaneAction::ChannelPage`): signed in, as the page's
-    /// lists need the token, as a viewer card's `Channel page` is.
-    pub past_broadcasts: bool,
 }
 
 /// A recording a stopped pane offers, and where it was left if it has been
@@ -804,12 +788,12 @@ pub enum PaneAction {
     /// Put the same link on the clipboard: More's, and the palette's.
     CopyLink,
     /// Move its picture into a window of its own, on top of other apps: its
-    /// header's icon, More's row, `P` and the palette's row. Windows only
-    /// for now; see `root::pop_out`.
+    /// menu's row, More's, `P` and the palette's row. Windows only for now;
+    /// see `root::pop_out`.
     PopOut,
     /// Bring its picture back from that window: the pop-out bar's Bring
-    /// back, the `Bring back` on the pane's own cell, its header's icon, `P`
-    /// in either window, and the palette's row.
+    /// back, the `Bring back` on the pane's own cell, its menu's row, `P` in
+    /// either window, and the palette's row.
     PopIn,
     /// Give it the whole watch page, chat and all, or, on the pane that has
     /// it, show every pane again: its menu's row (`crate::channel_menu`)
@@ -844,7 +828,7 @@ pub enum PaneAction {
     /// `RootView::back_to_live`.
     BackToLive,
     /// Open its chat options menu, or close it when it is the one open: the
-    /// icon in its header, beside pop out and close, on a pane with a chat
+    /// icon in its header, before its ⋯ and its ×, on a pane with a chat
     /// panel. One is open at a time, across every pane; see
     /// `chat_menu::toggled`.
     ToggleChatMenu,
@@ -872,18 +856,17 @@ pub enum PaneAction {
     /// drawn a frame stale pins what is pinned already rather than taking
     /// it off; see `RootView::set_pinned`.
     Pin(bool),
-    /// Bring the browse page up beside the panes, with this pane the one a
-    /// card plays in place of, or put it away again: the Browse button on
-    /// its bar, or on its header while it has no picture and so no bar. See
-    /// `RootView::toggle_browse`.
-    Browse,
     /// Open the channel's page, its past broadcasts and schedule, on the
-    /// browse page beside the panes, which play on: `Past broadcasts` on
-    /// the header under the picture. See `RootView::open_channel_page`.
+    /// browse page, which stops what plays at home: its menu's `Past
+    /// broadcasts`. See `RootView::open_channel_page`.
     ChannelPage,
     /// Open the pane's menu at this point in the window: a right-click on
     /// its picture or its header. See `crate::channel_menu`.
     Menu(Point<Pixels>),
+    /// Open the pane's menu under the ⋯ at the end of its header, whose
+    /// lower right corner this is, or put it away when it is the one open
+    /// (`RootView::toggle_pane_menu`).
+    MenuButton(Point<Pixels>),
 }
 
 /// How every pane in the current grid is arranged. Identical for all of them,
@@ -1100,19 +1083,6 @@ fn pane<V: 'static>(
         aspect,
         layout.video_share,
     );
-    // Beside its chat, the picture at the top of its column and the header
-    // under it, where the column has the black to give: the picture's box
-    // then, or `None` to keep the header on chat as it was
-    // (`layout::header_under_picture`, `strip`).
-    let under = (placement == Placement::Panel && !layout.portrait)
-        .then(|| {
-            layout::header_under_picture(
-                layout.cell_width - layout.chat_width,
-                layout.cell_height,
-                aspect,
-            )
-        })
-        .flatten();
 
     // The status screen, and the player over it. The screen is drawn until
     // the picture has faded all the way in, and the player draws nothing
@@ -1124,8 +1094,6 @@ fn pane<V: 'static>(
         // the header resting over its top when there is no chat panel.
         let (width, height) = if layout.portrait {
             (layout.cell_width, video_height)
-        } else if let Some(box_height) = under {
-            (layout.cell_width - layout.chat_width, box_height)
         } else if placement == Placement::Panel {
             (layout.cell_width - layout.chat_width, layout.cell_height)
         } else {
@@ -1157,40 +1125,23 @@ fn pane<V: 'static>(
         .as_ref()
         .is_some_and(|view| view.read(cx).has_picture());
 
-    // Built once, and drawn in one place: the panel, under the picture, or
-    // the band over it. Never two, since its elements' ids are the pane's.
-    let header = match under {
-        Some(_) => strip::pane_strip(
-            slot,
-            info,
-            layout.mark_active && active,
-            layout.movable,
-            window_hovered,
-            on_pane.clone(),
-            cx,
-        )
-        .into_any_element(),
-        None => header::pane_header(
-            slot,
-            info,
-            placement,
-            layout.mark_active && active,
-            layout.movable,
-            picture,
-            window_hovered,
-            on_pane.clone(),
-            cx,
-        )
-        .into_any_element(),
+    // Built once, and drawn in one place: the panel, or the band over the
+    // picture. Never both, since its elements' ids are the pane's.
+    let header = header::pane_header(
+        slot,
+        info,
+        placement,
+        layout.mark_active && active,
+        layout.movable,
+        picture,
+        window_hovered,
+        on_pane.clone(),
+        cx,
+    );
+    let (in_panel, on_picture) = match placement {
+        Placement::Panel => (Some(header), None),
+        Placement::OverPicture => (None, Some(header)),
     };
-    let (in_panel, under_picture, on_picture) = match (placement, under) {
-        (Placement::Panel, Some(_)) => (None, Some(header), None),
-        (Placement::Panel, None) => (Some(header), None, None),
-        (Placement::OverPicture, _) => (None, None, Some(header)),
-    };
-    // With the header under the picture, chat is headed by a bar of its own,
-    // which carries the chat options the header gave up.
-    let chat_bar = under.map(|_| strip::chat_bar(slot, info, window_hovered, on_pane.clone(), cx));
     // The chat options menu, while it is open on this pane: over the top of
     // its chat, under the header that opened it, or risen over that header
     // from the foot of a chat box too short for it (`chat_menu::placed`).
@@ -1287,11 +1238,14 @@ fn pane<V: 'static>(
             // Stacked, the box is the stream's shape whether or not chat is
             // under it — see `chat_or_why` for why hiding chat does not
             // change that. Beside, the video takes whatever the cell leaves
-            // it.
+            // it, and the player centres the picture in it, with black above
+            // and below where the column is taller than the stream's shape.
+            // For a week of October 2026 the picture sat at the top of that
+            // column with the pane's details under it, where the black was;
+            // the user did not like it, and the details went to the top of
+            // the chat panel instead (`header::pane_header`).
             if layout.portrait {
                 pane.flex_none().h(px(video_height)).w_full()
-            } else if let Some(box_height) = under {
-                pane.flex_none().h(px(box_height)).w_full()
             } else {
                 pane.flex_1().min_w_0()
             }
@@ -1327,9 +1281,10 @@ fn pane<V: 'static>(
     // Only the first press of a run. The platform counts a second press near
     // the first as a double-click wherever the first one landed, and the
     // first can have been on a control that put this page under the
-    // pointer with another pane active — Browse putting the browse page
-    // away, which grows the panes under it: the second, landing in whichever
-    // pane is there now, would hand that pane the keys instead. Any later press of a run is within a few pixels of
+    // pointer with another pane active — a card on the browse page playing
+    // in place, which brings the watch page up under the pointer: the
+    // second, landing in whichever pane is there now, would hand that pane
+    // the keys instead. Any later press of a run is within a few pixels of
     // the first, so on a pane the first press already chose.
     let key = slot.key.clone();
     let cell = div()
@@ -1372,16 +1327,10 @@ fn pane<V: 'static>(
                 // header's own bottom rule as the only line between them.
                 pane.flex_1().min_h_0().w_full().pt(px(0.))
             } else {
-                // Room above the header on chat; none above chat's own bar,
-                // which meets the title bar's rule as the picture does.
-                pane.flex_none()
-                    .w(px(layout.chat_width))
-                    .h_full()
-                    .when(under.is_none(), |pane| pane.pt(px(theme::GAP_TIGHT)))
+                pane.flex_none().w(px(layout.chat_width)).h_full()
             }
         })
         .children(in_panel)
-        .children(chat_bar)
         // Chat is placed in the room under its header, not flowed into it: a
         // layer over that room, which chat's own `size_full` is sized
         // against. Flowed - chat a block inside this `flex_1` box - taffy
@@ -1403,23 +1352,6 @@ fn pane<V: 'static>(
                 .children(chat_menu),
         );
 
-    // With the header under the picture, the picture's box and the header
-    // stand in one column, which has no id of its own, so the player's
-    // element path is the pane's whichever way the header goes and a window
-    // resized across the line moves nothing but the header.
-    let video_column = match under_picture {
-        Some(strip) => div()
-            .flex_1()
-            .min_w_0()
-            .flex()
-            .flex_col()
-            .bg(theme::bg())
-            .child(video_pane)
-            .child(strip)
-            .into_any_element(),
-        None => video_pane.into_any_element(),
-    };
-
     cell.map(|cell| {
         if layout.portrait {
             cell.flex_col()
@@ -1427,7 +1359,7 @@ fn pane<V: 'static>(
             cell.flex_row()
         }
     })
-    .child(video_column)
+    .child(video_pane)
     .child(divider(&slot.key, layout.portrait, on_resize, cx))
     .child(chat_pane)
     .children(drop_zone)

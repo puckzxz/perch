@@ -3,6 +3,7 @@
 
 use gpui::{Context, Point, Window};
 
+use super::channel_menus::MenuAt;
 use super::streams::Opening;
 use super::{Page, RootView};
 use twitch_api::VideoKind;
@@ -171,8 +172,10 @@ impl RootView {
     ///
     /// The box is in the title bar, over both pages, so a search can start on
     /// the watch page. It brings the browse page up for the results the way
-    /// `Esc` does — whatever is playing carries on beside it — because a
-    /// search is asked for to be looked at. Windowless,
+    /// Browse does, which stops what plays at home (`go_browse`), because a
+    /// search is asked for to be looked at; on the watch page only `Enter`
+    /// or a press on its row asks, never a pause in the typing
+    /// (`search_settled`). Windowless,
     /// like the box's own subscription that calls it, which is why recording
     /// a step needs no window either. New results start at the top.
     pub(super) fn run_search(&mut self, query: String, cx: &mut Context<Self>) {
@@ -272,7 +275,13 @@ impl RootView {
             Action::SetPinned { login, pinned } => this.set_pinned(login, pinned, cx),
             // Nor does a menu, until a row of it is pressed.
             Action::ChannelMenu { channel, live, at } => {
-                this.open_channel_menu(channel, live, false, None, at, cx)
+                this.open_channel_menu(channel, live, false, None, MenuAt::Pointer(at), cx)
+            }
+            // Following's offline names, folded or not: the page's own, not
+            // a place, so nothing is recorded either.
+            Action::ToggleOffline => {
+                this.following_offline_open = !this.following_offline_open;
+                cx.notify();
             }
         })
     }
@@ -280,7 +289,7 @@ impl RootView {
     /// Look at a channel's past broadcasts.
     ///
     /// Takes over the browse page the way a category does, and gets there
-    /// from the watch page as Browse does, the panes playing on beside it
+    /// from the watch page as Browse does, which stops what plays at home
     /// (`go_browse`). One step on the trail.
     pub(super) fn open_channel_page(
         &mut self,

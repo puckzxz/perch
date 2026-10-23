@@ -52,8 +52,9 @@
 //! keys are [`CONTEXT_POPOUT`]'s: `Space`, `M`, the arrows, `P` to bring it
 //! back and `Ctrl+W` to close it, and nothing of the watch page's — `Esc`
 //! least of all, since a stray press there would move video between
-//! windows. `P` pops the active pane out or brings it back, on the watch
-//! page and beside the browse page alike.
+//! windows. `P` pops the active pane out or brings it back, on either page:
+//! on the browse page the only panes left are in windows of their own, and
+//! it brings one back with the watch page.
 
 use gpui::{actions, Action, App, KeyBinding};
 
@@ -295,16 +296,15 @@ fn bindings() -> Vec<KeyBinding> {
         // one along, or the one before.
         KeyBinding::new("tab", NextPane, Some(&watch)),
         KeyBinding::new("shift-tab", PreviousPane, Some(&watch)),
-        // Out into a window of its own, and back: the active pane, on the
-        // watch page and beside the browse page, and the pane itself in its
-        // window. Not `escape` in the pop-out,
+        // Out into a window of its own, and back: the active pane on the
+        // watch page, a popped one back from the browse page, and the pane
+        // itself in its window. Not `escape` in the pop-out,
         // which a stray press would turn into video jumping between windows.
         KeyBinding::new("p", TogglePopOut, Some(&watch)),
         KeyBinding::new("p", TogglePopOut, Some(&browse)),
         // The active pane given the whole page, or every pane back. The
-        // watch page's alone: beside the browse page the panes share the
-        // window with it, and a pane in a window of its own is not on the
-        // page to fill it.
+        // watch page's alone: the browse page draws no pane, and a pane in a
+        // window of its own is not on the page to fill it.
         KeyBinding::new("z", ToggleMaximize, Some(&watch)),
         // The active pane one place along the order, as a drag of its header
         // swaps it. Shift and an arrow rather than `[` and `]`, which need
@@ -453,7 +453,7 @@ pub const SHORTCUTS: [(&[&str], &str, &str); 22] = [
     (
         &["escape"],
         "Esc",
-        "Browse beside what is playing, or back to watching",
+        "Leave fullscreen, or stop watching and browse",
     ),
     (
         &["alt-left"],
@@ -529,11 +529,10 @@ hints! {
     Fullscreen => "f" as ToggleFullscreen,
     // A pane header's ×, as `Ctrl+W` — `⌘W` on a Mac, from the sheet's label.
     Close => "secondary-w" as ClosePane,
-    // A pane header's pop-out and Bring back, and the pop-out's Bring back,
-    // on its bar.
+    // More's pop-out, and the pop-out's Bring back, on its bar.
     PopOut => "p" as TogglePopOut,
-    // A pane's Browse, on its bar or its header, while the browse page is
-    // away: `Esc` on the watch page brings it up as the press does.
+    // The title bar's Browse, on the watch page: `Esc` there brings the
+    // browse page up as the press does, once it is not leaving fullscreen.
     Browse => "escape" as GoBrowse,
 }
 
@@ -787,10 +786,10 @@ mod tests {
         }
     }
 
-    /// `P` answers in all three places it means something: the active pane,
-    /// on the watch page and beside the browse page, and the pop-out's own
-    /// pane. A `p` typed into the search box, which is over both pages, is
-    /// the box's, and nothing behind a modal hears it.
+    /// `P` answers in all three places it means something: the active pane
+    /// on the watch page, a popped one brought back from the browse page,
+    /// and the pop-out's own pane. A `p` typed into the search box, which is
+    /// over both pages, is the box's, and nothing behind a modal hears it.
     #[test]
     fn p_pops_out_from_either_page_and_the_pop_out() {
         use std::any::TypeId;

@@ -19,6 +19,7 @@ use gpui::{
     canvas, prelude::*, ClipboardItem, Context, DispatchPhase, IntoElement, MouseDownEvent, Window,
 };
 
+use super::channel_menus::MenuAt;
 use super::RootView;
 use crate::theme;
 use crate::video_view::{self, ChatButton, VideoEvent};
@@ -159,17 +160,18 @@ impl RootView {
                 self.chat_menu = None;
                 self.reset_sizes(cx);
             }
-            // The Browse button on its bar, or its header's.
-            PaneAction::Browse => self.toggle_browse(key, cx),
             // A right-click on its picture or its header: its menu, about
             // the channel it plays, with its own rows (`channel_menus`).
-            PaneAction::Menu(position) => self.open_pane_menu(key, position, cx),
-            // `Past broadcasts` under its picture: the channel's page beside
-            // the panes, with this pane the one a card there plays in place
-            // of. The page comes up where the pointer was, so the rest of
-            // the press's run is heard by nothing (`run_guard`). A
-            // recording knows its channel's id, which spares the page a
-            // lookup, as a list that carries the channel does.
+            PaneAction::Menu(position) => self.open_pane_menu(key, MenuAt::Pointer(position), cx),
+            // The ⋯ in its header: the same menu, hung under the ⋯, or put
+            // away by a second press on it (`channel_menus`).
+            PaneAction::MenuButton(under) => self.toggle_pane_menu(key, under, cx),
+            // Its menu's `Past broadcasts`: the channel's page, on the browse
+            // page, which stops what plays at home (`go_browse`). The page
+            // comes up where the pointer was, so the rest of the press's run
+            // is heard by nothing (`run_guard`). A recording knows its
+            // channel's id, which spares the page a lookup, as a list that
+            // carries the channel does.
             PaneAction::ChannelPage => {
                 self.take_rest_of_run();
                 let slot = &self.slots[index];
@@ -189,9 +191,8 @@ impl RootView {
     /// Close every menu open over a pane: a pane's chat options menu,
     /// whichever menu is open on a player's bar, a chat row's copy menu
     /// (`chat::copy_menu`), and a chat's viewer card (`chat::viewer_card`).
-    /// Returns whether any was. For `Esc`, and for the browse page coming
-    /// up or going from a pane's Browse, whose button stops the press that a
-    /// menu's own dismiss would otherwise have heard.
+    /// Returns whether any was. For `Esc`, and for the title bar's Browse,
+    /// whose press changes the page under every menu.
     pub(super) fn close_menus(&mut self, cx: &mut Context<Self>) -> bool {
         let videos: Vec<_> = self
             .slots

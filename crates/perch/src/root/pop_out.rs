@@ -471,8 +471,10 @@ impl RootView {
     /// `P` in either window, and the window's own close. `window` is the
     /// main one, whatever asked.
     ///
-    /// To the grid, on the watch page or beside the browse page, whichever
-    /// is up: the main window draws every pane at home on either.
+    /// To somewhere it is drawn. On the browse page the main window draws
+    /// no pane at home, and `restage` stops one that would be there with
+    /// nothing drawing it; so a pane brought back then brings the watch page
+    /// up with it. Bring back is asking to see the pane, not to stop it.
     ///
     /// Chosen as it comes (`choose`), so while another pane has the grid,
     /// the pane brought back takes it rather than coming home to be drawn
@@ -484,6 +486,9 @@ impl RootView {
     pub(super) fn pop_in(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
         if !self.stage.is_popped(key) {
             return;
+        }
+        if !self.stage_drawn() {
+            self.go_watch(cx);
         }
         self.come_home(key, cx);
         self.choose(key, window, cx);

@@ -6,9 +6,11 @@
 //! (`palette::suggestions`), hung under the box in the palette's rows, with
 //! asking Twitch as the first of them. And from Twitch, on `Enter`, as it
 //! always has, or by itself once the typing pauses ([`SEARCH_SETTLE`]), so a
-//! name nobody follows needs no more than to be typed. A run of typing that
-//! asks Twitch more than once is one step on the trail: a search already up
-//! is asked again in place ([`search_settled`](RootView::search_settled)).
+//! name nobody follows needs no more than to be typed — but not by itself
+//! on the watch page while something plays, since the results' page stops
+//! it. A run of typing that asks Twitch more than once is one step on the
+//! trail: a search already up is asked again in place
+//! ([`search_settled`](RootView::search_settled)).
 //!
 //! The suggestions are up while the box has the keyboard, something is
 //! typed in it and nothing has put them away — `Esc`, a pick, `Enter`. They
@@ -78,12 +80,20 @@ impl RootView {
     /// too short to be worth it or its results are what the page shows
     /// already. Results up already are asked again in place, as a refresh
     /// asks (`ask_search`), so a run of typing is one step on the trail; the
-    /// first ask is a step of its own, and brings the browse page up beside
-    /// what plays, as `Enter` does (`run_search`).
+    /// first ask is a step of its own, and brings the browse page up, as
+    /// `Enter` does (`run_search`).
+    ///
+    /// Not on the watch page while something plays there: the browse page
+    /// coming up stops it (`go_browse`), and a pause in the typing is not
+    /// somebody asking for that. There the box suggests what Perch knows,
+    /// and Twitch is asked on `Enter`, or a press on the row that says so.
     fn search_settled(&mut self, cx: &mut Context<Self>) {
         self.search_settle = None;
         let query = self.search.read(cx).value().trim().to_string();
         if query.chars().count() < SEARCH_SETTLE_MIN_LETTERS {
+            return;
+        }
+        if self.page == Page::Watch && self.leaving_stops_panes() {
             return;
         }
         let shown = self.discovery.search.as_ref().map(|results| &results.query);

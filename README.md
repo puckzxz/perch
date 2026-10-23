@@ -110,8 +110,8 @@ not holding the mouse.
 | `Shift+→` | Move this pane one place later, swapping it with the one after |
 | `Z` | Give this pane the whole window, chat and all, or show every pane again |
 | `Ctrl+W` | Close this pane |
-| `P` | Pop this pane out into a window of its own, on top of other apps, or bring it back — beside the browse page too (Windows) |
-| `Esc` | Browse beside what is playing, or back to watching — after showing every pane again, if one has the window |
+| `P` | Pop this pane out into a window of its own, on top of other apps, or bring it back — from the browse page too (Windows) |
+| `Esc` | Leave fullscreen, or stop watching and browse — after showing every pane again, if one has the window |
 | `Alt+←` | Back to where you were before — the mouse's back button too |
 | `Alt+→` | Forward again — the mouse's forward button too |
 | `Ctrl+F` | Search, from either page |
@@ -141,17 +141,18 @@ or `Shift+←`, `Shift+→` or a drag of its header has moved it.
 Pause, mute and volume never bring a header up over the picture. The keys
 stand aside while the cursor is in a text box — all but `Ctrl+K`, `Ctrl+,` and
 `Ctrl+R`, which type nothing, so the palette is one keystroke away straight
-after a search. A search typed on the watch page brings the browse page up
-beside what is playing for the results, the way `Esc` does. The same list is in the settings sheet. Double-clicking the
+after a search. A search typed on the watch page waits for `Enter`, or a
+click on its *Search Twitch* row, since its results come up on the browse
+page, which stops what is playing. The same list is in the settings sheet. Double-clicking the
 video is fullscreen too. Holding `Alt` while turning the mouse wheel over a
 picture changes that stream's volume, a step of 5% per click of the wheel, as
 `↑` and `↓` do — the wheel alone never touches the sound, so scrolling past a
 video cannot change it — and a middle click on a picture mutes or unmutes it,
-as `M` does. Both work in a pop-out too. `Esc` from the watch page brings the
-browse page up beside what is playing, on whichever tab, category or channel
-you left it on — and first lets go of a pane being dragged, then closes a
-pane's open menu, if there is one, and then shows every pane again, if one has
-the window. A playing pane's quality menu is in the palette as well:
+as `M` does. Both work in a pop-out too. `Esc` from the watch page stops
+what is playing and brings the browse page up, on whichever tab, category or
+channel you left it on — but first it lets go of a pane being dragged,
+closes a pane's open menu, if there is one, leaves fullscreen, and shows
+every pane again, if one has the window, each a press of its own. A playing pane's quality menu is in the palette as well:
 type `quality` and some of the pane's name, and `Choose quality for …` opens
 it. So are the two things under the bar's **More**, as `Copy link to …` and
 `Open … on twitch.tv`, and the maximize, as `Maximize …` and `Show all
@@ -159,7 +160,7 @@ panes`.
 
 The bar over a playing pane has play, the speaker — crossed out whenever the
 pane is silent, **Only this one** included — and the volume at the left, and at the
-right the quality, then chat, Browse (see below), fullscreen and **More**,
+right the quality, then chat, fullscreen and **More**,
 which has **Audio compressor**, **Playback speed** on a recording, **Pop
 out** on Windows, **Pin to the rail**, **Open on twitch.tv** and **Copy
 link**. **Pin to the rail** pins the pane's channel to the top of the
@@ -179,10 +180,9 @@ nothing to press.
 Back and forward work the way they do in a browser. `Alt+←` and `Alt+→`, the
 arrows at the top-left of the browse page or the mouse's side buttons walk
 back through the tabs, categories, searches, channel pages and the watch page
-you have been on, and forward again. **Browse** in the title bar brings the
-browse page up beside what is playing, the way `Esc` does, and is lit while
-it is up; pressed again, or the × at the top-right of the browse page, it
-puts the page away. `Esc` and the `← Back` beside a search or a channel's
+you have been on, and forward again. **Browse** in the title bar stops what
+is playing and brings the browse page up, the way `Esc` does, and is lit
+while it is up (see "Browsing"). `Esc` and the `← Back` beside a search or a channel's
 name still step out of whatever has taken the page over, and back takes that
 back too. The watch page drops out of the way once nothing is playing on it.
 A list you go back to is asked for again if it has been replaced since, and
@@ -192,10 +192,10 @@ the app.
 
 Every pane has an × in its header, a lone one included, and like the bar's
 icons it names its key, `Ctrl+W`; closing the last pane goes back to the
-browse page. On Windows a playing pane's header also has the icon that pops
-it out into a window of its own, and brings it back, `P` (see below). A
-header sitting on chat also has the chat options (see [Chat](#chat)); a
-header under the picture leaves them to the bar at the top of the chat.
+browse page. Before it is a ⋯, which opens the pane's menu, the one its
+right button opens (see "Right-click a channel"): **Pin to the rail**,
+**Past broadcasts**, **Pop out** on Windows, and the rest. A header sitting
+on chat also has the chat options (see [Chat](#chat)).
 
 A pane's header says `muted` or `paused` when either is true, so a channel
 that opens silent says so without the pointer having to be on the video. With
@@ -222,8 +222,8 @@ chat options, puts both back to what the layout would have derived.
 Hiding chat is remembered per channel, the way volume is — a channel you watch
 for the game stays that way without saying anything about the next one. Beside
 the video, hiding chat gives the video its column, all of it: there is no
-strip left above the picture. The header — the name, the numbers and the × —
-comes over the top of the picture while the pointer is on it, on the same dark
+strip left above the picture. The header — the name, the numbers, the ⋯ and
+the × — comes over the top of the picture while the pointer is on it, on the same dark
 band as the controls at the bottom, and stays up over a pane with no picture
 to cover, one starting, offline or ended, so that pane still says whose it is
 and can be closed; with no picture there is no bar either, so that header has
@@ -233,25 +233,17 @@ and does not move when `C` brings chat back. The space chat had says
 `Chat hidden · press C`. A past broadcast with no chat to replay lays out the
 same way.
 
-Each pane's header says who is on, how many are watching, how long they have
-been going, and what they are doing — the stream's title and its game, on a line
-of their own. Both are cut to fit; rest the pointer on them for the whole thing.
-A live pane has a red `LIVE` badge after its name, so a glance down the page
-says which panes are live; a recording says `replay` there instead.
-
-Beside its chat, a picture in a window of ordinary shape leaves black above
-and below it — one stream at 1920 by 1080, or at 4K maximized — so there the
-picture sits at the top of its column and the header takes the space under
-it, where it has the picture's width rather than chat's 340 pixels: the
-channel's picture (for one you follow or one recommended to you), its name
-at full size, how many are watching and for how long, the title on a line of
-its own and the game under it. At its end are **Pin**, or **Pinned**, which
-unpins (as **Pin to the rail** under **More** does); **Past broadcasts**,
-while you are signed in, which opens the channel's page beside the pane as it
-plays on (see "Browsing beside what plays"); the pop-out icon; and the ×. Chat is then headed by a bar of its own, with the chat options and a
-button that hides chat. A window wider than that, whose picture fills its
-column by height, has no room under the picture and keeps the header on
-chat.
+Each pane's header sits at the top of its chat, so it costs the picture
+nothing, and the picture is centred in the room beside it. It says who is
+on, at full size and on a line of its own, so a long name is not cut short:
+the channel's picture (for one you follow or one recommended to you), its
+name, then a red `LIVE` badge, how many are watching and for how long, then
+the stream's title and its game, each on a line of its own. The title is cut
+to fit; rest the pointer on it for the whole thing. The badge says at a
+glance down the page which panes are live; a recording says `replay` there
+instead, and gives its title and when it was. With chat hidden the header is
+shorter — the name, the badge and the numbers on one line, what is on under
+them — since it is over the picture.
 
 While a pane starts it shows the channel's latest picture — the one its card on
 the browse page shows, when a list there has the channel or the rail recommends
@@ -271,37 +263,35 @@ recording and the schedule need a sign-in to be found. Chat stays connected
 either way, which is where the goodnights are, until a recording takes the
 pane's place and brings its own chat replay.
 
-### Browsing beside what plays
+### Browsing
 
-Browse — the icon beside chat on a pane's bar, a frame with a panel down its
-left half — or `Esc` brings the browse page up on the left of the window,
-half its width at most, and the panes move over to the right, each playing on
-as it was, with its sound: a pane there has its whole picture, with its
-header and chat under it, or beside it where there is room. Nothing restarts,
-and a pane keeps the quality it was playing while its picture is smaller. A
-pane with no picture, one whose stream is off or has ended, has no bar, so
-its header offers the same icon. Browse again puts the page away and gives
-the panes the window back, and so does `Esc` from a tab; from a category, a
-search or a channel's page, `Esc` first steps out of it. With nothing
-playing, the browse page has the whole window.
+**Browse** in the title bar, or `Esc` on the watch page, stops what is
+playing and brings the browse page up with the whole window to itself: if
+you are looking for another stream, the one on ends. A pane popped out into
+a window of its own plays on (see "A pane in a window of its own"). The
+other ways to the browse page from a stream do the same — a search's
+results, **Past broadcasts** on a pane's menu, a channel's name in the rail
+while it is offline — and a viewer card's **Channel page** asks first while
+something is playing: **Stop streams and open?**, which a second press
+within a few seconds goes ahead with. Browse's tooltip says when it would
+stop something.
 
-A click on a card, a rail row or a go-live notice plays that channel in place
-of the pane you are on — the one the keys talk to, the last you pointed at or
-clicked — keeping its place in the grid, and goes back to watching; with
-nothing playing it simply opens. A channel already open in a pane is chosen
-there instead. Nothing else closes: the other panes play on. **+ Add** on a
-card, or `+` on a rail row, opens it beside the others instead, and at four
-panes says `Already watching 4 streams`. The palette's rows work the same
-way, and so does a recording's card, whose pane takes the place of the one
-you are on.
+A click on a card plays that channel, and so does a click on a live rail
+row or a go-live notice — on the watch page, in place of the pane you are
+on: the one the keys talk to, the last you pointed at or clicked, which
+keeps its place in the grid. A channel already open in a pane is chosen
+there instead. `+` on a rail row, or `+ Add` on a go-live notice, opens it
+beside the others instead, and at four panes says `Already watching 4
+streams`. The palette's rows work the same way, and so does a recording's
+card.
 
-Beside the panes is the whole browse page — its tabs, search results,
-categories and channel pages — so **Past broadcasts** under a pane's picture,
-or a viewer card's **Channel page**, opens that channel's page there while
-the pane plays on. Bringing the page up or putting it away closes any menu
-open on a pane. While it is up the keys are the page's: `Esc` steps out, and
-a pane's own keys — `Space`, `M` and the rest — wait until you are back to
-watching, all but `P`, which pops the pane you are on out or back.
+While the browse page is up the keys are its own: `Esc` steps out of a
+category, a search or a channel's page, and `P` brings a pane popped out
+into a window of its own back to the watch page.
+
+For a week of October 2026 the browse page opened on the left, beside the
+streams, which went on playing at half the width; it moved too much, and
+went back to being a page of its own.
 
 ### Right-click a channel
 
@@ -314,8 +304,10 @@ link**. On a name in chat it also has **Copy name**; the rest of the line
 keeps its own copy menu (see [Chat](#chat)). A click still does what it
 always did; the menu is where everything else is.
 
-A pane's own menu — the right button on its picture or its header — is
-about the channel it plays, and has what only two panes or more need:
+A pane's own menu — the right button on its picture or its header, or the
+⋯ in its header, which hangs it under the ⋯ and puts it away when pressed
+again — is about the channel it plays, and has what only two panes or more
+need:
 **Only this one**, which silences every other pane without touching
 anyone's volume, and once one pane alone is heard every pane's menu says
 **Hear all again** instead, until you change a silenced pane's volume;
@@ -392,9 +384,7 @@ too.
 
 Adding another pane, closing or popping out the one maximized, being left
 with a single pane, or a pane in its own window coming back because its
-stream stopped shows them all again. Browsing keeps the maximize: beside
-the browse page is the pane that has the window, while the others play on
-unseen. The pane given the window has its quality chosen for its new
+stream stopped shows them all again. The pane given the window has its quality chosen for its new
 size, moving up to a sharper rendition with no black where one fits; the
 others keep theirs, and the grid coming back lowers none.
 
@@ -406,11 +396,12 @@ while the rest of Perch goes behind them. Only its picture goes: its place,
 its number and its chat stay in the main window, whose cell says `Playing in
 its own window` and offers **Bring back**.
 
-A pane goes out from the pop-out icon in its header, **Pop out** under the
-bar's **More**, `P` — beside the browse page too — or the palette's `Pop out
-…`. A pane comes back from **Bring back** on its pop-out's
-bar or on its cell, the same icon in its header, `P` in either window, or the
-palette's `Bring … back`.
+A pane goes out from **Pop out** on its menu — its header's ⋯ or the right
+button — or under the bar's **More**, `P`, or the palette's `Pop out …`. A
+pane comes back from **Bring back** on its pop-out's bar or on its cell,
+**Bring back** on its menu, `P` in either window, or the palette's `Bring …
+back`. A popped-out pane plays on while you browse, where the rest stop;
+bringing it back from the browse page brings the watch page up with it.
 
 The pop-out is dragged by its picture and resized from its edges. Its bar
 has play, the volume, a recording's seek row or a live stream's timeline,
@@ -564,7 +555,9 @@ badges they wear, in words, and up to twenty of their messages in this chat,
 newest last, drawn as the chat draws them. At its foot, **Watch**, while they
 are live and there is room for another stream, adds them beside what is
 playing; **Channel page** opens their past broadcasts and schedule in Perch,
-on the browse page beside what is playing; and **twitch.tv** opens their
+on the browse page — which stops what is playing, so while something is it
+first asks **Stop streams and open?**, and a second press within a few
+seconds goes; and **twitch.tv** opens their
 channel in your browser. Signed out, nobody new is looked up, so a card has only their names and messages
 unless you opened theirs signed in since Perch started; and **Channel
 page**, which needs you signed in, is not offered. A click anywhere else, the
@@ -627,8 +620,10 @@ recorded; the ones you never watched follow by name. Each says when that
 channel was last live beside its name — "Live 3 hours ago", "Live yesterday",
 "Live 2 weeks ago" — and a name opens the channel's page: its past
 broadcasts, and a control for its chat, which connects whether or not anyone
-is streaming. Each heading but Recommended's carries how many are under it:
-*Pinned · 4*, *Live now · 23*, *Continue watching · 5*, *Offline · 103*.
+is streaming. Each group is a shelf under a heading of its own, further apart
+than the rows inside one. Everyone offline starts folded away under their
+heading and how many there are — *Offline 103* — and a click on it unfolds
+them, or folds them again, until Perch closes, as in the rail.
 
 When each channel was last live comes from the same unpublished Twitch query
 the recommendations use (see "The rail"), asked without your sign-in, a
@@ -676,12 +671,14 @@ pane starts up to two minutes after the stream does.
 
 Cards are as wide as the window allows: the grid takes the room it has and
 divides it, rather than leaving whatever a fixed width could not use as a gutter
-down one side. Viewer count and uptime sit on the thumbnail; the name, title and
-game are underneath, each on one line and cut with an ellipsis where it does not
-fit. Resting the pointer on one shows the whole of it.
+down one side, with no card narrower than 320 pixels — seven across a 2560
+window, five across a 1920 one. Viewer count and uptime sit on the
+thumbnail; under it are two lines, the name and the game on the first and
+the title on the second, each cut with an ellipsis where it does not fit.
+Resting the pointer on one shows the whole of it.
 
-Whatever is playing while you browse keeps playing beside the page, with its
-sound; see "Browsing beside what plays".
+Browsing stops what was playing, but for a pane popped out into a window of
+its own; see "Browsing".
 
 ### The search box
 
@@ -691,9 +688,10 @@ recordings you have watched, a channel by its exact name, a pasted twitch.tv
 link — by the same few-letters-of-a-name match the palette uses; a recording
 answers to its channel's name or to a word of its title. Its first row asks
 Twitch, which is what `Enter` does unless the arrows have chosen another
-row. And once you stop typing for a moment, it asks Twitch by itself: the
-results come up on the browse page, beside what is playing, and refine in
-place as you go on typing, as one step back. A click on a row opens it the
+row. And on the browse page, once you stop typing for a moment, it asks
+Twitch by itself: the results come up there, and refine in place as you go
+on typing, as one step back. On the watch page it waits for `Enter`, since
+the results' page stops what is playing. A click on a row opens it the
 way the palette does — a channel plays in place of the pane you are on —
 and `Esc` puts the list away, leaving what you typed. Following's own filter
 box went with this: the search box is the one place to type a name.

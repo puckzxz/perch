@@ -12,8 +12,7 @@
 //! hidden — with a tooltip that says what a press does, and names the key
 //! that does the same where there is one (`keys::Hint`), so the bar teaches
 //! the keys rather than standing in for them. More has no key, so its
-//! tooltip is its name; Browse names `Esc`, which brings the browse page
-//! up, and once it is up says what a press does.
+//! tooltip is its name.
 //! The still chat glyph of a recording with no chat replay says why there
 //! is nothing to press. The quality pill is words, saying what plays, with
 //! no tooltip and no key; the palette's `Choose quality for …` is its
@@ -70,19 +69,15 @@
 //! length on the seek row, `1.5x`, before any way back to live
 //! (`VideoView::speed_tag`). On a pane it is an on-video pill whose press
 //! opens the speed menu or closes it, as the quality pill does its own, and
-//! like Browse it acts on the press in the capture phase and stops it there,
-//! or the menus' press outside would close the menu for the click to open
-//! it again. It takes room from the seek track, as the way back does, so
+//! it acts on the press in the capture phase and stops it there, or the
+//! menus' press outside would close the menu for the click to open it
+//! again. It takes room from the seek track, as the way back does, so
 //! [`fit`] gives nothing up for it either. A pop-out has no menus, so there
 //! it is only a label.
 //!
-//! Browse brings the browse page up beside the panes, or puts it away
-//! (`RootView::toggle_browse`). It acts on the press, not the click, unlike
-//! its neighbours, in the capture phase, and stops it there
-//! ([`browse_button`]): no menu's press outside hears it — the root closes
-//! every menu over a pane as the page comes or goes, since the pane each
-//! hangs from moves — and only the first press of a run counts, since the
-//! panes move under the pointer and the root takes the rest of the run.
+//! Browse is not here. It had the cluster's fourth square while the browse
+//! page docked beside the panes, with this pane the one a card replaced;
+//! since browsing stops what plays it is the title bar's alone.
 //!
 //! What only two panes or more need — a pane given the window, hearing one
 //! alone, moving one — is not here but on a pane's right-click menu
@@ -113,12 +108,12 @@ use crate::stage::Place;
 use crate::theme;
 use crate::watch::PaneAction;
 
-/// The icon buttons in a pane's right-hand cluster: chat, Browse, fullscreen
-/// and More. `button_row` lays them out as an array this long, so a control
+/// The icon buttons in a pane's right-hand cluster: chat, fullscreen and
+/// More. `button_row` lays them out as an array this long, so a control
 /// cannot join the cluster without this count changing with it, and with it
 /// what [`fit`] leaves room for. The quality pill is not one of them: it is
 /// words, and it folds.
-pub(super) const RIGHT_BUTTONS: usize = 4;
+pub(super) const RIGHT_BUTTONS: usize = 3;
 
 /// The same for a pop-out's cluster: Bring back and Close.
 pub(super) const POP_OUT_BUTTONS: usize = 2;
@@ -131,7 +126,7 @@ pub(super) struct Cluster {
     pill: bool,
 }
 
-/// A pane's: the quality pill, then chat, Browse, fullscreen and More.
+/// A pane's: the quality pill, then chat, fullscreen and More.
 const PANE: Cluster = Cluster {
     buttons: RIGHT_BUTTONS,
     pill: true,
@@ -278,7 +273,7 @@ impl VideoView {
     /// that lifts under the pointer, with a tooltip, whose press opens the
     /// speeds as More's speed row does, or closes them, as the quality pill
     /// toggles its menu. On the press, in the capture phase, and the press
-    /// stops here, as Browse's does (see the module): the seek row paints
+    /// stops here (see the module): the seek row paints
     /// before the menus' anchor, so the anchor's press outside, which would
     /// close the menu for the click to open it again, never hears it. Only
     /// the first press of a run, so a quick second press is not a second
@@ -493,8 +488,8 @@ impl VideoView {
             .child(right)
     }
 
-    /// A pane's right-hand cluster: the quality pill, chat, Browse,
-    /// fullscreen and More, and the one anchor every menu opens from.
+    /// A pane's right-hand cluster: the quality pill, chat, fullscreen and
+    /// More, and the one anchor every menu opens from.
     fn pane_cluster(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let window_hovered = window.is_window_hovered();
 
@@ -603,15 +598,11 @@ impl VideoView {
             more.into_any_element()
         };
 
-        let buttons: [AnyElement; RIGHT_BUTTONS] = [
-            chat,
-            // Beside chat, the other thing about what is on beside the
-            // picture. Pop out is not here: it is the header's and More's,
-            // and this cluster never drops a button.
-            browse_button(self.browsing, window, cx).into_any_element(),
-            fullscreen.into_any_element(),
-            more,
-        ];
+        // Pop out is not here: it is More's and the pane menu's, and this
+        // cluster never drops a button. Nor is Browse, which is the title
+        // bar's alone since browsing stops what plays: a pane's own would
+        // say it was about this pane.
+        let buttons: [AnyElement; RIGHT_BUTTONS] = [chat, fullscreen.into_any_element(), more];
 
         // The right-hand cluster, and the one anchor every menu opens from.
         // Every control that joins the bar's right-hand end joins this
@@ -661,39 +652,6 @@ fn back_to_live(window: &Window, cx: &mut Context<VideoView>) -> impl IntoElemen
             this.close_menu(cx);
             cx.emit(VideoEvent::Pane(PaneAction::BackToLive));
         }))
-}
-
-/// Browse: brings the browse page up beside the panes, with this pane the
-/// one a card plays in place of, or puts it away (`PaneAction::Browse`). On
-/// the press, in the capture phase, and the press stops here; see the module
-/// for why. Only the first press of a run: the panes move as the browse
-/// page comes, and the root takes the rest of the run
-/// (`RootView::take_rest_of_run`). Its tooltip says what a press does, with
-/// `open` the browse page up or not (`VideoView::browsing`), and names
-/// `Esc` while the page is away, which brings it up as a press does; up,
-/// `Esc` first steps out of a category, a search or a channel's page, so
-/// the way back names no key. Its id follows that too, as the
-/// chat options icon's follows its menu: the press is stopped before gpui's
-/// own tooltip listener hears it, which is registered after the element's
-/// (div.rs, `paint_mouse_listeners`), so a tooltip up over the button would
-/// otherwise stay until the pointer left; a new id drops it
-/// (`controls::tip`).
-fn browse_button(open: bool, window: &Window, cx: &mut Context<VideoView>) -> Stateful<Div> {
-    let (id, tip) = if open {
-        ("bar-browse-open", "Back to watching".to_string())
-    } else {
-        ("bar-browse", Hint::Browse.tooltip("Browse what else is on"))
-    };
-    bar_icon(id, Icon::Browse, Variant::OnVideo, tip, window).capture_any_mouse_down(cx.listener(
-        |this, event: &MouseDownEvent, _window, cx| {
-            if event.button != MouseButton::Left || event.click_count > 1 {
-                return;
-            }
-            cx.stop_propagation();
-            this.close_menu(cx);
-            cx.emit(VideoEvent::Pane(PaneAction::Browse));
-        },
-    ))
 }
 
 /// A pop-out's right-hand cluster: the way back, then the way out. Both go

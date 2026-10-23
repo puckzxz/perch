@@ -21,7 +21,7 @@
 
 use gpui::{App, Context, Entity, FocusHandle, Window};
 
-use super::{Page, RootView};
+use super::RootView;
 use crate::motion;
 use crate::stage::Place;
 use crate::video_view::VideoView;
@@ -36,8 +36,10 @@ pub(super) fn pane_keys(slots: &[Slot]) -> Vec<&str> {
 
 impl RootView {
     /// Where the pane `key` names is drawn: its own window if it is popped,
-    /// and otherwise the grid, on the watch page or beside the browse page
-    /// (`stage_drawn`) — or nowhere while another pane is maximized.
+    /// and otherwise the grid on the watch page (`stage_drawn`) — or nowhere
+    /// while another pane is maximized, or for the moment between the
+    /// browse page coming up and a pane at home stopping
+    /// (`retire_homeless`).
     pub(super) fn place_of(&self, key: &str) -> Place {
         self.stage.place(self.stage_drawn(), key)
     }
@@ -108,10 +110,16 @@ impl RootView {
     /// of which panes there are, of their states, of the page, of what is
     /// popped or of what is maximized ends here.
     ///
-    /// No pane is ever stopped here for having nowhere to be drawn: the
-    /// main window draws every pane at home, on the watch page or beside the
-    /// browse page (`stage_drawn`). Leaving the watch page used to stop
-    /// them; browsing now docks beside them instead.
+    /// And so does a pane coming home to a main window that draws none
+    /// there: on the browse page. It is stopped, as it would have been had
+    /// it been home when the page was left ([`retire_homeless`](Self::retire_homeless))
+    /// — kept, a player would play its sound with no window drawing it, and
+    /// a stopped live pane could start again by itself where nobody sees
+    /// it. Deferred, because whoever called this may go on to use the index
+    /// of the pane it moved, and stopping a pane takes it out of `slots`.
+    /// Bring back never gets here that way: it brings the watch page up
+    /// first (`pop_in`), and so does a recording swapped in for a popped
+    /// pane (`replace_slot`).
     ///
     /// A maximize that ends here rather than through `maximize_changed`
     /// brings back panes `sync_quality` left alone while they were put away,
@@ -148,6 +156,12 @@ impl RootView {
         for (_, popped) in gone {
             self.let_pop_out_go(popped, cx);
         }
+        if self.homeless() {
+            let root = cx.entity().downgrade();
+            cx.defer(move |cx| {
+                let _ = root.update(cx, |this, cx| this.retire_homeless(cx));
+            });
+        }
         if was_maximized && self.stage.maximized().is_none() {
             let root = cx.entity().downgrade();
             let main = self.main_window;
@@ -164,9 +178,39 @@ impl RootView {
         cx.notify();
     }
 
-    /// Tell every player where it is drawn, in which window's focus, and
-    /// whether the browse page is up beside it; see `VideoView::set_place`,
-    /// which does nothing for a player already told.
+    /// Whether a pane is at home in the main window with nothing there to
+    /// draw it: on the browse page, which draws no pane (`stage_drawn`).
+    fn homeless(&self) -> bool {
+        !self.stage_drawn() && self.leaving_stops_panes()
+    }
+
+    /// Whether leaving the watch page now would stop a pane: one at home,
+    /// rather than in a window of its own. [`homeless`](Self::homeless)'s
+    /// rule, asked before leaving, for a control that would rather ask first
+    /// (a viewer card's `Channel page`) or say so (the title bar's Browse),
+    /// and for a search typed on the watch page, which waits for `Enter`
+    /// rather than leaving by itself (`search_settled`).
+    pub(super) fn leaving_stops_panes(&self) -> bool {
+        self.slots
+            .iter()
+            .any(|slot| !self.stage.is_popped(&slot.key))
+    }
+
+    /// Stop every pane the main window holds at home with nothing there to
+    /// draw it, and leave the rest: the one rule for leaving the watch page
+    /// (`go_browse`) and for a pane that comes home to the browse page
+    /// (`restage`), so the two cannot drift apart. A pane in a window of its
+    /// own plays on: it is on screen, and was put there to be kept.
+    pub(super) fn retire_homeless(&mut self, cx: &mut Context<Self>) {
+        if !self.homeless() {
+            return;
+        }
+        let popped: Vec<String> = self.stage.iter().map(|(key, _)| key.to_string()).collect();
+        self.retire_slots(move |slot| popped.contains(&slot.key), cx);
+    }
+
+    /// Tell every player where it is drawn and in which window's focus; see
+    /// `VideoView::set_place`, which does nothing for a player already told.
     ///
     /// Each pane whose cell is off the screen — every one with no grid
     /// drawn, and with one every one but the maximized pane's while one is — also
@@ -193,7 +237,6 @@ impl RootView {
     /// back to watching sets it for that.
     fn sync_presentation(&mut self, cx: &mut Context<Self>) {
         let watching = self.stage_drawn();
-        let browsing = self.page == Page::Browse;
         let keys = pane_keys(&self.slots);
         let cells = self.stage.cells(&keys);
         let told: Vec<(Place, bool)> = keys
@@ -212,10 +255,7 @@ impl RootView {
                     .stage
                     .popped(&slot.key)
                     .map_or_else(|| self.focus.clone(), |popped| popped.focus.clone());
-                view.update(cx, |video, cx| {
-                    video.set_place(place, focus, cx);
-                    video.set_browsing(browsing, cx);
-                });
+                view.update(cx, |video, cx| video.set_place(place, focus, cx));
             }
             if !on_screen {
                 if watching {
@@ -405,12 +445,13 @@ mod tests {
         );
     }
 
-    /// Browsing never stops a pane: leaving the watch page docks the browse
-    /// page beside the panes (`RootView::docks_stage`) rather than putting
-    /// them away, so `go_browse` closes nothing, as it used to with the mini
-    /// player off. Read from the source, as the tests above read theirs.
+    /// Leaving the watch page and a pane coming home to the browse page stop
+    /// a pane by the one rule, `retire_homeless`: neither closes panes by a
+    /// rule of its own that could come to keep a pane the other would stop,
+    /// or the other way round. Read from the sources, as the tests above
+    /// read theirs.
     #[test]
-    fn browsing_stops_no_pane() {
+    fn panes_with_nowhere_to_be_drawn_stop_by_one_rule() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/root");
         // Spaces and line ends out, as above.
         let code = |name: &str| {
@@ -428,7 +469,16 @@ mod tests {
             .nth(1)
             .and_then(|rest| rest.split("pub(super)fn").next())
             .expect("go_browse is in streams.rs");
-        assert!(!go_browse.contains("retire_"), "{go_browse}");
+        assert!(go_browse.contains("retire_homeless(cx)"), "{go_browse}");
+        assert!(!go_browse.contains("retire_slots("), "{go_browse}");
+        let restage = code("panes.rs")
+            .split("fnrestage(")
+            .nth(1)
+            .and_then(|rest| rest.split("pub(super)fn").next())
+            .expect("restage is in panes.rs")
+            .to_string();
+        assert!(restage.contains("retire_homeless(cx)"), "{restage}");
+        assert!(!restage.contains("retire_slots("), "{restage}");
     }
 
     /// A pane comes home when there is nothing to play, and only then: a

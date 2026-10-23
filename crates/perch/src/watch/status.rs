@@ -205,13 +205,14 @@ const SCHEDULE_ROW: f32 = theme::LINE_TIGHT + theme::GAP;
 ///
 /// A card as wide as the box allows, up to the browse grid's widest, and
 /// narrowed to the box's height when that is what runs out first; never
-/// narrower than the grid's narrowest, below which its title stops being
-/// worth reading. Short of that, a pill, if the box has a row to spare.
+/// narrower than a card is worth drawing at, below which its title stops
+/// being worth reading (`browse::CARD_LEAST`). Short of that, a pill, if
+/// the box has a row to spare.
 pub(super) fn next_up_room(width: f32, height: f32) -> NextUpRoom {
     let across = (width - 2.0 * theme::PANEL_PAD).min(browse::CARD_MAX);
     let picture = height - theme::VIDEO_CARD_TEXT - theme::STATUS_ROOM;
     let card = across.min(picture * 16.0 / 9.0);
-    if card >= browse::CARD_MIN {
+    if card >= browse::CARD_LEAST {
         NextUpRoom::Card(card)
     } else if height >= theme::STATUS_ROOM + PILL_ROW {
         NextUpRoom::Line
@@ -722,7 +723,7 @@ mod tests {
         );
         match next_up_room(1280.0, 340.0) {
             NextUpRoom::Card(width) => assert!(
-                (browse::CARD_MIN..browse::CARD_MAX).contains(&width),
+                (browse::CARD_LEAST..browse::CARD_MAX).contains(&width),
                 "a shorter pane narrows the card to fit, got {width}"
             ),
             other => panic!("a 340px pane fits a card, got {other:?}"),

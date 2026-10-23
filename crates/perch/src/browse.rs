@@ -42,9 +42,22 @@ use crate::twitch::{ListKey, Request};
 /// a 300px card left 306px of nothing, one card short of a fifth column. The
 /// grid now takes the width it has and divides it, so the slack goes into the
 /// cards instead of beside them.
-pub(crate) const CARD_MIN: f32 = 260.0;
-/// And the widest, so a card on an ultrawide does not become a poster.
-pub(crate) const CARD_MAX: f32 = 380.0;
+///
+/// It was 260, nine cards across the user's 2560 px window, each with three
+/// lines under it: Following, a page of shelves of them, read as clutter
+/// (October 2026). At 320 the same window holds seven, a 1920 one five.
+pub(crate) const CARD_MIN: f32 = 320.0;
+/// And the widest, so a card on an ultrawide does not become a poster. Wide
+/// enough that a narrow window's two or three columns still fill their row:
+/// with `n` columns a card can be as wide as `(n + 1)(min + gap) / n - gap`
+/// before the row takes another, which for two is 489 at [`CARD_MIN`]. An
+/// ultrawide's row has so many columns it never comes near this.
+pub(crate) const CARD_MAX: f32 = 490.0;
+/// The narrowest a card is worth drawing at all, its title still worth
+/// reading: a stopped pane offers its next recording as a card down to this
+/// (`watch::status`), where the grid, for its density, drops a column
+/// sooner ([`CARD_MIN`]).
+pub(crate) const CARD_LEAST: f32 = 260.0;
 const THUMBNAIL_WIDTH: u32 = 440;
 const THUMBNAIL_HEIGHT: u32 = 248;
 
@@ -78,11 +91,17 @@ const SEARCH_CATEGORY_LIMIT: usize = 12;
 /// Pure, and tested: the shape of a page is the kind of thing that looks right
 /// at the one window size you happen to have open and wrong at every other.
 /// `gap` is the space *between* cards, so N cards have N-1 of them.
+///
+/// A whole number of pixels, rounded down, so a row never comes to more
+/// than it has: the layout adds the cards up in `f32`, and seven cards of
+/// 2412 / 7 px and their gaps came to a hair over the 2520 px row they were
+/// cut from, so the seventh wrapped and every row left a column's gap at its
+/// end. The row keeps less than a pixel a card of slack instead.
 pub fn card_width(width: f32, min: f32, max: f32, gap: f32) -> f32 {
     let usable = (width - 2.0 * theme::PAGE_PAD).max(min);
     let columns = columns(width, min, gap);
     let each = (usable - (columns - 1) as f32 * gap) / columns as f32;
-    each.clamp(min, max)
+    each.floor().clamp(min, max)
 }
 
 /// How many cards of at least `min` fit side by side in `width`, `gap`
@@ -499,6 +518,9 @@ pub enum Action {
         login: String,
         pinned: bool,
     },
+    /// Unfold Following's offline names, or fold them away again: the
+    /// chevron on their heading. For the session, as the rail's are.
+    ToggleOffline,
 }
 
 impl Action {
@@ -716,9 +738,9 @@ pub(crate) enum CardOffers {
     Page { can_add: bool },
 }
 
-/// The line under a card's title: the game, and after it a note where the
-/// list has one — a recommendation says which channel led to it ("Like
-/// forsen"), as the rail's rows do.
+/// What follows a card's name on its first line: the game, and after it a
+/// note where the list has one — a recommendation says which channel led to
+/// it ("Like forsen"), as the rail's rows do.
 pub(crate) fn card_meta(game: &str, note: Option<&str>) -> String {
     match note.filter(|note| !note.is_empty()) {
         Some(note) if game.is_empty() => note.to_string(),
@@ -873,31 +895,73 @@ pub(crate) fn card<V: 'static>(
                     )
                 }),
         )
+        // Two lines under the picture: who and what game, then what they
+        // say they are doing. It was three — the name, the title and the
+        // game on lines of their own — and a page of cards read as a wall of
+        // text (October 2026).
         .child(
             div()
                 .flex()
                 .flex_col()
-                .gap(px(theme::GAP_TIGHT))
+                .gap(px(theme::GAP_WORD))
                 .p(px(theme::PANEL_PAD))
-                .child(
-                    one_line(("card-name", index), stream.display_name.clone())
-                        .text_size(px(theme::TEXT_BODY))
-                        .font_weight(theme::weight_title())
-                        .text_color(theme::text()),
-                )
+                .child(name_line(
+                    index,
+                    &stream.display_name,
+                    card_meta(&stream.game_name, note),
+                ))
                 .child(
                     one_line(("card-title", index), stream.title.clone())
                         .text_size(px(theme::TEXT_META))
                         .line_height(px(theme::LINE_TIGHT))
                         .text_color(theme::text_muted()),
-                )
-                .child(
-                    one_line(("card-game", index), card_meta(&stream.game_name, note))
-                        .text_size(px(theme::TEXT_META))
-                        .line_height(px(theme::LINE_TIGHT))
-                        .text_color(theme::text_dim()),
                 ),
         )
+}
+
+/// A card's first line: the channel's name, then what its list says beside
+/// it — the game, and a recommendation's reason ([`card_meta`]) — in the
+/// dimmest tier after a `·`, cut where the card runs out, with the whole of
+/// both a hover away. What follows the name gives way first: it takes what
+/// the name leaves (`flex_1`, from nothing), and the name gives way only
+/// once the line cannot hold the name alone.
+fn name_line(index: usize, name: &str, meta: String) -> Stateful<gpui::Div> {
+    let whole: Vec<SharedString> = [name.to_string(), meta.clone()]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .map(SharedString::from)
+        .collect();
+    div()
+        .id(("card-name", index))
+        .w_full()
+        .flex()
+        .flex_row()
+        .items_baseline()
+        .gap(px(theme::GAP_WORD))
+        .tooltip(controls::full_text(whole))
+        .child(
+            div()
+                .flex_shrink()
+                .min_w_0()
+                .text_ellipsis()
+                .line_clamp(1)
+                .text_size(px(theme::TEXT_BODY))
+                .font_weight(theme::weight_title())
+                .text_color(theme::text())
+                .child(SharedString::from(name.to_string())),
+        )
+        .when(!meta.is_empty(), |line| {
+            line.child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_ellipsis()
+                    .line_clamp(1)
+                    .text_size(px(theme::TEXT_META))
+                    .text_color(theme::text_dim())
+                    .child(SharedString::from(format!("· {meta}"))),
+            )
+        })
 }
 
 /// The scroll positions of the browse page's lists, one per list.
@@ -1053,11 +1117,18 @@ fn last_live_color(hovered: bool) -> gpui::Hsla {
     }
 }
 
-pub(crate) fn heading(text: impl Into<SharedString>) -> impl IntoElement {
+/// A shelf's heading on a browse list — Following's Pinned and Live now, a
+/// search's Live and Categories, Library's Continue watching — at a title's
+/// size in the text's own colour, so a page of shelves reads as a few groups
+/// rather than one long grid. It was a control label's size in the dimmest
+/// tier, a count after it on Following, until the user found that page
+/// cluttered (October 2026).
+pub(crate) fn heading(text: impl Into<SharedString>) -> gpui::Div {
     div()
-        .text_size(px(theme::TEXT_LABEL))
-        .font_weight(theme::weight_label())
-        .text_color(theme::text_dim())
+        .text_size(px(theme::TEXT_TITLE))
+        .font_weight(theme::weight_title())
+        .line_height(px(theme::LINE_BODY))
+        .text_color(theme::text())
         .child(text.into())
 }
 
@@ -2135,16 +2206,19 @@ mod tests {
 
     /// The row is filled, not merely fitted. A fixed 300px card at 1600px left
     /// 306px of gutter down one side — one card short of another column, and
-    /// the whole reason this is derived rather than declared.
+    /// the whole reason this is derived rather than declared. And never
+    /// overfilled, by so much as a fraction of a pixel, which wraps the last
+    /// card onto a row of its own; so less than a pixel a card is left over.
     #[test]
     fn cards_take_the_width_they_are_given() {
-        for width in [900.0, 1280.0, 1600.0, 2560.0, 3440.0] {
+        for width in [900.0, 1280.0, 1600.0, 1920.0, 2560.0, 3440.0, 3840.0] {
             let each = card_width(width, CARD_MIN, CARD_MAX, theme::GAP_SECTION);
+            assert_eq!(each, each.floor(), "{width}px gave a {each}px card");
             let columns = columns(width) as f32;
             let used = columns * each + (columns - 1.0) * theme::GAP_SECTION;
             let slack = (width - 2.0 * theme::PAGE_PAD) - used;
             assert!(
-                slack.abs() < 1.0,
+                (0.0..columns).contains(&slack),
                 "{width}px left {slack:.1}px of the row unused"
             );
         }

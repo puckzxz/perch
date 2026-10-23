@@ -425,11 +425,13 @@ impl RootView {
     /// A pane in a window of its own comes home first, as Bring back brings
     /// it (`pop_in`): its pop-out finds its player by the pane's key, which
     /// the new slot does not carry. So `LIVE` or a rewind pressed in a
-    /// pop-out closes that window and plays on in the main window, on the
-    /// watch page or beside the browse page, whichever is up. A maximized pane
-    /// stays maximized, under its new key (`Stage::rename`), and the new pane
-    /// is chosen (`choose`), so while another pane has the watch page, this
-    /// one takes it rather than playing where nobody can see it.
+    /// pop-out closes that window and plays on in the main window, which
+    /// comes up on the watch page if it was on the browse page — there the
+    /// pane would come home to nothing drawing it, and `restage` would stop
+    /// it along with the new slot. A maximized pane stays maximized, under
+    /// its new key (`Stage::rename`), and the new pane is chosen (`choose`),
+    /// so while another pane has the watch page, this one takes it rather
+    /// than playing where nobody can see it.
     fn replace_slot(
         &mut self,
         key: &str,
@@ -443,6 +445,9 @@ impl RootView {
             return;
         }
         if self.stage.is_popped(key) {
+            if !self.stage_drawn() {
+                self.go_watch(cx);
+            }
             self.come_home(key, cx);
         }
         let Some(index) = self.slot_index(key) else {
@@ -743,9 +748,6 @@ impl RootView {
                         .recording()
                         .map(|video| video.muted_segments.clone())
                         .unwrap_or_default(),
-                    // Whether the browse page is up, for the bar's Browse
-                    // button; kept up by `restage`.
-                    browsing: self.page == Page::Browse,
                     // Whether its channel is pinned, for More's pin row;
                     // kept up by `sync_pins`.
                     pinned: self.settings.is_pinned(&self.slots[index].channel),
@@ -1022,46 +1024,37 @@ impl RootView {
         cx.notify();
     }
 
-    /// Bring the browse page up.
+    /// Leave the watch page for the browse page, which has the whole window.
     ///
-    /// Nothing that plays stops or goes anywhere: the browse page docks on
-    /// the left of the window and the panes go on beside it, with their
-    /// sound and their pictures, in a grid of their own
-    /// (`RootView::docks_stage`) — smaller for the while, and at the
-    /// rendition chosen for the watch page, since `pane_height_for` measures
-    /// that grid whichever page is up, so browsing never trades away the
-    /// picture you go back to. It used to put them in a mini player in the
-    /// corner, or with that turned off, stop them. One step on the trail,
-    /// which `Alt+←` and `Esc` take back.
+    /// Every pane at home stops: somebody who goes to look for another
+    /// stream wants the one on to end, as the user put it in October 2026,
+    /// and a stream nobody can see is still decoding and still pulling
+    /// bytes. A pane in a window of its own plays on: it is somewhere else
+    /// on screen, and was put there to be kept. Which panes stop is
+    /// `retire_homeless`'s, the one rule for it. One step on the trail, which
+    /// `Alt+←` takes back while something is still playing to go back to.
+    ///
+    /// The browse page docked beside the panes for a week before this, and
+    /// before that the panes went to a mini player in its corner, or with
+    /// that switched off, which is how the user ran, stopped as they do now.
     pub(super) fn go_browse(&mut self, cx: &mut Context<Self>) {
         self.record(|this| {
             this.page = Page::Browse;
+            // A pane's chat options menu does not wait on another page to
+            // come back up with it.
+            this.chat_menu = None;
+            this.retire_homeless(cx);
             this.restage(cx);
         })
     }
 
-    /// A pane's Browse button: the browse page up beside the panes, with
-    /// the pane `key` names the one the keys talk to — the one a card plays
-    /// in place of — or, with the page up, put away again. One step on the
-    /// trail either way. The panes move under the pointer as the page comes
-    /// or goes, so the rest of the press's run is heard by nothing
-    /// (`run_guard`).
-    ///
-    /// Every menu open over a pane closes first: the press stopped at the
-    /// button, so a menu anchored in a pane drawn after it never heard it,
-    /// and the pane it hangs from is about to move.
-    pub(super) fn toggle_browse(&mut self, key: &str, cx: &mut Context<Self>) {
-        if self.page == Page::Watch {
-            self.active = Some(key.to_string());
-        }
-        self.toggle_browse_page(cx);
-    }
-
-    /// The browse page up beside the panes, or put away again: a pane's
-    /// Browse (`toggle_browse`), and the title bar's, which leaves the keys
-    /// with the pane they talk to already. With nothing open the browse page
-    /// is all there is, and this does nothing. See `toggle_browse` for the
-    /// menus and the rest of the run.
+    /// The title bar's Browse: the browse page up, which stops what plays
+    /// at home (`go_browse`), or, from the browse page while a pane plays
+    /// in a window of its own, back to watching, where that pane's cell is.
+    /// With nothing open the browse page is all there is, and this does
+    /// nothing. Every menu closes first, and the rest of the press's run is
+    /// heard by nothing (`run_guard`), since the page changes under the
+    /// pointer.
     pub(super) fn toggle_browse_page(&mut self, cx: &mut Context<Self>) {
         if self.slots.is_empty() {
             return;

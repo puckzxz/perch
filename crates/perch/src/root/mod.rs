@@ -92,8 +92,8 @@ use std::sync::Arc;
 use emotes::ImageCache;
 use futures::channel::mpsc::UnboundedReceiver;
 use gpui::{
-    div, prelude::*, px, AnyWindowHandle, Bounds, Context, Entity, FocusHandle, Pixels,
-    ScrollHandle, SharedString, Subscription, Task, WeakEntity, Window,
+    div, prelude::*, AnyWindowHandle, Bounds, Context, Entity, FocusHandle, Pixels, ScrollHandle,
+    SharedString, Subscription, Task, WeakEntity, Window,
 };
 use gpui_component::input::{InputEvent, InputState};
 use settings::history::{Forgotten, History};
@@ -318,6 +318,12 @@ pub(crate) struct RootView {
     /// list in the app, up to a thousand rows built every frame, and most
     /// evenings nobody is looking for someone who is not on.
     rail_offline_open: bool,
+    /// Whether Following's offline follows are unfolded, apart from the
+    /// rail's: for this session only, and folded at the start of each, for
+    /// the rail's reason. Unfolded by default they were a wall of a hundred
+    /// names under the cards, most of the page, which the user found the
+    /// clutter on it (October 2026).
+    following_offline_open: bool,
     /// Which live rail row the pointer is on, and whether its preview card
     /// is up yet: told by the rows' probes (`RootView::point_rail_row`),
     /// put away by a press on the rail, forgotten whenever the rail is not
@@ -464,6 +470,12 @@ pub(crate) struct RootView {
     /// one's arrival.
     channel_menu: Option<channel_menus::OpenChannelMenu>,
     channel_menus_opened: u64,
+    /// The pane whose menu a press has just put away, for the rest of that
+    /// press: a press on the pane's ⋯ while its menu is open closes it in
+    /// the capture phase, before the ⋯ hears it, and the ⋯ must not open it
+    /// straight again (`toggle_pane_menu`). Forgotten as each frame is
+    /// drawn, so it never outlives the press.
+    channel_menu_dismissed: Option<String>,
     /// Which row Enter would run. An index into the entries computed at render,
     /// clamped there — the list changes under it on every keystroke.
     palette_selected: usize,
@@ -638,6 +650,7 @@ impl RootView {
             rail_pointed: false,
             following_pointed: false,
             rail_offline_open: false,
+            following_offline_open: false,
             rail_preview: rail_preview::Preview::default(),
             recommended: Recommended::default(),
             last_live: LastLive::default(),
@@ -674,6 +687,7 @@ impl RootView {
             palette_open: false,
             channel_menu: None,
             channel_menus_opened: 0,
+            channel_menu_dismissed: None,
             palette_selected: 0,
             settings_panel: None,
             toasts: Vec::new(),
@@ -732,67 +746,29 @@ impl RootView {
         )
     }
 
-    /// Whether the browse page shares the window with the panes: up, with
-    /// a pane at home to draw beside it. Browsing never puts a pane away —
-    /// it docks on the left (`layout::panel_width`) and the panes go on
-    /// playing beside it, in their own grid, where a click on one is a click
-    /// on a pane. A pane in a window of its own is on screen already, so
-    /// panes that are all popped out leave the browse page the window.
-    pub(super) fn docks_stage(&self) -> bool {
-        self.page == Page::Browse
-            && self
-                .slots
-                .iter()
-                .any(|slot| !self.stage.is_popped(&slot.key))
-    }
-
-    /// Whether the main window draws its panes: on the watch page, and beside
-    /// the browse page while it shares the window with them
-    /// ([`docks_stage`](Self::docks_stage)). Where a pane is placed
-    /// (`stage::Stage::place`) follows this and nothing else.
+    /// Whether the main window draws its panes: on the watch page, and only
+    /// there. The browse page is a page of its own with the whole body, and
+    /// leaving the watch page for it stops every pane at home (`go_browse`,
+    /// `retire_homeless`), so while it is up the only panes left are in
+    /// windows of their own. Where a pane is placed (`stage::Stage::place`)
+    /// follows this and nothing else.
+    ///
+    /// The browse page docked beside the panes for a week of October 2026,
+    /// half the window wide, and the user found it weird: one press shrank
+    /// the stream to a third of its area and moved its chat under it. If
+    /// they are looking for another stream, they said, they want the one on
+    /// to end.
     pub(super) fn stage_drawn(&self) -> bool {
-        self.page == Page::Watch || self.docks_stage()
+        self.page == Page::Watch
     }
 
-    /// How wide the browse page is: the body, or its share while the panes
-    /// are beside it ([`layout::panel_width`]).
-    pub(super) fn browse_width(&self, window: &Window) -> f32 {
-        let body = self.body(window);
-        if self.docks_stage() {
-            layout::panel_width(body.width)
-        } else {
-            body.width
-        }
-    }
-
-    /// The room the panes have: the body, less the browse page while it
-    /// shares the window with them.
-    fn stage_body(&self, window: &Window) -> Body {
-        let body = self.body(window);
-        if self.docks_stage() {
-            body.beside(layout::panel_width(body.width))
-        } else {
-            body
-        }
-    }
-
-    /// The watch grid as it is drawn now: [`layout::Grid::of`] the room the
-    /// panes have ([`stage_body`](Self::stage_body)) and the
-    /// [`cells`](Self::cells). The one grid the page is drawn in and a
-    /// divider drag is measured against, so the two cannot disagree about a
-    /// pane's size. A pane's quality is chosen for the grid it has with the
-    /// browse page away, the watch page's ([`watch_grid`](Self::watch_grid)),
-    /// so browsing beside it never chooses for it.
+    /// The watch grid: [`layout::Grid::of`] the body and the
+    /// [`cells`](Self::cells). The one grid the page is drawn in, a divider
+    /// drag is measured against and a pane's quality is chosen for
+    /// (`pane_height_for`), so the three cannot disagree about a pane's size.
+    /// Worked out whichever page is up, so a pane in a window of its own
+    /// keeps the quality its cell would have while the browse page is.
     fn grid(&self, window: &Window) -> layout::Grid {
-        layout::Grid::of(self.stage_body(window), self.cells().len())
-    }
-
-    /// The grid the watch page draws, the browse page away: what a pane's
-    /// quality is chosen for (`pane_height_for`). The panes are smaller while
-    /// the browse page is beside them, and a quality chosen there would be
-    /// the first thing undone on the way back to watching; and since a
-    /// rendition only ever moves up, it would not be undone at all.
-    fn watch_grid(&self, window: &Window) -> layout::Grid {
         layout::Grid::of(self.body(window), self.cells().len())
     }
 
@@ -902,15 +878,14 @@ impl Render for RootView {
         // user happens to navigate back. See `browse::release_retired_previews`.
         browse::release_retired_previews(&self.cache, window, cx);
 
+        // A press that put a pane's menu away has been heard by everything
+        // it reached; see `channel_menu_dismissed`.
+        self.channel_menu_dismissed = None;
+
         // The browse page while it is up, and the panes while the main window
-        // draws them: the watch page, or beside the browse page
-        // (`docks_stage`). Two siblings rather than one page, so a pane is
-        // the same element whether browsing is beside it or not, and opening
-        // or closing the browse page remounts no player and replays no fade.
-        let browse = (self.page == Page::Browse).then(|| {
-            let width = self.docks_stage().then(|| self.browse_width(window));
-            (width, self.browse_page(window, cx).into_any_element())
-        });
+        // draws them, on the watch page (`stage_drawn`): one or the other.
+        let browse =
+            (self.page == Page::Browse).then(|| self.browse_page(window, cx).into_any_element());
         let stage = self
             .stage_drawn()
             .then(|| self.watch_page(window, cx).into_any_element());
@@ -1003,10 +978,9 @@ impl Render for RootView {
                     .flex_row()
                     .children(rail)
                     .child(
-                        // The browse page, alone or docked beside the panes,
-                        // and the panes. Neither column has an id, nor this
-                        // row, so a pane's element ids are its own whichever
-                        // of them is drawn (see `watch::page`).
+                        // The page: the browse page or the panes. Neither
+                        // column has an id, nor this row, so a pane's element
+                        // ids are its own (see `watch::page`).
                         div()
                             .relative()
                             .flex_1()
@@ -1015,30 +989,17 @@ impl Render for RootView {
                             .overflow_hidden()
                             .flex()
                             .flex_row()
-                            .children(browse.map(|(width, page)| {
-                                div()
-                                    .h_full()
-                                    .map(|column| match width {
-                                        Some(width) => column
-                                            .flex_none()
-                                            .w(px(width))
-                                            .border_r_1()
-                                            .border_color(theme::border()),
-                                        None => column.flex_1().min_w_0(),
-                                    })
-                                    .child(motion::arrive(
-                                        // The browse page fades in as it
-                                        // comes, alone or beside the panes,
-                                        // and not again as a tab, a category
-                                        // or a channel changes under it. No
-                                        // movement, only a fade: anything that
-                                        // slides drags the eye across the
-                                        // whole page. The panes beside it do
-                                        // not fade: they were there already.
-                                        "browse-page",
-                                        0.0,
-                                        div().size_full().child(page),
-                                    ))
+                            .children(browse.map(|page| {
+                                div().h_full().flex_1().min_w_0().child(motion::arrive(
+                                    // The browse page fades in as it comes,
+                                    // and not again as a tab, a category or a
+                                    // channel changes under it. No movement,
+                                    // only a fade: anything that slides drags
+                                    // the eye across the whole page.
+                                    "browse-page",
+                                    0.0,
+                                    div().size_full().child(page),
+                                ))
                             }))
                             .children(
                                 stage.map(|stage| div().flex_1().min_w_0().h_full().child(stage)),

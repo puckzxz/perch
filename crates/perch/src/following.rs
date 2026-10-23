@@ -10,15 +10,21 @@
 //! broadcast back up used to mean knowing to look in the history, a place
 //! you go rather than one you land on.
 //!
+//! Each is a shelf under a heading of its own (`browse::heading`), the
+//! shelves further apart than the rows within one (`theme::GAP_SHELF`), and
+//! Offline is folded under its heading and its count until it is asked for,
+//! as the rail's offline group is ([`offline_heading`]). Unfolded, a hundred
+//! names under the cards were most of the page; with nine small cards to a
+//! row, three lines under each, and a count on every heading in the
+//! dimmest grey, the user found the page cluttered (October 2026).
+//!
 //! Everything here is the app's already. The live cards are the ones every
 //! list of streams draws — a recommendation's saying which channel led to
 //! it, as its rail row does — the recordings are the Library tab's own cards
 //! (`history_page::entry_card`), and the offline names are the ones search
 //! results show, each saying when it was last live (`crate::last_live`).
 //! What this module adds is which of them, and in what order: [`continuing`],
-//! [`by_last_watched`] and [`split_pins`], pure and tested. Each heading
-//! carries how many are under it ([`counted`]), but Recommended's, which is
-//! a ranked handful rather than a count of anything yours. It had a filter
+//! [`by_last_watched`] and [`split_pins`], pure and tested. It had a filter
 //! box of its own over the page, until the title bar's search box came to
 //! answer from what Perch knows as you type (`root::search_box`).
 
@@ -26,10 +32,11 @@ use std::collections::HashMap;
 
 use chrono::Utc;
 use emotes::ImageCache;
-use gpui::{div, prelude::*, px, AnyElement, Context, ScrollHandle};
+use gpui::{div, prelude::*, px, svg, AnyElement, Context, ScrollHandle, SharedString};
 use settings::history::{History, Watched};
 use twitch_api::{Channel, LiveStream};
 
+use crate::assets::Icon;
 use crate::browse::{self, Action, SignIn, Tab};
 use crate::last_live::LastLive;
 use crate::recommended::{self, Suggestion};
@@ -65,6 +72,10 @@ pub struct Lists<'a> {
     /// When each offline follow was last live, as far as Twitch has said:
     /// the words beside its name.
     pub last_live: &'a LastLive,
+    /// Whether Offline is unfolded: for the session, from its heading
+    /// (`browse::Action::ToggleOffline`), folded at the start of each, as
+    /// the rail's is.
+    pub offline_open: bool,
     pub history: &'a History,
     pub sign_in: &'a SignIn,
     /// Whether a follows poll has answered yet, which is what tells an empty
@@ -72,16 +83,13 @@ pub struct Lists<'a> {
     pub follows_loaded: bool,
 }
 
-/// What Continue watching shows: the recordings, whether the history has
-/// more than fitted, and how many there are in all.
+/// What Continue watching shows: the recordings, and whether the history
+/// has more than fitted.
 #[derive(Debug, PartialEq)]
 pub struct Continuing<'a> {
     pub shown: Vec<&'a Watched>,
     /// More than the row holds, which is what offers "Show all".
     pub more: bool,
-    /// Every unfinished recording, shown or not: the count on the heading,
-    /// which says how much "Show all" has behind it.
-    pub total: usize,
 }
 
 /// The unfinished recordings, most recently watched first, at most `row` of
@@ -100,19 +108,8 @@ pub fn continuing(history: &History, row: usize) -> Continuing<'_> {
         .iter()
         .filter(|watched| history_page::unfinished(watched));
     let shown: Vec<&Watched> = unfinished.by_ref().take(cap).collect();
-    let rest = unfinished.count();
-    Continuing {
-        total: shown.len() + rest,
-        more: rest > 0,
-        shown,
-    }
-}
-
-/// A heading with how many are under it: "Live now · 23". Continue
-/// watching counts every unfinished recording, including those behind "Show
-/// all".
-fn counted(label: &str, count: usize) -> String {
-    format!("{label} · {count}")
+    let more = unfinished.next().is_some();
+    Continuing { shown, more }
 }
 
 /// Put the offline follows in the order you last watched them, most recent
@@ -300,57 +297,56 @@ pub fn view<V: 'static>(
     );
     let now = Utc::now();
 
-    let mut page = browse::scroller("browse-grid", scroll);
+    // The shelves further apart than the rows within one; see the module.
+    let mut page = browse::scroller("browse-grid", scroll).gap(px(theme::GAP_SHELF));
 
     // Each row of cards under an id of its own: the cards are numbered
     // within their row, and two rows on one page would otherwise share ids.
     if sections.pinned {
-        page = page
-            .child(browse::heading(counted(
-                "Pinned",
-                pinned_live.len() + pinned_off.len(),
-            )))
-            .when(!pinned_live.is_empty(), |page| {
-                page.child(
-                    browse::cards_row(
-                        pinned_live.iter().map(|stream| (*stream, None)),
-                        room.width,
-                        cache,
-                        can_add,
-                        on_action.clone(),
-                        cx,
-                    )
-                    .id("pinned-live"),
-                )
-            })
-            .when(!pinned_off.is_empty(), |page| {
-                page.child(names_row(
-                    "pinned-off",
-                    pinned_off.iter(),
-                    lists.last_live,
-                    now,
-                    on_action.clone(),
-                    cx,
-                ))
-            });
-    }
-
-    if sections.live {
-        page = page
-            .when(sections.live_heading, |page| {
-                page.child(browse::heading(counted("Live now", live.len())))
-            })
-            .child(
+        let mut rows = Vec::new();
+        if !pinned_live.is_empty() {
+            rows.push(
                 browse::cards_row(
-                    live.iter().map(|stream| (*stream, None)),
+                    pinned_live.iter().map(|stream| (*stream, None)),
                     room.width,
                     cache,
                     can_add,
                     on_action.clone(),
                     cx,
                 )
-                .id("live-now"),
+                .id("pinned-live")
+                .into_any_element(),
             );
+        }
+        if !pinned_off.is_empty() {
+            rows.push(
+                names_row(
+                    "pinned-off",
+                    pinned_off.iter(),
+                    lists.last_live,
+                    now,
+                    on_action.clone(),
+                    cx,
+                )
+                .into_any_element(),
+            );
+        }
+        page = page.child(shelf(Some(browse::heading("Pinned")), rows));
+    }
+
+    if sections.live {
+        let cards = browse::cards_row(
+            live.iter().map(|stream| (*stream, None)),
+            room.width,
+            cache,
+            can_add,
+            on_action.clone(),
+            cx,
+        )
+        .id("live-now")
+        .into_any_element();
+        let heading = sections.live_heading.then(|| browse::heading("Live now"));
+        page = page.child(shelf(heading, vec![cards]));
     }
 
     if sections.continuing {
@@ -365,33 +361,113 @@ pub fn view<V: 'static>(
     }
 
     if sections.recommended {
-        page = page.child(browse::heading("Recommended")).child(
-            browse::cards_row(
-                suggested.iter().map(|(stream, why)| (stream, Some(*why))),
-                room.width,
-                cache,
-                can_add,
-                on_action.clone(),
-                cx,
-            )
-            .id("recommended"),
-        );
+        let cards = browse::cards_row(
+            suggested.iter().map(|(stream, why)| (stream, Some(*why))),
+            room.width,
+            cache,
+            can_add,
+            on_action.clone(),
+            cx,
+        )
+        .id("recommended")
+        .into_any_element();
+        page = page.child(shelf(Some(browse::heading("Recommended")), vec![cards]));
     }
 
     if sections.offline {
-        page = page
-            .child(browse::heading(counted("Offline", offline.len())))
-            .child(names_row(
+        let heading = offline_heading(offline.len(), lists.offline_open, on_action.clone(), cx);
+        let names = lists.offline_open.then(|| {
+            names_row(
                 "offline-follow",
                 offline.iter().copied(),
                 lists.last_live,
                 now,
                 on_action.clone(),
                 cx,
-            ));
+            )
+            .into_any_element()
+        });
+        page = page.child(shelf(Some(heading), names.into_iter().collect()));
     }
 
     browse::scrollable(page, scroll).into_any_element()
+}
+
+/// One shelf of the page: its heading, where it has one, over its rows,
+/// the heading a peer's gap above them and the rows a section's gap apart,
+/// as the rows of cards inside one are.
+fn shelf(heading: Option<impl IntoElement>, rows: Vec<AnyElement>) -> gpui::Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(theme::GAP))
+        .children(heading)
+        .when(!rows.is_empty(), |shelf| {
+            shelf.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(theme::GAP_SECTION))
+                    .children(rows),
+            )
+        })
+}
+
+/// The group Offline's heading lifts its count and chevron with.
+const OFFLINE_FOLD: &str = "following-offline-fold";
+
+/// Offline's heading, which folds the names under it away: the heading, how
+/// many there are — which, folded, is all the shelf says — and a chevron
+/// pointing at the names while they show and away from them while they do
+/// not. A press on any of it unfolds them, or folds them again, for the
+/// session (`Action::ToggleOffline`), as the rail's offline heading does
+/// (`controls::fold`), whose chevron is first. Here it is last, so every
+/// heading on the page starts at the same edge.
+fn offline_heading<V: 'static>(
+    count: usize,
+    open: bool,
+    on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + 'static,
+    cx: &mut Context<V>,
+) -> impl IntoElement {
+    let icon = if open { Icon::Unfolded } else { Icon::Folded };
+    let tip = if open {
+        "Hide who is offline"
+    } else {
+        "Show who is offline"
+    };
+    // In a row of its own, the heading's width rather than the page's, so a
+    // press beside it on the empty rest of the line does nothing.
+    div().flex().flex_row().child(
+        div()
+            .id(OFFLINE_FOLD)
+            .flex_none()
+            .group(OFFLINE_FOLD)
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(theme::GAP_TIGHT))
+            .cursor_pointer()
+            .tooltip(controls::tip(tip))
+            .on_click(cx.listener(move |view, _event, window, cx| {
+                on_action(view, Action::ToggleOffline, window, cx)
+            }))
+            .child(browse::heading("Offline"))
+            .child(
+                div()
+                    .text_size(px(theme::TEXT_META))
+                    .text_color(theme::text_dim())
+                    .group_hover(OFFLINE_FOLD, |style| style.text_color(theme::text_muted()))
+                    .child(SharedString::from(count.to_string())),
+            )
+            .child(
+                svg()
+                    .path(icon.path())
+                    .flex_none()
+                    .size(px(theme::ICON))
+                    .text_color(theme::text_dim())
+                    .group_hover(OFFLINE_FOLD, |style| style.text_color(theme::text())),
+            ),
+    )
 }
 
 /// A wrap of offline names, each saying when it was last live where Twitch
@@ -460,10 +536,7 @@ fn continuing_section<V: 'static>(
         .flex()
         .flex_row()
         .items_center()
-        .child(browse::heading(counted(
-            "Continue watching",
-            continuing.total,
-        )))
+        .child(browse::heading("Continue watching"))
         .child(div().flex_1())
         .when(continuing.more, |line| {
             line.child(
@@ -475,14 +548,7 @@ fn continuing_section<V: 'static>(
             )
         });
 
-    Some(
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(theme::GAP_SECTION))
-            .child(heading)
-            .child(row),
-    )
+    Some(shelf(Some(heading), vec![row.into_any_element()]))
 }
 
 #[cfg(test)]
@@ -538,12 +604,10 @@ mod tests {
         let wide = continuing(&history, 4);
         assert_eq!(ids(&wide), ["a", "c", "d"], "a finished one was listed");
         assert!(!wide.more, "offered more when everything fitted");
-        assert_eq!(wide.total, 3);
 
         let narrow = continuing(&history, 2);
         assert_eq!(ids(&narrow), ["a", "c"]);
         assert!(narrow.more, "the third was neither shown nor offered");
-        assert_eq!(narrow.total, 3, "counted only what fitted");
     }
 
     /// However narrow, one card; however wide, six.
@@ -605,13 +669,6 @@ mod tests {
         let mut offline = vec![channel("aaa"), channel("Forsen")];
         by_last_watched(&mut offline, &["#forsen".to_string()], &History::default());
         assert_eq!(offline[0].login, "Forsen");
-    }
-
-    /// A heading says how many are under it.
-    #[test]
-    fn headings_carry_their_counts() {
-        assert_eq!(counted("Live now", 23), "Live now · 23");
-        assert_eq!(counted("Offline", 0), "Offline · 0");
     }
 
     /// "Live now" titles the cards only when something else shares the page;

@@ -88,8 +88,7 @@ impl RootView {
     }
 
     /// Close every chat's card; returns whether one was open. For `Esc`
-    /// with the menus, and for the browse page coming up or going from a
-    /// pane's Browse (`close_menus`).
+    /// with the menus, and for the title bar's Browse (`close_menus`).
     pub(super) fn close_viewer_cards(&mut self, cx: &mut Context<Self>) -> bool {
         let chats: Vec<_> = self
             .slots
@@ -118,18 +117,31 @@ impl RootView {
     }
 
     /// A card's `Channel page`: Perch's page of `login`'s past broadcasts
-    /// and schedule (`open_channel_page`), on the browse page beside the
-    /// panes, which play on. Offered only signed in
-    /// (`CardFacts::channel_page`), as the page's lists need the token. The
-    /// account's id goes with it when it is known, which spares the page a
-    /// lookup.
+    /// and schedule (`open_channel_page`), which leaves the watch page.
+    /// Offered only signed in (`CardFacts::channel_page`), as the page's
+    /// lists need the token.
+    ///
+    /// Leaving stops every pane at home (`go_browse`), and Back does not
+    /// bring them back, so a first press that would stop any
+    /// (`leaving_stops_panes`) goes nowhere: the card is asked to ask for a
+    /// second press instead (`ChatView::confirm_leaving`), and only that one,
+    /// `confirmed`, goes. Decided here, at the press, from what is true now.
+    /// The user asked for the card never to end what they are watching
+    /// without saying so (October 2026). The account's id goes with it when
+    /// it is known, which spares the page a lookup.
     pub(super) fn channel_page_from_card(
         &mut self,
+        chat: &Entity<ChatView>,
         login: String,
         display_name: String,
+        confirmed: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !confirmed && self.leaving_stops_panes() {
+            chat.update(cx, |chat, cx| chat.confirm_leaving(cx));
+            return;
+        }
         self.take_rest_of_run();
         let user_id = match self.profiles.lookup(&login, true) {
             Lookup::Known(user) => Some(user.id.clone()).filter(|id| !id.is_empty()),

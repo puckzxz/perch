@@ -1,5 +1,6 @@
 //! One right-click menu wherever a channel is named: a stream card, an
-//! offline name, a rail row, a name in chat, and a pane.
+//! offline name, a rail row, a name in chat, and a pane — whose header's ⋯
+//! opens it too, for the pointer that does not reach for the right button.
 //!
 //! The same words everywhere, so a channel reads the same whichever list it
 //! is in: `Watch` and `Add beside` while it is live, `Pin to the rail` or
@@ -18,11 +19,11 @@
 //! as it is drawn ([`Facts`]), so a row is never offered from a stale
 //! answer; the root carries out the pick (`RootView::channel_menu_pick`).
 //! Drawn as the chat's copy menu is ([`view`]): deferred and anchored at the
-//! pointer, its rows acting on the press, put away by a press anywhere
-//! outside it, `Esc`, or the pick.
+//! pointer, or under the ⋯, its rows acting on the press, put away by a
+//! press anywhere outside it, `Esc`, or the pick.
 
 use gpui::{
-    anchored, deferred, div, prelude::*, px, Animation, AnimationExt, AnyElement, Context,
+    anchored, deferred, div, prelude::*, px, Animation, AnimationExt, AnyElement, Context, Corner,
     MouseButton, MouseDownEvent, Pixels, Point, Window,
 };
 
@@ -197,16 +198,18 @@ pub fn entries(facts: Facts) -> Vec<Row> {
     rows
 }
 
-/// The open menu, drawn after everything else in the window at the pointer
-/// where it was opened (`position`), as the chat's copy menu is: raised and
-/// ruled like the app's other menus, its rows acting on the press — only the
-/// first of a run, as theirs do — and a press anywhere outside it putting
-/// it away, heard in the capture phase so that press still lands. `opened`
-/// keys its arrival, so a menu opened in place of another fades in as
-/// itself.
+/// The open menu, drawn after everything else in the window with its
+/// `corner` at `position` — its top left at the pointer where a right-click
+/// opened it, or its top right under the ⋯ that did — as the chat's copy
+/// menu is: raised and ruled like the app's other menus, its rows acting on
+/// the press — only the first of a run, as theirs do — and a press anywhere
+/// outside it putting it away, heard in the capture phase so that press
+/// still lands. `opened` keys its arrival, so a menu opened in place of
+/// another fades in as itself.
 pub fn view<V: 'static>(
     rows: &[Row],
     position: Point<Pixels>,
+    corner: Corner,
     opened: u64,
     on_pick: impl Fn(&mut V, Pick, &mut Window, &mut Context<V>) + Clone + 'static,
     on_dismiss: impl Fn(&mut V, &mut Window, &mut Context<V>) + 'static,
@@ -269,7 +272,7 @@ pub fn view<V: 'static>(
         Animation::new(theme::MOTION_ENTER).with_easing(theme::ease_enter()),
         |menu, delta| menu.opacity(delta),
     );
-    deferred(anchored().position(position).child(menu)).into_any_element()
+    deferred(anchored().anchor(corner).position(position).child(menu)).into_any_element()
 }
 
 #[cfg(test)]

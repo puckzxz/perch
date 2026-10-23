@@ -321,15 +321,20 @@ impl RootView {
                 this.toggle_sidebar(window, cx);
             }));
 
-        // The browse page beside the panes, or put away again: a pane's
-        // Browse, for the pane the keys talk to already
-        // (`toggle_browse_page`). Lit while the page is up, as the open
-        // tab is. With nothing to go back to watching, the page is all
-        // there is, and the pill only says where you are. Its id and words
-        // follow which it is, so a tooltip up over one does not outlive the
-        // press that changed it.
+        // The browse page, which has the window to itself, and stops what
+        // plays at home to get it (`toggle_browse_page`, `go_browse`); its
+        // tooltip says so whenever it would. Lit while the page is up, as
+        // the open tab is. With nothing to go back to watching, the page is
+        // all there is, and the pill only says where you are. Its id and
+        // words follow which it is, so a tooltip up over one does not
+        // outlive the press that changed it.
         let browsing = self.page == Page::Browse;
         let (id, variant, tip) = match (browsing, self.slots.is_empty()) {
+            (false, _) if self.leaving_stops_panes() => (
+                "title-browse-stop",
+                Variant::Chrome,
+                Some(Hint::Browse.tooltip("Stop watching and browse")),
+            ),
             (false, _) => (
                 "title-browse",
                 Variant::Chrome,
