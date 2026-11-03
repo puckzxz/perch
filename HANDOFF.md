@@ -262,7 +262,7 @@ App modules:
 | `video_view/menu.rs` | the bar's menus, the quality, More (with the quality once the bar has folded its pill, `Audio compressor · Off` or `· On`, a recording's `Playback speed · 1x`, `Pop out` where the pop-out is offered, and `Pin to the rail` or `Unpin from the rail`, `pin_row`, tested) and a recording's speeds, opened in More's place (`speed_row`, tested): which is open (`Menu`, one at a time), the box, rows that act on the press (tested), and `run_guard`, which swallows the rest of a double-click a row took (tested); `set_menu`, the one write of the open menu (a test counts them), which says the quality menu opening or closing to the root (`quality_menu_flip`, tested) — after `Pop out`, which takes the player out of the window, the root's `run_guard` does |
 | `loudness.rs` | one pane's level and the Mute all hush over it: what mpv hears, and the only level ever reported to be remembered; what a pane's menu offers about hearing one pane alone, worked out from the panes' hushes (`HearOnly`, `hear_only`) (pure, tested) |
 | `channel_menu.rs` | the one right-click menu wherever a channel is named — a card, an offline name, a rail row, a name in chat, a pane, whose header's ⋯ opens it too: what it offers (`entries`, from `Facts` the root works out as it is drawn, with a pane's own part, `PaneFacts`; pure, tested) and the menu drawn at the pointer or under the ⋯, deferred and anchored by the corner the root says, rows acting on the press (`view`) |
-| `compressor.rs` | the audio compressor, every pane's at once: the mpv `af` chain (`chain`: ffmpeg's `sidechaincompress` listening 6 ms ahead, fitted to what FrankerFaceZ's compressor puts out in Chrome — tested against Chrome's curve and makeup — and hearing each pane at its volume, as FFZ's hears the player's, `drive`), what each player's render loop still owes its chain, new words or the volume told by command (`Applied`, tested), the process-wide flag every player's render thread reads between frames as it reads its volume (`set`, `on`), and More's row (`row`) (pure, tested) |
+| `compressor.rs` | the audio compressor, every pane's at once: the mpv `af` chain (`chain`: ffmpeg's `sidechaincompress` listening 6 ms ahead, with mpv's `fix-pts` putting back the timestamps it counts from zero (`KEEP_TIMESTAMPS`, tested), fitted to what FrankerFaceZ's compressor puts out in Chrome — tested against Chrome's curve and makeup — and hearing each pane at its volume, as FFZ's hears the player's, `drive`), what each player's render loop still owes its chain, new words or the volume told by command (`Applied`, tested), the process-wide flag every player's render thread reads between frames as it reads its volume (`set`, `on`), and More's row (`row`) (pure, tested) |
 | `wheel.rs` | `Alt` and the wheel over a picture, turned into volume steps: one per click of a notched wheel, a click's worth at a time for a touchpad or trackpad (`Wheel`) (pure, tested) |
 | `ad_break.rs` | a pane's ad-break notice: what its header tag says (`ad break · 0:25`), when it ticks, and when it is over — its length run out, or the picture moving again after standing still, which each player's render thread counts from every new frame, offstage ones included (`FrameClock`) (pure, tested) |
 | `seek_bar.rs` | the bar on a recording, and on a live pane its timeline, ending in its length or the live badge (`End`), and the arithmetic behind it; a recording's muted stretches as a band behind the rail (`muted_spans`), and `muted` in the time under the pointer over one (`muted_at`, `hover_label`) (tested) |
@@ -898,6 +898,33 @@ keeps it, so the next `load` — a recording's reposition — starts silent too
 (2020) already had — `adelay`'s `all` is the newest thing in it — where the
 mpv.net libmpv it was measured on carries a January 2024 FFmpeg
 (`Player::set_audio_filters`).
+
+**`sidechaincompress` starts its clock at zero, so the chain carries mpv's
+`fix-pts`.** ffmpeg's `sidechaincompress` stamps the sound it puts out with
+a count of samples from zero, whatever it was given (`out->pts = s->pts`,
+`af_sidechaincompress.c`), and mpv starts the sound by the stamps: until it
+is ready it clips away any sound stamped before the picture's start
+(`ao_process` in `player/audio.c`, mpv 0.37). An MPEG-TS stream reaches mpv
+with a clock near zero (gdqtv's `time-pos` counted up from 0), so nothing
+showed. Some channels now come as fragmented MP4 instead, an `#EXT-X-MAP`
+in the media playlist (2 of 6 live ones checked on 2 November 2026:
+a_seagull, streaming portrait renditions beside an HEVC 1440p60 that only a
+signed-in viewer is offered, and summit1g, plain H.264), and mpv leaves that
+clock as the broadcast's, hours in (`time-pos` 14,173 s). With the
+compressor on, the sound was stamped hours before the picture and clipped
+whole, mpv never said `audio ready`, and the picture stood still after its
+first three frames: every run, 6 on a_seagull and 3 on summit1g, through the
+relay as perch plays them, with mpv's sound output or with none; never with
+the compressor off (7 runs). `fix-pts=yes` on the `lavfi` wrapper has mpv
+number the samples itself and put the stream's timestamps back on what
+comes out (`emulate_audio_pts` in `f_lavfi.c`; the manual offers it for
+"filters which output a recomputed PTS"), and with it both channels played
+at 60 fps, 6 runs of 6, and gdqtv as before (`compressor::KEEP_TIMESTAMPS`).
+It is in mpv 0.29 and later. To measure anything like it without the UI:
+serve the channel with streamlink's relay as `streamlink::run` does, open
+`http://127.0.0.1:<port>/` with `mpv-frames` the way `video.rs` does
+(`audio: true`, the chain as `af`), count the frames each second, and read
+mpv's `log-file`.
 
 ### Recordings
 

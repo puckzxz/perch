@@ -79,14 +79,17 @@ pub const LABEL: &str = "compressor";
 ///   attack, Chrome's floor under FFZ's 0; and a threshold, ratio and knee
 ///   (−28.5 dB, 3:1, ffmpeg's widest) fitted so the output follows the
 ///   browser's, rather than FFZ's own, which mean something else here.
+/// - `fix-pts`, after the graph, is mpv's ([`KEEP_TIMESTAMPS`]).
 ///
-/// Every option here has been in FFmpeg since 4.3 (2020). That matters:
-/// mpv starts a file whose chain it cannot build with no sound at all, so
-/// an option newer than the libmpv it runs on would silence every pane.
+/// Every option in the graph has been in FFmpeg since 4.3 (2020), and
+/// `fix-pts` in mpv since 0.29 (2018), before the first libmpv-2. That
+/// matters: mpv starts a file whose chain it cannot build with no sound at
+/// all, so an option newer than the libmpv it runs on would silence every
+/// pane.
 pub fn chain(volume: u8) -> String {
     format!(
         "@{LABEL}:lavfi=[asplit[heard][listened];[heard]adelay=delays=6:all=1[late];\
-         [late][listened]sidechaincompress=level_sc={}:{SHAPE}]",
+         [late][listened]sidechaincompress=level_sc={}:{SHAPE}]:{KEEP_TIMESTAMPS}",
         drive_words(volume)
     )
 }
@@ -94,6 +97,23 @@ pub fn chain(volume: u8) -> String {
 /// The compressor's settings but what it hears the pane at; see [`chain`].
 const SHAPE: &str = "threshold=-28.5dB:ratio=3:knee=8:attack=1:release=250:\
     makeup=12.45dB:detection=peak:link=maximum";
+
+/// mpv's option on its `lavfi` wrapper that keeps the stream's own
+/// timestamps on the sound the chain puts out.
+///
+/// `sidechaincompress` stamps its output with a count of samples from zero,
+/// whatever it was given (`out->pts = s->pts` in ffmpeg's
+/// `af_sidechaincompress.c`), and mpv starts the sound by those stamps,
+/// throwing away whatever it thinks comes before the picture. MPEG-TS
+/// streams reach mpv with a clock near zero, so that went unseen. A live
+/// stream Twitch serves as fragmented MP4 keeps its broadcast's clock,
+/// hours in, so the sound looked hours late: mpv threw all of it away
+/// waiting for the sound to catch up, and the picture stood still after
+/// its first frames, for good (a_seagull and summit1g, 2 November 2026).
+/// With this, mpv numbers the samples itself and maps what comes out back
+/// onto the stream's timestamps, which is what mpv's manual offers it for:
+/// "filters which output a recomputed PTS instead of the original PTS".
+const KEEP_TIMESTAMPS: &str = "fix-pts=yes";
 
 /// How loud the compressor hears a pane at `volume`: as loud as mpv then
 /// plays it, the cube of the slider (mpv's volume curve), so 50 is heard
@@ -252,12 +272,22 @@ mod tests {
         10f64.powf(db / 20.0)
     }
 
+    /// The lavfi graph in `chain`, brackets included: without the label
+    /// before it or mpv's own options after it.
+    fn graph_of(chain: &str) -> &str {
+        chain
+            .strip_prefix(&format!("@{LABEL}:lavfi="))
+            .and_then(|rest| rest.strip_suffix(&format!(":{KEEP_TIMESTAMPS}")))
+            .unwrap_or_else(|| panic!("{chain}"))
+    }
+
     /// A number a full-volume pane's chain gives `sidechaincompress`,
     /// without its `dB`.
     fn param(name: &str) -> f64 {
         const FILTER: &str = "sidechaincompress=";
         let chain = chain(100);
-        let options = &chain[chain.find(FILTER).unwrap() + FILTER.len()..];
+        let graph = graph_of(&chain);
+        let options = &graph[graph.find(FILTER).unwrap() + FILTER.len()..];
         options
             .trim_end_matches(']')
             .split(':')
@@ -369,9 +399,7 @@ mod tests {
     fn the_chain_is_one_graph_with_no_spaces() {
         for volume in [0, 42, 100] {
             let chain = chain(volume);
-            let graph = chain
-                .strip_prefix(&format!("@{LABEL}:lavfi="))
-                .unwrap_or_else(|| panic!("{chain}"));
+            let graph = graph_of(&chain);
             assert!(graph.starts_with('[') && graph.ends_with(']'), "{chain}");
             assert!(!chain.contains(char::is_whitespace), "{chain}");
             let mut depth = 0;
@@ -387,6 +415,20 @@ mod tests {
                 );
             }
             assert_eq!(depth, 0, "{chain}");
+        }
+    }
+
+    /// The sound keeps the stream's timestamps past `sidechaincompress`,
+    /// which counts its own from zero ([`KEEP_TIMESTAMPS`]): without them a
+    /// live stream served as fragmented MP4 stood still on its first
+    /// frames. The option is mpv's, so it goes after the graph, outside the
+    /// brackets ffmpeg reads.
+    #[test]
+    fn the_chain_keeps_the_streams_own_timestamps() {
+        for volume in [0, 42, 100] {
+            let chain = chain(volume);
+            assert!(chain.ends_with("]:fix-pts=yes"), "{chain}");
+            assert!(!graph_of(&chain).contains("fix-pts"), "{chain}");
         }
     }
 
