@@ -2,8 +2,8 @@
 //! little faster, the way Twitch's own player and FrankerFaceZ's
 //! (`player.allow-catchup`, on by default) do.
 //!
-//! mpv jumps to the edge only when a live pane is unpaused
-//! (`Player::seek_to_live`). After the network stalls, streamlink fetches
+//! mpv jumps to the edge only when a live pane is unpaused, as [`resume`]
+//! decides. After the network stalls, streamlink fetches
 //! the segments it missed and hands them over at once, so mpv resumes with
 //! that backlog in its cache and plays it at normal speed, behind for good.
 //! Measured on 14 October 2026 against a live channel with streamlink
@@ -75,9 +75,77 @@ impl CatchUp {
     }
 }
 
+/// How an unpaused live pane gets back to the edge; see [`resume`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Resume {
+    /// Nothing to do: the cache holds no more than [`ABOVE`], which a
+    /// catch-up leaves alone too, so a jump would only cost a restart.
+    Stay,
+    /// Seek within the cache to this time: its end, less [`UNTIL`], which
+    /// leaves as much in hand as a catch-up stops at (`Player::seek_to_live`).
+    Seek(f64),
+    /// Open the stream again, which streamlink's relay answers from the live
+    /// edge, with a fresh resolve of the channel (`Player::reopen`).
+    Reopen,
+}
+
+/// How a live pane unpaused now gets back to the edge, given how much its
+/// cache holds (`demuxer-cache-duration`), where the cache ends
+/// (`demuxer-cache-time`; either `None` before mpv has said) and whether
+/// it filled while the pane was paused (`demuxer-cache-idle`).
+///
+/// While paused, mpv goes on reading the relay into its cache, so the
+/// cache's end stays at the live edge, and a seek there is instant: 0.5 s
+/// behind live after a twenty-second pause, against 20.0 s with no jump.
+/// Until the cache is full — 150 MiB, a little over two minutes of 1440p —
+/// when mpv stops reading, and its end falls behind with every second the
+/// pane stays paused: 14.3 s behind, the same way, with the cache held to
+/// fill in seven. Only opening the stream again gets back from there: 0.2 s
+/// behind live, two and a half seconds after the press, holding the paused
+/// frame meanwhile (all measured 2 November 2026; see HANDOFF, "A live
+/// pane's jump to the edge").
+pub fn resume(buffered: Option<f64>, cache_end: Option<f64>, filled_while_paused: bool) -> Resume {
+    if filled_while_paused {
+        return Resume::Reopen;
+    }
+    match (buffered, cache_end) {
+        (Some(secs), _) if secs <= ABOVE => Resume::Stay,
+        (_, Some(end)) => Resume::Seek(end - UNTIL),
+        _ => Resume::Reopen,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A pause short enough to leave no more in the cache than a pane at
+    /// the edge holds jumps nowhere; a longer one jumps to the cache's end,
+    /// keeping what a catch-up stops at in hand.
+    #[test]
+    fn an_unpause_jumps_to_the_end_of_the_cache() {
+        assert_eq!(resume(Some(1.6), Some(100.0), false), Resume::Stay);
+        assert_eq!(resume(Some(ABOVE), Some(100.0), false), Resume::Stay);
+        assert_eq!(
+            resume(Some(21.1), Some(100.0), false),
+            Resume::Seek(100.0 - UNTIL)
+        );
+        assert_eq!(
+            resume(None, Some(100.0), false),
+            Resume::Seek(100.0 - UNTIL)
+        );
+    }
+
+    /// A cache that filled while paused stopped reading, so its end is not
+    /// the edge, however much it holds; and with no reading of where it
+    /// ends there is nowhere to seek to. Both open the stream again.
+    #[test]
+    fn an_unpause_opens_the_stream_again_when_the_cache_cannot_reach_the_edge() {
+        assert_eq!(resume(Some(1.6), Some(100.0), true), Resume::Reopen);
+        assert_eq!(resume(Some(140.0), Some(100.0), true), Resume::Reopen);
+        assert_eq!(resume(Some(21.1), None, false), Resume::Reopen);
+        assert_eq!(resume(None, None, false), Resume::Reopen);
+    }
 
     #[test]
     fn at_the_edge_it_plays_at_normal_speed() {

@@ -1007,6 +1007,11 @@ stream by however long it waited, so it plays a twentieth faster, at the same
 pitch, until it is back at the live edge: about two minutes for a six-second
 stall. Chat, which never waits, is in step with it again by then.
 
+Resuming a paused live pane jumps straight back to the live edge. After a
+pause long enough that the player stopped buffering — a little over two
+minutes at 1440p, longer at lower qualities — it opens the stream again
+instead, which takes a couple of seconds.
+
 The choice is made again whenever a pane changes size — another pane opening
 or closing, the rail folding, the window resizing or going fullscreen, a pane
 given the whole window or every pane shown again, a popped-out pane's own

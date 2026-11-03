@@ -24,7 +24,7 @@ use smallvec::smallvec;
 use streamlink::Playlist;
 
 use crate::ad_break::FrameClock;
-use crate::catch_up::CatchUp;
+use crate::catch_up::{CatchUp, Resume};
 use crate::compressor;
 use crate::seek_bar::Timeline;
 use crate::speed::Speed;
@@ -714,9 +714,16 @@ impl VideoStream {
                     // jumps are reopens that wait a second each by design,
                     // and its stalls have their own remedy (`vod::stalled`).
                     // And how much it holds, which is how far behind the
-                    // edge it is (`crate::catch_up`).
+                    // edge it is (`crate::catch_up`), where it ends and
+                    // whether it is full, which say how an unpause gets back
+                    // to the edge (`catch_up::resume`).
                     if live {
-                        for name in ["paused-for-cache", "demuxer-cache-duration"] {
+                        for name in [
+                            "paused-for-cache",
+                            "demuxer-cache-duration",
+                            "demuxer-cache-time",
+                            "demuxer-cache-idle",
+                        ] {
                             if let Err(e) = player.observe_property(name) {
                                 eprintln!("video: could not observe {name}: {e}");
                             }
@@ -787,6 +794,12 @@ impl VideoStream {
                     let mut buffered: Option<f64> = None;
                     let mut catch_up = CatchUp::default();
                     let mut live_speed = 1.0;
+                    // Where a live player's cache ends, whether mpv has
+                    // stopped filling it, and whether it did so while the
+                    // pane was paused; see `catch_up::resume`.
+                    let mut cache_end: Option<f64> = None;
+                    let mut cache_full = false;
+                    let mut filled_while_paused = false;
                     // Where an offstage player's frames go; see `offstage`.
                     // Allocated once: nothing reads it, so nothing holds it.
                     let mut thrown_away =
@@ -822,6 +835,17 @@ impl VideoStream {
                                     }
                                     "demuxer-cache-duration" => {
                                         buffered = value.and_then(|v| v.parse().ok());
+                                    }
+                                    "demuxer-cache-time" => {
+                                        cache_end = value.and_then(|v| v.parse().ok());
+                                    }
+                                    // mpv's word that the cache is as full
+                                    // as it reads ahead and it has stopped
+                                    // reading; on a live stream, that from
+                                    // here its end falls behind the edge.
+                                    "demuxer-cache-idle" => {
+                                        cache_full = value.as_deref() == Some("yes");
+                                        filled_while_paused |= cache_full && applied_pause;
                                     }
                                     "paused-for-cache" => {
                                         let starved = value.as_deref() == Some("yes");
@@ -972,12 +996,49 @@ impl VideoStream {
                         // change for mpv's own thread; see `Player::set_paused`.
                         let want_pause = paused.load(Ordering::Relaxed);
                         if want_pause != applied_pause {
+                            if want_pause && live {
+                                filled_while_paused = cache_full;
+                            }
                             if !want_pause && live {
                                 // Resuming from a pause on a live stream would
                                 // otherwise continue from where it stopped,
                                 // leaving the viewer permanently behind. On a
                                 // recording, where it stopped is the point.
-                                let _ = player.seek_to_live();
+                                // Queued ahead of the unpause, as a
+                                // recording's reopen is, so mpv takes it first.
+                                match crate::catch_up::resume(
+                                    buffered,
+                                    cache_end,
+                                    filled_while_paused,
+                                ) {
+                                    Resume::Stay => {}
+                                    Resume::Seek(to) => {
+                                        eprintln!(
+                                            "video: resuming at the live edge ({:.1}s buffered)",
+                                            buffered.unwrap_or_default()
+                                        );
+                                        if let Err(e) = player.seek_to_live(to) {
+                                            eprintln!("video: could not jump to the edge: {e}");
+                                        }
+                                    }
+                                    Resume::Reopen => {
+                                        eprintln!(
+                                            "video: resuming by opening the stream again \
+                                             (the cache {})",
+                                            if filled_while_paused {
+                                                "filled while paused"
+                                            } else {
+                                                "never said where it ends"
+                                            }
+                                        );
+                                        reload_compressor(&player, &mut compression, volume_level.load(Ordering::Relaxed));
+                                        if let Err(e) = player.reopen(&url) {
+                                            eprintln!("video: could not open the stream again: {e}");
+                                        }
+                                        rendered = None;
+                                        cache_end = None;
+                                    }
+                                }
                                 // The cache went on filling while paused, so
                                 // the last reading says the pane is as far
                                 // behind as it was paused for, which the

@@ -525,6 +525,38 @@ come after the word of it, and is acted on until the next one, a moment at
 render thread's poll and its core taking the jump. A pane's own speed
 (`crate::speed`) stays a recording's only.
 
+**A live pane's jump to the edge is a seek inside mpv's cache, or a
+reopen.** It was `seek 100 absolute-percent`, and it never once worked:
+mpv's log said `Cached seek not possible.` and `Cannot seek in this
+stream.` on every unpause, on TS and fragmented MP4 alike. The relay is not
+seekable, so mpv seeks only within its cache (`mp_seek` adds `SEEK_CACHED`),
+and a live stream has no length, so a percent seek becomes a
+fraction-of-the-file one, which the cache cannot serve
+(`find_cache_seek_range` refuses `SEEK_FACTOR`). In the app, a pane paused
+twenty seconds came back 20.7 s behind and logged a catch-up, about seven
+minutes of play at 1.05 to get back. While paused, mpv goes on reading the
+relay into its cache, so the cache's end is the live edge, and an absolute
+seek to it is served from the cache at once: 0.5 s behind live after the
+same twenty seconds (gdqtv) and at the edge on a_seagull's fragmented MP4,
+the cache holding 1.8 s after, no catch-up. The seek leaves
+`catch_up::UNTIL` in hand, so it lands where a catch-up would stop, and a
+pause that left no more than `catch_up::ABOVE` in the cache jumps nowhere,
+since the restart would cost more than the second it saves. Until the
+cache is full: 150 MiB, which a 1440p60 pause filled in 130 s. Then mpv
+stops reading and says `demuxer-cache-idle`, the cache's end falls behind
+with every second the pane stays paused (14.3 s behind after twenty
+seconds, with the cache held to 6 MiB so that it filled in seven), and the
+picture stays that far behind as it plays on. So an unpause after the cache
+filled opens the relay's URL again (`Player::reopen`), which streamlink's
+relay answers by resolving the channel afresh (`fetch_streams` in
+`output_stream_http`) and serving from the edge: 0.2 s behind live, about
+two and a half seconds after the press, with the paused frame up
+meanwhile, as a recording's reopen holds its own. Seen in the app after a
+150 s pause at 1440p. `catch_up::resume` decides, from
+`demuxer-cache-duration`, `demuxer-cache-time` and whether
+`demuxer-cache-idle` said yes while paused; the render thread observes all
+three on a live player.
+
 **`mpv_render_context_render` blocks until the frame's display time**, up to
 `video-timing-offset` (50 ms default). That wait is what keeps video timed to
 audio, so it is wanted — but calling it on the UI thread stalls the whole GPUI
@@ -1027,9 +1059,10 @@ sees. `Eof` is the only end that finishes a recording, and the pane reads it
 as "Finished" rather than "ended the stream" by looking at what it was playing
 (`watch::showing`).
 
-`mpv-frames` deliberately has no `seek`. `seek_to_live` is the percent seek for
-the live edge; an absolute one was added for recordings and removed when the
-measurement above came in, because a command nothing can use is a trap.
+`mpv-frames` deliberately has no `seek` for a recording. `seek_to_live` is a
+live stream's jump to a time inside its cache (see "A live pane's jump to the
+edge" under Video); an absolute seek was added for recordings and removed when
+the measurement above came in, because a command nothing can use is a trap.
 
 **A recording paused for a while can come back to a dead connection, and
 hang.** The main file is local, so mpv runs no network cache: the demuxer reads
@@ -6068,10 +6101,11 @@ None of these is being worked on; all of them are real.
     - from the checks before the push of 14 October 2026: an ad notice
       ending on the frames of a pane maximized away (a pre-roll that ends
       offstage) and holding through the grid's return mid-break, the frame
-      clock having moved to the render thread; an unpaused live pane that
-      was paused for half a minute logging no catch-up; and a popped pane's
-      badge, `buffering` through a stall and the ad break's tag through a
-      break;
+      clock having moved to the render thread; and a popped pane's badge,
+      `buffering` through a stall and the ad break's tag through a break
+      (an unpaused live pane logging no catch-up was here too, until it was
+      seen on 2 November 2026 logging one, which is how the jump to the
+      edge was found broken: see "A live pane's jump to the edge");
     - maximize and reorder end to end: no remount or flash either way, the
       re-pick on the way back, `Esc`'s order, a header dragged and dropped
       or let go elsewhere, and `Shift` with an arrow;

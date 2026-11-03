@@ -433,12 +433,18 @@ impl Player {
         self.set_property_async("pause", if paused { "yes" } else { "no" })
     }
 
-    /// Jump to the newest available point in a live stream. Queued, like
-    /// [`set_paused`](Self::set_paused).
-    pub fn seek_to_live(&self) -> Result<(), Error> {
-        // Equivalent to mpv's "seek 100 absolute-percent"; on a live stream the
-        // end of the cache is the live edge.
-        self.command_async(&["seek", "100", "absolute-percent"])
+    /// Jump a live stream to `secs`, a time inside what mpv's cache holds:
+    /// its end, read from `demuxer-cache-time`, less whatever should be left
+    /// in hand. Queued, like [`set_paused`](Self::set_paused).
+    ///
+    /// A time, because nothing else reaches the cache. A stream read from a
+    /// pipe or a relay is not seekable, so mpv seeks only within what it has
+    /// cached; a live one has no length, so a percent seek becomes a
+    /// fraction-of-the-file seek, which the cache cannot serve. This used to
+    /// be `seek 100 absolute-percent`, and every one failed with `Cannot seek
+    /// in this stream` (mpv 0.37's `mp_seek` and `find_cache_seek_range`).
+    pub fn seek_to_live(&self, secs: f64) -> Result<(), Error> {
+        self.command_async(&["seek", &format!("{secs:.3}"), "absolute"])
     }
 
     /// Replace what is playing with `url`, starting `start_secs` into it.
@@ -447,12 +453,24 @@ impl Player {
     /// The whole player stays: the render context, the decoder's setup, the
     /// audio device. Only the file changes, which is what makes this the way
     /// to reposition a source that cannot be seeked in place. There is
-    /// deliberately no `seek` here: the one source with a position, a Twitch
-    /// recording, is the one the demuxer cannot seek — `perch::vod` says why —
-    /// and a command nothing can use is a trap for the next reader.
+    /// deliberately no seek for that here: the one source with a position, a
+    /// Twitch recording, is the one the demuxer cannot seek — `perch::vod`
+    /// says why — and a command nothing can use is a trap for the next
+    /// reader. [`seek_to_live`](Self::seek_to_live) seeks only within a live
+    /// stream's cache.
     pub fn load(&self, url: &str, start_secs: f64) -> Result<(), Error> {
         let start = format!("start={:.3}", start_secs.max(0.0));
         self.command_async(&["loadfile", url, "replace", &start])
+    }
+
+    /// Replace what is playing with `url` read again from its start, which
+    /// for streamlink's relay is the live edge: each new request resolves
+    /// the channel afresh. Queued, like [`set_paused`](Self::set_paused).
+    ///
+    /// No `start`, unlike [`load`](Self::load): on a stream that cannot be
+    /// seeked, mpv would try the seek anyway and log that it cannot.
+    pub fn reopen(&self, url: &str) -> Result<(), Error> {
+        self.command_async(&["loadfile", url, "replace"])
     }
 
     /// Change playback volume (0-100) while playing. Queued, like
