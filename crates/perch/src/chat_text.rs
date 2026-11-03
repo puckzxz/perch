@@ -13,7 +13,8 @@
 //! that needs its scheme typed is a smaller problem than "ok.so" turning blue.
 //!
 //! This runs only on text that survived emote extraction, so an emote name can
-//! never reach it — see `render_message`, which classifies `Token::Text` only.
+//! never reach it — see `message_words` in `chat/mod.rs`, which hands only
+//! `Token::Text` on to `render_word` and so to `classify`.
 
 /// What a word turned out to be.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

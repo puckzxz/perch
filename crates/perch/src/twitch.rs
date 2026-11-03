@@ -991,13 +991,14 @@ fn serve(
     }));
 }
 
-/// Three requests behind one result.
+/// Four requests behind one result.
 ///
 /// `/search/channels` answers with a profile picture and no viewer count, which
 /// is a different shape from every other list in the app, so its logins are fed
 /// back through `/streams` to get ordinary stream records. Categories are
 /// searched in the same breath because a name like "zomboid" is as likely to
-/// mean the game as a channel.
+/// mean the game as a channel, and the channels it names that are not live
+/// are asked for last, below.
 fn search(client_id: &str, token: &str, query: String) -> Result<TwitchEvent, twitch_api::Error> {
     let categories = twitch_api::search_categories(client_id, token, &query)?;
     let logins = twitch_api::search_channels(client_id, token, &query)?;

@@ -420,9 +420,9 @@ impl RootView {
     /// Only for a channel in a Helix list the app has fetched, or in the
     /// rail's recommendations, which are live when they are listed and whose
     /// preview is at the address any live channel's is
-    /// (`recommended::as_stream`).
-    /// Nothing has fetched a preview for one opened by name, and a pane with
-    /// none waits on black, as before.
+    /// (`recommended::as_stream`), or for one opened by name once its own ask
+    /// is answered, since `stream_info` reads `root::pane_streams` last.
+    /// Until then a pane with none waits on black.
     fn poster(&self, slot: &Slot) -> Option<PathBuf> {
         match slot.recording() {
             Some(video) if channel_page::poster_url(video).is_some() => {

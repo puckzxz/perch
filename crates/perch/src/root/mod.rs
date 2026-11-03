@@ -17,20 +17,24 @@
 //! | `browsing` | the browse page's requests: tabs, search, categories, channels |
 //! | `navigation` | back and forward: where the app is as a `Route`, recording each step on the trail (`crate::trail`), and the three ways along it |
 //! | `streams` | opening, restarting and closing panes, and swapping one for a recording in place |
-//! | `renditions` | what each pane plays, and when it restarts: the quality chosen against each pane's own height (`pane_height_for`), the upward re-pick when the grid changes, a pick from the pane's menu; a new rendition resolved beside the picture and kept once its player has taken over in place (`video_view::swap`) |
-//! | `panes` | where each pane is drawn, applied: `restage`, the one funnel every change of state, membership, page, pop-out or maximize ends in; `set_slot_state`, the only write of a pane's state; `video_in_main`, the only way the main window reaches a player; a pane given the watch page and every pane shown again (`toggle_maximize`, `show_all_panes`), and `choose`, which takes the maximize to the pane chosen; two panes swapping places in the order (`move_pane`), from a header dropped on a pane or `Shift+←`/`Shift+→` |
+//! | `renditions` | what each pane plays, and when it restarts: the quality chosen against each pane's own height (`pane_height_for`), the upward re-pick when the grid changes, a pick from the pane's menu; a new rendition resolved beside the picture and kept once its player has taken over in place (`video_view::swap`); `set_pending`, the only write of a pane's pending start |
+//! | `panes` | where each pane is drawn, applied: `restage`, the one funnel every change of state, membership, page, pop-out or maximize ends in; `set_slot_state`, the only write of a pane's state; `video_in_main`, the only way the main window reaches a player; a pane given the watch page and every pane shown again (`toggle_maximize`, `show_all_panes`), and `choose`, which takes the maximize to the pane chosen; two panes swapping places in the order (`move_pane`), from a header dropped on a pane or `Shift+←`/`Shift+→`; and `retire_homeless`, the one rule that stops a pane at home with nothing to draw it |
+//! | `warm` | streamlink started ahead for a live pane's quality menu (`to_warm`), so a pick from it starts beside the picture with the slow part done: taken by the pick (`take_warm`, `adopt_warm`), and let go a grace after the menu closes, at its age, with the player or by a cold start (`expire_warm`) |
 //! | `pop_out` | a pane in a window of its own, on top of other apps: moving its picture there and back, the window, and `to_root`, the only way back from it |
 //! | `hearing` | which panes are heard: a pane menu's `Only this one` and `Hear all again`, through Mute all's hush, read from the hushes as the menu is drawn (`hear_only_now`); More's `Audio compressor`, every pane's at once (`toggle_compressor`) |
 //! | `ad_breaks` | a pane's ad-break notice: begun when streamlink says it is filtering an ad, counted down once a second, taken down when it is over |
-//! | `broadcasts` | what a stopped live pane asks about its channel's past broadcasts, and whether it can start by itself |
+//! | `broadcasts` | what a stopped live pane asks about its channel's past broadcasts, and whether it can start by itself; `start_due`, the one step by which a list of who is live starts the stopped panes it carries |
+//! | `rewind` | a live pane's timeline: when each live player's broadcast began (`sync_live_since`), a press on it, and the archive opened in the pane's place; and the way back, whether each recording's broadcast is still on (`sync_back_to_live`) and `LIVE` pressed (`back_to_live`) |
 //! | `channel_menus` | the right-click menu about a channel (`crate::channel_menu`): opened on a card, an offline name, a rail row, a name in chat or a pane, what it knows each time it is drawn, and a pick carried out — a pane's by its key, as its own controls go |
-//! | `pane_actions` | what a pane asks for, by its key: its controls, and its player's requests; the header a pane key reveals; `run_guard`, which swallows the rest of a double-click whose first press took a player from under the pointer |
+//! | `pane_actions` | what a pane asks for, by its key: its controls, and its player's requests; the header a pane key reveals; `run_guard`, which swallows the rest of a double-click whose first press took a player from under the pointer; `copy`, the one place the clipboard is written |
 //! | `launches` | what the command line named, at startup and from later launches |
 //! | `history` | what has been watched: noting where each recording got to, resuming there |
 //! | `saving` | writing the settings and the history down: each save a copy handed to one writer thread (`settings::writer`), a failed one said, and the wait for the last saves as the window closes |
 //! | `muted` | a recording's muted stretches: heard from every Helix answer that lists videos, given to a pane that opens one without them, asked for once when nothing has been heard, and taken onto every pane playing it and its player's seek bar |
 //! | `prefs` | the settings sheet, the divider drag, how every chat is drawn, the rail folding and what is pinned to it |
 //! | `recommended` | the rail's Recommended group: when to ask the worker, and what its answer becomes |
+//! | `last_live` | when the offline follows were last live: when to ask the worker (`ask_last_live`), and what its answer does; the words are worked out in `crate::last_live` |
+//! | `pane_streams` | what the channels nothing else asks about are doing, in one Helix ask by login (`ask_pane_streams`): a live pane on a channel no fetched list carries, a stopped pane or a pin on a channel nobody follows |
 //! | `shared_chat` | the chats' Shared Chat labels: hearing an unnamed partner, asking its name, handing it to every chat; and `watch_chat`, which listens to every chat made |
 //! | `badges` | the chats' badges: hearing a chat's room, asking the worker for the global and the room's badge books, handing each to the chats it is for |
 //! | `cheers` | the live chats' cheers: hearing a live chat's room, asking the worker for its cheermotes, handing the answer to the live chats in that room |
@@ -790,9 +794,10 @@ impl RootView {
     /// Whether the settings sheet or the palette is up, so that nothing
     /// behind it may change the page: the keys (through
     /// [`key_context`](Self::key_context)), the title bar's veil over its
-    /// rail button, arrows and search box, and the mouse's side buttons.
-    /// Asked here by all three, so a modal added later is one more line here
-    /// rather than three places to remember.
+    /// rail button, Browse and search box (`title_bar_leading`), the mouse's
+    /// side buttons, and the rail's preview cards and the toasts' hold
+    /// (`chrome`). Asked here by each, so a modal added later is one more line
+    /// here rather than one more place to remember.
     fn modal_open(&self) -> bool {
         self.settings_panel.is_some() || self.palette_open
     }

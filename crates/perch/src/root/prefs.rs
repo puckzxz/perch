@@ -300,8 +300,9 @@ impl RootView {
 
     /// Pin a channel to the top of the rail, or take it off, and write it
     /// down. The one place either happens — from the rail's own pin, a
-    /// pane's More or a channel's page — so a pin is saved however it came
-    /// to be made, and a press that changes nothing writes nothing.
+    /// channel menu, a pane's More or a channel's page — so a pin is saved
+    /// however it came to be made, and a press that changes nothing writes
+    /// nothing.
     ///
     /// A pin on a channel nobody follows is asked about at once, rather than
     /// at the next round, so its row says whether it is live as it lands in

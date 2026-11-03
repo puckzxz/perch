@@ -20,9 +20,11 @@
 //!
 //! Matched loosely — words, not the logger's prefix or the exact sentence —
 //! so a rewording keeps working as long as it still says it, and a line that
-//! says nothing of the kind is nothing: a streamlink that logs neither line,
-//! or one whose configuration has its log level above info, shows no notice
-//! rather than a wrong one.
+//! says nothing of the kind is nothing: a streamlink that logs neither line
+//! shows no notice rather than a wrong one. Its configuration cannot hide
+//! them by level, since the serving run passes `--loglevel info`; a `quiet`
+//! or a `logfile` there hides `Starting server` as well, and the start
+//! fails at `READY_WAIT` instead.
 
 /// The length of the ad break `line` announces, in whole seconds, when it
 /// announces one: `Some(Some(secs))` for a break of known length,

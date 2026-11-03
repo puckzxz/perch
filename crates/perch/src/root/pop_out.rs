@@ -12,9 +12,10 @@
 //! is measured by its own window (`PoppedOut::height`), and one brought
 //! back by its cell again.
 //!
-//! A pane goes out from its header's icon, its bar's More, `P` or the
-//! palette. It comes back from its pop-out's Bring back, the `Bring back` on
-//! its cell, its header's icon, `P` in either window, or the palette.
+//! A pane goes out from its menu's `Pop out` (the header's ⋯, or a
+//! right-click on the pane), its bar's More, `P` or the palette. It comes
+//! back from its pop-out's Bring back, the `Bring back` on its cell, its
+//! menu's `Bring back`, `P` in either window, or the palette.
 //!
 //! Three rules hold everything here up, each because gpui fails otherwise:
 //!
@@ -467,8 +468,8 @@ impl RootView {
     }
 
     /// Bring the pane `key` names back from its window, as the pane the keys
-    /// talk to: Bring back, the cell's own `Bring back`, the header's icon,
-    /// `P` in either window, and the window's own close. `window` is the
+    /// talk to: Bring back, the cell's own `Bring back`, the pane menu's
+    /// `Bring back`, `P` in either window, and the window's own close. `window` is the
     /// main one, whatever asked.
     ///
     /// To somewhere it is drawn. On the browse page the main window draws

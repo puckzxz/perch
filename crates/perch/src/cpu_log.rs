@@ -18,8 +18,8 @@
 //!
 //! Two of the columns exist because of how the number is usually *seen*.
 //! `child_pct` is streamlink and the python under it: Task Manager's process
-//! list folds a parent's children into its row, so a stream left playing as a
-//! browse thumbnail shows up as perch using CPU when none of it is perch's.
+//! list folds a parent's children into its row, so a stream's streamlink
+//! shows up as perch using CPU when none of it is perch's.
 //! And `renders_per_s` separates work from spinning - a static page repainting
 //! sixty times a second is a bug, and in a CPU number alone it looks exactly
 //! like a page that is legitimately busy.

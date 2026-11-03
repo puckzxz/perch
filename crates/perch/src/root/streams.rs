@@ -1013,7 +1013,7 @@ impl RootView {
     /// Mute all is not somebody deciding a channel should open silent. Letting
     /// go never un-mutes a pane that was muted by hand before it.
     ///
-    /// More's `Hear all again` is the letting go (`hearing`).
+    /// The pane menu's `Hear all again` is the letting go (`hearing`).
     pub(super) fn set_quiet_all(&mut self, quiet: bool, cx: &mut Context<Self>) {
         for slot in &mut self.slots {
             slot.quiet = quiet;

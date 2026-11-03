@@ -8,7 +8,7 @@ This file is an index. The facts live in two places, and each is the one source
 for what it covers:
 
 - `README.md` — using it: what every control does, the requirements, the keys.
-- `HANDOFF.md` — working on it (about 5,000 lines, so read it by section, with
+- `HANDOFF.md` — working on it (about 3,800 lines, so read it by section, with
   `grep -n '^#' HANDOFF.md` for the map). Before changing anything, read:
   - **Product decisions** — who it is for and what was declined. A feature that
     cuts across one is a conversation with the user, not a cleanup.

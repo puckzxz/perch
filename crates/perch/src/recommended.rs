@@ -90,8 +90,7 @@ pub fn seeds<S: AsRef<str>>(open: &[S], recent: &[String]) -> Vec<String> {
 }
 
 /// Why a recommendation is offered, in the seeds' own names: "Like forsen",
-/// "Like forsen and nymn", or "Like forsen and 2 more" — the way the mini
-/// player names what is playing.
+/// "Like forsen and nymn", or "Like forsen and 2 more".
 ///
 /// `because` is `Recommendation::because`, in seed order; `name_of` is the
 /// name a seed writes itself as, where the app knows one, and the login

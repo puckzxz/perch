@@ -2,9 +2,9 @@
 //!
 //! The controls you reach for while watching — pause, mute, volume, chat,
 //! fullscreen — are icons on a bar that comes up over the video under the
-//! pointer, each naming its key in its tooltip ([`Hint`]); a pane's × and
-//! its pop-out icon sit in its header and name their keys the same way, and
-//! the rest live in the title bar or the settings sheet. That is the right
+//! pointer, each naming its key in its tooltip ([`Hint`]); a pane's × sits in
+//! its header beside the ⋯ that opens its menu, and names its key the same
+//! way, and the rest live in the title bar or the settings sheet. That is the right
 //! place for them when you are already holding the mouse, and no place at
 //! all when you are not, which for a window left open for hours is most of
 //! the time.
@@ -75,10 +75,11 @@ actions!(
         ToggleSidebar,
         /// Close the active pane.
         ClosePane,
-        /// Bring the browse page up beside the panes, which play on with
-        /// their sound. Once whatever is in the way has gone: a pane being dragged, which
-        /// is let go where it was, an open menu, then a pane given the whole
-        /// page, which shows every pane again first.
+        /// Leave for the browse page, which stops every pane at home
+        /// (`RootView::go_browse`). Once whatever is in the way has gone: a
+        /// pane being dragged, which is let go where it was, an open menu,
+        /// fullscreen, then a pane given the whole page, which shows every
+        /// pane again first.
         GoBrowse,
         /// Open the settings sheet, or close it if it is already open.
         ToggleSettings,

@@ -106,7 +106,7 @@ impl RowKind {
     /// The wash behind this row, if it needs one: see `chat_tint`.
     ///
     /// Events are washed rather than outlined or barred, because the row has to
-    /// keep its place in the ruler of timestamps down the side. Two intensities
+    /// keep its place in the rhythm you scan down. Two intensities
     /// and no more, besides the colour an announcement's sender picked:
     /// enumerating Twitch's `msg-id` values is a losing game, and the sentence
     /// in the row already says which event it was. A message is washed only

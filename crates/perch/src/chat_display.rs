@@ -73,9 +73,9 @@ pub fn text_size(size: ChatTextSize) -> f32 {
 /// sizes it is scaled with the text ([`Metrics::of`]).
 ///
 /// An emote overhangs its line rather than growing it — see the wrapper in
-/// `ChatView::message_line` — so at this height it comes within about half a
-/// pixel of the hairline above and below. That is deliberate: shrinking the
-/// emote to buy clearance costs more than the crowding does.
+/// `ChatView::emote` (`chat/emote.rs`) — so at this height it comes within
+/// about half a pixel of the hairline above and below. That is deliberate:
+/// shrinking the emote to buy clearance costs more than the crowding does.
 const EMOTE_HEIGHT: f32 = 28.0;
 
 /// Drawn badge size at body size: Twitch's own, 18 pixels square, which is

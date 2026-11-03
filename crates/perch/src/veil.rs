@@ -2,7 +2,7 @@
 //! counting the pointer as theirs.
 //!
 //! Every hover a pane has is measured, not reported (see `HANDOFF.md`,
-//! "Hover is measured"): a `canvas` probe asks where the pointer is and
+//! "measured, not reported"): a `canvas` probe asks where the pointer is and
 //! whether it is inside the pane's bounds. A probe inserts no hitbox, which
 //! is what lets it see through the player's own control bar, and also what
 //! lets it see through anything else drawn over the pane. A person's card

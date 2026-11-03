@@ -10,11 +10,10 @@
 //! hush is a silence on top of it that never touches it. A pane reports a
 //! level only from [`Loudness::set`], so a hush cannot save a 0.
 //!
-//! Mute all, which held every pane silent through it, was the mini player's
-//! and went with it when browsing came to dock beside the panes; the hush
-//! keeps its name. Its way in now is `Only this one`, from a pane's More
-//! menu, which holds every other pane silent through it and so saves
-//! nothing either ([`HearOnly`]).
+//! Mute all, which held every pane silent through it, went with the mini
+//! player; the hush keeps its name. Its way in now is `Only this one`, a row
+//! of a pane's menu, which holds every other pane silent through it and so
+//! saves nothing either ([`HearOnly`]).
 //!
 //! Pure and tested, because this is the one place that decides what mpv
 //! hears and what the channel remembers.

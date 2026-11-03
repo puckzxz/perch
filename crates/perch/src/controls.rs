@@ -405,10 +405,12 @@ pub fn icon_waiting(icon: Icon) -> Div {
 ///
 /// Lit — hovered or pressed — only while `window_hovered`, which the caller
 /// takes from `window.is_window_hovered()`. gpui hears the pointer leave the
-/// window as a flag and nothing more: no move is sent, so the next frame
-/// hit-tests the last position it saw, and these buttons sit on the edge the
-/// pointer usually leaves by. Ungated, Close would stay red with the pointer
-/// off the window, and Minimize come back from the taskbar still lit. The id
+/// window as a flag and nothing more: no move is sent, and these buttons sit
+/// on the edge the pointer usually leaves by. Stock gpui's next frame then
+/// hit-tests the last position it saw; vendored fix 7 (`Cargo.toml`) makes
+/// it hit-test nothing, and the gate, which came first, says the same, so
+/// Close does not stay red with the pointer off the window, nor Minimize
+/// come back from the taskbar still lit. The id
 /// follows the flag for the press's sake. A press dragged off the window and
 /// let go outside never comes back as a release, so gpui would hold the
 /// button pressed until the next release anywhere in the window; the first

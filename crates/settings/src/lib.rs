@@ -164,8 +164,9 @@ impl DesktopNotifications {
 ///   sends it as an API header to unlock subscriber-only qualities and suppress
 ///   ads. It is a full account credential.
 /// - `oauth` is a proper Helix OAuth token obtained by device-code sign-in,
-///   scoped to reading your follows. It cannot do what the cookie token does,
-///   and the cookie token cannot call Helix.
+///   scoped to reading your follows and sending chat (`twitch_api::SCOPES`).
+///   It cannot do what the cookie token does, and the cookie token cannot
+///   call Helix.
 #[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Credentials {
@@ -856,8 +857,9 @@ impl Settings {
     }
 
     /// Forget the stored sign-in, keeping everything else the file says:
-    /// the settings sheet's Sign out, and the first half of signing in
-    /// again for a scope the old sign-in lacks.
+    /// the settings sheet's Sign out. Signing in again for a scope the old
+    /// sign-in lacks does not come here: the old tokens stay on disk until
+    /// the new sign-in is written over them (perch's `sign_in_again`).
     ///
     /// [`save_sign_in`](Self::save_sign_in) with nothing, under its lock and
     /// its re-read, so a preference saved a moment ago survives it, and

@@ -739,10 +739,12 @@ the last list stays and is asked for again at the next five-minute refresh.
 Nothing about them is saved.
 
 The pin that appears on a row under the pointer pins that channel, and the
-same pin on a pinned row unpins it. A channel you do not follow is pinned from
-its pane — **Pin to the rail** under the bar's **More**, live or a recording —
-or from the pin on its page (see [Past broadcasts](#past-broadcasts)); a
-recommended row has no pin. Pins are kept in `settings.json`, as `pinned`, so
+same pin on a pinned row unpins it. Any channel can be pinned from its
+right-click menu (see [Right-click a channel](#right-click-a-channel)); one you
+do not follow is also pinned from its pane — **Pin to the rail** under the
+bar's **More**, live or a recording — or from the pin on its page (see
+[Past broadcasts](#past-broadcasts)). A recommended row has no pin of its own;
+its menu pins it. Pins are kept in `settings.json`, as `pinned`, so
 they can be written there by hand too. Perch asks Twitch about the pinned
 channels you do not follow by itself, signed in: when one is pinned, and every
 two minutes after, all of them in one request, which also covers the panes
@@ -788,8 +790,9 @@ opened was a recording you had not finished, it leads the empty palette, so
 ## Past broadcasts
 
 Every channel has a page of what it broadcast before: click an offline name on
-Following, the **Past broadcasts** control that appears on a live card or
-under a pane's picture, or the palette's row for it — or search for it by name, since a search lists
+Following, the **Past broadcasts** control that appears on a live card, the
+row of that name in a channel's menu (right-click it, or a pane's **⋯**), or
+the palette's row for it — or search for it by name, since a search lists
 the channels that answer to it and are not on, as names under the live ones.
 The recordings are cards like the streams are, with the length where a
 stream's card has its viewer count, and how long ago it was underneath. One

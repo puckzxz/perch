@@ -22,8 +22,9 @@
 //! where it starts each session, and folded it builds no rows and asks for
 //! no pictures. The rows all hold still under the pointer; see
 //! `RootView::hold_live`. A pin is made and taken off from a followed
-//! channel's row itself, under the pointer, from a pane's More and from a
-//! channel's page, and saved by `RootView::set_pinned`.
+//! channel's row itself, under the pointer, from any channel menu
+//! (`crate::channel_menu`, on a row, a card, a name or a pane), from a pane's
+//! More and from a channel's page, and saved by `RootView::set_pinned`.
 //!
 //! On the left, opposite chat. Chat belongs to the pane it is part of and sits
 //! on the right of it; the rail belongs to the window. Putting both on the same
@@ -267,9 +268,10 @@ impl Row<'_> {
     /// Whether the row offers the pin. A followed channel's does, and a
     /// pinned row's, which unpins. A recommendation's does not: pinned from
     /// there, a live row would land in Pinned as a bare login until the ask
-    /// about it was answered (`root::pane_streams`). A channel nobody follows
-    /// is pinned from its pane's More or its page instead, where it is
-    /// already open (see `Action::SetPinned`).
+    /// about it was answered (`root::pane_streams`). Its channel menu still
+    /// offers Pin, at that price; a channel nobody follows is also pinned
+    /// from its pane's More or its page, where it is already open (see
+    /// `Action::SetPinned`).
     fn offers_pin(&self) -> bool {
         !matches!(self, Row::Recommended(_))
     }
@@ -796,7 +798,7 @@ fn preview(channel: Row<'_>, cache: &ImageCache) -> Option<gpui::AnyElement> {
 ///
 /// A row the rail's top cuts off counts as not pointed at: its card hangs
 /// from the row's top, which is then up under the title bar, and the card
-/// would be drawn over the bar's arrows and search box.
+/// would be drawn over the title bar's Browse and search box.
 ///
 /// A report asks for the next frame itself (`request_animation_frame`):
 /// it comes from prepaint, where a `cx.notify()` marks the view dirty but
