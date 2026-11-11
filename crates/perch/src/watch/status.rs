@@ -135,10 +135,13 @@ impl Showing<'_> {
     /// took capitals, a lowercase line over a `Try again` read as a fragment
     /// that had lost its start.
     ///
-    /// Except a failure, which is said in the words of whatever failed —
-    /// streamlink, mpv, the streamlink crate or the player — passed through
-    /// as is. Those words are mostly lowercase, so a failed pane still reads
-    /// as the fragment above; HANDOFF lists it among the lines not swept yet.
+    /// A failure too: `Couldn't play Forsen`, which is what happened as the
+    /// viewer met it. What failed says why in its own words — streamlink,
+    /// mpv, the streamlink crate or the player — and those are passed
+    /// through as they come, under this line ([`reason`](Self::reason)).
+    /// They were the line itself until November 2026: mostly lowercase, a
+    /// program's sentence in the middle of a pane, in the colour of a fault
+    /// and title-sized, over a `Try again`.
     fn sentence(&self, name: &str) -> Option<SharedString> {
         Some(match self {
             Showing::Picture => return None,
@@ -155,9 +158,18 @@ impl Showing<'_> {
             Showing::Unavailable => "This recording is no longer available".into(),
             Showing::Ended => format!("{name} ended the stream").into(),
             Showing::Finished => "Finished".into(),
-            Showing::Failed(reason) => (*reason).clone(),
+            Showing::Failed(_) => format!("Couldn't play {name}").into(),
             Showing::Elsewhere => "Playing in its own window".into(),
         })
+    }
+
+    /// Why a failed pane failed, in the words of whatever failed, for the
+    /// line under its sentence. Nothing for any other pane.
+    fn reason(&self) -> Option<SharedString> {
+        match self {
+            Showing::Failed(reason) => Some((*reason).clone()),
+            _ => None,
+        }
     }
 
     /// Whether asking again is on offer, and what the control says.
@@ -319,6 +331,27 @@ pub(super) fn screen<V: 'static>(
             theme::text_dim()
         })
         .child(text);
+    // Under a failure, why: what failed, in its own words, as it came.
+    // Quieter and smaller than the sentence, and kept to a notice's width,
+    // since streamlink's reasons run long and the pane may be the window's.
+    let label = match showing.reason() {
+        Some(reason) => div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(theme::GAP_WORD))
+            .child(label)
+            .child(
+                div()
+                    .max_w(px(theme::NOTICE_WIDTH))
+                    .text_size(px(theme::TEXT_META))
+                    .line_height(px(theme::LINE_BODY))
+                    .text_center()
+                    .text_color(theme::text_dim())
+                    .child(reason),
+            ),
+        None => label,
+    };
 
     // Every state that is not going anywhere on its own gets this, and
     // until it existed the only way to ask again was to close the pane and
@@ -604,8 +637,19 @@ mod tests {
         assert_eq!(showing(&channel, false, false), Showing::Failed(&reason));
         assert_eq!(
             showing(&channel, false, false).sentence("Forsen"),
+            Some("Couldn't play Forsen".into()),
+            "a failure is said as the viewer met it"
+        );
+        assert_eq!(
+            showing(&channel, false, false).reason(),
             Some(reason),
-            "a failure is said in its own words"
+            "and why, in the words of whatever failed"
+        );
+        channel.set_state(StreamState::Offline);
+        assert_eq!(
+            showing(&channel, false, false).reason(),
+            None,
+            "only a failure has a reason"
         );
     }
 

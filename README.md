@@ -263,7 +263,9 @@ on next, if it has a schedule on Twitch — *Next stream: Tue 7:00 PM · its tit
 When a stream ends the pane says so — it does not simply stop on its last
 frame, which is indistinguishable from a pause — and offers **Watch from the
 start**, which plays that broadcast's recording from the top in the same pane
-once Twitch lists it, **Try again** and **Close**. The last broadcast, the
+once Twitch lists it, **Try again** and **Close**. A pane that cannot play
+says that too, `Couldn't play Forsen`, with why under it in the words of
+whatever failed — streamlink's, or the player's — and **Try again**. The last broadcast, the
 recording and the schedule need a sign-in to be found. Chat stays connected
 either way, which is where the goodnights are, until a recording takes the
 pane's place and brings its own chat replay.

@@ -425,7 +425,7 @@ impl ChatView {
                 // The words the row that replaces it uses, "Connected to
                 // {channel}'s chat": not IRC's `#channel`, which is a name for
                 // the room nobody reading the pane needs to know.
-                let waiting = format!("connecting to {channel}'s chat…");
+                let waiting = format!("Connecting to {channel}'s chat…");
                 (
                     Link::Live { _client: client },
                     events,
@@ -442,7 +442,7 @@ impl ChatView {
             } => {
                 let (replay, events) =
                     Replay::start(video_id, channel, room_id, move || position.playhead());
-                let waiting = "loading chat replay…".to_string();
+                let waiting = "Loading chat replay…".to_string();
                 (
                     Link::Replay { _replay: replay },
                     events,
@@ -1715,7 +1715,7 @@ impl Render for ChatView {
                 // next message is on its way at the recording's own pace.
                 // Said plainly, and still, because that can last a while.
                 if self.replay && self.loaded {
-                    pane.child(caption.child("nothing said here yet"))
+                    pane.child(caption.child("Nothing said here yet"))
                 } else {
                     // Safe to pulse: this state always ends, either at the
                     // join or at the first disconnect notice, and both put

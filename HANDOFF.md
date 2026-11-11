@@ -1732,12 +1732,16 @@ unconsidered.
   `Finished`), since it sits over a sentence-case pill. So is a toast (`Link
   copied`, `Couldn't switch to 480p30`, `Sign in to rewind`), a notice like
   any other. A pane header's `muted`, `paused`, `buffering`, `replay` and
-  `ad break` tags stay lowercase on purpose (see "Product decisions"). Not
-  swept yet, so do not take them for the rule: the other passive words that
-  state a fact — chat's `deleted`, chat's notices, the palette's kind column
-  — are still lowercase, and so is a failed pane's line, which is the
-  failure in the words of whatever failed (streamlink, mpv, the streamlink
-  crate or the player), passed through as is by `Showing::sentence`.
+  `ad break` tags stay lowercase on purpose (see "Product decisions"), and
+  so do the other one-word facts drawn as tags: chat's `deleted`, and the
+  palette's kind column. A failed pane leads with a sentence of Perch's own
+  (`Couldn't play Forsen`), and what failed says why under it, smaller, in
+  its own words (streamlink, mpv, the streamlink crate or the player),
+  passed through as they come by `Showing::reason`: those are a program's
+  and mostly lowercase, which is why they are not the line. Chat's captions
+  over an empty pane (`Connecting to forsen's chat…`, `Loading chat
+  replay…`, `Nothing said here yet`) and the reasons a replay gives for
+  having no chat are sentences too, since November 2026.
   `channel_page::kind_tag` is also read mid-sentence, in a palette row's
   `(replay)` and a history byline, so it cannot simply take a capital.
 - **Layout reads a `layout::Body`, never the viewport.** The body is the window
@@ -2645,12 +2649,12 @@ or one whose player has stopped, is noted where it is rather than at zero.
 
 **Two events only a replay sends, and one that means something else.**
 `ChatEvent::Reset` clears the rows and keeps the colour map — same chat, same
-people. `ChatEvent::Unavailable` is one notice row — "no chat replay for this
+people. `ChatEvent::Unavailable` is one notice row — "No chat replay for this
 broadcast", or a video that is not on Twitch — after which the thread retires.
 `Connected` is the join on a live pane and puts a row in it; for a replay it is
 the buffer being ready, puts no row (a row stamped with today would draw a
 time break between two of last Tuesday's minutes), and is what turns an empty
-pane's pulsing "loading chat replay…" into a still "nothing said here yet". A
+pane's pulsing "Loading chat replay…" into a still "Nothing said here yet". A
 request that fails says "Chat replay interrupted: … — retrying" once per
 streak and backs off to thirty seconds; the pill at the bottom of a scrolled
 replay says "↓ Newest", since nothing about it is live.

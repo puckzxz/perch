@@ -256,7 +256,7 @@ fn run(
                     // nothing left for this thread to do.
                     if first_load && aligned < 1.0 && schedule.is_empty() && source.exhausted {
                         send(ChatEvent::Unavailable {
-                            reason: "no chat replay for this broadcast".into(),
+                            reason: "No chat replay for this broadcast".into(),
                         });
                         return;
                     }
@@ -508,7 +508,7 @@ pub fn parse_page(body: &Value) -> Result<Page, Error> {
     let response = body.get(0).unwrap_or(body);
     let video = match response.pointer("/data/video") {
         Some(Value::Null) => {
-            return Err(Error::Unavailable("this recording is not on Twitch".into()))
+            return Err(Error::Unavailable("This recording is not on Twitch".into()))
         }
         Some(video) => video,
         // No data at all: the request itself was refused, and the reason is
