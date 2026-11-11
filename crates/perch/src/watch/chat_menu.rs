@@ -24,16 +24,17 @@
 //! menu hangs outside the anchor, so a press on one of its rows closes it
 //! in the capture phase too — and where a risen menu covers the anchor, the
 //! row's own answer closes it, as every row's does
-//! (`RootView::on_pane_action`). The rows act on the press for the reason
-//! `video_view::menu::menu_row` gives; a test below holds this file to it.
+//! (`RootView::on_pane_action`). It opens in the app's one menu box and its
+//! rows are its rows (`crate::menu`), which is why they act on the press and
+//! what holds this file to it.
 //! The rest of a double-click whose first press a row took is swallowed by
 //! the root's guard (`RootView::run_guard`), so it cannot land on a link in
 //! the chat the closed menu leaves under the pointer. `Esc` closes it too
 //! (`RootView::on_go_browse`).
 
 use gpui::{
-    div, prelude::*, px, Animation, AnimationExt, AnyElement, Context, Div, ElementId, MouseButton,
-    MouseDownEvent, SharedString, Window,
+    div, prelude::*, px, AnimationExt, AnyElement, Context, Div, ElementId, MouseDownEvent,
+    SharedString, Window,
 };
 use settings::ChatTextSize;
 
@@ -67,7 +68,7 @@ pub(super) fn menu<V: 'static>(
     cx: &mut Context<V>,
 ) -> impl IntoElement {
     let focus_key = key.to_string();
-    let mut rows: Vec<AnyElement> = vec![heading("Text size")];
+    let mut rows: Vec<AnyElement> = vec![crate::menu::heading("Text size").into_any_element()];
     for (index, size) in ChatTextSize::ALL.into_iter().enumerate() {
         rows.push(
             row(
@@ -82,6 +83,7 @@ pub(super) fn menu<V: 'static>(
             .into_any_element(),
         );
     }
+    rows.push(crate::menu::rule().into_any_element());
     rows.push(
         row(
             pane_id(key, "chat-times"),
@@ -104,13 +106,12 @@ pub(super) fn menu<V: 'static>(
                 .text_color(theme::text_dim())
                 .child(toggle_state(display.times)),
         )
-        .border_t_1()
-        .border_color(theme::border())
         .into_any_element(),
     );
     // The divider beside chat and the one between a stacked pane's video
     // and chat are dragged; this puts both back. Never chosen, so never in
     // the accent; ruled off, since it is about the page, not the text.
+    rows.push(crate::menu::rule().into_any_element());
     rows.push(
         row(
             pane_id(key, "reset-sizes"),
@@ -121,23 +122,13 @@ pub(super) fn menu<V: 'static>(
             on_pane.clone(),
             cx,
         )
-        .border_t_1()
-        .border_color(theme::border())
         .into_any_element(),
     );
 
-    let menu = div()
-        .flex()
-        .flex_col()
+    let menu = crate::menu::surface()
         // Half of where it goes; see `placed`.
         .flex_shrink_0()
         .mb_auto()
-        .min_w(px(theme::MENU_MIN_WIDTH))
-        .rounded(px(theme::RADIUS_LG))
-        .overflow_hidden()
-        .bg(theme::surface_raised())
-        .border_1()
-        .border_color(theme::border())
         // Over chat, whose links and rows would otherwise hear the press on
         // a row too.
         .occlude()
@@ -157,7 +148,7 @@ pub(super) fn menu<V: 'static>(
         // the same few pixels into either place `placed` gives it.
         .with_animation(
             pane_id(key, "chat-menu"),
-            Animation::new(theme::MOTION_ENTER).with_easing(theme::ease_enter()),
+            crate::menu::arrival(),
             |menu, delta| {
                 menu.opacity(delta)
                     .top(px(-theme::MENU_RISE * (1.0 - delta)))
@@ -218,19 +209,6 @@ fn toggle_state(on: bool) -> &'static str {
     }
 }
 
-/// The words over the sizes, which say what the four rows choose between.
-/// Not a row: nothing happens on a press.
-fn heading(words: &'static str) -> AnyElement {
-    div()
-        .px(px(theme::PANEL_PAD))
-        .pt(px(theme::CONTROL_PAD_Y))
-        .text_size(px(theme::TEXT_META))
-        .text_color(theme::text_dim())
-        .whitespace_nowrap()
-        .child(words)
-        .into_any_element()
-}
-
 /// One row: in the accent when it is what is `chosen`, with anything the
 /// caller adds after its words pushed to the far end, and on the press,
 /// asks for `action`: every chat drawn another way, or the sizes reset. The
@@ -251,35 +229,14 @@ fn row<V: 'static>(
     cx: &mut Context<V>,
 ) -> gpui::Stateful<gpui::Div> {
     let key = key.to_string();
-    div()
-        .id(id.into())
-        .flex()
-        .flex_row()
-        .items_center()
-        .justify_between()
-        .gap(px(theme::GAP))
-        .px(px(theme::PANEL_PAD))
-        .py(px(theme::CONTROL_PAD_Y))
-        .text_size(px(theme::TEXT_LABEL))
-        .font_weight(theme::weight_label())
-        .whitespace_nowrap()
-        .cursor_pointer()
-        .text_color(if chosen {
-            theme::accent()
-        } else {
-            theme::text()
-        })
-        .hover(|style| style.bg(theme::hover()))
-        .child(label)
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |view, event: &MouseDownEvent, window, cx| {
-                if event.click_count > 1 {
-                    return;
-                }
-                on_pane(view, &key, action.clone(), window, cx)
-            }),
-        )
+    crate::menu::row(
+        id,
+        label,
+        chosen,
+        cx.listener(move |view, _: &MouseDownEvent, window, cx| {
+            on_pane(view, &key, action.clone(), window, cx)
+        }),
+    )
 }
 
 #[cfg(test)]
@@ -309,23 +266,6 @@ mod tests {
     #[test]
     fn another_panes_icon_moves_the_menu_there() {
         assert_eq!(toggled(Some("forsen"), "xqc"), Some("xqc".to_string()));
-    }
-
-    /// The bar's menu test, for this one: a row that waited for a click
-    /// would never hear it, since the press closes the menu and takes the
-    /// row away before the release. Held against the file's own source, as
-    /// no test without a window can press one.
-    #[test]
-    fn menu_rows_act_on_the_press() {
-        let code = code();
-        assert!(
-            !code.contains(".on_click("),
-            "something in the chat options menu waits for a click, which never comes"
-        );
-        assert!(
-            code.contains(".on_mouse_down(MouseButton::Left,"),
-            "the chat options menu's rows no longer act on the press"
-        );
     }
 
     /// What [`placed`] rests on, held against the file's source for the

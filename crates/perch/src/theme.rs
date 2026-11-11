@@ -223,12 +223,21 @@ pub fn overlay() -> Hsla {
 ///
 /// Denser than [`overlay`] because it carries every tier, not just full text,
 /// and each one is measured against the worst picture there is — a white frame
-/// under the wash: text 13.3, text_muted 7.7, control_rest 5.8, text_dim 4.7,
-/// accent 5.2 and danger 6.8:1. `every_tier_drawn_on_a_picture_reads_over_a_white_frame` holds
+/// under the wash: text 15.5, text_muted 9.0, control_rest 6.7, text_dim 5.5,
+/// accent 6.0 and danger 7.9:1. `every_tier_drawn_on_a_picture_reads_over_a_white_frame` holds
 /// it there. One wash for everything on a picture, so two strips over the same
 /// frame never disagree about how dark the video behind them is.
+///
+/// And dense enough that what is under it is not read through it. At `e0`,
+/// where it stood until November 2026, a stream's own bright caption along
+/// the foot of its picture showed through the bar at about 1.2:1 against the
+/// black around it, faint and still legible, under the bar's own words: the
+/// quality sat on a line of somebody's overlay. At `f0` it is about 1.08:1,
+/// which is a texture rather than text. The bar is only up while it is
+/// asked for, so what it costs is the last of a picture that could not be
+/// seen through it anyway.
 pub fn video_chrome() -> Hsla {
-    rgba(0x000000e0).into()
+    rgba(0x000000f0).into()
 }
 
 /// The brightest a picture can be under this wash: a white frame with the wash
@@ -312,7 +321,7 @@ pub fn text_muted() -> Hsla {
 /// or a pane's header, the title bar's gear, the window's caption buttons —
 /// before the pointer lifts it to [`text`] (`controls::Variant`). Quieter
 /// than [`text_muted`] on purpose: chrome is what you stare past for three
-/// hours, and information is what you came to read. 5.8:1 on the player's
+/// hours, and information is what you came to read. 6.7:1 on the player's
 /// [`video_chrome`] over a white frame, which is where the quietest control
 /// sits.
 pub fn control_rest() -> Hsla {
@@ -465,6 +474,13 @@ pub fn weight_title() -> FontWeight {
 /// with a title.
 pub fn weight_label() -> FontWeight {
     FontWeight::MEDIUM
+}
+
+/// Words that are read rather than pressed, where they sit inside a control
+/// and must not take its weight: when an offline name was last live, beside
+/// the name in its pill.
+pub fn weight_body() -> FontWeight {
+    FontWeight::NORMAL
 }
 
 /// The one element that genuinely has to shout: the `LIVE` badge, read at a
@@ -738,6 +754,17 @@ pub const SEEK_MUTED_MIN: f32 = 2.0;
 /// foot so it clears the button it came from; and how much lower than that
 /// it starts as it rises into place.
 pub const MENU_MIN_WIDTH: f32 = 120.0;
+/// The widest a notice's words run on a page with nothing else on it — the
+/// sign-in prompt, an empty list's sentence — so a sentence is a few short
+/// lines in the middle of the page rather than one line across a 4K window.
+pub const NOTICE_WIDTH: f32 = 420.0;
+/// How wide the settings sheet is: room for a field and its help beside the
+/// two columns of the shortcuts' list.
+pub const SHEET_WIDTH: f32 = 480.0;
+/// A line a pixel thick: the rule between a menu's groups, the break a
+/// chat's minute sits on, the divider beside the tabs. One name for them,
+/// so a rule is not a literal wherever one is drawn.
+pub const HAIRLINE: f32 = 1.0;
 pub const MENU_BOTTOM: f32 = ICON_BUTTON + GAP_WORD;
 pub const MENU_RISE: f32 = 6.0;
 

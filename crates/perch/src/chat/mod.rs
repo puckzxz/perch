@@ -1015,7 +1015,7 @@ impl ChatView {
                     .text_color(theme::text_dim())
                     .child(stamp),
             )
-            .child(div().flex_1().h(px(1.)).bg(theme::divider()))
+            .child(div().flex_1().h(px(theme::HAIRLINE)).bg(theme::divider()))
     }
 
     /// A row's own time, at its start, while every message carries one (the
@@ -1769,7 +1769,7 @@ impl Render for ChatView {
                             // Sits over messages, so it has to swallow the
                             // click rather than pass it to a link beneath.
                             .block_mouse_except_scroll()
-                            .shadow_lg()
+                            .map(controls::lifted)
                             .on_click(
                                 cx.listener(|this, _event, _window, cx| this.follow_live(cx)),
                             ),

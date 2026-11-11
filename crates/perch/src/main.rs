@@ -43,6 +43,7 @@ mod last_live;
 mod launch;
 mod layout;
 mod loudness;
+mod menu;
 mod motion;
 mod notifications;
 mod os_window;

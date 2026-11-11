@@ -39,15 +39,14 @@ use std::path::{Path, PathBuf};
 
 use emotes::effects::{WIDE, ZERO_SPACE};
 use emotes::{Effects, Emote};
-use gpui::{
-    div, img, prelude::*, px, AnyElement, Context, MouseButton, ObjectFit, SharedString, Window,
-};
+use gpui::{div, img, prelude::*, px, AnyElement, Context, MouseButton, ObjectFit, SharedString};
 
 use super::copy_menu::Target;
 use super::ChatView;
 use crate::chat_display::Metrics;
 use crate::chat_effects::{self, Made, Picture};
 use crate::chat_words;
+use crate::controls;
 use crate::theme;
 
 /// What an emote is drawn from.
@@ -56,60 +55,6 @@ enum Drawn {
     File(PathBuf),
     /// The picture its effects made of that file.
     Made(Made),
-}
-
-/// What a picture in a chat line says under the pointer: a line for each
-/// picture or effect in it, its name and then what it is. Emote names are
-/// worth showing on hover: half of chat is emotes, and knowing what one is
-/// called is the difference between reading a message and guessing.
-pub(super) struct EmoteTooltip {
-    pub lines: Vec<(SharedString, SharedString)>,
-}
-
-impl EmoteTooltip {
-    pub(super) fn new(lines: impl IntoIterator<Item = (String, String)>) -> Self {
-        Self {
-            lines: lines
-                .into_iter()
-                .map(|(name, what)| (name.into(), what.into()))
-                .collect(),
-        }
-    }
-}
-
-impl Render for EmoteTooltip {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        // At its natural width: a tooltip has no definite width to wrap
-        // against, and a `max_w` on one does not help (HANDOFF, "Do not size
-        // a tooltip with `max_w`").
-        div()
-            .px(px(theme::CONTROL_PAD_X))
-            .py(px(theme::CONTROL_PAD_Y))
-            .rounded(px(theme::RADIUS))
-            .bg(theme::surface_raised())
-            .flex()
-            .flex_col()
-            .gap(px(theme::GAP_WORD))
-            .children(self.lines.iter().map(|(name, what)| {
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_baseline()
-                    .gap(px(theme::GAP_WORD))
-                    .child(
-                        div()
-                            .text_size(px(theme::TEXT_LABEL))
-                            .text_color(theme::text())
-                            .child(name.clone()),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(theme::TEXT_META))
-                            .text_color(theme::text_dim())
-                            .child(what.clone()),
-                    )
-            }))
-    }
 }
 
 impl ChatView {
@@ -223,9 +168,8 @@ impl ChatView {
         // its words are worked out only when it comes up.
         .on_mouse_down(MouseButton::Right, pressed)
         .when(self.window_hovered, move |picture| {
-            picture.tooltip(move |_window, cx| {
-                cx.new(|_| EmoteTooltip::new(chat_words::emote_tip(&emote)))
-                    .into()
+            picture.tooltip(move |window, cx| {
+                controls::named(chat_words::emote_tip(&emote))(window, cx)
             })
         });
 

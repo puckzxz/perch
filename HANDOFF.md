@@ -253,6 +253,7 @@ App modules, one line each; each file's own `//!` says the rest:
 | `video_view/menu.rs` | the bar's menus — the quality and a recording's speeds — and `set_menu`, the one write of the open menu (tested) |
 | `loudness.rs` | one pane's level and the hush `Only this one` lays over it (pure, tested) |
 | `channel_menu.rs` | the one right-click menu wherever a channel is named (pure, tested) |
+| `menu.rs` | the one menu every menu is drawn through: its box, its row, its rule, its heading and its arrival (tested) |
 | `compressor.rs` | the audio compressor, every pane's at once: the mpv `af` chain and the flag every render thread reads (pure, tested) |
 | `wheel.rs` | `Alt` and the wheel over a picture, turned into volume steps (pure, tested) |
 | `rest.rs` | a pointer at rest: where it stopped and when, which lets go of what it was holding up (pure, tested) |
@@ -291,7 +292,7 @@ App modules, one line each; each file's own `//!` says the rest:
 | `shared_chat.rs` | Shared Chat labels worked out (pure, tested) |
 | `recommended.rs` | the rail's Recommended group worked out (pure, tested) |
 | `palette.rs` | the command palette, and the search box's suggestions (tested) |
-| `controls.rs` | the one button and its variants, the tags, the live badge, the icon button, the headings and the tooltip builders |
+| `controls.rs` | the one button and its variants, the tags, the live badge, the icon button, the headings and the fold, the raised surface and its shadow, and the tooltip builders |
 | `widget_theme.rs` | hands `theme.rs` to `gpui-component`'s own palette |
 | `assets.rs` | the icons, typed as `assets::Icon` |
 | `motion.rs` | the two shapes of motion gpui allows, arrivals (`arrive`, `waiting`) and two-way changes (`Fade`, the one piece of state they need) |
@@ -1226,8 +1227,11 @@ the press is outside the anchor's *own* bounds (div.rs:226-236), and a menu
 hanging above its button is outside them. So a press on a row closes the menu
 first, and the click gpui would make at the release comes from a frame with
 no row in it (div.rs:2213-2245). The press is dispatched against the frame it
-landed on, so `menu::menu_row` acts in `on_mouse_down`; its doc has the rest,
-and a test reads `menu.rs` and fails on an `on_click` in it. The box itself
+landed on, so the app's one row, `menu::row` (`crate::menu`, whose module doc
+has the rest), acts in `on_mouse_down`, for every menu: the channel menu, the
+player's, the chat options and a chat row's copy menu all draw their rows
+through it, and `menu_rows_act_on_the_press` reads all five files and fails
+on an `on_click`, or on a menu building a row of its own. The player's box
 occludes, since it rises out of the bar's own hitbox, or a press on a row
 would also reach the picture's double-click.
 
@@ -1689,6 +1693,17 @@ unconsidered.
   typed.
 - **Spacing** — named by role (`PAGE_PAD`, `PANEL_PAD`, `CONTROL_PAD_*`,
   `GAP_TIGHT`, `GAP`, `GAP_SECTION`, `PANE_GAP`, `ROW_PAD_*`), not by size.
+- **A part is built once.** The tokens kept colours and type alike and
+  nothing kept the rest, so by November 2026 there were four menus with a
+  box and a row each, six surfaces risen over the page writing the same
+  five calls, two folds, three card shells and two looks of tooltip. Now a
+  menu is `menu.rs`'s (`surface`, `row`, `rule`, `heading`, `arrival`); a
+  raised surface is `controls::raised`; a fold is `controls::fold_target`
+  and `fold_chevron`, which the rail's `fold` and Following's `Offline`
+  heading share, each keeping its own face; a card is `browse::card_shell`;
+  and what a picture in chat says under the pointer is `controls::named`,
+  in the library's tooltip box as `tip` is. A fifth menu, or a new thing
+  risen over the page, starts from those.
 - **Controls come from `controls.rs`.** There were ten hand-rolled buttons in
   six shapes — the tokens were shared the whole time and the component was not,
   which is the same drift one file down. A control that needs a shape not on
@@ -1785,37 +1800,27 @@ unconsidered.
   two-way changes, `ease_enter` for arrivals). Motion says *that something
   changed*; anything long enough to wait for is too long.
 
-Audit commands, worth re-running after UI work:
+**The audit is a test.** `crates/perch/tests/design_audit.rs` reads every
+source under `src`, comments and whitespace out, and fails on a colour
+written outside `theme.rs` and `widget_theme.rs`; on spacing by a size's
+name (`.gap_2()`) or a literal padding or gap; on a text size by name or a
+`FontWeight` spelled out; on a literal size, offset or radius; on a shadow
+outside `controls.rs`; and on an `opacity(0)` outside `motion.rs`, since a
+control at zero opacity still takes clicks (see "Things not to redo"). Its
+module doc has how it reads the sources, and each test says what a hit
+wants instead. It was a list of greps here, which somebody had to remember
+to run, and the last time they were run by hand they found a raw weight, a
+stray shadow and three literal sizes; all are tokens now, so the ledger of
+literal sizes that used to be kept here is empty and stays that way. A zero
+(`px(0.)`) is left out on purpose: the divider seams and the seek bar's
+time label hang off zero-sized anchors by design.
 
-```bash
-# From the repo root. Every source file the crate has, in every directory,
-# new ones included before they are added.
-files=$(git ls-files --cached --others --exclude-standard ':(glob)crates/perch/src/**/*.rs')
-grep -ohE "\.(p|px|py|gap|gap_x|gap_y)_[0-9p]+\(\)" $files | sort | uniq -c
-grep -nE "\.(p|px|py|pt|pb|pl|pr|gap|gap_x|gap_y)\(px\([1-9]" $files | grep -v "/theme.rs:"
-grep -nE "\b(rgb|rgba|hsla|hsl)\(" $files | grep -v "/theme.rs:\|/widget_theme.rs:"
-grep -nE "\.text_(xs|sm|base|lg|xl)\(\)|FontWeight::[A-Z_]+" $files | grep -v "/theme.rs:"
-grep -nE "\.(w|h|min_w|max_w|min_h|max_h|size|top|left|right|bottom)\(px\([1-9]" $files | grep -v "/theme.rs:"
-grep -nE "Duration::from_(millis|secs)" $files
-grep -nE "\.opacity\(0(\.0*)?\)" $files | grep -v "/motion.rs:"
-```
-
-The list comes from git rather than from a glob, so a new directory is never
-skipped. Keep the `:(glob)` magic: in a plain pathspec `**/` needs a slash
-after `src/`, so it drops every file at the top of the crate.
-
-The first four should return nothing outside `theme.rs`; the tests that
-measure text over a picture build their backdrop with `theme::over_white`
-rather than a grey of their own. The fifth, literal sizes, is the ledger of
-the debt that is left: what it prints should only get shorter, and a token
-in `theme.rs` is how a line comes off it. A zero (`px(0.)`) is left out on
-purpose: the divider seams and the seek bar's time label hang off zero-sized
-anchors by design. The sixth will show genuine timings — the follows poll,
-the toast lifetime and its resume floor, an mpv frame wait — but no
-*animation* duration should appear outside `theme.rs`. The last should
-return nothing: a control at zero opacity still takes clicks (see "Things
-not to redo"), and only `motion` fades one there, on its way to
-`invisible()`.
+One check is still a reader's: durations. `grep -nE
+"Duration::from_(millis|secs)"` over the sources will show genuine timings
+— the follows poll, the toast lifetime and its resume floor, an mpv frame
+wait — and no *animation* duration should be among them; those are
+`theme.rs`'s. And the tests that measure text over a picture build their
+backdrop with `theme::over_white` rather than a grey of their own.
 
 ### Where controls live
 
@@ -3641,8 +3646,14 @@ None of these is being worked on; all of them are real.
   is actually opaque. And only while it is drawn: an `invisible()` occluder
   still blocks the pointer.
 - Do not make a menu row act on a click. The press closes the menu, and the
-  click would come from a frame with no row in it; `menu::menu_row` acts on
-  the press, and `menu_rows_act_on_the_press` holds `menu.rs` to it.
+  click would come from a frame with no row in it; `menu::row` acts on the
+  press, and `menu_rows_act_on_the_press` holds every menu to it.
+- Do not build a menu's box or row by hand, or give anything a shadow of
+  its own. Four menus did, from the same tokens, and came out as two
+  families: one with a shadow and a gap over its first row, three without.
+  A menu opens in `menu::surface` with `menu::row`s; anything else risen
+  over the page goes through `controls::raised`, or `controls::lifted` for
+  the shadow alone (`tests/design_audit.rs` allows the call nowhere else).
 - Do not give the picture the whole cell when a stacked pane hides its chat.
   The box stays the one a pane with chat has, so `C` never moves the picture,
   and with the divider where it is derived a landscape picture would gain

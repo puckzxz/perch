@@ -326,17 +326,7 @@ pub(crate) fn card<V: 'static>(
             )
     });
 
-    div()
-        .id(("video-card", index))
-        .w(px(width))
-        .flex()
-        .flex_col()
-        .rounded(px(theme::RADIUS_LG))
-        .overflow_hidden()
-        .bg(theme::surface())
-        .cursor_pointer()
-        .hover(|style| style.bg(theme::surface_raised()))
-        .active(|style| style.bg(theme::pressed()))
+    browse::card_shell(("video-card", index), width)
         .on_click(cx.listener(move |view, _event, window, cx| {
             on_click(
                 view,

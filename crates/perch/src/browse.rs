@@ -749,6 +749,29 @@ pub(crate) fn card_meta(game: &str, note: Option<&str>) -> String {
     }
 }
 
+/// The box every card on the browse page is — a stream's, a recording's, a
+/// category's — with nothing in it yet: a column the grid's `width`, on the
+/// page's surface, clipped to its corners, under the pointer's hand. It
+/// steps up a fill under the pointer, and under a press takes the press
+/// wash over that fill rather than in its place: the wash is translucent,
+/// and alone it let the page show through a card being pressed, the
+/// opposite of a control answering (`controls::Variant::pressed_background`
+/// has the same story for a pill). One definition, where there were three
+/// copies of it, so a card cannot be restyled in one list and not the next.
+pub fn card_shell(id: impl Into<gpui::ElementId>, width: f32) -> Stateful<gpui::Div> {
+    div()
+        .id(id.into())
+        .w(px(width))
+        .flex()
+        .flex_col()
+        .rounded(px(theme::RADIUS_LG))
+        .overflow_hidden()
+        .bg(theme::surface())
+        .cursor_pointer()
+        .hover(|style| style.bg(theme::surface_raised()))
+        .active(|style| style.bg(theme::surface_raised().blend(theme::pressed())))
+}
+
 /// One live channel.
 ///
 /// Clicking the card watches it alone; the small "+" adds it beside whatever is
@@ -816,17 +839,7 @@ pub(crate) fn card<V: 'static>(
     .collect::<Vec<_>>()
     .join(" · ");
 
-    div()
-        .id(("stream-card", index))
-        .w(px(width))
-        .flex()
-        .flex_col()
-        .rounded(px(theme::RADIUS_LG))
-        .overflow_hidden()
-        .bg(theme::surface())
-        .cursor_pointer()
-        .hover(|style| style.bg(theme::surface_raised()))
-        .active(|style| style.bg(theme::pressed()))
+    card_shell(("stream-card", index), width)
         .on_click(cx.listener(move |view, _event, window, cx| {
             on_click(view, Action::Watch(login.clone()), window, cx)
         }))
@@ -1078,7 +1091,7 @@ pub(crate) fn offline_pill<V: 'static>(
             .child(
                 div()
                     .text_size(px(theme::TEXT_META))
-                    .font_weight(gpui::FontWeight::NORMAL)
+                    .font_weight(theme::weight_body())
                     .text_color(last_live_color(false))
                     .group_hover(OFFLINE_PILL_GROUP, |style| {
                         style.text_color(last_live_color(true))
@@ -1375,17 +1388,7 @@ fn category_card<V: 'static>(
             .into_any_element(),
     };
 
-    div()
-        .id(("category-card", index))
-        .w(px(width))
-        .flex()
-        .flex_col()
-        .rounded(px(theme::RADIUS_LG))
-        .overflow_hidden()
-        .bg(theme::surface())
-        .cursor_pointer()
-        .hover(|style| style.bg(theme::surface_raised()))
-        .active(|style| style.bg(theme::pressed()))
+    card_shell(("category-card", index), width)
         .child(cover)
         .child(
             div().p(px(theme::PANEL_PAD)).child(
@@ -1477,7 +1480,7 @@ fn awaiting_code<V: 'static>(
         )
         .child(
             div()
-                .max_w(px(420.))
+                .max_w(px(theme::NOTICE_WIDTH))
                 .text_size(px(theme::TEXT_META))
                 .line_height(px(theme::LINE_BODY))
                 .text_center()
@@ -1505,7 +1508,7 @@ pub(crate) fn notice(title: SharedString, detail: SharedString, error: bool) -> 
         )
         .child(
             div()
-                .max_w(px(420.))
+                .max_w(px(theme::NOTICE_WIDTH))
                 .text_size(px(theme::TEXT_BODY))
                 .line_height(px(theme::LINE_BODY))
                 .text_center()

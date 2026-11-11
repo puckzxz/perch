@@ -405,7 +405,7 @@ impl Render for SettingsPanel {
                 "settings-panel",
                 PANEL_RISE,
                 div()
-                    .w(px(480.))
+                    .w(px(theme::SHEET_WIDTH))
                     // The sheet is taller than a small window, and used to be
                     // centred inside one with no way to reach either end: at
                     // 1000x640 the title was cut off the top and Save and Close
@@ -415,11 +415,7 @@ impl Render for SettingsPanel {
                     .max_h(relative(0.9))
                     .flex()
                     .flex_col()
-                    .rounded(px(theme::RADIUS_LG))
-                    .bg(theme::surface_raised())
-                    .border_1()
-                    .border_color(theme::border())
-                    .shadow_lg()
+                    .map(controls::raised)
                     .child(
                         div()
                             .flex_none()

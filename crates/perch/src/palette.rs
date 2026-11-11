@@ -22,6 +22,7 @@ use settings::history::Watched;
 use twitch_api::{Channel, LiveStream};
 
 use crate::browse::Tab;
+use crate::controls;
 use crate::seek_bar;
 use crate::stage::MaximizeButton;
 use crate::target::{self, Target};
@@ -699,11 +700,7 @@ pub fn sheet<V: 'static>(
                     .w(px(WIDTH))
                     .flex()
                     .flex_col()
-                    .rounded(px(theme::RADIUS_LG))
-                    .bg(theme::surface_raised())
-                    .border_1()
-                    .border_color(theme::border())
-                    .shadow_lg()
+                    .map(controls::raised)
                     .child(div().p(px(theme::PANEL_PAD)).child(input))
                     .child(
                         div()

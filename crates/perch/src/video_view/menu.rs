@@ -6,9 +6,10 @@
 //! seek row. Hand-rolled rather than gpui-component's `DropdownMenu`, which
 //! serves only that library's own `Button`. One is open at a time, both
 //! hang from the bar's right-hand cluster (`bar::pane_cluster`), and `Esc`
-//! closes whichever it is, through `RootView::on_go_browse`. The rows act on
-//! the press, never on a click; `menu_row` says why, and a test below holds
-//! this file to it. The rest of a double-click whose first press a row took
+//! closes whichever it is, through `RootView::on_go_browse`. They open in
+//! the app's one menu box and their rows are its rows (`crate::menu`), which
+//! is why they act on the press, never on a click, and what holds this file
+//! to it. The rest of a double-click whose first press a row took
 //! is swallowed whole, by `run_guard`, so it cannot land on whatever the
 //! closed menu left under the pointer.
 //!
@@ -22,8 +23,8 @@
 //! the stream; what else can be done with it is one menu.
 
 use gpui::{
-    canvas, div, prelude::*, px, Animation, AnimationExt, AnyElement, Context, DispatchPhase, Div,
-    ElementId, MouseButton, MouseDownEvent, SharedString, Stateful, Window,
+    canvas, div, prelude::*, px, AnimationExt, AnyElement, Context, DispatchPhase, Div, ElementId,
+    MouseDownEvent, SharedString, Stateful, Window,
 };
 
 use super::{Switching, VideoEvent, VideoView};
@@ -144,17 +145,9 @@ impl VideoView {
             Menu::Speed => self.speed_rows(cx),
         };
 
-        div()
+        crate::menu::surface()
             .absolute()
             .right_0()
-            .flex()
-            .flex_col()
-            .min_w(px(theme::MENU_MIN_WIDTH))
-            .rounded(px(theme::RADIUS_LG))
-            .overflow_hidden()
-            .bg(theme::surface_raised())
-            .border_1()
-            .border_color(theme::border())
             // The box rises above the bar, out from under the bar's own
             // occluder, so it blocks the pointer itself: without this a press
             // on a row would also reach the picture underneath, where a
@@ -170,7 +163,7 @@ impl VideoView {
             // enough: there is no closed state to animate back to.
             .with_animation(
                 ElementId::from(which.id()),
-                Animation::new(theme::MOTION_ENTER).with_easing(theme::ease_enter()),
+                crate::menu::arrival(),
                 |menu, delta| {
                     menu.opacity(delta)
                         .bottom(px(theme::MENU_BOTTOM - theme::MENU_RISE * (1.0 - delta)))
@@ -186,29 +179,34 @@ impl VideoView {
     /// The row marked is the one chosen ([`chosen`]): while a pick is under
     /// way, the row it was made from, breathing, rather than what still
     /// plays — the menu opened again mid-switch says what was asked for.
-    fn quality_rows(&self, cx: &mut Context<Self>) -> Vec<Stateful<Div>> {
+    fn quality_rows(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let switching = self.switching.as_ref();
         let marked = chosen(self.qualities.picked, &self.qualities.playing, switching);
         let waiting = switching.is_some();
-        let mut rows = vec![quality_option(
-            "quality-default",
-            self.qualities.default.clone(),
-            Mark::of(marked == Chosen::Default, waiting),
-            None,
-            cx,
-        )
-        .border_b_1()
-        .border_color(theme::border())];
+        let mut rows = vec![
+            quality_option(
+                "quality-default",
+                self.qualities.default.clone(),
+                Mark::of(marked == Chosen::Default, waiting),
+                None,
+                cx,
+            )
+            .into_any_element(),
+            crate::menu::rule().into_any_element(),
+        ];
 
         for (index, name) in self.qualities.available.iter().enumerate() {
             let selected = marked == Chosen::Rendition(name.as_str());
-            rows.push(quality_option(
-                ("quality-option", index),
-                SharedString::from(name.clone()),
-                Mark::of(selected, waiting),
-                Some(name.clone()),
-                cx,
-            ));
+            rows.push(
+                quality_option(
+                    ("quality-option", index),
+                    SharedString::from(name.clone()),
+                    Mark::of(selected, waiting),
+                    Some(name.clone()),
+                    cx,
+                )
+                .into_any_element(),
+            );
         }
         rows
     }
@@ -217,7 +215,7 @@ impl VideoView {
     /// the one it plays at marked as the quality menu marks its choice. A
     /// press plays the pane at it from the next frame (`set_speed`); the
     /// one already chosen changes nothing.
-    fn speed_rows(&self, cx: &mut Context<Self>) -> Vec<Stateful<Div>> {
+    fn speed_rows(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let current = self.stream.speed();
         Speed::CHOICES
             .into_iter()
@@ -230,6 +228,7 @@ impl VideoView {
                     move |this, _window, cx| this.set_speed(speed, cx),
                     cx,
                 )
+                .into_any_element()
             })
             .collect()
     }
@@ -388,23 +387,16 @@ fn quality_option(
 
 /// One row of a menu: closes the menu and runs `on_press`, on the press.
 ///
-/// Not on a click, because the click would never come. The anchor's
-/// `on_mouse_down_out` asks whether a press landed outside the anchor's own
-/// bounds (gpui's div.rs:226-236), and a menu hangs above its anchor, outside
-/// them, so a press on a row closes the menu in the capture phase. gpui makes
-/// a click out of a press and a release, and fires it from the listeners of
-/// the frame current at the release (div.rs:2213-2245): drawn after the menu
-/// closed, with no row left in it. The press itself is dispatched against the
-/// frame it landed on, and its bubble phase, where this runs, comes after the
-/// capture phase that closed the menu, while the row is still there to hear
-/// it. What acting on the press costs is drag-off-to-cancel, which a short
-/// list of rows can do without.
+/// The app's one row (`crate::menu::row`, whose module says why a row acts
+/// on the press and only on the first of a run). Here the anchor's
+/// `on_mouse_down_out` is what closes the menu on that press: it asks
+/// whether a press landed outside the anchor's own bounds (gpui's
+/// div.rs:226-236), and a menu hangs above its anchor, outside them. What
+/// acting on the press costs is drag-off-to-cancel, which a short list of
+/// rows can do without.
 ///
-/// Only on the first press of a run, which is also when it marks the run as
-/// a row's, for [`VideoView::run_guard`] to swallow the rest of. A later
-/// press of a run is never a row's to take: whatever the run's first press
-/// landed on chose, and the row under the second may only be there because
-/// the first opened its menu.
+/// It also marks the run as a row's, for [`VideoView::run_guard`] to
+/// swallow the rest of.
 fn menu_row(
     id: impl Into<ElementId>,
     label: SharedString,
@@ -424,37 +416,16 @@ fn row_of(
     on_press: impl Fn(&mut VideoView, &mut Window, &mut Context<VideoView>) + 'static,
     cx: &mut Context<VideoView>,
 ) -> Stateful<Div> {
-    div()
-        .id(id.into())
-        .px(px(theme::PANEL_PAD))
-        .py(px(theme::CONTROL_PAD_Y))
-        .text_size(px(theme::TEXT_LABEL))
-        .font_weight(theme::weight_label())
-        // One line, however long: the menu hangs from a button narrower than
-        // it, so its width is whatever its rows say, and a row such as the
-        // quality menu's first, which says the settings' choice in the
-        // sheet's words (`Auto (matches the video pane)`), would otherwise
-        // wrap at the menu's least width.
-        .whitespace_nowrap()
-        .cursor_pointer()
-        .text_color(if selected {
-            theme::accent()
-        } else {
-            theme::text()
-        })
-        .hover(|style| style.bg(theme::hover()))
-        .child(label)
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                if event.click_count > 1 {
-                    return;
-                }
-                this.row_run = true;
-                this.close_menu(cx);
-                on_press(this, window, cx);
-            }),
-        )
+    crate::menu::row(
+        id,
+        label,
+        selected,
+        cx.listener(move |this, _: &MouseDownEvent, window, cx| {
+            this.row_run = true;
+            this.close_menu(cx);
+            on_press(this, window, cx);
+        }),
+    )
 }
 
 #[cfg(test)]
@@ -561,32 +532,6 @@ mod tests {
         assert!(!rest_of_row_run(true, 1));
         assert!(!rest_of_row_run(false, 1));
         assert!(!rest_of_row_run(false, 2));
-    }
-
-    /// A row that waited for a click would compile, draw, highlight under the
-    /// pointer and do nothing when chosen: the menu closes on the press and
-    /// takes the row with it before the release (see `menu_row`). No test
-    /// without a window can press one, and gpui's test harness is a feature
-    /// this build does not lock, so the rule is held here against the file's
-    /// own source instead. Everything above the tests must take its presses
-    /// through `on_mouse_down`, and nothing in it may listen for a click.
-    #[test]
-    fn menu_rows_act_on_the_press() {
-        let source = include_str!("menu.rs");
-        let code = source
-            .split("#[cfg(test)]")
-            .next()
-            .expect("the file has code above its tests");
-        // Spaces and line ends out, so formatting cannot hide a call.
-        let code: String = code.split_whitespace().collect();
-        assert!(
-            !code.contains(".on_click("),
-            "something in a menu waits for a click, which never comes once the press has closed the menu"
-        );
-        assert!(
-            code.contains(".on_mouse_down(MouseButton::Left,"),
-            "menu_row no longer acts on the press"
-        );
     }
 
     /// The quality menu opening or closing is told, from either side of

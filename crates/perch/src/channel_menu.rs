@@ -28,13 +28,13 @@
 //! press anywhere outside it, `Esc`, or the pick.
 
 use gpui::{
-    anchored, deferred, div, prelude::*, px, Animation, AnimationExt, AnyElement, Context, Corner,
-    MouseButton, MouseDownEvent, Pixels, Point, SharedString, Window,
+    anchored, deferred, prelude::*, AnimationExt, AnyElement, Context, Corner, MouseDownEvent,
+    Pixels, Point, SharedString, Window,
 };
 
 use crate::loudness::HearOnly;
 use crate::stage::MaximizeButton;
-use crate::{compressor, seek_bar, sidebar, theme};
+use crate::{compressor, seek_bar, sidebar};
 
 /// What the menu is about: a channel, by its login, with the name it writes
 /// itself as and its Helix id where the list it came from had one, which
@@ -251,61 +251,35 @@ pub fn view<V: 'static>(
     on_dismiss: impl Fn(&mut V, &mut Window, &mut Context<V>) + 'static,
     cx: &mut Context<V>,
 ) -> AnyElement {
-    // Under an id of its own, which the rows' ids sit in.
-    let mut menu = div()
+    // The app's one menu box (`crate::menu`), under an id of its own, which
+    // the rows' ids sit in.
+    let mut menu = crate::menu::surface()
         .id("channel-menu")
-        .flex()
-        .flex_col()
-        .min_w(px(theme::MENU_MIN_WIDTH))
-        .py(px(theme::GAP_WORD))
-        .rounded(px(theme::RADIUS_LG))
-        .overflow_hidden()
-        .bg(theme::surface_raised())
-        .border_1()
-        .border_color(theme::border())
-        .shadow_lg()
         // Over a card, a row or a pane, whose own listeners would otherwise
         // hear a press on a row too.
         .occlude()
         .on_mouse_down_out(
             cx.listener(move |view, _: &MouseDownEvent, window, cx| on_dismiss(view, window, cx)),
-        )
-        // A menu drawn from inside a chat would take the chat's text size
-        // and leading; this one is the app's, as every other menu is.
-        .line_height(gpui::phi());
+        );
     for row in rows {
         let pick = row.pick;
         let on_pick = on_pick.clone();
         menu = menu
-            .when(row.rule, |menu| {
-                menu.child(div().my(px(theme::GAP_WORD)).h(px(1.0)).bg(theme::border()))
-            })
-            .child(
-                div()
-                    .id(row.id)
-                    .px(px(theme::PANEL_PAD))
-                    .py(px(theme::CONTROL_PAD_Y))
-                    .text_size(px(theme::TEXT_LABEL))
-                    .font_weight(theme::weight_label())
-                    .whitespace_nowrap()
-                    .cursor_pointer()
-                    .text_color(theme::text())
-                    .hover(|style| style.bg(theme::hover()))
-                    .child(row.label.clone())
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |view, event: &MouseDownEvent, window, cx| {
-                            if event.click_count > 1 {
-                                return;
-                            }
-                            on_pick(view, pick, window, cx)
-                        }),
-                    ),
-            );
+            .when(row.rule, |menu| menu.child(crate::menu::rule()))
+            .child(crate::menu::row(
+                row.id,
+                row.label.clone(),
+                false,
+                cx.listener(move |view, _: &MouseDownEvent, window, cx| {
+                    on_pick(view, pick, window, cx)
+                }),
+            ));
     }
+    // It opens at the pointer, or under a ⋯ it must not cover, rather than
+    // out of a button, so it fades in without a rise.
     let menu = menu.with_animation(
         ("channel-menu", opened as usize),
-        Animation::new(theme::MOTION_ENTER).with_easing(theme::ease_enter()),
+        crate::menu::arrival(),
         |menu, delta| menu.opacity(delta),
     );
     deferred(anchored().anchor(corner).position(position).child(menu)).into_any_element()

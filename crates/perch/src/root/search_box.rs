@@ -27,7 +27,7 @@ use std::time::Duration;
 use gpui::{canvas, div, prelude::*, px, App, Context, Focusable, KeyDownEvent, Point, Window};
 
 use super::{Page, RootView};
-use crate::{palette, theme};
+use crate::{controls, palette, theme};
 
 /// How long the typing has to pause before the box asks Twitch by itself:
 /// long enough not to ask about every word on the way to the one meant,
@@ -245,11 +245,7 @@ impl RootView {
                 // root's, which would take the keyboard from the box first.
                 .occlude()
                 .py(px(theme::GAP_TIGHT))
-                .rounded(px(theme::RADIUS_LG))
-                .bg(theme::surface_raised())
-                .border_1()
-                .border_color(theme::border())
-                .shadow_lg()
+                .map(controls::raised)
                 .child(rows),
         )
     }

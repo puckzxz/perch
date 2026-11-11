@@ -525,12 +525,8 @@ impl ChatView {
                 .max_h(px(place.max_height))
                 .flex()
                 .flex_col()
-                .rounded(px(theme::RADIUS_LG))
                 .overflow_hidden()
-                .bg(theme::surface_raised())
-                .border_1()
-                .border_color(theme::border())
-                .shadow_lg()
+                .map(controls::raised)
                 // Over the rows and the pills at their foot, whose links and
                 // names would otherwise hear a press on it too.
                 .occlude()

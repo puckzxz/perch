@@ -32,11 +32,10 @@ use std::collections::HashMap;
 
 use chrono::Utc;
 use emotes::ImageCache;
-use gpui::{div, prelude::*, px, svg, AnyElement, Context, ScrollHandle, SharedString};
+use gpui::{div, prelude::*, px, AnyElement, Context, ScrollHandle, SharedString};
 use settings::history::{History, Watched};
 use twitch_api::{Channel, LiveStream};
 
-use crate::assets::Icon;
 use crate::browse::{self, Action, SignIn, Tab};
 use crate::last_live::LastLive;
 use crate::recommended::{self, Suggestion};
@@ -422,14 +421,15 @@ const OFFLINE_FOLD: &str = "following-offline-fold";
 /// not. A press on any of it unfolds them, or folds them again, for the
 /// session (`Action::ToggleOffline`), as the rail's offline heading does
 /// (`controls::fold`), whose chevron is first. Here it is last, so every
-/// heading on the page starts at the same edge.
+/// heading on the page starts at the same edge. The two are one fold to the
+/// pointer (`controls::fold_target`, `controls::fold_chevron`): as tall as
+/// an icon button, where this one was the height of its words.
 fn offline_heading<V: 'static>(
     count: usize,
     open: bool,
     on_action: impl Fn(&mut V, Action, &mut gpui::Window, &mut Context<V>) + 'static,
     cx: &mut Context<V>,
 ) -> impl IntoElement {
-    let icon = if open { Icon::Unfolded } else { Icon::Folded };
     let tip = if open {
         "Hide who is offline"
     } else {
@@ -438,15 +438,8 @@ fn offline_heading<V: 'static>(
     // In a row of its own, the heading's width rather than the page's, so a
     // press beside it on the empty rest of the line does nothing.
     div().flex().flex_row().child(
-        div()
-            .id(OFFLINE_FOLD)
-            .flex_none()
-            .group(OFFLINE_FOLD)
-            .flex()
-            .flex_row()
-            .items_center()
+        controls::fold_target(div().flex_none(), OFFLINE_FOLD, OFFLINE_FOLD)
             .gap(px(theme::GAP_TIGHT))
-            .cursor_pointer()
             .tooltip(controls::tip(tip))
             .on_click(cx.listener(move |view, _event, window, cx| {
                 on_action(view, Action::ToggleOffline, window, cx)
@@ -459,14 +452,7 @@ fn offline_heading<V: 'static>(
                     .group_hover(OFFLINE_FOLD, |style| style.text_color(theme::text_muted()))
                     .child(SharedString::from(count.to_string())),
             )
-            .child(
-                svg()
-                    .path(icon.path())
-                    .flex_none()
-                    .size(px(theme::ICON))
-                    .text_color(theme::text_dim())
-                    .group_hover(OFFLINE_FOLD, |style| style.text_color(theme::text())),
-            ),
+            .child(controls::fold_chevron(open, OFFLINE_FOLD)),
     )
 }
 

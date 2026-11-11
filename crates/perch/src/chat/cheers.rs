@@ -7,7 +7,7 @@
 //! A cheer is drawn as an emote is (`emote`): its picture at the emote
 //! height in a box a line high, hanging past the line above and below, so a
 //! row with a cheer is no taller than one without; animated under an id of
-//! its own; its tooltip in the emote's look (`EmoteTooltip`), only while the
+//! its own; its tooltip in the emote's look (`controls::named`), only while the
 //! pointer is in the window; and, until the picture is on disk, the word's
 //! prefix in its place, dim, as an emote's name stands in for an emote. The
 //! amount follows it in bold, in the tier's colour, lifted as far as it must
@@ -23,11 +23,11 @@ use gpui::{div, img, prelude::*, px, AnyElement, Context, Hsla, SharedString};
 
 use twitch_chat::ChatMessage;
 
-use super::emote::EmoteTooltip;
 use super::{ChatView, RowKind};
 use crate::chat_cheers::ChatCheers;
 use crate::chat_display::Metrics;
 use crate::chat_words;
+use crate::controls;
 use crate::theme;
 
 impl ChatView {
@@ -92,9 +92,8 @@ impl ChatView {
                     .h(px(metrics.emote))
                     .mt(px(-metrics.overhang))
                     .when(self.window_hovered, move |picture| {
-                        picture.tooltip(move |_window, cx| {
-                            cx.new(|_| EmoteTooltip::new(chat_words::cheer_tip(&cheer)))
-                                .into()
+                        picture.tooltip(move |window, cx| {
+                            controls::named(chat_words::cheer_tip(&cheer))(window, cx)
                         })
                     });
                 div()

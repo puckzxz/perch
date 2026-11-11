@@ -461,7 +461,7 @@ impl RootView {
                 .bg(theme::surface_raised())
                 .border_l_2()
                 .border_color(theme::accent())
-                .shadow_lg()
+                .map(controls::lifted)
                 .text_size(px(theme::TEXT_META))
                 .line_height(px(theme::LINE_BODY))
                 .text_color(theme::text())

@@ -522,6 +522,80 @@ pub fn drag_layer<V: 'static>(
         .on_hover(cx.listener(|_, _: &bool, _window, cx| cx.notify()))
 }
 
+/// The shadow anything risen over the page casts: a menu, a card under the
+/// pointer, a toast. One call for it, so the app has one elevation, and a
+/// surface that should cast it cannot be written without it; the audit in
+/// `tests/design_audit.rs` allows the call nowhere else.
+pub fn lifted<E: Styled>(element: E) -> E {
+    element.shadow_lg()
+}
+
+/// A surface risen over the page: every menu (`crate::menu::surface`), the
+/// palette, the search box's suggestions, the settings sheet, the rail's
+/// preview card and a viewer's card. The raised fill, the app's hairline
+/// border, the large radius and the one shadow ([`lifted`]), as one recipe:
+/// each of those wrote the same five calls, and the three menus that left
+/// the shadow out are how it came to be one. For any element mid-chain,
+/// through `map`.
+pub fn raised<E: Styled>(element: E) -> E {
+    lifted(
+        element
+            .rounded(px(theme::RADIUS_LG))
+            .bg(theme::surface_raised())
+            .border_1()
+            .border_color(theme::border()),
+    )
+}
+
+/// A tooltip of names, each with what it is beside it, quieter: what a
+/// picture in a chat line says under the pointer (`KEKW  BetterTTV emote`),
+/// a line for each picture or effect in it. In the library's tooltip box,
+/// as [`tip`] and [`full_text`] are, so every tooltip in the app is drawn
+/// the same way; it had a box of its own, with another radius and no
+/// border.
+///
+/// At its natural width: a tooltip has no definite width to wrap against,
+/// and a `max_w` on one does not help (HANDOFF, "Do not size a tooltip with
+/// `max_w`").
+pub fn named(
+    lines: impl IntoIterator<Item = (String, String)>,
+) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
+    let lines: Vec<(SharedString, SharedString)> = lines
+        .into_iter()
+        .map(|(name, what)| (name.into(), what.into()))
+        .collect();
+
+    move |window, cx| {
+        let lines = lines.clone();
+        gpui_component::tooltip::Tooltip::element(move |_, _| {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(theme::GAP_WORD))
+                .children(lines.iter().map(|(name, what)| {
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_baseline()
+                        .gap(px(theme::GAP_WORD))
+                        .child(
+                            div()
+                                .text_size(px(theme::TEXT_LABEL))
+                                .text_color(theme::text())
+                                .child(name.clone()),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(theme::TEXT_META))
+                                .text_color(theme::text_dim())
+                                .child(what.clone()),
+                        )
+                }))
+        })
+        .build(window, cx)
+    }
+}
+
 /// The box a group's name sits in over the rows it heads, with nothing in it
 /// yet: the rail's `Pinned`, `Live` and `Recommended`, and the start of a
 /// [`fold`] for its `Offline`. Not a control; here because [`fold`] is built on it, and the
@@ -548,28 +622,44 @@ pub fn group_heading() -> Div {
 /// read as one more. The chevron takes its colour through `group_hover`, for
 /// the reason [`icon_button`]'s glyph does.
 pub fn fold(id: impl Into<ElementId>, label: impl Into<SharedString>, open: bool) -> Stateful<Div> {
-    let icon = if open { Icon::Unfolded } else { Icon::Folded };
-    group_heading()
-        .id(id.into())
-        .group(FOLD_GROUP)
-        .flex()
-        .flex_row()
-        .items_center()
+    fold_target(group_heading(), id, FOLD_GROUP)
         .gap(px(theme::GAP_WORD))
         .rounded(px(theme::RADIUS))
-        .cursor_pointer()
         // The one `hover`; see `pill`.
         .hover(|style| style.bg(theme::hover()).text_color(theme::text()))
         .active(|style| style.bg(theme::pressed()))
-        .child(
-            svg()
-                .path(icon.path())
-                .flex_none()
-                .size(px(theme::ICON))
-                .text_color(theme::text_dim())
-                .group_hover(FOLD_GROUP, |style| style.text_color(theme::text())),
-        )
+        .child(fold_chevron(open, FOLD_GROUP))
         .child(label.into())
+}
+
+/// What every fold is to the pointer, whatever it looks like: `base` as a
+/// row with its parts centred, at least an icon button tall, under the
+/// pointer's hand, and the `group` its chevron lifts with. The rail's fold
+/// and Following's `Offline` heading are both built on it; the heading drew
+/// its own, the height of its text, about nineteen pixels, the smallest
+/// thing to hit in the app.
+pub fn fold_target(base: Div, id: impl Into<ElementId>, group: &'static str) -> Stateful<Div> {
+    base.id(id.into())
+        .group(group)
+        .flex()
+        .flex_row()
+        .items_center()
+        .min_h(px(theme::ICON_BUTTON))
+        .cursor_pointer()
+}
+
+/// A fold's chevron: pointing at its rows while they show (`open`) and away
+/// while they are folded, dim until the pointer is on its fold (`group`).
+/// It takes its colour through `group_hover`, for the reason
+/// [`icon_button`]'s glyph does.
+pub fn fold_chevron(open: bool, group: &'static str) -> gpui::Svg {
+    let icon = if open { Icon::Unfolded } else { Icon::Folded };
+    svg()
+        .path(icon.path())
+        .flex_none()
+        .size(px(theme::ICON))
+        .text_color(theme::text_dim())
+        .group_hover(group, |style| style.text_color(theme::text()))
 }
 
 /// A control that destroys something, which earns exactly one signal: it turns

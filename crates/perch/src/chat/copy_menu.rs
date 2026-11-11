@@ -39,13 +39,12 @@
 //! `Chat paused` stays up rather than the rows landing on the close.
 
 use gpui::{
-    anchored, deferred, div, prelude::*, px, Animation, AnimationExt, AnyElement, Context,
-    MouseButton, MouseDownEvent, Pixels, Point, SharedString,
+    anchored, deferred, prelude::*, AnimationExt, AnyElement, Context, MouseDownEvent, Pixels,
+    Point, SharedString,
 };
 
 use super::{ChatView, ChatViewEvent, RowKind};
 use crate::chat_text::{self, Kind};
-use crate::theme;
 
 /// What under the pointer a right-click on a row landed on, as far as the
 /// menu cares: a link, by where it points, an emote, by its name (with
@@ -266,33 +265,22 @@ impl ChatView {
             .enumerate()
             .map(|(index, entry)| menu_row(index, entry.label.into(), cx))
             .collect();
-        let menu_box = div()
-            .flex()
-            .flex_col()
-            .min_w(px(theme::MENU_MIN_WIDTH))
-            .rounded(px(theme::RADIUS_LG))
-            .overflow_hidden()
-            .bg(theme::surface_raised())
-            .border_1()
-            .border_color(theme::border())
+        // The app's one menu box (`crate::menu`), which also keeps the
+        // chat's text size and leading out of a menu drawn from inside it.
+        let menu_box = crate::menu::surface()
             // Over the chat and maybe a pane beside it, whose rows, links
             // and picture would otherwise hear a press on a row too.
             .occlude()
             .on_mouse_down_out(cx.listener(|this, _: &MouseDownEvent, _window, cx| {
                 this.close_menu(cx);
             }))
-            // Drawn from inside the chat, it would inherit the chat's text
-            // size and leading (`chat_display`), which a menu does not
-            // follow: it is the app's, as every other menu is. The rows set
-            // their size; this puts back gpui's own leading under them.
-            .line_height(gpui::phi())
             .children(rows)
             // Mounted only while open, so a one-shot is enough, as the bar's
             // menus are; it opens at the pointer rather than out of a
             // button, so it fades in without a rise.
             .with_animation(
                 ("chat-copy-menu", menu.opened as usize),
-                Animation::new(theme::MOTION_ENTER).with_easing(theme::ease_enter()),
+                crate::menu::arrival(),
                 |menu, delta| menu.opacity(delta),
             );
         Some(deferred(anchored().position(menu.position).child(menu_box)).into_any_element())
@@ -307,26 +295,12 @@ fn menu_row(
     label: SharedString,
     cx: &mut Context<ChatView>,
 ) -> gpui::Stateful<gpui::Div> {
-    div()
-        .id(("chat-copy-row", index))
-        .px(px(theme::PANEL_PAD))
-        .py(px(theme::CONTROL_PAD_Y))
-        .text_size(px(theme::TEXT_LABEL))
-        .font_weight(theme::weight_label())
-        .whitespace_nowrap()
-        .cursor_pointer()
-        .text_color(theme::text())
-        .hover(|style| style.bg(theme::hover()))
-        .child(label)
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
-                if event.click_count > 1 {
-                    return;
-                }
-                this.pick(index, cx);
-            }),
-        )
+    crate::menu::row(
+        ("chat-copy-row", index),
+        label,
+        false,
+        cx.listener(move |this, _: &MouseDownEvent, _window, cx| this.pick(index, cx)),
+    )
 }
 
 #[cfg(test)]
@@ -469,28 +443,6 @@ mod tests {
                 "Link copied",
                 "Emote name copied"
             ]
-        );
-    }
-
-    /// The bar's menu test, for this one: a row that waited for a click
-    /// would never hear it, since the press closes the menu and takes the
-    /// row away before the release. Held against the file's own source, as
-    /// no test without a window can press one.
-    #[test]
-    fn menu_rows_act_on_the_press() {
-        let source = include_str!("copy_menu.rs");
-        let code = source
-            .split("#[cfg(test)]")
-            .next()
-            .expect("the file has code above its tests");
-        let code: String = code.split_whitespace().collect();
-        assert!(
-            !code.contains(".on_click("),
-            "something in the chat's copy menu waits for a click, which never comes"
-        );
-        assert!(
-            code.contains(".on_mouse_down(MouseButton::Left,"),
-            "the chat's copy menu's rows no longer act on the press"
         );
     }
 }

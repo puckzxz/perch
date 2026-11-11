@@ -177,7 +177,7 @@ impl RootView {
             .child(
                 div()
                     .flex_none()
-                    .w(px(1.0))
+                    .w(px(theme::HAIRLINE))
                     .h(px(theme::ICON))
                     .bg(theme::border()),
             )
