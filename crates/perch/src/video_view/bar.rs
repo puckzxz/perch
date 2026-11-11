@@ -11,8 +11,7 @@
 //! speaker crossed out while it is silent, chat crossed out while it is
 //! hidden — with a tooltip that says what a press does, and names the key
 //! that does the same where there is one (`keys::Hint`), so the bar teaches
-//! the keys rather than standing in for them. More has no key, so its
-//! tooltip is its name.
+//! the keys rather than standing in for them.
 //! The still chat glyph of a recording with no chat replay says why there
 //! is nothing to press. The quality pill is words, saying what plays, with
 //! no tooltip and no key; the palette's `Choose quality for …` is its
@@ -35,7 +34,8 @@
 //!   press on it, in the capture phase (`control_bar`).
 //!
 //! What fits at the pane's width is [`fit`]: a narrow pane drops the volume
-//! figure, then the slider, then folds the quality pill into More, and never
+//! figure, then the slider, then swaps the quality pill for an icon that
+//! opens the same menu and says what plays under the pointer, and never
 //! drops play, volume or a button of the right-hand cluster.
 //!
 //! A live stream's timeline is the recording's seek row, in its place above
@@ -65,37 +65,42 @@
 //! (`seek_bar::Timeline::growing`), which is Twitch saying the archive is
 //! finished, whatever a list kept since says.
 //!
-//! A recording playing at other than the normal speed says so after its
-//! length on the seek row, `1.5x`, before any way back to live
-//! (`VideoView::speed_tag`). On a pane it is an on-video pill whose press
-//! opens the speed menu or closes it, as the quality pill does its own, and
-//! it acts on the press in the capture phase and stops it there, or the
-//! menus' press outside would close the menu for the click to open it
-//! again. It takes room from the seek track, as the way back does, so
-//! [`fit`] gives nothing up for it either. A pop-out has no menus, so there
-//! it is only a label.
+//! A recording says how fast it plays after its length on the seek row,
+//! `1x` or `1.5x`, before any way back to live (`VideoView::speed_tag`). On
+//! a pane it is an on-video pill whose press opens the speed menu or closes
+//! it, as the quality pill does its own, and it is always there, since it
+//! is the one way to the speeds; it acts on the press in the capture phase
+//! and stops it there, or the menus' press outside would close the menu for
+//! the click to open it again. It takes room from the seek track, as the
+//! way back does, so [`fit`] gives nothing up for it either. A pop-out has
+//! no menus, so there it is only a label, and only while the speed is not
+//! the normal one.
 //!
 //! Browse is not here. It had the cluster's fourth square while the browse
 //! page docked beside the panes, with this pane the one a card replaced;
 //! since browsing stops what plays it is the title bar's alone.
 //!
-//! What only two panes or more need — a pane given the window, hearing one
-//! alone, moving one — is not here but on a pane's right-click menu
-//! (`crate::channel_menu`), so the bar keeps to what one stream needs.
+//! Nothing else is here. The bar is for playing the stream; what else can
+//! be done with it — its pin, its link, the compressor, its pop-out, and
+//! what only two panes or more need — is the pane's one menu
+//! (`crate::channel_menu`), from the ⋯ in its header or the right button.
+//! A More stood at the end of this bar until November 2026 and offered
+//! four of that menu's rows a second time (`menu`'s module doc).
 //!
 //! A pane popped into a window of its own has a bar of its own shape: the
 //! seek row and the left-hand end as a pane has them, and at the right only
-//! Bring back and Close. No quality, chat, fullscreen or More — the pane's
-//! chat and its menus stay with its cell in the main window, and the window
-//! is too small to want them.
+//! Bring back and Close. No quality, chat or fullscreen — the pane's chat
+//! and its menus stay with its cell in the main window, and the window is
+//! too small to want them.
 
 use chrono::Utc;
 use gpui::{
-    canvas, div, prelude::*, px, AnyElement, Context, Div, MouseButton, MouseDownEvent,
+    canvas, div, prelude::*, px, AnyElement, Context, Div, ElementId, MouseButton, MouseDownEvent,
     SharedString, Stateful, Window,
 };
 use gpui_component::slider::Slider;
 
+use super::menu::folded_quality;
 use super::{ChatButton, Menu, Switching, VideoEvent, VideoView};
 use crate::assets::Icon;
 use crate::controls::{self, Variant};
@@ -108,12 +113,13 @@ use crate::stage::Place;
 use crate::theme;
 use crate::watch::PaneAction;
 
-/// The icon buttons in a pane's right-hand cluster: chat, fullscreen and
-/// More. `button_row` lays them out as an array this long, so a control
-/// cannot join the cluster without this count changing with it, and with it
-/// what [`fit`] leaves room for. The quality pill is not one of them: it is
-/// words, and it folds.
-pub(super) const RIGHT_BUTTONS: usize = 3;
+/// The icon buttons in a pane's right-hand cluster: chat and fullscreen.
+/// `pane_cluster` lays them out as an array this long, so a control cannot
+/// join the cluster without this count changing with it, and with it what
+/// [`fit`] leaves room for. The quality is not one of them: it stands
+/// before them as words, or as an icon where the words do not fit, and
+/// [`needs`] counts whichever it is.
+pub(super) const RIGHT_BUTTONS: usize = 2;
 
 /// The same for a pop-out's cluster: Bring back and Close.
 pub(super) const POP_OUT_BUTTONS: usize = 2;
@@ -126,7 +132,7 @@ pub(super) struct Cluster {
     pill: bool,
 }
 
-/// A pane's: the quality pill, then chat, fullscreen and More.
+/// A pane's: the quality, then chat and fullscreen.
 const PANE: Cluster = Cluster {
     buttons: RIGHT_BUTTONS,
     pill: true,
@@ -196,10 +202,10 @@ pub(super) fn timeline_fits(width: f32) -> bool {
 }
 
 impl VideoView {
-    /// The seek row: a recording's seek bar, with its speed after it while
-    /// that is not the normal one ([`speed_tag`](Self::speed_tag)) and the
-    /// way back to live while its broadcast goes on ([`back_to_live`]), or a
-    /// live stream's timeline ([`live_row`](Self::live_row)).
+    /// The seek row: a recording's seek bar, with its speed after it
+    /// ([`speed_tag`](Self::speed_tag)) and the way back to live while its
+    /// broadcast goes on ([`back_to_live`]), or a live stream's timeline
+    /// ([`live_row`](Self::live_row)).
     fn seek_row(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let Some(timeline) = self.stream.timeline() else {
             return self.live_row(cx);
@@ -237,13 +243,15 @@ impl VideoView {
             |this: &mut Self, bounds| this.track = Some(bounds),
             cx,
         );
-        // The speed, while it is not the normal one ([`speed_tag`]); and
-        // only while the archive is still being made, the way back to live:
-        // the keeper re-reads its playlist, and Twitch ends it once the
-        // broadcast is over, which takes the way back away whichever list
-        // still carries the channel.
+        // The speed ([`speed_tag`]): always on a pane, where it is the way
+        // to the speeds, and in a pop-out, which has no menus, only while
+        // it is not the normal one. And only while the archive is still
+        // being made, the way back to live: the keeper re-reads its
+        // playlist, and Twitch ends it once the broadcast is over, which
+        // takes the way back away whichever list still carries the channel.
         let speed = self.stream.speed();
-        let speed = (!speed.is_normal()).then(|| self.speed_tag(speed, window, cx));
+        let speed = (self.place == Place::Pane || !speed.is_normal())
+            .then(|| self.speed_tag(speed, window, cx));
         let back = (self.back_to_live && timeline.growing).then(|| back_to_live(window, cx));
         if speed.is_none() && back.is_none() {
             return Some(seek.into_any_element());
@@ -264,15 +272,15 @@ impl VideoView {
         )
     }
 
-    /// The speed a recording plays at, after its length on the seek row,
-    /// while it is not the normal one: `1.5x`, at the length's size, so a
-    /// pane playing fast says so wherever the pointer is on it and the time
-    /// beside it is read for what it is.
+    /// The speed a recording plays at, after its length on the seek row:
+    /// `1x`, or `1.5x`, at the length's size, so a pane playing fast says
+    /// so wherever the pointer is on it and the time beside it is read for
+    /// what it is.
     ///
-    /// On a pane it is a control like the bar's others: an on-video pill
-    /// that lifts under the pointer, with a tooltip, whose press opens the
-    /// speeds as More's speed row does, or closes them, as the quality pill
-    /// toggles its menu. On the press, in the capture phase, and the press
+    /// On a pane it is a control like the bar's others, and the one way to
+    /// the speeds: an on-video pill that lifts under the pointer, with a
+    /// tooltip, whose press opens the speeds, or closes them, as the
+    /// quality pill toggles its menu. On the press, in the capture phase, and the press
     /// stops here (see the module): the seek row paints
     /// before the menus' anchor, so the anchor's press outside, which would
     /// close the menu for the click to open it again, never hears it. Only
@@ -420,9 +428,9 @@ impl VideoView {
             .child(self.button_row(window, cx))
     }
 
-    /// Play, volume, then the right-hand cluster — a pane's quality, chat,
-    /// fullscreen and More, or a pop-out's Bring back and Close: the row
-    /// every stream has.
+    /// Play, volume, then the right-hand cluster — a pane's quality, chat
+    /// and fullscreen, or a pop-out's Bring back and Close: the row every
+    /// stream has.
     fn button_row(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         // The figure is the level chosen, beside the slider showing it; the
         // speaker says whether the pane can be heard, which a pane held
@@ -502,17 +510,20 @@ impl VideoView {
             .child(right)
     }
 
-    /// A pane's right-hand cluster: the quality pill, chat, fullscreen and
-    /// More, and the one anchor every menu opens from.
+    /// A pane's right-hand cluster: the quality, chat and fullscreen, and
+    /// the one anchor every menu opens from.
     fn pane_cluster(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let window_hovered = window.is_window_hovered();
 
         // The pill says what is playing, and opens the menu to change it.
-        // Words rather than an icon, so it is the first thing to go when
-        // the bar runs out of room: More then carries it as its first row.
-        // While a pick is under way it names that instead, and breathes
-        // (`pill_face`), in the same room (`theme::QUALITY_PILL_ROOM`).
-        let quality = self.fit.quality.then(|| {
+        // Words rather than an icon, so it is the first thing to give way
+        // when the bar runs out of room: an icon then stands where it did,
+        // opens the same menu, and says what the words said under the
+        // pointer (`menu::folded_quality`). While a pick is under way the
+        // pill names that instead, and breathes (`pill_face`), in the same
+        // room (`theme::QUALITY_PILL_ROOM`); the icon breathes too, so a
+        // bar held up for the switch has something on it that says why.
+        let quality = if self.fit.quality {
             let face = pill_face(&self.qualities.playing, self.switching.as_ref());
             let pill = controls::pill(face.id, face.label, Variant::OnVideo)
                 // Breathing, in the lifted words a pointer would give it:
@@ -531,7 +542,24 @@ impl VideoView {
             } else {
                 pill.into_any_element()
             }
-        });
+        } else {
+            // Its id follows its words, so a tooltip up when a pick lands
+            // does not go on saying what played before (`controls::tip`).
+            let says = folded_quality(&self.qualities.playing, self.switching.as_ref());
+            let icon = menu_button(
+                SharedString::from(format!("bar-quality-{says}")),
+                Icon::Settings,
+                says.to_string(),
+                Menu::Quality,
+                window,
+                cx,
+            );
+            if self.switching.is_some() {
+                motion::waiting("quality-switching", icon).into_any_element()
+            } else {
+                icon.into_any_element()
+            }
+        };
 
         let chat = match self.chat {
             ChatButton::Shown => act_button(
@@ -595,28 +623,11 @@ impl VideoView {
             |_this, window, _cx| window.toggle_fullscreen(),
         );
 
-        let more = menu_button(
-            "bar-more",
-            Icon::More,
-            "More".to_string(),
-            Menu::More,
-            window,
-            cx,
-        );
-        // With the pill folded into More, More is where a switch under way
-        // is said (`menu::folded_quality`), so it breathes meanwhile: the
-        // bar held up for the switch has something on it that says why.
-        let more = if !self.fit.quality && self.switching.is_some() {
-            motion::waiting("more-switching", more).into_any_element()
-        } else {
-            more.into_any_element()
-        };
-
-        // Pop out is not here: it is More's and the pane menu's, and this
-        // cluster never drops a button. Nor is Browse, which is the title
+        // Pop out is not here: it is the pane menu's, with everything else
+        // that is not playing the stream. Nor is Browse, which is the title
         // bar's alone since browsing stops what plays: a pane's own would
         // say it was about this pane.
-        let buttons: [AnyElement; RIGHT_BUTTONS] = [chat, fullscreen.into_any_element(), more];
+        let buttons: [AnyElement; RIGHT_BUTTONS] = [chat, fullscreen.into_any_element()];
 
         // The right-hand cluster, and the one anchor every menu opens from.
         // Every control that joins the bar's right-hand end joins this
@@ -634,15 +645,15 @@ impl VideoView {
             // outside the anchor's bounds, so a press on one of its rows
             // counts as elsewhere too, which is why rows act on the press;
             // see `menu::menu_row`. What is inside the anchor closes the menu
-            // itself, or toggles it: `act_button`, `menu_button`, the pill and
-            // the still chat glyph. Only the narrow gaps between them close
+            // itself, or toggles it: `act_button`, the quality's pill or its
+            // icon (`menu_button`), and the still chat glyph. Only the narrow gaps between them close
             // nothing.
             .when(self.menu.is_some(), |anchor| {
                 anchor.on_mouse_down_out(cx.listener(|this, _event, _window, cx| {
                     this.close_menu(cx);
                 }))
             })
-            .children(quality)
+            .child(quality)
             .children(buttons)
             .when_some(self.menu, |anchor, which| {
                 anchor.child(self.menu_box(which, cx))
@@ -711,7 +722,7 @@ fn pop_out_cluster(window: &Window, cx: &mut Context<VideoView>) -> impl IntoEle
 /// module. `id` is keyed on whatever state `tip` follows, for the same
 /// reason.
 fn bar_icon(
-    id: &'static str,
+    id: impl Into<ElementId>,
     icon: Icon,
     variant: Variant,
     tip: String,
@@ -744,13 +755,14 @@ fn act_button(
     ))
 }
 
-/// An icon that opens `which`, or closes it when it is the menu open. Closes
-/// nothing first, unlike [`act_button`]: a second press on an open menu's
-/// button would close it and then open it again, and a press while the
-/// other menu is open swaps one for the other (`menu::toggled`). The press is
-/// inside the anchor, so the dismiss does not hear it either.
+/// An icon that opens `which`, or closes it when it is the menu open: the
+/// quality's, where the bar is too narrow for its pill. Closes nothing
+/// first, unlike [`act_button`]: a second press on an open menu's button
+/// would close it and then open it again, and a press while the other menu
+/// is open swaps one for the other (`menu::toggled`). The press is inside
+/// the anchor, so the dismiss does not hear it either.
 fn menu_button(
-    id: &'static str,
+    id: impl Into<ElementId>,
     icon: Icon,
     tip: String,
     which: Menu,
@@ -768,9 +780,9 @@ pub(super) struct Fit {
     pub(super) figure: bool,
     /// The volume slider. The speaker and `↑`/`↓` still set the level.
     pub(super) slider: bool,
-    /// The quality pill. Without it, More's first row is the quality. Read
-    /// only by a pane's cluster: a pop-out has neither pill nor More, and
-    /// [`fit`] counts no room for the pill there.
+    /// The quality pill. Without it the quality is an icon in the pill's
+    /// place. Read only by a pane's cluster: a pop-out has neither, and
+    /// [`fit`] counts no room for one there.
     pub(super) quality: bool,
 }
 
@@ -786,7 +798,7 @@ impl Fit {
 /// The bar at each width it gives way at, widest first: each drops one more
 /// thing, in the order they go. The figure first, because the slider shows
 /// the same level; then the slider, since the speaker and the keys still
-/// change it; then the quality pill, which More can carry.
+/// change it; then the quality pill, which an icon can stand in for.
 const NARROWINGS: [Fit; 4] = [
     Fit::EVERYTHING,
     Fit {
@@ -808,8 +820,10 @@ const NARROWINGS: [Fit; 4] = [
 /// How wide the bar has to be to hold `fit`, with `cluster` at its
 /// right-hand end: its padding, play and volume, the spacer between the two
 /// ends, the cluster's buttons, and whatever `fit` adds, each with the gap
-/// before it — the pill only where the cluster has one. The sizes are the ones `button_row` draws with, from `theme`; the
-/// quality pill's is an estimate (`theme::QUALITY_PILL_ROOM`).
+/// before it — and where the cluster has the quality, its pill or the icon
+/// that stands in for it. The sizes are the ones `button_row` draws with,
+/// from `theme`; the quality pill's is an estimate
+/// (`theme::QUALITY_PILL_ROOM`).
 fn needs(fit: Fit, cluster: Cluster) -> f32 {
     let gap = theme::GAP_TIGHT;
     let shown = |kept: bool, width: f32| if kept { width + gap } else { 0.0 };
@@ -824,7 +838,14 @@ fn needs(fit: Fit, cluster: Cluster) -> f32 {
         + (buttons - 1.0).max(0.0) * gap
         + shown(fit.slider, theme::VOLUME_SLIDER)
         + shown(fit.figure, theme::VOLUME_FIGURE)
-        + shown(cluster.pill && fit.quality, theme::QUALITY_PILL_ROOM)
+        + shown(
+            cluster.pill,
+            if fit.quality {
+                theme::QUALITY_PILL_ROOM
+            } else {
+                theme::ICON_BUTTON
+            },
+        )
 }
 
 /// What fits on a bar `width` logical pixels wide with `cluster` at its
@@ -930,8 +951,8 @@ mod tests {
         }
     }
 
-    /// The quality pill is the last thing to go: it folds only once the
-    /// slider has gone, and with it into More.
+    /// The quality pill is the last thing to go: it gives way to its icon
+    /// only once the slider has gone.
     #[test]
     fn the_quality_pill_folds_after_the_slider() {
         for width in widths() {
@@ -965,8 +986,17 @@ mod tests {
                 quality: false,
             }
         );
-        let squares = 2.0 + PANE.buttons as f32;
+        // Play, the speaker, the cluster's buttons and the quality's icon.
+        let squares = 2.0 + PANE.buttons as f32 + 1.0;
         assert!(needs(narrowest, PANE) >= 2.0 * theme::PANEL_PAD + squares * theme::ICON_BUTTON);
+        let with_pill = Fit {
+            quality: true,
+            ..narrowest
+        };
+        assert!(
+            needs(with_pill, PANE) > needs(narrowest, PANE),
+            "the icon is no narrower than the words it stands in for"
+        );
     }
 
     /// A pane's cluster with one more button in it.

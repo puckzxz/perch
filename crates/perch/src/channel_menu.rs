@@ -3,17 +3,22 @@
 //! opens it too, for the pointer that does not reach for the right button.
 //!
 //! The same words everywhere, so a channel reads the same whichever list it
-//! is in: `Watch` and `Add beside` while it is live, `Pin to the rail` or
-//! `Unpin from the rail`, `Past broadcasts`, `Open on twitch.tv` and `Copy
-//! link`. A click still does the one thing it always did — a card or a live
+//! is in: `Watch` and `Add beside` while it is live, `Pin` or `Unpin`,
+//! `Past broadcasts`, `Open on twitch.tv` and `Copy link`. A click still does the one thing it always did — a card or a live
 //! row plays in place of the pane you are on, a name opens its page or its
 //! card — and the menu is where the rest of what can be done with the
 //! channel is, one right-click away rather than spread over hover pills.
 //!
-//! On a pane it is also where what only two panes or more need lives —
-//! `Only this one`, giving the pane the window, moving it earlier or later
-//! — beside its pop-out and its close, so the bar over a picture keeps to
-//! what one stream needs.
+//! On a pane it is the one menu the stream has. The bar over the picture
+//! is for playing it — play, the level, the quality, chat, fullscreen — and
+//! had a More of its own until November 2026, which offered the pin, the
+//! pop-out, the way to twitch.tv and the link a second time, a few hundred
+//! pixels from this one. So what that carried and this did not is here: the
+//! audio compressor, every pane's at once, in a group of its own, and a
+//! recording's link at the moment it is at (`Copy link at 1:02:03`). It is
+//! also where what only two panes or more need lives — `Only this one`,
+//! giving the pane the window, moving it earlier or later — beside its
+//! pop-out and its close.
 //!
 //! What it offers is [`entries`], pure and tested, from what the root knows
 //! as it is drawn ([`Facts`]), so a row is never offered from a stale
@@ -24,12 +29,12 @@
 
 use gpui::{
     anchored, deferred, div, prelude::*, px, Animation, AnimationExt, AnyElement, Context, Corner,
-    MouseButton, MouseDownEvent, Pixels, Point, Window,
+    MouseButton, MouseDownEvent, Pixels, Point, SharedString, Window,
 };
 
 use crate::loudness::HearOnly;
 use crate::stage::MaximizeButton;
-use crate::{sidebar, theme};
+use crate::{compressor, seek_bar, sidebar, theme};
 
 /// What the menu is about: a channel, by its login, with the name it writes
 /// itself as and its Helix id where the list it came from had one, which
@@ -64,6 +69,13 @@ pub struct PaneFacts {
     pub earlier: bool,
     pub later: bool,
     pub pop_out: PopOut,
+    /// Whether the audio compressor is on: every pane's at once
+    /// (`crate::compressor`), so the row says the same on each.
+    pub compressor: bool,
+    /// Where the recording the pane plays has got to, in whole seconds
+    /// (`watch::Slot::moment`): the moment `Copy link` then names, which is
+    /// the one its link carries. `None` on a live pane.
+    pub moment: Option<u64>,
 }
 
 /// What the root knows of the channel as the menu is drawn.
@@ -104,6 +116,8 @@ pub enum Pick {
     OpenOnTwitch,
     CopyLink,
     CopyName,
+    /// Every pane's, offered on each: the audio compressor, on or off.
+    Compressor,
     /// The pane's: `Only this one`, or `Hear all again`.
     HearOnly,
     /// The pane's: the window to itself, or every pane again.
@@ -120,26 +134,39 @@ pub enum Pick {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Row {
     pub id: &'static str,
-    pub label: &'static str,
+    pub label: SharedString,
     pub pick: Pick,
     pub rule: bool,
 }
 
 impl Row {
-    fn new(id: &'static str, label: &'static str, pick: Pick) -> Self {
+    fn new(id: &'static str, label: impl Into<SharedString>, pick: Pick) -> Self {
         Self {
             id,
-            label,
+            label: label.into(),
             pick,
             rule: false,
         }
     }
 }
 
-/// What the menu offers, top to bottom, in up to three groups: what to
+/// What a pane's `Copy link` says: the moment its link carries, on a
+/// recording past its first second (`Copy link at 1:02:03`), and plainly
+/// otherwise. Read as the menu is drawn, which a playing picture does with
+/// every frame, so the time on the row is the time a press copies.
+fn copy_link_words(moment: Option<u64>) -> SharedString {
+    match moment {
+        Some(secs) => format!("Copy link at {}", seek_bar::timecode(secs as f64)).into(),
+        None => "Copy link".into(),
+    }
+}
+
+/// What the menu offers, top to bottom, in up to four groups: what to
 /// watch, a channel named anywhere but a pane, while it is live; the
-/// channel's; and a pane's own. A row's id follows its words, as every
-/// control whose words follow a state does.
+/// channel's; and on a pane the sound's, which is the compressor, then the
+/// pane's own. A row's id follows its words, as every control whose words
+/// follow a state does; `Copy link` keeps one id through the moments it
+/// names, since it has no tooltip to go stale and is one row all along.
 pub fn entries(facts: Facts) -> Vec<Row> {
     let mut rows = Vec::new();
 
@@ -160,7 +187,11 @@ pub fn entries(facts: Facts) -> Vec<Row> {
         rows.push(Row::new("videos", "Past broadcasts", Pick::ChannelPage));
     }
     rows.push(Row::new("twitch", "Open on twitch.tv", Pick::OpenOnTwitch));
-    rows.push(Row::new("copy-link", "Copy link", Pick::CopyLink));
+    rows.push(Row::new(
+        "copy-link",
+        copy_link_words(facts.pane.and_then(|pane| pane.moment)),
+        Pick::CopyLink,
+    ));
     if facts.from_chat {
         rows.push(Row::new("copy-name", "Copy name", Pick::CopyName));
     }
@@ -169,6 +200,11 @@ pub fn entries(facts: Facts) -> Vec<Row> {
     }
 
     if let Some(pane) = facts.pane {
+        let sound = rows.len();
+        let (id, label) = compressor::row(pane.compressor);
+        rows.push(Row::new(id, label, Pick::Compressor));
+        rows[sound].rule = true;
+
         let own = rows.len();
         if let Some((id, label)) = pane.hear_only.row() {
             rows.push(Row::new(id, label, Pick::HearOnly));
@@ -255,7 +291,7 @@ pub fn view<V: 'static>(
                     .cursor_pointer()
                     .text_color(theme::text())
                     .hover(|style| style.bg(theme::hover()))
-                    .child(row.label)
+                    .child(row.label.clone())
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |view, event: &MouseDownEvent, window, cx| {
@@ -353,7 +389,7 @@ mod tests {
             .find(|row| matches!(row.pick, Pick::Pin(_)))
             .unwrap();
         assert_eq!(pin.pick, Pick::Pin(false));
-        assert_eq!((pin.id, pin.label), ("unpin", "Unpin from the rail"));
+        assert_eq!((pin.id, pin.label.as_ref()), ("unpin", "Unpin"));
 
         let signed_out = picks(&entries(Facts {
             signed_in: false,
@@ -368,17 +404,32 @@ mod tests {
         assert_eq!(chat.last(), Some(&Pick::CopyName));
     }
 
-    /// A pane's menu has no watching of its own, and adds what is the
-    /// pane's — hearing it alone, the window, moving it, its pop-out — then
-    /// its close, ruled off from the channel's rows.
+    /// A pane with nothing of its own to offer: live, alone, with no
+    /// pop-out, and the compressor off.
+    fn bare_pane() -> PaneFacts {
+        PaneFacts {
+            hear_only: HearOnly::Hidden,
+            maximize: MaximizeButton::Hidden,
+            earlier: false,
+            later: false,
+            pop_out: PopOut::Hidden,
+            compressor: false,
+            moment: None,
+        }
+    }
+
+    /// A pane's menu has no watching of its own, and adds the compressor,
+    /// in a group of its own, then what is the pane's — hearing it alone,
+    /// the window, moving it, its pop-out — and its close, each group ruled
+    /// off from the one before.
     #[test]
     fn a_pane_adds_its_own_rows() {
         let pane = PaneFacts {
             hear_only: HearOnly::Offered,
             maximize: MaximizeButton::Maximize,
             earlier: true,
-            later: false,
             pop_out: PopOut::Out,
+            ..bare_pane()
         };
         let rows = entries(Facts {
             pane: Some(pane),
@@ -391,6 +442,7 @@ mod tests {
                 Pick::ChannelPage,
                 Pick::OpenOnTwitch,
                 Pick::CopyLink,
+                Pick::Compressor,
                 Pick::HearOnly,
                 Pick::Maximize,
                 Pick::MoveEarlier,
@@ -398,25 +450,78 @@ mod tests {
                 Pick::Close,
             ]
         );
-        let own = rows
-            .iter()
-            .position(|row| row.pick == Pick::HearOnly)
-            .unwrap();
-        assert!(rows[own].rule);
+        for group in [Pick::Compressor, Pick::HearOnly] {
+            let first = rows.iter().position(|row| row.pick == group).unwrap();
+            assert!(rows[first].rule, "{group:?} is not set off");
+        }
 
-        // One pane alone: nothing but its pop-out and its close.
+        // One pane alone: the compressor, then nothing but its pop-out and
+        // its close.
         let alone = picks(&entries(Facts {
             pane: Some(PaneFacts {
-                hear_only: HearOnly::Hidden,
-                maximize: MaximizeButton::Hidden,
-                earlier: false,
-                later: false,
                 pop_out: PopOut::Back,
+                ..bare_pane()
             }),
             ..facts()
         }));
-        assert_eq!(&alone[alone.len() - 2..], [Pick::PopIn, Pick::Close]);
+        assert_eq!(
+            &alone[alone.len() - 3..],
+            [Pick::Compressor, Pick::PopIn, Pick::Close]
+        );
         assert!(!alone.contains(&Pick::HearOnly) && !alone.contains(&Pick::Maximize));
+    }
+
+    /// The compressor is a pane menu's alone — a card or a rail row is not
+    /// playing anything to even out — and its row says what it is now.
+    #[test]
+    fn the_compressor_is_offered_on_a_pane_and_says_what_it_is() {
+        assert!(!picks(&entries(facts())).contains(&Pick::Compressor));
+        for (on, words) in [
+            (false, "Audio compressor · Off"),
+            (true, "Audio compressor · On"),
+        ] {
+            let rows = entries(Facts {
+                pane: Some(PaneFacts {
+                    compressor: on,
+                    ..bare_pane()
+                }),
+                ..facts()
+            });
+            let row = rows
+                .iter()
+                .find(|row| row.pick == Pick::Compressor)
+                .unwrap();
+            assert_eq!(row.label.as_ref(), words);
+        }
+        // A new row once pressed, so nothing stale is relabelled.
+        assert_ne!(compressor::row(false).0, compressor::row(true).0);
+    }
+
+    /// A recording's `Copy link` names the moment its link carries; a live
+    /// pane's, and a channel's named anywhere else, says only what it does.
+    #[test]
+    fn a_recordings_copy_link_names_its_moment() {
+        let label = |facts: Facts| {
+            entries(facts)
+                .into_iter()
+                .find(|row| row.pick == Pick::CopyLink)
+                .unwrap()
+                .label
+        };
+        assert_eq!(label(facts()).as_ref(), "Copy link");
+        let live = Facts {
+            pane: Some(bare_pane()),
+            ..facts()
+        };
+        assert_eq!(label(live).as_ref(), "Copy link");
+        let recording = Facts {
+            pane: Some(PaneFacts {
+                moment: Some(3723),
+                ..bare_pane()
+            }),
+            ..facts()
+        };
+        assert_eq!(label(recording).as_ref(), "Copy link at 1:02:03");
     }
 
     /// Ids are unique within a menu, since they key the rows' elements.
@@ -430,6 +535,8 @@ mod tests {
                 earlier: true,
                 later: true,
                 pop_out: PopOut::Out,
+                compressor: true,
+                moment: Some(90),
             }),
             ..facts()
         });

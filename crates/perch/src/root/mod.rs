@@ -21,7 +21,7 @@
 //! | `panes` | where each pane is drawn, applied: `restage`, the one funnel every change of state, membership, page, pop-out or maximize ends in; `set_slot_state`, the only write of a pane's state; `video_in_main`, the only way the main window reaches a player; a pane given the watch page and every pane shown again (`toggle_maximize`, `show_all_panes`), and `choose`, which takes the maximize to the pane chosen; two panes swapping places in the order (`move_pane`), from a header dropped on a pane or `Shift+←`/`Shift+→`; and `retire_homeless`, the one rule that stops a pane at home with nothing to draw it |
 //! | `warm` | streamlink started ahead for a live pane's quality menu (`to_warm`), so a pick from it starts beside the picture with the slow part done: taken by the pick (`take_warm`, `adopt_warm`), and let go a grace after the menu closes, at its age, with the player or by a cold start (`expire_warm`) |
 //! | `pop_out` | a pane in a window of its own, on top of other apps: moving its picture there and back, the window, and `to_root`, the only way back from it |
-//! | `hearing` | which panes are heard: a pane menu's `Only this one` and `Hear all again`, through Mute all's hush, read from the hushes as the menu is drawn (`hear_only_now`); More's `Audio compressor`, every pane's at once (`toggle_compressor`) |
+//! | `hearing` | which panes are heard: a pane menu's `Only this one` and `Hear all again`, through Mute all's hush, read from the hushes as the menu is drawn (`hear_only_now`); the same menu's `Audio compressor`, every pane's at once (`toggle_compressor`) |
 //! | `ad_breaks` | a pane's ad-break notice: begun when streamlink says it is filtering an ad, counted down once a second, taken down when it is over |
 //! | `broadcasts` | what a stopped live pane asks about its channel's past broadcasts, and whether it can start by itself; `start_due`, the one step by which a list of who is live starts the stopped panes it carries |
 //! | `rewind` | a live pane's timeline: when each live player's broadcast began (`sync_live_since`), a press on it, and the archive opened in the pane's place; and the way back, whether each recording's broadcast is still on (`sync_back_to_live`) and `LIVE` pressed (`back_to_live`) |
@@ -86,7 +86,6 @@ mod title_bar;
 mod viewer_cards;
 mod warm;
 
-pub(crate) use self::pop_out::offered_here as pop_out_offered;
 pub(crate) use self::title_bar::window_min_size;
 
 use std::collections::{HashMap, HashSet};

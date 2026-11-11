@@ -17,6 +17,7 @@ use super::streams::Opening;
 use super::{pop_out, RootView};
 use crate::browse::SignIn;
 use crate::channel_menu::{self, Channel, Facts, PaneFacts, Pick, PopOut};
+use crate::compressor;
 use crate::stage;
 use crate::target::{self, Target};
 use crate::watch::PaneAction;
@@ -179,7 +180,9 @@ impl RootView {
     /// (`Stage::maximize_button`), moving it (`move_active`'s rule: two
     /// panes or more on the page, none being dragged, and not past an end,
     /// `stage::moved`), and its pop-out (`pop_out::offered_here`, and a
-    /// player to move).
+    /// player to move); with what every pane's menu says of the sound
+    /// (`compressor::on`) and where a recording has got to
+    /// (`Slot::moment`), read now, as the rest is.
     fn pane_menu_facts(&self, key: &str) -> Option<PaneFacts> {
         let index = self.slot_index(key)?;
         let keys = pane_keys(&self.slots);
@@ -198,6 +201,8 @@ impl RootView {
             earlier: moves(-1),
             later: moves(1),
             pop_out,
+            compressor: compressor::on(),
+            moment: self.slots[index].moment(),
         })
     }
 
@@ -238,7 +243,7 @@ impl RootView {
     /// the rest of the press's run is heard by nothing (`run_guard`), since
     /// whatever the pick does moves what is under the pointer. A pane's
     /// rows go by its key, the way its own controls do (`on_pane_action`),
-    /// so they do what its More and its header do; a channel's elsewhere go
+    /// so they do what its bar and its header do; a channel's elsewhere go
     /// the way a card's press and a rail row's go.
     fn channel_menu_pick(&mut self, pick: Pick, window: &mut Window, cx: &mut Context<Self>) {
         let Some(menu) = self.channel_menu.take() else {
@@ -268,7 +273,8 @@ impl RootView {
             Pick::CopyLink => self.copy(target::link(&Target::Channel(login)), "Link copied", cx),
             Pick::CopyName => self.copy(display_name, "Name copied", cx),
             // A pane's own, never offered anywhere else.
-            Pick::HearOnly
+            Pick::Compressor
+            | Pick::HearOnly
             | Pick::Maximize
             | Pick::MoveEarlier
             | Pick::MoveLater
@@ -292,6 +298,7 @@ impl RootView {
             Pick::ChannelPage => PaneAction::ChannelPage,
             Pick::OpenOnTwitch => PaneAction::OpenOnTwitch,
             Pick::CopyLink => PaneAction::CopyLink,
+            Pick::Compressor => PaneAction::ToggleCompressor,
             Pick::HearOnly => PaneAction::HearOnly,
             Pick::Maximize => PaneAction::Maximize,
             Pick::PopOut => PaneAction::PopOut,

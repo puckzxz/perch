@@ -91,7 +91,7 @@ build is several times slower at it.
 
 The player's controls are on a bar that comes up over the video while the
 pointer is on it, and those a key also works name the key in their tooltips;
-the quality and More have no key. Leave the pointer still on a playing
+the quality has no key. Leave the pointer still on a playing
 picture for three seconds and the bar goes again, and the cursor with it —
 after a double-click into fullscreen the pointer is on the picture, and a
 window left on one stream should be just the stream. The first move brings
@@ -159,26 +159,25 @@ channel you left it on — but first it lets go of a pane being dragged,
 closes a pane's open menu, if there is one, leaves fullscreen, and shows
 every pane again, if one has the window, each a press of its own. A playing pane's quality menu is in the palette as well:
 type `quality` and some of the pane's name, and `Choose quality for …` opens
-it. So are the two things under the bar's **More**, as `Copy link to …` and
+it. So are two rows of the pane's own menu, as `Copy link to …` and
 `Open … on twitch.tv`, and the maximize, as `Maximize …` and `Show all
 panes`.
 
 The bar over a playing pane has play, the speaker — crossed out whenever the
 pane is silent, **Only this one** included — and the volume at the left, and at the
-right the quality, then chat, fullscreen and **More**,
-which has **Audio compressor**, **Playback speed** on a recording, **Pop
-out** on Windows, **Pin to the rail**, **Open on twitch.tv** and **Copy
-link**. **Pin to the rail** pins the pane's channel to the top of the
-rail — a live pane's or a recording's, followed or not (see "The rail") —
-and says **Unpin from the rail** once it is. What only two panes or more
-need is on the pane's right-click menu (see "Right-click a channel").
-**Audio compressor** evens out how loud each stream is the way FrankerFaceZ's
+right the quality, then chat and fullscreen. That is all of it: the bar is
+for playing the stream, and everything else that can be done with it is on
+the pane's one menu, its header's ⋯ or the right button (see "Right-click a
+channel"). The bar had a **More** of its own until November 2026, which
+offered four of that menu's rows a second time.
+**Audio compressor**, on that menu, evens out how loud each stream is the way FrankerFaceZ's
 compressor does in the browser — a loud streamer comes down, a quiet one comes
 up — for every pane at once, and is remembered. As on Twitch with FFZ, a
 pane's volume goes in before the compressor, so it works gently at the volume
 you listen at and harder near the top of the slider, where turning a loud
 pane down changes it less. A narrow pane drops the volume's figure first, then
-its slider, then folds the quality into More. A
+its slider, then shows the quality as a gear in place of its words, which
+opens the same menu and says what is playing under the pointer. A
 past broadcast with no chat to replay shows the chat icon crossed out, with
 nothing to press.
 
@@ -198,8 +197,8 @@ the app.
 Every pane has an × in its header, a lone one included, and like the bar's
 icons it names its key, `Ctrl+W`; closing the last pane goes back to the
 browse page. Before it is a ⋯, which opens the pane's menu, the one its
-right button opens (see "Right-click a channel"): **Pin to the rail**,
-**Past broadcasts**, **Pop out** on Windows, and the rest. A header sitting
+right button opens (see "Right-click a channel"): **Pin**, **Past
+broadcasts**, **Audio compressor**, **Pop out** on Windows, and the rest. A header sitting
 on chat also has the chat options (see [Chat](#chat)).
 
 A pane's header says `muted` or `paused` when either is true, so a channel
@@ -304,16 +303,19 @@ went back to being a page of its own.
 Wherever a channel is named — a card, an offline name, a row of the rail, a
 name in chat — the right button opens one menu about it, in the same words
 everywhere: **Watch** and **Add beside** while it is live (Add only with room
-for another pane), **Pin to the rail** or **Unpin from the rail**, **Past
-broadcasts** while you are signed in, **Open on twitch.tv** and **Copy
-link**. On a name in chat it also has **Copy name**; the rest of the line
+for another pane), **Pin** or **Unpin** (pinned channels lead the rail and
+Following), **Past broadcasts** while you are signed in, **Open on
+twitch.tv** and **Copy link**. On a name in chat it also has **Copy name**; the rest of the line
 keeps its own copy menu (see [Chat](#chat)). A click still does what it
 always did; the menu is where everything else is.
 
 A pane's own menu — the right button on its picture or its header, or the
 ⋯ in its header, which hangs it under the ⋯ and puts it away when pressed
-again — is about the channel it plays, and has what only two panes or more
-need:
+again — is about the channel it plays, and is the one menu a stream has.
+After the channel's rows it has **Audio compressor**, saying **On** or
+**Off**, which is every pane's at once; and on a recording its **Copy link**
+names the moment it copies, `Copy link at 1:02:03`. Then what only two panes
+or more need:
 **Only this one**, which silences every other pane without touching
 anyone's volume, and once one pane alone is heard every pane's menu says
 **Hear all again** instead, until you change a silenced pane's volume;
@@ -403,7 +405,7 @@ its number and its chat stay in the main window, whose cell says `Playing in
 its own window` and offers **Bring back**.
 
 A pane goes out from **Pop out** on its menu — its header's ⋯ or the right
-button — or under the bar's **More**, `P`, or the palette's `Pop out …`. A
+button — `P`, or the palette's `Pop out …`. A
 pane comes back from **Bring back** on its pop-out's bar or on its cell,
 **Bring back** on its menu, `P` in either window, or the palette's `Bring …
 back`. A popped-out pane plays on while you browse, where the rest stop;
@@ -496,8 +498,8 @@ are remembered. **Reset pane sizes**, under them, puts the chat and video sizes
 back, as `Ctrl+0` does. On a chat too short to hold the menu, it rises over the
 header and the picture rather than running off the chat's foot, so
 **Reset pane sizes** is always in reach. The channel's name in the pane header
-opens it on twitch.tv — and so do **Open on twitch.tv** under the bar's
-**More** and the palette's `Open … on twitch.tv`. On a live pane the site plays
+opens it on twitch.tv — and so do **Open on twitch.tv** on the pane's menu
+and the palette's `Open … on twitch.tv`. On a live pane the site plays
 the stream as well, with its own sound.
 
 ### Sending a message
@@ -750,8 +752,8 @@ Nothing about them is saved.
 The pin that appears on a row under the pointer pins that channel, and the
 same pin on a pinned row unpins it. Any channel can be pinned from its
 right-click menu (see [Right-click a channel](#right-click-a-channel)); one you
-do not follow is also pinned from its pane — **Pin to the rail** under the
-bar's **More**, live or a recording — or from the pin on its page (see
+do not follow is also pinned from its pane — **Pin** on its menu, live or a
+recording — or from the pin on its page (see
 [Past broadcasts](#past-broadcasts)). A recommended row has no pin of its own;
 its menu pins it. Pins are kept in `settings.json`, as `pinned`, so
 they can be written there by hand too. Perch asks Twitch about the pinned
@@ -825,18 +827,17 @@ or so, because the player is reopened at the new place rather than seeked —
 the reason is the player's and `HANDOFF.md` has it. The header says `replay`
 — or `highlight`, or `upload` — names the video, and opens it on twitch.tv;
 while it opens the pane shows the recording's own picture, dimmed, and when
-the recording ends the pane says so and offers to start over. Under the
-bar's **More**, **Copy link** reads `Copy link at 1:02:03` and copies a link
+the recording ends the pane says so and offers to start over. On the
+pane's menu, **Copy link** reads `Copy link at 1:02:03` and copies a link
 to the moment you are at, which pasted back into Perch opens there, and
 **Open on twitch.tv** opens it at that moment. A channel's
 live stream and one of its recordings can be open side by side.
 
 Where Twitch muted a recording's sound for music it matched, the seek bar
 marks the stretch with a dull amber band around the bar, and pointing there
-says `muted` after the time. **Playback speed** under **More** plays a
-recording at 0.75x up to 2x, in quarter steps, with voices kept at their own
-pitch; while it is not 1x the speed is written after the length on the seek
-bar, and clicking it opens the speeds again. It belongs to the pane: a
+says `muted` after the time. The speed is written after the length on the
+seek bar, `1x` to begin with, and clicking it opens the speeds: 0.75x up to
+2x, in quarter steps, with voices kept at their own pitch. It belongs to the pane: a
 quality change keeps it, nothing saves it, and whatever the pane plays next
 starts at 1x. The chat replay keeps pace.
 

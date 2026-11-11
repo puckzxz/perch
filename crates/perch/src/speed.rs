@@ -1,10 +1,10 @@
-//! How fast a recording plays: the speeds a pane's More offers, and how each
+//! How fast a recording plays: the speeds its seek row offers, and how each
 //! is written.
 //!
 //! A recording only. A live stream plays at the speed it is made, and
-//! anything faster would run into the live edge within the minute; the More
-//! menu of a live pane has no speed row, and `VideoStream::set_speed` does
-//! nothing to one. The one time a live player plays faster is its own
+//! anything faster would run into the live edge within the minute; a live
+//! pane's bar has no speed on it, and `VideoStream::set_speed` does nothing
+//! to one. The one time a live player plays faster is its own
 //! doing, catching up with the edge after falling behind it
 //! (`crate::catch_up`), and that is never a speed the pane chose.
 //!
@@ -26,7 +26,7 @@ impl Speed {
     /// The recording as it was made.
     pub const NORMAL: Speed = Speed(100);
 
-    /// What More's speed menu offers, slowest first: a step under normal for
+    /// What the speed menu offers, slowest first: a step under normal for
     /// a dense explanation, and quarter steps up to double for catching up
     /// on a long broadcast.
     pub const CHOICES: [Speed; 6] = [

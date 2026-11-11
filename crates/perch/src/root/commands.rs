@@ -154,8 +154,8 @@ impl RootView {
             }
             palette::Command::Close(index) => self.close_slot(index, window, cx),
             palette::Command::ChooseQuality(index) => self.choose_quality(index, window, cx),
-            // More's rows by name, down the route More takes, by the pane's
-            // key: the same link, the same toast.
+            // A pane menu's rows by name, down the route the menu takes, by
+            // the pane's key: the same link, the same toast.
             palette::Command::CopyLink(index) => {
                 self.pane_command(index, PaneAction::CopyLink, window, cx)
             }

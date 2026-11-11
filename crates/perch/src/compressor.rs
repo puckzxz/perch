@@ -1,5 +1,5 @@
-//! The audio compressor: More's `Audio compressor · Off` and `· On`, one
-//! answer for every pane, which evens out how loud each stream is — a
+//! The audio compressor: a pane menu's `Audio compressor · Off` and `· On`
+//! (`crate::channel_menu`), one answer for every pane, which evens out how loud each stream is — a
 //! streamer who runs hot comes down, one who mumbles comes up.
 //!
 //! One answer rather than one per pane, because what it is for is the
@@ -227,13 +227,13 @@ impl Applied {
 static ON: AtomicBool = AtomicBool::new(false);
 
 /// Turn it on or off for every player, from the settings at startup and
-/// from More's row. Each player picks it up between frames.
+/// from a pane menu's row. Each player picks it up between frames.
 pub fn set(on: bool) {
     ON.store(on, Ordering::Relaxed);
 }
 
 /// Whether it is on: what a player should be filtering with, and what
-/// More's row says.
+/// the menu's row says.
 pub fn on() -> bool {
     ON.load(Ordering::Relaxed)
 }
@@ -248,15 +248,15 @@ pub fn filters(on: bool, volume: u8) -> String {
     }
 }
 
-/// More's row while the compressor is `on`: its id and its words. The id
-/// follows the words, as every control's whose words follow a state does
-/// (`loudness::HearOnly::row`), so the row that says the other thing is a
-/// new element rather than the old one relabelled under the pointer.
+/// A pane menu's row while the compressor is `on`: its id and its words.
+/// The id follows the words, as every control's whose words follow a state
+/// does (`loudness::HearOnly::row`), so the row that says the other thing
+/// is a new element rather than the old one relabelled under the pointer.
 pub fn row(on: bool) -> (&'static str, &'static str) {
     if on {
-        ("more-compressor-on", "Audio compressor · On")
+        ("compressor-on", "Audio compressor · On")
     } else {
-        ("more-compressor-off", "Audio compressor · Off")
+        ("compressor-off", "Audio compressor · Off")
     }
 }
 

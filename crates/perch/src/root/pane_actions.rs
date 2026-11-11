@@ -81,16 +81,17 @@ impl RootView {
             PaneAction::ToggleChat => self.toggle_chat(index, cx),
             // Its menu's `Only this one`, or `Hear all again`; see `hearing`.
             PaneAction::HearOnly => self.hear_only(key, cx),
-            // More's `Audio compressor`; every pane's, see `hearing`.
+            // Its menu's `Audio compressor`; every pane's, see `hearing`.
             PaneAction::ToggleCompressor => self.toggle_compressor(cx),
-            // More's `Pin to the rail` or `Unpin from the rail`: the pane's
-            // channel, live or recorded; see `prefs`.
+            // Its menu's `Pin` or `Unpin`: the pane's channel, live or
+            // recorded; see `prefs`.
             PaneAction::Pin(pinned) => {
                 let channel = self.slots[index].channel.clone();
                 self.set_pinned(channel, pinned, cx);
             }
-            // The moment the pane is at, on a recording: More is where a
-            // moment is offered, and the palette's row is More by name.
+            // The moment the pane is at, on a recording: the pane's menu
+            // is where a moment is offered, and the palette's row is that
+            // row by name.
             PaneAction::OpenOnTwitch => cx.open_url(&self.slots[index].link(true)),
             PaneAction::CopyLink => {
                 let link = self.slots[index].link(true);
@@ -230,8 +231,8 @@ impl RootView {
         closed
     }
 
-    /// Put `text` on the clipboard and say so with `toast`: More's and the
-    /// palette's `Copy link`, and a row of a chat's copy menu. The one place
+    /// Put `text` on the clipboard and say so with `toast`: a pane menu's
+    /// and the palette's `Copy link`, and a row of a chat's copy menu. The one place
     /// Perch writes the clipboard, which is the app's, not a window's, so it
     /// needs neither (see HANDOFF.md, "The clipboard is the app's").
     pub(super) fn copy(&mut self, text: String, toast: &'static str, cx: &mut Context<Self>) {
@@ -384,16 +385,7 @@ impl RootView {
             VideoEvent::Buffering => cx.notify(),
             // The bar's own: the same route as the pane's header and the
             // palette, by the key the player was subscribed with.
-            VideoEvent::Pane(action) => {
-                // More's `Pop out`, the one row that takes the player out of
-                // this window, and with it the guard the player keeps on the
-                // rest of a double-click its row took; the root takes the run
-                // over (`run_guard`). Nothing but that row sends it this way.
-                if matches!(action, PaneAction::PopOut) {
-                    self.take_rest_of_run();
-                }
-                self.on_pane_action(owner, action.clone(), window, cx)
-            }
+            VideoEvent::Pane(action) => self.on_pane_action(owner, action.clone(), window, cx),
             // A new rendition took over in place, or was given up on; see
             // `renditions`.
             VideoEvent::Swapped { generation } => self.on_swapped(owner, *generation, cx),
@@ -418,13 +410,11 @@ impl RootView {
     /// The platform counts a second press near the first as a double-click
     /// whatever is under it by then (gpui's windows/window.rs:1049-1060), and
     /// that holds even once another window has taken activation, as a
-    /// pop-out does when it opens. More's rows act on the press, and the
-    /// player stops the rest of a run its row took (`VideoView::run_guard`)
-    /// — but only while the main window draws the player, and `Pop out`
-    /// takes it, guard and all, into a window of its own. The second press
-    /// then reached the cell under the closed menu: its `Bring back`, which
-    /// sent the pane straight back, or its header's icons, which could do
-    /// that or close it.
+    /// pop-out does when it opens. A menu's rows act on the press, and a
+    /// pane menu's `Pop out` takes the player into a window of its own. The
+    /// second press then reached the cell under the closed menu: its `Bring
+    /// back`, which sent the pane straight back, or its header's icons,
+    /// which could do that or close it.
     ///
     /// So each of those takes the run (`take_rest_of_run`), and this stops
     /// every later press of it in the capture phase, before anything under

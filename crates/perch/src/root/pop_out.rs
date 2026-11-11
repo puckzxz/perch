@@ -13,7 +13,7 @@
 //! back by its cell again.
 //!
 //! A pane goes out from its menu's `Pop out` (the header's ⋯, or a
-//! right-click on the pane), its bar's More, `P` or the palette. It comes
+//! right-click on the pane), `P` or the palette. It comes
 //! back from its pop-out's Bring back, the `Bring back` on its cell, its
 //! menu's `Bring back`, `P` in either window, or the palette.
 //!
@@ -107,9 +107,8 @@ pub(super) fn offered(platform: Platform) -> bool {
 }
 
 /// Whether the pop-out is offered on this platform; see [`offered`]. Asked
-/// by everything that offers it, the player's More menu included, through
-/// `root::pop_out_offered`.
-pub(crate) fn offered_here() -> bool {
+/// by everything that offers it: a pane's menu, `P` and the palette.
+pub(super) fn offered_here() -> bool {
     offered(Platform::CURRENT)
 }
 

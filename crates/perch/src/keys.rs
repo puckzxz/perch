@@ -530,7 +530,7 @@ hints! {
     Fullscreen => "f" as ToggleFullscreen,
     // A pane header's ×, as `Ctrl+W` — `⌘W` on a Mac, from the sheet's label.
     Close => "secondary-w" as ClosePane,
-    // More's pop-out, and the pop-out's Bring back, on its bar.
+    // A pane menu's `Pop out`, and the pop-out's Bring back, on its bar.
     PopOut => "p" as TogglePopOut,
     // The title bar's Browse, on the watch page: `Esc` there brings the
     // browse page up as the press does, once it is not leaving fullscreen.

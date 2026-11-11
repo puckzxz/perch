@@ -300,34 +300,20 @@ impl RootView {
 
     /// Pin a channel to the top of the rail, or take it off, and write it
     /// down. The one place either happens — from the rail's own pin, a
-    /// channel menu, a pane's More or a channel's page — so a pin is saved
+    /// channel menu, a pane's or a channel's page — so a pin is saved
     /// however it came to be made, and a press that changes nothing writes
     /// nothing.
     ///
     /// A pin on a channel nobody follows is asked about at once, rather than
     /// at the next round, so its row says whether it is live as it lands in
-    /// the rail; one taken off is let go (`root::pane_streams`). And every
-    /// player's More says the other thing now ([`sync_pins`](Self::sync_pins)).
+    /// the rail; one taken off is let go (`root::pane_streams`). Every menu
+    /// that names the pin reads the settings as it is drawn
+    /// (`channel_menu::Facts`), so none is told.
     pub(super) fn set_pinned(&mut self, login: String, pinned: bool, cx: &mut Context<Self>) {
         if self.settings.set_pinned(&login, pinned) {
             self.save_settings();
             self.ask_pane_streams();
-            self.sync_pins(cx);
             cx.notify();
-        }
-    }
-
-    /// Tell every player whether its channel is pinned, for More's pin row
-    /// (`VideoView::pinned`): the one writer of that mirror after `Start`,
-    /// called whenever a pin changes, which only
-    /// [`set_pinned`](Self::set_pinned) does. A player told what it already
-    /// knows does nothing.
-    fn sync_pins(&mut self, cx: &mut Context<Self>) {
-        for slot in &self.slots {
-            let pinned = self.settings.is_pinned(&slot.channel);
-            if let Some(view) = slot.video() {
-                view.update(cx, |video, cx| video.set_pinned(pinned, cx));
-            }
         }
     }
 

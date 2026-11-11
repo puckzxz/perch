@@ -86,7 +86,7 @@ pub enum VideoEvent {
     /// rather than the player.
     QualityRequested(Option<String>),
     /// The quality menu opened (`true`) or closed (`false`), by whatever
-    /// opened or closed it — its pill, More's row, the palette, a press on
+    /// opened or closed it — its pill, the palette, a press on
     /// a row or elsewhere, `Esc`, the player changing place. The root starts
     /// streamlink ahead for the renditions it offers while it is open, so a
     /// pick finds the slow part done (`RootView::quality_menu`). Said by
@@ -101,8 +101,8 @@ pub enum VideoEvent {
     /// what is left to do - retire this player, take streamlink down with it,
     /// and say so in the pane - is all outside the player.
     Stopped(Stopped),
-    /// Something on the bar or in More that is the pane's rather than the
-    /// player's: its chat, its link, its window, the maximize. Answered by
+    /// Something on the bar that is the pane's rather than the player's:
+    /// its chat, the way back to live, a pop-out's way back. Answered by
     /// `RootView::on_pane_action`, as the pane's own controls are, for the
     /// pane this player belongs to.
     Pane(PaneAction),
@@ -259,15 +259,6 @@ pub struct VideoView {
     root_focus: FocusHandle,
     /// What the bar's chat glyph offers; see [`ChatButton`].
     chat: ChatButton,
-    /// Whether the pane's channel is pinned to the rail, which More's pin
-    /// row says the other of and keys its id on: `Pin to the rail` or
-    /// `Unpin from the rail` (`menu::pin_row`).
-    ///
-    /// A mirror, on [`ChatButton`]'s pattern: the pins are the root's, in
-    /// the settings. Written in exactly two places — [`Start::pinned`] when
-    /// the player is made, and [`set_pinned`](Self::set_pinned), which only
-    /// `RootView::sync_pins` calls, after every change of a pin.
-    pinned: bool,
     /// The quality change somebody picked, while it is under way: the pill
     /// names it and breathes, the menu marks its row, and the bar stays up
     /// (`sync_controls`). See [`Switching`] for why it is a mirror, and why
@@ -281,7 +272,7 @@ pub struct VideoView {
     linger: Option<Task<()>>,
     /// What the bar has room for at the pane's width, measured by the probe
     /// (`bar::fit`): the volume figure and slider, and the quality pill,
-    /// which folds into More when it does not fit.
+    /// which gives way to an icon when it does not fit.
     fit: bar::Fit,
     /// Whether the pane is wide enough for a live stream's timeline, measured
     /// by the probe with `fit` (`bar::timeline_fits`). A recording's seek row
@@ -414,9 +405,6 @@ pub struct Start {
     /// A recording's muted stretches, as far as the root knows them; see
     /// `VideoView::muted`.
     pub muted: Vec<MutedSegment>,
-    /// Whether the pane's channel is pinned as the player is made; see
-    /// `VideoView::pinned`.
-    pub pinned: bool,
 }
 
 impl VideoView {
@@ -497,7 +485,6 @@ impl VideoView {
             row_run: false,
             root_focus: start.focus,
             chat: start.chat,
-            pinned: start.pinned,
             switching: start.switching,
             linger: None,
             // Until the probe has measured the pane: the bar is hidden on
@@ -1059,16 +1046,6 @@ impl VideoView {
         }
     }
 
-    /// Whether the pane's channel is pinned now, from `RootView::sync_pins`;
-    /// see `VideoView::pinned` for why nothing else calls this. Repaints
-    /// only on a change.
-    pub fn set_pinned(&mut self, pinned: bool, cx: &mut Context<Self>) {
-        if self.pinned != pinned {
-            self.pinned = pinned;
-            cx.notify();
-        }
-    }
-
     /// Note what the bar has room for, from the probe: `fit` on its row of
     /// buttons, and whether a live stream's timeline fits above it. Returns
     /// whether that changed, the only time a repaint is worth it: the width
@@ -1169,8 +1146,8 @@ struct BarHolds {
 /// And on a pane, while a quality somebody picked is under way and for a
 /// moment after: the pill saying so is on the bar, and a bar that faded
 /// with the pointer gone hid the only sign the pick was being carried out.
-/// Not in a pop-out, whose bar has no pill and no More, so nothing on it
-/// would say why it stayed up.
+/// Not in a pop-out, whose bar has no pill, so nothing on it would say why
+/// it stayed up.
 ///
 /// And for a moment after `Alt` and the wheel changed the level, in a pane
 /// and a pop-out alike, so the slider and the figure are seen to move: the

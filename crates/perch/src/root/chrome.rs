@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use gpui::{canvas, div, prelude::*, px, Context, IntoElement, SharedString, Window};
 
 use super::streams::Opening;
-use super::{Page, RootView, Toast, ToastAction};
+use super::{RootView, Toast, ToastAction};
 use crate::browse::Tab;
 use crate::{controls, layout, motion, rail_preview, sidebar, theme};
 
@@ -378,13 +378,16 @@ impl RootView {
     /// reaches the right-hand side, where a "went live" toast would land on
     /// top of it and take the click. The old header had the search box and
     /// the refresh pill in that corner, and that is what toasts did to them.
-    /// The watch page has no strip, so there the offset is a gap and nothing
-    /// more.
+    /// The watch page has no strip, and hangs the stack at the same height
+    /// all the same: a gap from the top there put a toast over the buttons
+    /// at the end of a pane's header, beside chat or on the band over a
+    /// picture, for the eight seconds it stays. That mattered once the
+    /// audio compressor moved to the menu under the header's ⋯: the toast
+    /// saying it was on sat on the ⋯ that would turn it off again. A strip's
+    /// height down, it is under that row of buttons, and a toast is where
+    /// it was on the page you came from.
     pub(super) fn toast_stack(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let top = match self.page {
-            Page::Browse => theme::TAB_STRIP_HEIGHT + theme::GAP_TIGHT,
-            Page::Watch => theme::GAP,
-        };
+        let top = theme::TAB_STRIP_HEIGHT + theme::GAP_TIGHT;
 
         let mut stack = div()
             .absolute()

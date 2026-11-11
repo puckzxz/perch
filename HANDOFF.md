@@ -81,8 +81,9 @@ monitor at 100% scale with a vertical one beside it, and the mouse first —
 **Multiview.**
 
 - **Sound stays separate per pane.** Each pane has its own level, remembered
-  per channel; Mute all and `Only this one` are a session hush beside that
-  level, never saved (see "Things not to redo").
+  per channel; `Only this one` is a session hush beside that level, never
+  saved (see "Things not to redo"). The code still calls it Mute all's
+  hush, after the mini player's control that laid it and went with it.
 - **Chat stays per pane, so there is no focus layout** — no one large pane
   with the rest as thumbnails sharing one chat. It is also why a maximized
   pane draws the others as nothing rather than as a strip or thumbnails (see
@@ -133,6 +134,22 @@ somebody moved the pointer off. Leaving the picture still takes the bar
 down at once, which the user checked for by name. What stays up under a
 still pointer: a paused picture's bar, a bar the pointer is resting on, an
 open menu, and chat under an open viewer card.
+
+**The bar is for playing; a stream has one menu.** Since 10 November 2026,
+the developer's call, which the user had handed over. The bar over a
+picture had a More at its end — the compressor, a recording's speed, the
+pop-out, the pin, twitch.tv and the link — and the pane's own menu, the ⋯
+in its header and the right button, had four of those six as well, added
+later with nobody taking the copies out; with chat under the picture the
+two ⋯ sat one above the other. More went. The compressor is on the pane's
+menu, in a group of its own; a recording's speed is on its seek row always,
+not only while it is not `1x`; the menu's `Copy link` names a recording's
+moment as More's did; and a bar too narrow for the quality's words shows a
+gear in their place rather than folding them into a menu. Every pin
+control says `Pin` or `Unpin` with no `to the rail` (`sidebar::pin_words`):
+the pins lead Following as well, and the user watches with the rail folded.
+A new thing to do with a stream goes on that menu; a new control for
+playing it goes on the bar.
 
 **Voice.** The user left it to the developer: every word on a control is
 sentence case, notices, toasts and tooltips read as sentences, and a pane
@@ -233,8 +250,8 @@ App modules, one line each; each file's own `//!` says the rest:
 | `video_view.rs` | the player element: its sound, its hover, the picture and the gestures on it, moved between places only by `set_place` |
 | `video_view/swap.rs` | a rendition swapped in place, held to the stream on screen by `align`; `route`, the one rule a start's events reach their stream by (tested) |
 | `video_view/bar.rs` | the control bar over a playing picture: the seek row or the live timeline, the icons, the quality pill and what fits (tested) |
-| `video_view/menu.rs` | the bar's menus — the quality, More, a recording's speeds — and `set_menu`, the one write of the open menu (tested) |
-| `loudness.rs` | one pane's level and the Mute all hush over it (pure, tested) |
+| `video_view/menu.rs` | the bar's menus — the quality and a recording's speeds — and `set_menu`, the one write of the open menu (tested) |
+| `loudness.rs` | one pane's level and the hush `Only this one` lays over it (pure, tested) |
 | `channel_menu.rs` | the one right-click menu wherever a channel is named (pure, tested) |
 | `compressor.rs` | the audio compressor, every pane's at once: the mpv `af` chain and the flag every render thread reads (pure, tested) |
 | `wheel.rs` | `Alt` and the wheel over a picture, turned into volume steps (pure, tested) |
@@ -242,7 +259,7 @@ App modules, one line each; each file's own `//!` says the rest:
 | `ad_break.rs` | a pane's ad-break notice: what it says and when it is over (`FrameClock`) (pure, tested) |
 | `seek_bar.rs` | the seek bar on a recording and a live pane's timeline, and the arithmetic behind them (tested) |
 | `catch_up.rs` | a live picture getting back to the edge: catching up after a stall, and the jump on unpause (`resume`) (pure, tested) |
-| `speed.rs` | how fast a recording plays: the speeds More offers (pure, tested) |
+| `speed.rs` | how fast a recording plays: the speeds its seek row offers (pure, tested) |
 | `rewind.rs` | rewinding a live pane, and the way back to live, worked out (pure, tested) |
 | `video.rs` | the render thread, which owns the mpv `Player`, and the pane's `PositionHandle`, which every player of the pane and its chat replay share |
 | `vod.rs` | positions a recording by rewriting its playlist; the keeper for one still growing |
@@ -549,8 +566,9 @@ three estimates from the log (see "A swap says what it did in the log").
 
 A pick is seen to be under way from the press, since with nothing changing on
 screen for the seconds a resolve takes, a working switch was taken for a broken
-one: the pill names the rendition picked and breathes, More's folded row says
-`Quality · switching to 480p30`, and the bar stays up until
+one: the pill names the rendition picked and breathes, the icon that stands
+in for it on a narrow bar breathes too and says `Quality · switching to
+480p30` under the pointer, and the bar stays up until
 `theme::SWITCH_LINGER` after the switch ends either way (`bar::pill_face`;
 `RootView::set_pending`, the only write of `Slot::pending`, tells the player).
 A re-pick is silent throughout, and one that fails waits for the next growth,
@@ -833,9 +851,10 @@ once, with the request a link is looked up by (`Request::Video`);
 `root/muted.rs`'s `//!` has how, and how an answer is told from a link's
 (`Muted::claim`).
 
-**A recording can play faster or slower, per pane.** More on a recording has
-`Playback speed · 1x`, which opens the speeds, `0.75x` to `2x`, in More's
-place; README's Past broadcasts has the rest of what the user sees. Nothing
+**A recording can play faster or slower, per pane.** A recording's seek row
+ends in its speed, `1x`, a pill that opens the speeds, `0.75x` to `2x`
+(`VideoView::speed_tag`); README's Past broadcasts has the rest of what the
+user sees. Nothing
 on a live stream, which plays as it is made. The speed is the pane's, on its
 `PositionHandle`, so every player of the pane, a swap's included, plays at it
 from its first pass, and a pane that plays something else is a new slot, at
@@ -1268,7 +1287,7 @@ not gate its tooltips yet.
 which needs no focus and no window, and opening a link in the browser is
 `cx.open_url` (app.rs:1078). Perch writes the clipboard in one place,
 `RootView::copy`, followed by the toast that says it did: `Copy link` from
-More or the palette, and a chat row's copy menu, whose chat asks the root
+a pane's menu or the palette, and a chat row's copy menu, whose chat asks the root
 (`ChatViewEvent::Copy`) rather than writing it itself. Each platform has its
 own `write_to_clipboard` under gpui's; the macOS one is compiled by CI's Mac
 leg and has never been run for Perch.
@@ -1828,11 +1847,12 @@ header rests over it. The split:
   decisions"). The picture is centred beside chat; its box, render size and
   quality are the same either way.
 - **Over the video**, only while something asks for it
-  (`video_view::bar_wanted`): the control bar (`video_view/bar.rs`; More's
-  rows are `VideoView::more_rows`, in `video_view/menu.rs`). It keeps to
-  what one stream needs; what only two panes or more need is on the pane's
-  right-click menu. `bar::RIGHT_BUTTONS` counts the right-hand cluster,
-  which never drops a button, so one added there narrows the bar sooner.
+  (`video_view::bar_wanted`): the control bar (`video_view/bar.rs`), which
+  is for playing the stream and nothing else: play, the level, the quality,
+  chat, fullscreen, and a recording's seek row with its speed. Everything
+  else is the pane's one menu (see "The bar is for playing" under "Product
+  decisions"). `bar::RIGHT_BUTTONS` counts the right-hand cluster, which
+  never drops a button, so one added there narrows the bar sooner.
   What is the pane's rather than the player's goes up as `VideoEvent::Pane`
   and is resolved by key in `root/pane_actions.rs`, the one place the
   clipboard is written. Nothing page-level is drawn over the panes, so the
@@ -1841,7 +1861,8 @@ header rests over it. The split:
   navigated away.
 - **The channel menu** (`channel_menu.rs`, `root/channel_menus.rs`): the
   right button wherever a channel is named, and the ⋯ in a pane's header;
-  a pane's adds what only two panes or more need. What it offers is worked
+  a pane's adds the audio compressor, the moment to its recording's `Copy
+  link`, and what only two panes or more need. What it offers is worked
   out as it is drawn (`channel_menu::entries`), so no row comes from a stale
   answer; under the ⋯ it hangs by its top right (`channel_menus::MenuAt`
   says why).
@@ -1864,7 +1885,10 @@ header rests over it. The split:
   says who is signed in on its tooltip, and on Windows the caption buttons.
 - **The browse page's tab strip** (`RootView::tab_strip`): back and forward,
   the four tabs, then Refresh, left-aligned to keep Refresh out from under
-  the toasts.
+  the toasts. The toasts hang a strip's height down on both pages
+  (`RootView::toast_stack`): on the watch page that keeps them off the
+  buttons at the end of a pane's header, the ⋯ whose menu the compressor's
+  toast comes of among them.
 - **The rail** (`sidebar.rs`; `sidebar::row` has a row's controls): the pin
   and `+` a row reveals under the pointer stop propagation, or the row under
   them would fire as well.
@@ -2128,7 +2152,7 @@ again. A pane opened from the group reads what it says of its channel from
 `Recommended::channel`; the palette does not offer recommendations yet.
 
 **Pins from anywhere.** A pin is made from any channel's right-click menu
-(`Pick::Pin`), a pane's More (`PaneAction::Pin`), a channel page's bar
+(`Pick::Pin`; a pane's goes as `PaneAction::Pin`), a channel page's bar
 (`channel_page::Standing`), and a followed or pinned rail row's own pin; all
 end in `RootView::set_pinned`. A recommended row has no pin of its own
 (`sidebar::Row::offers_pin`): pinned from the row, a live channel would land
@@ -2771,10 +2795,10 @@ quality for …` opens it, and with it the bar (`RootView::choose_quality`), its
 rows after every `Close` row so that `c quin` stays a close
 (`an_abbreviated_close_leads_with_the_close`). A pane still waiting for its
 first frame is offered no row, and `VideoView::open_menu` refuses it; its doc
-says why. More's two rows are in the palette by name as well — `Copy link to
-…` and `Open … on twitch.tv`, for every pane, a stopped one included — and go
-down the route More's own rows take (`RootView::on_pane_action`), so the link
-and the toast are the same.
+says why. Two rows of a pane's menu are in the palette by name as well —
+`Copy link to …` and `Open … on twitch.tv`, for every pane, a stopped one
+included — and go down the route the menu's own rows take
+(`RootView::on_pane_action`), so the link and the toast are the same.
 
 **Back and forward are `Alt+←` and `Alt+→`** (`⌥` on macOS), as well as the
 arrows on the browse page's tab strip (`root/pages.rs`) and the mouse's side
@@ -2940,10 +2964,10 @@ press. A press on a row or on any of the bar's controls closes the menu, which
 ends the hold, and the bar fades out within `theme::MOTION_HOVER` — except
 after a row that picks a quality other than what plays on a pane whose picture
 covers it, which holds the bar up, with no blink at the press, until the switch
-ends and `theme::SWITCH_LINGER` after; only More over the quality menu, the
-pill over More and More's quality row put one menu in place of another and keep
-it. So open the menu again from the palette before each press. Rows, the pill,
-More, chat and fullscreen act before the fade starts, and so do the slider and
+ends and `theme::SWITCH_LINGER` after; only a recording's speed pressed over
+the quality menu, and the pill over the speeds, put one menu in place of
+another and keep it. So open the menu again from the palette before each
+press. Rows, the pill, chat and fullscreen act before the fade starts, and so do the slider and
 the seek row, which act on the press (the seek row holds the bar while its
 thumb is held, and seeks on the release wherever it lands; a live pane's
 timeline, the same row, rewinds on the release instead, which replaces the
@@ -3230,7 +3254,7 @@ None of these is being worked on; all of them are real.
     desktop notification, since both read the follows poll
     (`notifications::who`). A recommended rail row has no pin under the
     pointer, but its right-click menu pins it (`channel_menu::entries`
-    always offers `Pin to the rail`), and the new pin is a bare login until
+    always offers `Pin`), and the new pin is a bare login until
     the ask about it is answered (see "Pins from anywhere" under Browsing).
 15. **A recording's thumbnail is 320x180**, the one size Twitch serves for a
     video, scaled up onto a card that is wider than that — and over a whole
@@ -3297,13 +3321,14 @@ None of these is being worked on; all of them are real.
     each time it happens the window comes back a little smaller. The fix
     belongs in `vendor/gpui` — re-measure only while not maximised — and
     waits on a decision to patch it; see "The window remembers where it was".
-23. **A live pane's link has no time.** More's `Copy link` and `Open on
+23. **A live pane's link has no time.** Its menu's `Copy link` and `Open on
     twitch.tv`, and the palette's, give a live pane's channel. A moment in a
     broadcast still going is a moment in its archive, which the pane knows
     only once a rewind has found it; see "What to build next", item 1.
 24. **The bar can run past the narrowest pane.** `bar::fit` drops the volume
-    figure, the slider and the quality pill, but play, the speaker and the
-    right-hand buttons stay, about 194px with the padding, and four beside
+    figure and the slider and swaps the quality pill for an icon, but play,
+    the speaker, that icon and the right-hand buttons stay, about 194px with
+    the padding, five squares as when More was one of them, and four beside
     panes in a small window can be narrower. The quality pill's room is an
     estimate (`theme::QUALITY_PILL_ROOM`), so a long rendition name can run a
     few pixels past a pane right at the edge of fitting.
@@ -3408,15 +3433,14 @@ None of these is being worked on; all of them are real.
       while popped (see "Working on it") and the CPU log with one open
       (`perch.cpu.csv`, under Windows packaging), two or more stacking clear
       of each other, and its quality following its size, and the re-pick on
-      bringing one back; its other entry points (the pane menu's row,
-      More's, `P` from the browse page, which brings the watch page up with
-      it);
+      bringing one back; its other entry points (the pane menu's row, `P`
+      from the browse page, which brings the watch page up with it);
     - phase 2's signed-in parts: an offline pane's last broadcast as a card
       or pill, `Start when they go live` starting a pane, `Watch from the
       start`, the live poster; and the failed screen when mpv cannot open;
     - the swap on a recording, and on a live pane a second live session on
       one token (item 3); and after a failed switch, its message with the
-      bar's linger, and More's folded row mid-switch on a narrow pane;
+      bar's linger, and the quality's icon mid-switch on a narrow pane;
     - the paused redraw after a resize, a pop-out, a bring-back and a
       maximize, and the redraw of any pane back from offstage, playing,
       paused, or in an ad break or a stall, and again at the size its
@@ -3442,8 +3466,8 @@ None of these is being worked on; all of them are real.
       starting pane, an ended pane's one try while its broadcast is still
       listed, the sign-in toast for a failed save, the 2160p render on a 4K
       stream, and a render loop's own exit offering `Try again`.
-    - pins from anywhere, signed in: More's `Pin to the rail` and
-      `Unpin from the rail` on a live pane and a recording, the channel
+    - pins from anywhere, signed in: the pane menu's `Pin` and `Unpin` on
+      a live pane and a recording, the channel
       page's pin and its tooltip after a press, a pin nobody follows
       turning live in the rail within two minutes of its stream, a stopped
       pane nobody follows offering `Start when they go live` and starting

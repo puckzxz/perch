@@ -512,7 +512,7 @@ pub enum Action {
     },
     /// Pin this channel to the top of the rail, or take it off: the rail's
     /// own pin, on a followed channel's row or a pinned one's, and the pin on
-    /// a channel's page, followed or not. A pane's More does the same through
+    /// a channel's page, followed or not. A pane's menu does the same through
     /// `watch::PaneAction::Pin`, and both end in `RootView::set_pinned`.
     SetPinned {
         login: String,

@@ -1,19 +1,25 @@
 //! The menus the player's control bar opens: which one is open, the box it
 //! opens in, and its rows.
 //!
-//! Three of them: the quality; More — what else there is to do with the
-//! pane, which also carries the quality when the bar is too narrow for it;
-//! and a recording's speeds, which open in
-//! More's place from its speed row. Hand-rolled rather than gpui-component's `DropdownMenu`, which
-//! serves only that library's own `Button`. One is open at a time, all of
-//! them open from the bar's right-hand cluster (`bar::button_row`), and `Esc`
+//! Two of them: the quality, from its pill or from the icon the pill gives
+//! way to on a narrow bar; and a recording's speeds, from the speed on its
+//! seek row. Hand-rolled rather than gpui-component's `DropdownMenu`, which
+//! serves only that library's own `Button`. One is open at a time, both
+//! hang from the bar's right-hand cluster (`bar::pane_cluster`), and `Esc`
 //! closes whichever it is, through `RootView::on_go_browse`. The rows act on
 //! the press, never on a click; `menu_row` says why, and a test below holds
 //! this file to it. The rest of a double-click whose first press a row took
 //! is swallowed whole, by `run_guard`, so it cannot land on whatever the
-//! closed menu left under the pointer — or, after `Pop out`, which takes the
-//! player and that guard with it out of the window, by the root's
-//! (`RootView::run_guard`).
+//! closed menu left under the pointer.
+//!
+//! There was a third, More, until November 2026: the compressor, a
+//! recording's speed, the pop-out, the pin, the way to twitch.tv and the
+//! link. Four of those were on the pane's own menu as well, the ⋯ in its
+//! header a few hundred pixels away, so More went and the rest moved: the
+//! compressor to that menu (`crate::channel_menu`), the speed to the seek
+//! row for good (`VideoView::speed_tag`), and the quality, which More
+//! carried on a narrow bar, to an icon of its own. The bar is for playing
+//! the stream; what else can be done with it is one menu.
 
 use gpui::{
     canvas, div, prelude::*, px, Animation, AnimationExt, AnyElement, Context, DispatchPhase, Div,
@@ -21,29 +27,18 @@ use gpui::{
 };
 
 use super::{Switching, VideoEvent, VideoView};
-use crate::compressor;
 use crate::motion;
-use crate::seek_bar;
-use crate::sidebar;
 use crate::speed::Speed;
 use crate::stage::Place;
-use crate::target;
 use crate::theme;
-use crate::watch::PaneAction;
 
 /// A menu the control bar opens.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Menu {
     /// The renditions this stream offers, under the settings' choice.
     Quality,
-    /// The rest: the audio compressor, a recording's speed, pop the pane
-    /// out, pin its channel to the rail or take it off, open it on
-    /// twitch.tv, copy its link — and the quality, while the bar has no room
-    /// for it. What only two panes or more need is on the pane's right-click
-    /// menu (`crate::channel_menu`).
-    More,
-    /// A recording's speeds (`crate::speed`), opened in More's place from
-    /// its speed row, or from the speed on the seek row.
+    /// A recording's speeds (`crate::speed`), from the speed on its seek
+    /// row.
     Speed,
 }
 
@@ -54,15 +49,14 @@ impl Menu {
     fn id(self) -> &'static str {
         match self {
             Menu::Quality => "quality-menu",
-            Menu::More => "more-menu",
             Menu::Speed => "speed-menu",
         }
     }
 }
 
 /// Whether going from `old` to `new` opens the quality menu (`Some(true)`),
-/// closes it (`Some(false)`), or leaves it as it was. More opening in its
-/// place closes it, and it opening in More's place opens it.
+/// closes it (`Some(false)`), or leaves it as it was. The speeds opening in
+/// its place close it, and it opening in theirs opens it.
 pub(super) fn quality_menu_flip(old: Option<Menu>, new: Option<Menu>) -> Option<bool> {
     let (was, is) = (old == Some(Menu::Quality), new == Some(Menu::Quality));
     (was != is).then_some(is)
@@ -79,12 +73,12 @@ pub(super) fn toggled(open: Option<Menu>, which: Menu) -> Option<Menu> {
 }
 
 impl VideoView {
-    /// Open `which` over the bar: the palette's keyboard path to it, and
-    /// More's quality and speed rows, which open their menus in More's
-    /// place. (The seek row's speed tag toggles the speed menu, as a menu's
-    /// own button does, through [`toggle_menu`](Self::toggle_menu).) An
-    /// open menu holds the bar up (`sync_controls`), so the bar comes up with
-    /// it, wherever the pointer is.
+    /// Open `which` over the bar: the palette's keyboard path to the
+    /// quality. (A menu's own button — the pill, the icon in its place, the
+    /// seek row's speed — toggles it, through
+    /// [`toggle_menu`](Self::toggle_menu).) An open menu holds the bar up
+    /// (`sync_controls`), so the bar comes up with it, wherever the pointer
+    /// is.
     ///
     /// Nothing anywhere but a pane, or on a player still waiting for its
     /// first frame: a tile and a starting player draw no bar to hang a menu
@@ -147,7 +141,6 @@ impl VideoView {
     pub(super) fn menu_box(&self, which: Menu, cx: &mut Context<Self>) -> impl IntoElement {
         let rows = match which {
             Menu::Quality => self.quality_rows(cx),
-            Menu::More => self.more_rows(cx),
             Menu::Speed => self.speed_rows(cx),
         };
 
@@ -241,116 +234,6 @@ impl VideoView {
             .collect()
     }
 
-    /// More: the quality first while the bar has folded its pill away,
-    /// ruled off from the rest; then `Audio compressor · Off` or `· On`; then a recording's
-    /// `Playback speed · 1x`, which opens the speeds in its place; then `Pop
-    /// out`; then `Pin to the rail` or `Unpin from the rail` ([`pin_row`]);
-    /// then the pane's way out to twitch.tv and its link. All but the
-    /// quality and the speed are the root's to do — it knows the panes, its
-    /// windows and the pins, and the clipboard and the browser are the
-    /// app's — so they go up as `VideoEvent::Pane`.
-    ///
-    /// A recording opens and copies at the moment it is at, and says so:
-    /// `Copy link at 1:02:03`, from its first whole second on, by the rule
-    /// the link itself is written by (`target::moment`). Read as the menu is
-    /// drawn, which a playing picture does with every frame, so the time on
-    /// the row is the time a press copies.
-    fn more_rows(&self, cx: &mut Context<Self>) -> Vec<Stateful<Div>> {
-        let mut folded = Vec::new();
-        if !self.fit.quality {
-            folded.push(menu_row(
-                "more-quality",
-                folded_quality(&self.qualities.playing, self.switching.as_ref()),
-                false,
-                // In place of this menu, as if from the pill.
-                |this, _window, cx| this.open_menu(Menu::Quality, cx),
-                cx,
-            ));
-        }
-        let ruled = folded.len();
-        let mut rows: Vec<Stateful<Div>> = folded
-            .into_iter()
-            .enumerate()
-            .map(|(index, row)| {
-                row.when(index + 1 == ruled, |row| {
-                    row.border_b_1().border_color(theme::border())
-                })
-            })
-            .collect();
-        // The compressor, saying whether it is on. Every pane's at once, so
-        // the root turns it (`crate::compressor`); read as the menu is drawn,
-        // which is how a row on one pane says what another pane's turned.
-        let (id, words) = compressor::row(compressor::on());
-        rows.push(menu_row(
-            id,
-            words.into(),
-            false,
-            |_this, _window, cx| cx.emit(VideoEvent::Pane(PaneAction::ToggleCompressor)),
-            cx,
-        ));
-        // A recording's speed, saying what it is, which opens the speeds in
-        // this menu's place, as the folded quality row opens the qualities.
-        // Nothing on a live stream, which plays at the speed it is made.
-        if self.stream.timeline().is_some() {
-            rows.push(menu_row(
-                "more-speed",
-                speed_row(self.stream.speed()),
-                false,
-                |this, _window, cx| this.open_menu(Menu::Speed, cx),
-                cx,
-            ));
-        }
-        // The pane's picture into a window of its own, where the pop-out is
-        // offered. Only ever on a pane: no other place draws this menu
-        // (`open_menu`), and a popped pane's bar has Bring back instead. The
-        // player leaves the main window on this press, and `run_guard` with
-        // it, so the root guards the rest of the run (`RootView::run_guard`).
-        if crate::root::pop_out_offered() {
-            rows.push(menu_row(
-                "more-pop-out",
-                "Pop out".into(),
-                false,
-                |_this, _window, cx| cx.emit(VideoEvent::Pane(PaneAction::PopOut)),
-                cx,
-            ));
-        }
-        // The pane's channel pinned to the rail, or taken off it, live or a
-        // recording's. The press says which it was offered as, so a row a
-        // frame stale cannot do the opposite (`PaneAction::Pin`).
-        let pinned = self.pinned;
-        let (id, words) = pin_row(pinned);
-        rows.push(menu_row(
-            id,
-            words.into(),
-            false,
-            move |_this, _window, cx| cx.emit(VideoEvent::Pane(PaneAction::Pin(!pinned))),
-            cx,
-        ));
-        rows.push(menu_row(
-            "more-open",
-            "Open on twitch.tv".into(),
-            false,
-            |_this, _window, cx| cx.emit(VideoEvent::Pane(PaneAction::OpenOnTwitch)),
-            cx,
-        ));
-        let moment = self
-            .stream
-            .timeline()
-            .and_then(|_| target::moment(self.stream.position()));
-        let copy = match moment {
-            Some(secs) => format!("Copy link at {}", seek_bar::timecode(secs as f64)),
-            None => "Copy link".to_string(),
-        };
-        rows.push(menu_row(
-            "more-copy",
-            copy.into(),
-            false,
-            |_this, _window, cx| cx.emit(VideoEvent::Pane(PaneAction::CopyLink)),
-            cx,
-        ));
-        rows
-    }
-
     /// The rest of a run of presses whose first one a row took: an element
     /// for the player to hold, a `canvas` that listens at the window as it
     /// paints, the way `RootView::side_buttons` does.
@@ -358,10 +241,9 @@ impl VideoView {
     /// A row acts on the press and takes the menu away with it, but the
     /// platform counts a second press near the first as a double-click
     /// whatever is under it by then (gpui's windows/window.rs:1049-1060).
-    /// Under a row that was the picture, whose double-click is fullscreen; a
-    /// recording's seek track, which seeks; or, after More's quality row, the
-    /// quality menu that opened in More's place, where the press would pick a
-    /// rendition and change the stream. So a row marks its run (`row_run`),
+    /// Under a row that was the picture, whose double-click is fullscreen,
+    /// or a recording's seek track, which seeks. So a row marks its run
+    /// (`row_run`),
     /// and this stops every later press of that run in the capture phase,
     /// before anything under the pointer hears it. The bubble phase, where a
     /// click begins, never comes, so the release makes no click either. The
@@ -370,8 +252,7 @@ impl VideoView {
     /// Window-level because nothing narrower hears all of those: the bar and
     /// the menu each block the pointer from what is under them. Held ahead
     /// of the bar, so this listens before anything on the bar or in a menu
-    /// does, the anchor's dismiss included, and a quality menu just opened
-    /// from More stays open for a press of its own.
+    /// does, the anchor's dismiss included.
     pub(super) fn run_guard(cx: &mut Context<Self>) -> impl IntoElement {
         let owner = cx.entity().downgrade();
         canvas(
@@ -404,8 +285,8 @@ impl VideoView {
 /// `row_run` reads once the press has been heard.
 ///
 /// The root's guard asks the same of a run whose first press took a player
-/// out from under the pointer, `Pop out` on one of these rows included, out
-/// of the reach of the player's own guard (`RootView::run_guard`).
+/// out from under the pointer, as a pane menu's `Pop out` does
+/// (`RootView::run_guard`).
 pub(crate) fn rest_of_row_run(row_run: bool, click_count: usize) -> bool {
     row_run && click_count > 1
 }
@@ -438,8 +319,9 @@ pub(super) fn chosen<'a>(
     }
 }
 
-/// More's quality row, while the pill is folded into it: what plays, or
-/// what a pick under way is switching to.
+/// What the quality's icon says under the pointer, where the bar is too
+/// narrow for its pill: what plays, or what a pick under way is switching
+/// to. The pill says it in its own words; an icon has to be asked.
 pub(super) fn folded_quality(
     playing: &SharedString,
     switching: Option<&Switching>,
@@ -448,22 +330,6 @@ pub(super) fn folded_quality(
         Some(switching) => format!("Quality · switching to {}", switching.to).into(),
         None => format!("Quality · {playing}").into(),
     }
-}
-
-/// More's speed row: the speed a recording plays at, in the words the speed
-/// menu and the seek row write it in.
-pub(super) fn speed_row(speed: Speed) -> SharedString {
-    format!("Playback speed · {}", speed.label()).into()
-}
-
-/// More's pin row, with the pane's channel `pinned` or not: its id and its
-/// words, which say what a press does (`sidebar::pin_words`). The id
-/// follows the words, as every control's whose words follow a state does
-/// (`loudness::HearOnly::row`), so the row that says the other thing is a
-/// new element rather than the old one relabelled under the pointer.
-pub(super) fn pin_row(pinned: bool) -> (&'static str, &'static str) {
-    let id = if pinned { "more-unpin" } else { "more-pin" };
-    (id, sidebar::pin_words(pinned))
 }
 
 /// How a row of the quality menu is marked: not at all, as the one chosen,
@@ -634,34 +500,15 @@ mod tests {
         }
     }
 
-    /// More's folded quality row says what plays, or what a pick under way
-    /// is switching to.
+    /// The quality's icon says what plays, or what a pick under way is
+    /// switching to.
     #[test]
-    fn mores_quality_row_says_a_switch() {
+    fn the_folded_quality_says_a_switch() {
         let playing = SharedString::from("720p60");
         assert_eq!(folded_quality(&playing, None).as_ref(), "Quality · 720p60");
         assert_eq!(
             folded_quality(&playing, Some(&switching("480p30", false))).as_ref(),
             "Quality · switching to 480p30"
-        );
-    }
-
-    /// More's pin row says what a press does to the pane's channel, and is
-    /// a new row, by its id, once the press has done it.
-    #[test]
-    fn mores_pin_row_says_what_a_press_does() {
-        assert_eq!(pin_row(false), ("more-pin", "Pin to the rail"));
-        assert_eq!(pin_row(true), ("more-unpin", "Unpin from the rail"));
-    }
-
-    /// More's speed row says the speed the recording plays at, in the
-    /// speed menu's own words.
-    #[test]
-    fn mores_speed_row_says_the_speed() {
-        assert_eq!(speed_row(Speed::NORMAL).as_ref(), "Playback speed · 1x");
-        assert_eq!(
-            speed_row(Speed::from_hundredths(175)).as_ref(),
-            "Playback speed · 1.75x"
         );
     }
 
@@ -684,21 +531,22 @@ mod tests {
         assert_eq!(toggled(None, Menu::Quality), Some(Menu::Quality));
     }
 
-    /// One menu at a time: More's button over an open quality menu swaps
-    /// one for the other rather than stacking them, and the other way round.
+    /// One menu at a time: the seek row's speed over an open quality menu
+    /// swaps one for the other rather than stacking them, and the other way
+    /// round.
     #[test]
     fn opening_one_menu_closes_the_other() {
-        assert_eq!(toggled(Some(Menu::Quality), Menu::More), Some(Menu::More));
+        assert_eq!(toggled(Some(Menu::Quality), Menu::Speed), Some(Menu::Speed));
         assert_eq!(
-            toggled(Some(Menu::More), Menu::Quality),
+            toggled(Some(Menu::Speed), Menu::Quality),
             Some(Menu::Quality)
         );
-        assert_eq!(toggled(Some(Menu::More), Menu::More), None);
+        assert_eq!(toggled(Some(Menu::Speed), Menu::Speed), None);
     }
 
     /// A double- or triple-click on a row: the row took the first press, so
-    /// the rest go nowhere — not to the picture's fullscreen, the seek track
-    /// or the quality menu More's row opened under the pointer.
+    /// the rest go nowhere — not to the picture's fullscreen, nor the seek
+    /// track.
     #[test]
     fn the_rest_of_a_rows_run_is_swallowed() {
         assert!(rest_of_row_run(true, 2));
@@ -742,22 +590,22 @@ mod tests {
     }
 
     /// The quality menu opening or closing is told, from either side of
-    /// More, and nothing else is.
+    /// the speeds, and nothing else is.
     #[test]
     fn only_the_quality_menu_coming_or_going_is_told() {
         assert_eq!(quality_menu_flip(None, Some(Menu::Quality)), Some(true));
         assert_eq!(
-            quality_menu_flip(Some(Menu::More), Some(Menu::Quality)),
+            quality_menu_flip(Some(Menu::Speed), Some(Menu::Quality)),
             Some(true),
-            "More's quality row opens it in More's place"
+            "the pill pressed over the open speeds opens it in their place"
         );
         assert_eq!(quality_menu_flip(Some(Menu::Quality), None), Some(false));
         assert_eq!(
-            quality_menu_flip(Some(Menu::Quality), Some(Menu::More)),
+            quality_menu_flip(Some(Menu::Quality), Some(Menu::Speed)),
             Some(false)
         );
-        assert_eq!(quality_menu_flip(None, Some(Menu::More)), None);
-        assert_eq!(quality_menu_flip(Some(Menu::More), None), None);
+        assert_eq!(quality_menu_flip(None, Some(Menu::Speed)), None);
+        assert_eq!(quality_menu_flip(Some(Menu::Speed), None), None);
         assert_eq!(
             quality_menu_flip(Some(Menu::Quality), Some(Menu::Quality)),
             None

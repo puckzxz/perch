@@ -23,8 +23,8 @@
 //! no pictures. The rows all hold still under the pointer; see
 //! `RootView::hold_live`. A pin is made and taken off from a followed
 //! channel's row itself, under the pointer, from any channel menu
-//! (`crate::channel_menu`, on a row, a card, a name or a pane), from a pane's
-//! More and from a channel's page, and saved by `RootView::set_pinned`.
+//! (`crate::channel_menu`, on a row, a card, a name or a pane) and from a
+//! channel's page, and saved by `RootView::set_pinned`.
 //!
 //! On the left, opposite chat. Chat belongs to the pane it is part of and sits
 //! on the right of it; the rail belongs to the window. Putting both on the same
@@ -97,15 +97,17 @@ const GAP_COUNT: f32 = 4.0;
 /// the rail's border rather than touching it.
 const PREVIEW_OFFSET: f32 = theme::GAP_TIGHT * 2.0;
 
-/// What a pin control away from the rail says a press does, with the
-/// channel `pinned` or not: a pane's More row (`video_view::menu::pin_row`)
-/// and the channel page's pin, which name the rail since they are not
-/// beside it. The rail's own pin says `Pin` and `Unpin`.
+/// What every pin control says a press does, with the channel `pinned` or
+/// not: a channel menu's row, the channel page's pin and the rail's own.
+/// `Pin` and `Unpin`, with no `to the rail`: the pins lead Following as
+/// well as the rail, and the rail is folded for whoever watches one stream
+/// with nothing beside it, so naming it said less than half of where a pin
+/// shows (10 November 2026).
 pub fn pin_words(pinned: bool) -> &'static str {
     if pinned {
-        "Unpin from the rail"
+        "Unpin"
     } else {
-        "Pin to the rail"
+        "Pin"
     }
 }
 
@@ -270,7 +272,7 @@ impl Row<'_> {
     /// there, a live row would land in Pinned as a bare login until the ask
     /// about it was answered (`root::pane_streams`). Its channel menu still
     /// offers Pin, at that price; a channel nobody follows is also pinned
-    /// from its pane's More or its page, where it is already open (see
+    /// from its pane's menu or its page, where it is already open (see
     /// `Action::SetPinned`).
     fn offers_pin(&self) -> bool {
         !matches!(self, Row::Recommended(_))
@@ -721,7 +723,7 @@ fn row<V: 'static>(
                                 controls::Variant::Pill
                             },
                         )
-                        .tooltip(controls::tip(if pinned { "Unpin" } else { "Pin" }))
+                        .tooltip(controls::tip(pin_words(pinned)))
                         .on_click(cx.listener(
                             move |view, _event, window, cx| {
                                 cx.stop_propagation();

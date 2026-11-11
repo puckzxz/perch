@@ -100,7 +100,7 @@ impl Loudness {
     }
 }
 
-/// What a pane's More menu offers about hearing one pane alone: nothing,
+/// What a pane's menu offers about hearing one pane alone: nothing,
 /// `Only this one`, or `Hear all again`.
 ///
 /// `Only this one` hushes every other pane through Mute all's hush (never
@@ -138,7 +138,7 @@ impl HearOnly {
     }
 }
 
-/// What every pane's More menu offers, given each pane's hush, in any order.
+/// What every pane's menu offers, given each pane's hush, in any order.
 /// Held when there are two panes or more and exactly one is not hushed —
 /// whether `Only this one` or Mute all and then a level set on one pane got
 /// it there, since `Hear all again` means the same in both.

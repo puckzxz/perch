@@ -619,7 +619,7 @@ impl Slot {
     /// A live pane's link has no time either way: a moment in a broadcast
     /// still going is a moment in its archive, which the pane does not know.
     /// The header's name passes `false`, since a name says which and never
-    /// when; More and the palette pass `true`.
+    /// when; the pane's menu and the palette pass `true`.
     pub fn link(&self, at_position: bool) -> String {
         target::link(&match &self.source {
             Source::Live => Target::Channel(self.channel.clone()),
@@ -630,6 +630,17 @@ impl Slot {
                     .flatten(),
             },
         })
+    }
+
+    /// Where the recording the pane plays has got to, in whole seconds, as
+    /// its link at this moment carries it (`target::moment`): what its
+    /// menu's `Copy link` says it copies. `None` on a live pane, whose link
+    /// has no time, and in a recording's first second.
+    pub fn moment(&self) -> Option<u64> {
+        match &self.source {
+            Source::Live => None,
+            Source::Video { position, .. } => target::moment(position.get()),
+        }
     }
 }
 
@@ -790,13 +801,13 @@ pub enum PaneAction {
     /// Show or hide its chat, as `C` does: the chat glyph on the bar, and
     /// on the header over a pane with no picture, which has no bar.
     ToggleChat,
-    /// Open what it plays on twitch.tv, at the moment it is at: More's
+    /// Open what it plays on twitch.tv, at the moment it is at: its menu's
     /// `Open on twitch.tv` row, and the palette's.
     OpenOnTwitch,
-    /// Put the same link on the clipboard: More's, and the palette's.
+    /// Put the same link on the clipboard: its menu's, and the palette's.
     CopyLink,
     /// Move its picture into a window of its own, on top of other apps: its
-    /// menu's row, More's, `P` and the palette's row. Windows only for now;
+    /// menu's row, `P` and the palette's row. Windows only for now;
     /// see `root::pop_out`.
     PopOut,
     /// Bring its picture back from that window: the pop-out bar's Bring
@@ -854,13 +865,12 @@ pub enum PaneAction {
     /// once one pane alone is heard, every pane again: its menu's `Only
     /// this one` and `Hear all again`; see `RootView::hear_only`.
     HearOnly,
-    /// Turn the audio compressor on or off, for every pane at once: More's
-    /// `Audio compressor` row. See `crate::compressor` and
+    /// Turn the audio compressor on or off, for every pane at once: its
+    /// menu's `Audio compressor` row. See `crate::compressor` and
     /// `RootView::toggle_compressor`.
     ToggleCompressor,
-    /// Pin the pane's channel to the rail, or take it off: More's `Pin to
-    /// the rail` or `Unpin from the rail`, for a live pane's channel and a
-    /// recording's alike. Says which, as the row it came from did, so a row
+    /// Pin the pane's channel, or take the pin off: its menu's `Pin` or
+    /// `Unpin`, for a live pane's channel and a recording's alike. Says which, as the row it came from did, so a row
     /// drawn a frame stale pins what is pinned already rather than taking
     /// it off; see `RootView::set_pinned`.
     Pin(bool),
@@ -1050,7 +1060,7 @@ fn chat_or_why(slot: &Slot) -> AnyElement {
 /// One pane: a player, and its chat with a header.
 ///
 /// Over the picture, on hover, go playback — the player's bar, with the
-/// pane's chat, fullscreen and More — and, with no chat on screen, the
+/// pane's quality, chat and fullscreen — and, with no chat on screen, the
 /// pane's header: its facts and its ×, on the band along the top. Over a
 /// pane with no picture that band stays up at rest, since there is nothing
 /// to keep clear. Nothing else is drawn on the picture.

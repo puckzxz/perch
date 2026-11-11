@@ -567,8 +567,8 @@ pub fn view<V: 'static>(
     }));
     // The rail's own pin, lit while the channel is pinned, as it is on a
     // pinned row, and keyed on that, so the words a press has just made
-    // false do not stay up (`controls::tip`). Its words name the rail, which
-    // is not beside it (`sidebar::pin_words`).
+    // false do not stay up (`controls::tip`). In every pin's words
+    // (`sidebar::pin_words`).
     let pin_login = channel.login.clone();
     let pin = controls::icon_button(
         if pinned {

@@ -748,9 +748,6 @@ impl RootView {
                         .recording()
                         .map(|video| video.muted_segments.clone())
                         .unwrap_or_default(),
-                    // Whether its channel is pinned, for More's pin row;
-                    // kept up by `sync_pins`.
-                    pinned: self.settings.is_pinned(&self.slots[index].channel),
                 };
                 // The pane's one player: its own size until the pane is
                 // measured, playing, and its position heard by the pane —

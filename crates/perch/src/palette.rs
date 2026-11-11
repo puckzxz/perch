@@ -54,13 +54,13 @@ pub enum Command {
     /// Close the pane at this index.
     Close(usize),
     /// Open the quality menu of the pane at this index: the keyboard's way
-    /// to a menu no key opens. More has no key either, and its rows are
-    /// here by name below.
+    /// to a menu no key opens. The pane's own menu has no key either, and
+    /// two of its rows are here by name below.
     ChooseQuality(usize),
-    /// Copy a link to the pane at this index, at the moment it is at: More's
-    /// `Copy link`, by name.
+    /// Copy a link to the pane at this index, at the moment it is at: its
+    /// menu's `Copy link`, by name.
     CopyLink(usize),
-    /// Open the pane at this index on twitch.tv, the same way: More's
+    /// Open the pane at this index on twitch.tv, the same way: its menu's
     /// `Open on twitch.tv`.
     OpenOnTwitch(usize),
     /// Move the picture of the pane at this index into a window of its own,
@@ -193,7 +193,7 @@ struct PaneRow {
 
 /// The pane rows, in the order they are offered: the quality, which needs a
 /// bar to open over in the main window; the watch page given to it; the
-/// pop-out, out or back; then More's two by name, for every pane. See
+/// pop-out, out or back; then its menu's two by name, for every pane. See
 /// `entries`.
 const PANE_ROWS: [PaneRow; 6] = [
     PaneRow {
@@ -475,7 +475,7 @@ pub fn entries(
     }
 
     // A pane's quality, by name, for a pane with a picture to choose it for;
-    // its pop-out, out or back; then More's two rows by name, for every pane,
+    // its pop-out, out or back; then its menu's two rows by name, for every pane,
     // since a stopped one still has a channel or a recording to hand out.
     // Only once something is typed: with nothing typed they would be rows
     // per pane between the recents and the commands, for things done now and
@@ -1007,7 +1007,7 @@ mod tests {
             .any(|entry| matches!(entry.command, Command::PopOut(_))));
     }
 
-    /// More's two rows, by name, for each pane the query names — a stopped
+    /// A pane menu's two rows, by name, for each pane the query names — a stopped
     /// one too, since it still has a channel to hand out — and after every
     /// `Close`, so an abbreviated close still leads.
     #[test]

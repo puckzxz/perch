@@ -9,8 +9,8 @@
 //! out from the hushes alone (`loudness::hear_only`), never kept as a fact of
 //! its own; see `loudness::HearOnly` for why.
 //!
-//! And how every pane sounds: the audio compressor, More's `Audio
-//! compressor` row on any pane, one answer for all of them
+//! And how every pane sounds: the audio compressor, the `Audio
+//! compressor` row of any pane's menu, one answer for all of them
 //! (`toggle_compressor`, `crate::compressor`).
 
 use gpui::Context;
@@ -44,7 +44,7 @@ impl RootView {
         cx.notify();
     }
 
-    /// More's `Audio compressor`, pressed on any pane: on for every pane if
+    /// A pane menu's `Audio compressor`, pressed on any pane: on for every pane if
     /// it was off, off for every pane if it was on, and remembered. Every
     /// player picks it up between frames (`crate::compressor`), so there is
     /// nothing to tell each pane; the menu that was pressed closes with the

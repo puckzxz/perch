@@ -177,7 +177,7 @@ impl Facts {
             name: pane.name.clone(),
             // The name opens what the pane is playing: the channel, or this
             // one recording, from its start — the name says which, never
-            // when. The moment is More's to offer, on the bar.
+            // when. The moment is the pane menu's to offer.
             url: slot.link(false),
             tooltip: match recording {
                 Some(_) => SharedString::from("Open this broadcast on twitch.tv"),
@@ -374,8 +374,9 @@ pub(super) fn chat_options<V: 'static>(
 
 /// The pane's menu (`crate::channel_menu`), from the ⋯ at the end of its
 /// header: what the right button opens on its picture or its header, for a
-/// pointer that does not reach for the right button — `Pin to the rail`,
-/// `Past broadcasts`, `Pop out` or `Bring back`, and the rest. Hung under
+/// pointer that does not reach for the right button — `Pin`, `Past
+/// broadcasts`, `Audio compressor`, `Pop out` or `Bring back`, and the
+/// rest. Hung under
 /// the ⋯, its top right corner at the ⋯'s lower right, which a probe
 /// measures as the header is painted, since a press says only where the
 /// pointer was; a second press on the ⋯ puts the menu away
