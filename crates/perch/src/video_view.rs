@@ -54,9 +54,10 @@ use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 use gpui::{
-    canvas, div, img, prelude::*, Animation, AnimationExt, Bounds, ClickEvent, Context, Div,
-    ElementId, Entity, EventEmitter, FocusHandle, MouseButton, MouseDownEvent, Pixels, Point,
-    RenderImage, ScrollWheelEvent, SharedString, Stateful, Subscription, Task, Window,
+    canvas, div, img, prelude::*, Animation, AnimationExt, Bounds, ClickEvent, Context,
+    CursorStyle, Div, ElementId, Entity, EventEmitter, FocusHandle, MouseButton, MouseDownEvent,
+    Pixels, Point, RenderImage, ScrollWheelEvent, SharedString, Stateful, Subscription, Task,
+    Window,
 };
 use gpui_component::slider::{SliderEvent, SliderState};
 use twitch_api::MutedSegment;
@@ -65,6 +66,7 @@ use crate::controls;
 use crate::keys;
 use crate::loudness::Loudness;
 use crate::motion;
+use crate::rest::Rest;
 use crate::rewind;
 use crate::seek_bar;
 use crate::speed::Speed;
@@ -335,9 +337,20 @@ pub struct VideoView {
     /// cannot report the pointer leaving the window, because that delivers no
     /// mouse move. Asking where the pointer is fixes both.
     hovered: bool,
+    /// Where the pointer stopped over this player and when, noted by the
+    /// probe each frame; see `crate::rest`.
+    rest: Rest,
+    /// Whether the pointer has been left still over the playing picture
+    /// ([`theme::POINTER_REST`]): what `hovered` was holding up is let go,
+    /// and the cursor goes with the bar. Worked out by
+    /// [`follow_rest`](Self::follow_rest), by [`at_rest`]'s rule.
+    rested: bool,
+    /// Where the control bar was laid out last frame, so a pointer resting
+    /// on the bar itself is known from one resting on the picture.
+    bar: Option<Bounds<Pixels>>,
     /// Whether the control bar is up, and how far through fading it is.
-    /// Derived from `hovered`, the open menu, a scrub and a switch under way
-    /// (`switching`, `linger`) by `sync_controls`.
+    /// Derived from `hovered` and `rested`, the open menu, a scrub and a
+    /// switch under way (`switching`, `linger`) by `sync_controls`.
     controls: motion::Fade,
     /// Where the player is drawn. Presentation only: a player offstage is
     /// drawn by nothing, so it draws no control bar, answers no hover and
@@ -495,6 +508,9 @@ impl VideoView {
             back_to_live: start.back_to_live,
             muted: start.muted,
             hovered: false,
+            rest: Rest::default(),
+            rested: false,
+            bar: None,
             controls: motion::Fade::hidden(),
             place: start.place,
             scrub: None,
@@ -606,6 +622,48 @@ impl VideoView {
         }
         self.pointing = pointing;
         true
+    }
+
+    /// Note whether the pointer has been left still over the picture, from
+    /// the probe — `None` for a pointer that is not over this player at all,
+    /// whose way back is then a move. Returns whether that changed, which
+    /// wants a repaint either way: the bar comes or goes with it, and so
+    /// does the cursor.
+    ///
+    /// The probe is the only wake this needs. A playing picture draws every
+    /// frame, so the frame the wait runs out on is the one that sees it; a
+    /// paused one draws nothing and is never at rest ([`at_rest`]).
+    fn follow_rest(&mut self, pointer: Option<Point<Pixels>>, now: Instant) -> bool {
+        let rested = match pointer {
+            Some(pointer) => {
+                self.rest.note(pointer, now);
+                let on_bar = self.controls.is_visible()
+                    && self.bar.is_some_and(|bar| bar.contains(&pointer));
+                at_rest(
+                    self.rest.resting(now, theme::POINTER_REST),
+                    self.stream.is_paused(),
+                    on_bar,
+                )
+            }
+            None => {
+                self.rest.forget();
+                false
+            }
+        };
+        if self.rested == rested {
+            return false;
+        }
+        self.rested = rested;
+        self.sync_controls();
+        true
+    }
+
+    /// Whether the pointer has been left still over a playing picture, so
+    /// the pane's header over that picture goes as the bar does
+    /// (`watch::band_wanted`). Never without a picture: a pane with none
+    /// keeps its header up whatever the pointer does.
+    pub fn rested(&self) -> bool {
+        self.rested && self.has_picture()
     }
 
     /// Set volume without writing back to the slider, which is already where
@@ -774,6 +832,9 @@ impl VideoView {
         self.set_menu(None, cx);
         self.row_run = false;
         self.hovered = false;
+        self.rest.forget();
+        self.rested = false;
+        self.bar = None;
         self.pointing = None;
         self.scrub = None;
         self.track = None;
@@ -806,6 +867,7 @@ impl VideoView {
             self.place,
             BarHolds {
                 hovered: self.hovered,
+                rested: self.rested,
                 menu: self.menu.is_some(),
                 scrub: self.scrub.is_some(),
                 switch: self.switching.is_some() || self.linger.is_some(),
@@ -1075,6 +1137,9 @@ fn draws_bar(place: Place) -> bool {
 struct BarHolds {
     /// The pointer is over the player.
     hovered: bool,
+    /// And has been left still there, over a playing picture ([`at_rest`]):
+    /// it holds nothing up until it moves.
+    rested: bool,
     /// One of its menus is open.
     menu: bool,
     /// The seek bar's thumb is held.
@@ -1091,8 +1156,12 @@ struct BarHolds {
 /// holding it.
 ///
 /// Only where a bar is drawn at all ([`draws_bar`]). There, while the
-/// pointer is over the player; while a menu is open even after the pointer
-/// leaves, or reaching for an option would dismiss the menu on the way —
+/// pointer is over the player and has not been left still there
+/// ([`at_rest`]): a pointer parked on the picture, as a double-click into
+/// fullscreen leaves it, is not reaching for a control, and the bar it held
+/// up stayed over the picture until somebody moved it off. While a menu is
+/// open even after the pointer leaves or comes to rest, or reaching for an
+/// option would dismiss the menu on the way —
 /// which is also what lets the palette open a menu with the pointer nowhere
 /// near; and while the thumb is held, wherever the pointer has dragged it,
 /// since a bar that faded out mid-scrub would take the thumb with it.
@@ -1109,7 +1178,21 @@ struct BarHolds {
 /// should not change the level with nothing on screen saying so.
 fn bar_wanted(place: Place, holds: BarHolds) -> bool {
     let switch = holds.switch && place == Place::Pane;
-    draws_bar(place) && (holds.hovered || holds.menu || holds.scrub || holds.volume || switch)
+    let pointed = holds.hovered && !holds.rested;
+    draws_bar(place) && (pointed || holds.menu || holds.scrub || holds.volume || switch)
+}
+
+/// Whether a pointer over the player counts as left there: `still` for
+/// [`theme::POINTER_REST`], over a picture that is playing, and not on the
+/// bar.
+///
+/// A paused picture keeps its bar, since the way back to playing is on it
+/// and nothing is being watched for it to be in the way of; it also sends no
+/// frames, so nothing would draw the bar going. And a pointer resting on
+/// the bar itself is on a control, however still: the bar going from under
+/// a slider being read would be the bar deciding it was not wanted.
+fn at_rest(still: bool, paused: bool, on_bar: bool) -> bool {
+    still && !paused && !on_bar
 }
 
 /// Whether a change of what a pick is switching to, from `old` to `new`,
@@ -1244,10 +1327,11 @@ impl Render for VideoView {
                 let timeline_fits = bar::timeline_fits(f32::from(bounds.size.width));
                 this.update(cx, |view: &mut Self, cx| {
                     let hovered = view.set_hovered(inside);
+                    let rested = view.follow_rest(inside.then_some(pointer), Instant::now());
                     let scrubbed = view.follow_scrub(pointer.x);
                     let pointed = view.follow_pointer(inside.then_some(pointer));
                     let fitted = view.set_fit(fit, timeline_fits);
-                    if hovered || scrubbed || pointed || fitted {
+                    if hovered || rested || scrubbed || pointed || fitted {
                         cx.notify();
                     }
                 })
@@ -1287,6 +1371,14 @@ impl Render for VideoView {
             // so the probe above decides; but a paused stream sends no frames,
             // and without this nothing would ask the probe to run again.
             .on_hover(cx.listener(|_, _: &bool, _window, cx| cx.notify()))
+            // A pointer left still on the picture goes with the bar it was
+            // holding up, and comes back with it on the first move. Only
+            // once the bar is down: one held up by a menu or a switch is
+            // something to point at. gpui sets the cursor again after every
+            // draw, so this takes without a move to carry it.
+            .when(self.rested && !self.controls.is_visible(), |pane| {
+                pane.cursor(CursorStyle::None)
+            })
             // The gesture a pane's player has. A single click does nothing on
             // purpose - it is how a pane is made the active one, and pausing
             // on a click would turn choosing a pane into stopping it. Not on
@@ -1408,6 +1500,62 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A pointer left still on the picture holds the bar up no longer,
+    /// wherever a bar is drawn; whatever else was holding it still does,
+    /// since a menu open under a resting pointer is still being read.
+    #[test]
+    fn a_resting_pointer_lets_the_bar_go() {
+        let parked = BarHolds {
+            hovered: true,
+            rested: true,
+            ..BarHolds::default()
+        };
+        for place in PLACES {
+            assert!(!bar_wanted(place, parked), "{place:?}");
+        }
+        let others = [
+            BarHolds {
+                menu: true,
+                ..parked
+            },
+            BarHolds {
+                scrub: true,
+                ..parked
+            },
+            BarHolds {
+                volume: true,
+                ..parked
+            },
+        ];
+        for place in PLACES {
+            for hold in others {
+                assert_eq!(
+                    bar_wanted(place, hold),
+                    draws_bar(place),
+                    "{place:?} {hold:?}"
+                );
+            }
+        }
+        assert!(bar_wanted(
+            Place::Pane,
+            BarHolds {
+                switch: true,
+                ..parked
+            }
+        ));
+    }
+
+    /// The pointer is at rest only when it has been still, over a picture
+    /// that is playing, and off the bar: a paused picture keeps its bar, and
+    /// so does a pointer sitting on a control.
+    #[test]
+    fn a_pointer_rests_only_on_a_playing_picture_off_the_bar() {
+        assert!(at_rest(true, false, false));
+        assert!(!at_rest(false, false, false), "still on the move");
+        assert!(!at_rest(true, true, false), "paused");
+        assert!(!at_rest(true, false, true), "on the bar");
     }
 
     /// A quality change somebody picked holds a pane's bar up with the

@@ -49,6 +49,7 @@ mod os_window;
 mod palette;
 mod rail_preview;
 mod recommended;
+mod rest;
 mod rewind;
 mod root;
 mod schedule;

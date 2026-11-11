@@ -31,6 +31,7 @@ pub mod viewer_card;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 use emotes::{EmoteLoader, EmoteSets, ImageCache, Token};
 use gpui::{
@@ -51,6 +52,7 @@ use crate::chat_tint;
 use crate::chat_words;
 use crate::controls;
 use crate::motion;
+use crate::rest::Rest;
 use crate::shared_chat::{self, Label};
 use crate::theme;
 use crate::veil;
@@ -75,6 +77,20 @@ fn trim_front<T>(items: &mut Vec<T>, cap: usize) -> usize {
     let excess = items.len().saturating_sub(cap);
     items.drain(..excess);
     excess
+}
+
+/// Whether the pointer is holding a chat's new rows back: while it is `over`
+/// the chat and on the move, or stopped only a moment ago.
+///
+/// A pointer left `still` there (`crate::rest`, [`theme::CHAT_REST`]) is not
+/// reaching for a link any more, and a chat that waited on it sat on `Chat
+/// paused` for as long as it was parked: the user chose to let it flow (10
+/// November 2026). The rows held land at once, as they do when the pointer
+/// leaves, and the first move holds the next ones again. A card open under
+/// the pointer is the exception: its lines are found among the rows, and
+/// somebody reading it is holding still on purpose.
+fn pointer_holds(over: bool, still: bool, card_open: bool) -> bool {
+    over && (!still || card_open)
 }
 
 /// Wall-clock time for a row, formatted once on arrival.
@@ -319,6 +335,15 @@ pub struct ChatView {
     /// [`sync_hold`](Self::sync_hold).
     hold: bool,
     held: Vec<(RowKind, Option<u64>)>,
+    /// Where the pointer stopped over the chat and when, noted as the chat
+    /// is drawn (`crate::rest`). A pointer left still there for
+    /// [`theme::CHAT_REST`] is not reaching for anything, and holds nothing
+    /// back ([`pointer_holds`]).
+    rest: Rest,
+    /// The one wake a resting pointer needs: a timer for the moment the
+    /// rest is up, while rows are held under a pointer that nothing else is
+    /// drawing the chat for ([`wake_at_rest`](Self::wake_at_rest)).
+    rest_wake: Option<Task<()>>,
     /// How big the text is and whether every message carries its time: the
     /// root's settings, mirrored here when the pane is made and on every
     /// change from the chat options menu, through
@@ -525,6 +550,8 @@ impl ChatView {
             emote_loader,
             hold: false,
             held: Vec::new(),
+            rest: Rest::default(),
+            rest_wake: None,
             display,
             rooms: HashMap::new(),
             window_hovered: false,
@@ -788,6 +815,11 @@ impl ChatView {
     /// window without a move event still releases the rows at the next
     /// repaint.
     ///
+    /// And only while the pointer is on the move, or has just stopped:
+    /// `over` is [`pointer_holds`]'s answer, which lets go of a pointer left
+    /// still for [`theme::CHAT_REST`]. A press in chat leaves the pointer on
+    /// chat, and chat then sat on `Chat paused` until somebody moved it off.
+    ///
     /// The copy menu holds the rows too, for as long as it is open, wherever
     /// the pointer is — on the menu, past the chat's edge, or off the window
     /// — so the row it is about stays where it was right-clicked. Closing it
@@ -800,6 +832,39 @@ impl ChatView {
             self.push_all(held);
         }
         self.hold = hold;
+    }
+
+    /// See that the chat is drawn again at the moment a pointer holding its
+    /// rows comes to rest, when nothing else would draw it then.
+    ///
+    /// The hold is let go as the chat is drawn (`sync_hold`), and beside a
+    /// playing picture that is every frame. Beside a paused one, or with no
+    /// picture at all, the next draw is the next message, which the hold
+    /// would then swallow until the one after. So while rows are held by the
+    /// pointer alone (`by_pointer`: not a card's hold, nor the copy menu's,
+    /// which a rest does not end), one timer is set for when the rest is up,
+    /// and set again from that draw if the pointer has moved meanwhile. One
+    /// at a time, and none once nothing is held: a pointer moving over a
+    /// quiet chat starts no timers at all.
+    fn wake_at_rest(&mut self, by_pointer: bool, now: Instant, cx: &mut Context<Self>) {
+        let waiting = by_pointer && self.menu.is_none() && self.hold && !self.held.is_empty();
+        if !waiting {
+            self.rest_wake = None;
+            return;
+        }
+        if self.rest_wake.is_some() {
+            return;
+        }
+        let Some(wait) = self.rest.until(now, theme::CHAT_REST) else {
+            return;
+        };
+        self.rest_wake = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(wait).await;
+            let _ = this.update(cx, |this, cx| {
+                this.rest_wake = None;
+                cx.notify();
+            });
+        }));
     }
 
     /// Stop holding rows back, and land the ones held: for a pane whose chat
@@ -1588,7 +1653,19 @@ impl Render for ChatView {
         let over = veil::pointer_over(self.list.viewport_bounds(), Some(card), window, cx)
             || veil::bounds_of(card, window, cx)
                 .is_some_and(|bounds| veil::pointer_over(bounds, Some(card), window, cx));
-        self.sync_hold(over);
+        // And only while it is on the move, or has just stopped: a pointer
+        // left still here holds nothing back (`crate::rest`), unless it is
+        // on a card, whose lines are being read.
+        let now = Instant::now();
+        if over {
+            self.rest.note(window.mouse_position(), now);
+        } else {
+            self.rest.forget();
+        }
+        let card_open = self.cards.open().is_some();
+        let still = self.rest.resting(now, theme::CHAT_REST);
+        self.sync_hold(pointer_holds(over, still, card_open));
+        self.wake_at_rest(over && !card_open, now, cx);
         let at_live = self.at_live();
         let holding = !self.held.is_empty();
         let metrics = Metrics::of(self.display.size);
@@ -1733,12 +1810,35 @@ impl Render for ChatView {
 
 #[cfg(test)]
 mod tests {
-    use super::{trim_front, ChatView, Row, RowKind};
+    use super::{pointer_holds, trim_front, ChatView, Row, RowKind};
     use crate::theme;
     use emotes::{tokenize, Token};
     use twitch_chat::message::parse_line;
     use twitch_chat::replay::parse_page;
     use twitch_chat::ChatMessage;
+
+    /// The pointer holds chat's rows while it is over the chat and has not
+    /// been left still there; a pointer parked on chat lets them through,
+    /// except on a card, which is being read.
+    #[test]
+    fn a_parked_pointer_lets_chat_flow() {
+        assert!(pointer_holds(true, false, false), "reaching for something");
+        assert!(!pointer_holds(true, true, false), "left where it was");
+        assert!(pointer_holds(true, true, true), "reading a card");
+        for (still, card_open) in [(false, false), (false, true), (true, false), (true, true)] {
+            assert!(
+                !pointer_holds(false, still, card_open),
+                "not over the chat: still {still}, card {card_open}"
+            );
+        }
+    }
+
+    /// Chat waits longer on a still pointer than the player's bar does: the
+    /// hold is there for reaching, and reading on the way is part of it.
+    #[test]
+    fn chat_waits_longer_than_the_bar() {
+        assert!(theme::CHAT_REST > theme::POINTER_REST);
+    }
 
     /// A speaker's name is lifted against the paint of the row it is on,
     /// not the bare surface: every colour Twitch hands out reads on the

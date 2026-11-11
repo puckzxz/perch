@@ -480,10 +480,16 @@ impl Slot {
     }
 
     /// Where the pointer is, from the pane's probe, every frame the pane is
-    /// drawn: `inside` it or not, with the pane showing a `picture` or not,
-    /// and a `menu_open` on its bar or not. Says whether the pointer has just
+    /// drawn: `inside` it or not, `rested` there or still on the move
+    /// (`VideoView::rested`), with the pane showing a `picture` or not, and
+    /// a `menu_open` on its bar or not. Says whether the pointer has just
     /// come in, which is what makes a pane the one the keys talk to, and
     /// whether anything drawn changed.
+    ///
+    /// A pointer left still on a playing picture holds the header up no more
+    /// than it holds the bar (`crate::rest`), so the two go together and
+    /// come back together on its first move. It is still inside: coming to
+    /// rest is not leaving, and moving again is not coming in.
     ///
     /// Every frame rather than on crossings, because the header follows more
     /// than the pointer — a picture arriving, a menu opening, a reveal — and
@@ -491,10 +497,11 @@ impl Slot {
     /// `RootView::go_watch_pane` counts every pane as pointed at already, so
     /// the pane under the pointer after the palette's way back to a pane
     /// has none.
-    pub fn point(&mut self, inside: bool, picture: bool, menu_open: bool) -> Pointed {
+    pub fn point(&mut self, inside: bool, rested: bool, picture: bool, menu_open: bool) -> Pointed {
         let entered = inside && !self.hovered;
         self.hovered = inside;
-        let wanted = band_wanted(placement(self), inside, self.revealed, picture, menu_open);
+        let pointing = inside && !rested;
+        let wanted = band_wanted(placement(self), pointing, self.revealed, picture, menu_open);
         Pointed {
             entered,
             changed: self.header.set(wanted) || entered,
@@ -644,20 +651,21 @@ pub fn placement(slot: &Slot) -> Placement {
 
 /// Whether a pane's header is up over its picture.
 ///
-/// Only when it lives there at all. Then: while the pointer is on the pane,
-/// or a key has `revealed` it, or always when there is no `picture` to cover
+/// Only when it lives there at all. Then: while the pointer is on the pane
+/// and has not been left still there (`pointing`; see [`Slot::point`]), or
+/// a key has `revealed` it, or always when there is no `picture` to cover
 /// — a status screen is not a picture, and a stopped pane with chat hidden
 /// would otherwise have nothing on screen to say whose it is or to close it.
 /// And never over an open menu: the menu is what was asked for last, and the
 /// two would stack over the same picture.
 fn band_wanted(
     placement: Placement,
-    inside: bool,
+    pointing: bool,
     revealed: bool,
     picture: bool,
     menu_open: bool,
 ) -> bool {
-    placement == Placement::OverPicture && (inside || revealed || !picture) && !menu_open
+    placement == Placement::OverPicture && (pointing || revealed || !picture) && !menu_open
 }
 
 /// What a live pane's header says about the broadcast: how many are watching,
@@ -1910,21 +1918,38 @@ mod tests {
     #[test]
     fn the_band_waits_for_the_pointer_over_a_picture() {
         let mut pane = recording(0.0);
-        pane.point(false, true, false);
+        pane.point(false, false, true, false);
         assert!(
             !pane.header.is_visible(),
             "up over a picture nobody pointed at"
         );
-        assert!(pane.point(true, true, false).changed);
+        assert!(pane.point(true, false, true, false).changed);
         assert!(
             pane.header.is_visible(),
             "the pointer came in and it stayed down"
         );
-        assert!(pane.point(false, true, false).changed);
+        assert!(pane.point(false, false, true, false).changed);
         assert!(
             !pane.header.is_visible(),
             "it stayed up after the pointer left"
         );
+    }
+
+    /// A pointer left still on the picture lets the header go, as it lets
+    /// the bar go, and the first move brings it back. Coming to rest is not
+    /// leaving the pane, so moving again is not coming into it: the keys
+    /// stay where they were.
+    #[test]
+    fn a_resting_pointer_lets_the_band_go() {
+        let mut pane = recording(0.0);
+        assert!(pane.point(true, false, true, false).entered);
+        assert!(pane.header.is_visible());
+        let rested = pane.point(true, true, true, false);
+        assert!(rested.changed && !rested.entered);
+        assert!(!pane.header.is_visible(), "held up by a parked pointer");
+        let moved = pane.point(true, false, true, false);
+        assert!(moved.changed && !moved.entered, "a move is not an entry");
+        assert!(pane.header.is_visible(), "the move did not bring it back");
     }
 
     /// A pane with no picture has nothing to keep clear, and says whose it
@@ -1934,7 +1959,7 @@ mod tests {
         let mut pane = recording(0.0);
         pane.set_state(StreamState::Offline);
         for inside in [false, true] {
-            pane.point(inside, false, false);
+            pane.point(inside, false, false, false);
             assert!(pane.header.is_visible(), "inside: {inside}");
         }
     }
@@ -1944,9 +1969,9 @@ mod tests {
     #[test]
     fn the_band_steps_aside_for_an_open_menu() {
         let mut pane = recording(0.0);
-        pane.point(true, true, false);
+        pane.point(true, false, true, false);
         assert!(pane.header.is_visible());
-        assert!(pane.point(true, true, true).changed);
+        assert!(pane.point(true, false, true, true).changed);
         assert!(!pane.header.is_visible());
     }
 
@@ -1969,12 +1994,12 @@ mod tests {
     #[test]
     fn coming_in_is_reported_once() {
         let mut pane = recording(0.0);
-        assert!(pane.point(true, true, false).entered);
-        assert!(!pane.point(true, true, false).entered);
-        assert!(!pane.point(false, true, false).entered);
-        assert!(pane.point(true, true, false).entered);
+        assert!(pane.point(true, false, true, false).entered);
+        assert!(!pane.point(true, false, true, false).entered);
+        assert!(!pane.point(false, false, true, false).entered);
+        assert!(pane.point(true, false, true, false).entered);
         assert_eq!(
-            pane.point(true, true, false),
+            pane.point(true, false, true, false),
             Pointed {
                 entered: false,
                 changed: false,
@@ -1984,7 +2009,7 @@ mod tests {
 
         let mut pointed_already = recording(0.0);
         pointed_already.hovered = true;
-        let pointed = pointed_already.point(true, true, false);
+        let pointed = pointed_already.point(true, false, true, false);
         assert!(
             !pointed.entered,
             "a tile's click must keep its own pane active"
@@ -1998,10 +2023,10 @@ mod tests {
     fn a_revealed_band_shows_without_the_pointer() {
         let mut pane = recording(0.0);
         pane.revealed = true;
-        pane.point(false, true, false);
+        pane.point(false, false, true, false);
         assert!(pane.header.is_visible());
         pane.revealed = false;
-        assert!(pane.point(false, true, false).changed);
+        assert!(pane.point(false, false, true, false).changed);
         assert!(!pane.header.is_visible());
     }
 
@@ -2016,7 +2041,7 @@ mod tests {
         }
         let mut pane = recording(0.0);
         pane.revealed = true;
-        pane.point(false, true, true);
+        pane.point(false, false, true, true);
         assert!(!pane.header.is_visible());
     }
 }

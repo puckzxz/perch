@@ -120,6 +120,20 @@ Live now, Recommended and Offline, with Continue watching after who is live,
 so the two never disagree; its pins came with the redesign the user
 approved.
 
+**A pointer at rest asks for nothing.** Chosen by the user on 10 November
+2026, both halves asked about and answered. The player's bar, the header
+over a picture with its chat hidden and the cursor go once the pointer has
+been still on a playing picture for three seconds, and chat lets through
+the rows it was holding once the pointer has been still on it for five; the
+first move takes hold again (`rest.rs`, `theme::POINTER_REST`,
+`theme::CHAT_REST`). Before it, "the pointer is on it" held things up for
+as long as the pointer was there: a double-click into fullscreen left the
+bar over the picture, and a press in chat left chat on `Chat paused`, until
+somebody moved the pointer off. Leaving the picture still takes the bar
+down at once, which the user checked for by name. What stays up under a
+still pointer: a paused picture's bar, a bar the pointer is resting on, an
+open menu, and chat under an open viewer card.
+
 **Voice.** The user left it to the developer: every word on a control is
 sentence case, notices, toasts and tooltips read as sentences, and a pane
 header's passive tags stay lowercase (`muted`, `paused`, `buffering`,
@@ -224,6 +238,7 @@ App modules, one line each; each file's own `//!` says the rest:
 | `channel_menu.rs` | the one right-click menu wherever a channel is named (pure, tested) |
 | `compressor.rs` | the audio compressor, every pane's at once: the mpv `af` chain and the flag every render thread reads (pure, tested) |
 | `wheel.rs` | `Alt` and the wheel over a picture, turned into volume steps (pure, tested) |
+| `rest.rs` | a pointer at rest: where it stopped and when, which lets go of what it was holding up (pure, tested) |
 | `ad_break.rs` | a pane's ad-break notice: what it says and when it is over (`FrameClock`) (pure, tested) |
 | `seek_bar.rs` | the seek bar on a recording and a live pane's timeline, and the arithmetic behind them (tested) |
 | `catch_up.rs` | a live picture getting back to the edge: catching up after a stall, and the jump on unpause (`resume`) (pure, tested) |
@@ -1789,8 +1804,10 @@ not to redo"), and only `motion` fades one there, on its way to
 picture is exactly what you end up staring past for three hours, so it lives
 in the pane header on the chat panel instead — chat is already a panel, so it
 costs nothing there. What does come over the picture comes because something
-asked for it: the pointer on the pane, one of the bar's menus held open, or a
-key that has just chosen the pane. A pane with no picture — starting,
+asked for it: the pointer on the pane and not left still there
+(`VideoView::follow_rest`, `video_view::at_rest`; see "A pointer at rest asks
+for nothing" under "Product decisions"), one of the bar's menus held open, or
+a key that has just chosen the pane. A pane with no picture — starting,
 offline, ended, a player before its first frame — is not a picture, and its
 header rests over it. The split:
 
@@ -2337,7 +2354,11 @@ leaves, only while following live, since a pane scrolled back already holds
 its own position, and the check is measured, so a pointer that leaves the
 window without a move event still releases them at the next repaint.
 `ChatView::sync_hold`, `append` and `push_all` have the rest, the copy menu's
-hold and the cap on what is held among it.
+hold and the cap on what is held among it. A pointer left still for
+`theme::CHAT_REST` lets them through as well (`chat::pointer_holds`), which
+the chat sees as it is drawn: every frame beside a playing picture, and by
+one timer of its own otherwise (`ChatView::wake_at_rest`), since a chat
+beside a paused picture is next drawn by the next message.
 
 **A right-click on a row offers to copy it.** gpui's text cannot be
 drag-selected, and a message is a row of separate words and pictures besides,
@@ -3776,6 +3797,11 @@ None of these is being worked on; all of them are real.
   relay, hits end of file without it, and `stream_stopped` ends the pane and
   drops the new start with it. The old supervisor goes in `on_swapped`,
   once its player has stopped; see the swap trap under Video.
+- Do not hold anything up on "the pointer is over it" alone, on the watch
+  page. A pointer left where it was is not asking: ask `rest::Rest` as the
+  player's probe and the chat's render do, with a wait that suits what is
+  held, and say what a still pointer keeps (see "A pointer at rest asks for
+  nothing" under "Product decisions").
 - Do not dock the browse page beside the panes again, nor keep what plays
   at home going behind it, without asking the user. It docked on the left,
   half the window, for a week of October 2026, and in use they found it

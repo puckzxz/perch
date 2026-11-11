@@ -91,8 +91,8 @@
 
 use chrono::Utc;
 use gpui::{
-    div, prelude::*, px, AnyElement, Context, Div, MouseButton, MouseDownEvent, SharedString,
-    Stateful, Window,
+    canvas, div, prelude::*, px, AnyElement, Context, Div, MouseButton, MouseDownEvent,
+    SharedString, Stateful, Window,
 };
 use gpui_component::slider::Slider;
 
@@ -353,11 +353,25 @@ impl VideoView {
     }
 
     pub(super) fn control_bar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Where the bar is, for telling a pointer resting on it from one
+        // resting on the picture (`VideoView::follow_rest`): measured, as
+        // the seek bar's track is, since its height follows what it holds.
+        let this = cx.entity().downgrade();
+        let measure = canvas(
+            move |bounds, _window, cx| {
+                this.update(cx, |view: &mut Self, _| view.bar = Some(bounds))
+                    .ok();
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_full();
         div()
             .absolute()
             .bottom_0()
             .left_0()
             .right_0()
+            .child(measure)
             // Clicks on the bar stay on the bar. Hit-testing is flat, so
             // without this a click on Pause would also reach the pane
             // underneath, where a double-click means fullscreen. The hover

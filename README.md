@@ -91,7 +91,12 @@ build is several times slower at it.
 
 The player's controls are on a bar that comes up over the video while the
 pointer is on it, and those a key also works name the key in their tooltips;
-the quality and More have no key. The rail button, Browse, the search box
+the quality and More have no key. Leave the pointer still on a playing
+picture for three seconds and the bar goes again, and the cursor with it —
+after a double-click into fullscreen the pointer is on the picture, and a
+window left on one stream should be just the stream. The first move brings
+both back. A paused picture keeps its bar, and so does a pointer resting on
+the bar itself or a menu left open. The rail button, Browse, the search box
 and settings sit in the bar across the top of the window, and back and
 forward at the top of the browse page. None of them is any use when you are
 not holding the mouse.
@@ -224,7 +229,8 @@ for the game stays that way without saying anything about the next one. Beside
 the video, hiding chat gives the video its column, all of it: there is no
 strip left above the picture. The header — the name, the numbers, the ⋯ and
 the × — comes over the top of the picture while the pointer is on it, on the same dark
-band as the controls at the bottom, and stays up over a pane with no picture
+band as the controls at the bottom, goes with them when the pointer is left
+still, and stays up over a pane with no picture
 to cover, one starting, offline or ended, so that pane still says whose it is
 and can be closed; with no picture there is no bar either, so that header has
 the chat icon that brings chat back. Under the video, the pane keeps its shape
@@ -530,8 +536,11 @@ including **Off**.
 Chat holds still while the pointer is over it. A link that moves as you reach
 for it is not much of a link, so while a pane is pointed at and following live
 its new messages wait — it says `Chat paused` — and land the moment the pointer
-leaves. A pane you have scrolled back in is left alone; its position is already
-yours. A message a moderator deletes stays where it was, greyed and marked
+leaves, or once it has been still for five seconds: a pointer left sitting on
+chat is not reaching for anything, and chat goes on. Move it and the next
+messages wait again. A person's card open under the pointer keeps them waiting
+however still it is, since its lines are being read. A pane you have scrolled
+back in is left alone; its position is already yours. A message a moderator deletes stays where it was, greyed and marked
 `deleted`, rather than vanishing from under your eye. When someone is timed
 out or banned, chat says so — `ronni was timed out for 10 minutes`, `ronni was
 banned` — and every message of theirs on screen, a resub's note included, is

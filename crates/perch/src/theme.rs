@@ -642,6 +642,21 @@ pub const SWITCH_LINGER: Duration = Duration::from_millis(1500);
 /// it came to. `VideoView::on_wheel` is the reader. The same glance as
 /// `SWITCH_LINGER`, so the same length.
 pub const VOLUME_LINGER: Duration = Duration::from_millis(1500);
+/// How long the pointer has to be still over a playing picture before what
+/// it was holding up there is let go: the player's bar, the header over a
+/// picture with its chat hidden, and the cursor itself (`crate::rest`,
+/// `VideoView::follow_rest`). Long enough that a pause on the way to a
+/// control is not the bar going from under it, short enough to be gone soon
+/// after a double-click into fullscreen has left the pointer on the picture.
+/// The length players everywhere have settled near, and a first guess here.
+pub const POINTER_REST: Duration = Duration::from_secs(3);
+/// How long the pointer has to be still over a chat before the rows it was
+/// holding back are let through (`ChatView::sync_hold`). Longer than
+/// [`POINTER_REST`]: the hold is there so a link stays put while it is
+/// reached for, and reading the line under the pointer on the way is part of
+/// reaching. The user chose the rest over a chat that waits for as long as
+/// the pointer is on it (10 November 2026).
+pub const CHAT_REST: Duration = Duration::from_secs(5);
 /// How long a control that asks for a second press waits for it before it
 /// goes back to its first words: a viewer card's `Channel page`, when going
 /// there would stop the streams (`chat::viewer_card`). Long enough to read

@@ -367,7 +367,11 @@ impl RootView {
                 let player = this.video_in_main(slot);
                 let picture = player.is_some_and(|view| view.read(cx).covers());
                 let menu_open = player.is_some_and(|view| view.read(cx).menu_open());
-                let pointed = this.slots[index].point(inside, picture, menu_open);
+                // And whether the pointer has been left still on the
+                // picture, by the player's own measure, so the header goes
+                // when its bar does.
+                let rested = player.is_some_and(|view| view.read(cx).rested());
+                let pointed = this.slots[index].point(inside, rested, picture, menu_open);
                 // Sticky, unlike `hovered`: a keyboard shortcut has to keep
                 // working once the pointer has moved into chat or off the
                 // window entirely, and the pane you last looked at is the
