@@ -36,7 +36,7 @@ cd "$(dirname "$0")/.."
 # brought in, pristine, so that the commit which patches it shows the patch
 # and nothing else.
 
-CRATES=(gpui_pre gpui_pre_windows gpui_pre_macos)
+CRATES=(gpui_pre gpui_pre_windows gpui_pre_macos gpui_pre_apple)
 
 # gpui-pre is a snapshot of Zed's gpui, published weekly to crates.io by
 # gpui-component's maintainer, with each platform's backend in a crate of its
@@ -158,6 +158,18 @@ check_gpui_pre_macos() {
   needs src/platform.rs 'let text_system = Arc::new(gpui_apple::AppleTextSystem::new());' \
     "uses Core Text to render Mac labels"
 }
+
+crate_gpui_pre_apple() {
+  CRATE=gpui-pre-apple
+  VENDOR=vendor/gpui-pre-apple
+  PATCH=vendor/gpui-pre-apple.patch
+  EXPECT_VERSION=0.3.12
+  EXPECT_SHA256=a460605ec4e8cbcc9b213462a84b1d6cc3efe4ed8f0e18669659f07b2d5c6aec
+  REMOVED=()
+  PATCHED=()
+}
+
+check_gpui_pre_apple() { :; }
 
 # --- The machinery -----------------------------------------------------------
 
