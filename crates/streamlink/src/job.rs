@@ -1,46 +1,48 @@
-//! Tie streamlink children to the lifetime of this process, without needing
-//! this process to cooperate.
-//!
-//! [`crate::StreamSupervisor::drop`] kills the child it owns, and for every
-//! ordinary teardown — closing a pane, switching quality, going back to browse
-//! — that is the whole story. It is not the whole story when perch itself goes
-//! away without running destructors: a panic that aborts, a crash inside a
-//! driver, the window's quit path unwinding somewhere `Drop` never reaches, or
-//! the user ending the process from Task Manager. Nothing runs `Drop` on any of
-//! those routes, and `Child`'s own `Drop` deliberately does not kill, so
-//! streamlink is left behind serving a stream nobody is watching — holding its
-//! loopback port and the Twitch credential on its command line — until someone
-//! notices it in a process list.
-//!
-//! That is not a race to be tightened. No arrangement of flags and slots inside
-//! this crate can help, because the code that would run them is what failed to
-//! run. The only fix is to hand the job to something that outlives us, which on
-//! Windows is the kernel: a Job Object holding every child, with
-//! `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` set. Process exit closes handles however
-//! the process died, so the last handle to the job going away is exactly the
-//! event "perch is gone, by any route" — and the kernel kills what is left.
-//!
-//! Children are assigned after spawn rather than through `CREATE_SUSPENDED`,
-//! which would need the child's *thread* handle to resume and `std`'s `Command`
-//! does not expose one. That leaves a sliver in which the shim could spawn its
-//! own child before being assigned, so the grandchild would sit outside the job
-//! — but killing the shim takes its `python.exe` worker with it, which is
-//! measured behaviour of the Streamlink launcher, not an assumption. The chain
-//! holds either way.
-//!
-//! There is no equivalent on macOS. Job objects have no counterpart, and
-//! `PR_SET_PDEATHSIG` is Linux-only, so [`track`] is a documented no-op there
-//! and teardown still rests on `Drop`. Ordinary quits are covered; a hard crash
-//! on macOS can still leave streamlink behind.
+//! Spawn streamlink so crash cleanup can run after Perch exits. Windows uses
+//! a kill-on-close job object. On macOS a watchdog receives EOF on Perch's
+//! pipe and kills the private process group, including Streamlink's children.
 
-/// Put `child` under this process's lifetime, so that it cannot outlive perch
-/// even if perch dies without running destructors.
+use std::io;
+use std::process::{Child, ExitStatus};
+
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
+pub(crate) use macos::spawn;
+
+pub(crate) struct Process {
+    pub(crate) child: Child,
+    #[cfg(target_os = "macos")]
+    _watchdog: macos::Watchdog,
+}
+
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn spawn(command: &mut std::process::Command) -> io::Result<Process> {
+    let child = command.spawn()?;
+    #[cfg(windows)]
+    track(&child);
+    Ok(Process { child })
+}
+
+impl Process {
+    pub(crate) fn wait(mut self) -> io::Result<ExitStatus> {
+        self.child.wait()
+    }
+
+    pub(crate) fn kill(mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// Closing the job when Perch exits kills every assigned process.
 ///
-/// Best effort by design: a failure here means the supervisor's own `Drop` is
-/// the only teardown, which is what the behaviour was before this existed.
-/// Losing the safety net is not worth refusing to play a stream over.
+/// Assignment is best effort after spawn. `Command` gives us a process
+/// handle, while assigning a suspended child would need its thread handle
+/// to resume it. Killing the Streamlink launcher also stops its `python.exe`
+/// worker, which covers a worker spawned before assignment.
 #[cfg(windows)]
-pub fn track(child: &std::process::Child) {
+fn track(child: &Child) {
     use std::os::windows::io::AsRawHandle;
 
     let Some(job) = job() else { return };
@@ -53,9 +55,6 @@ pub fn track(child: &std::process::Child) {
         );
     }
 }
-
-#[cfg(not(windows))]
-pub fn track(_child: &std::process::Child) {}
 
 /// The one job every streamlink child is assigned to, created on first use.
 ///

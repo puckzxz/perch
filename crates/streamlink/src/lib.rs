@@ -34,7 +34,7 @@ mod version;
 use std::io::{BufRead, BufReader, Read};
 use std::net::TcpListener;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -91,7 +91,7 @@ pub struct StreamSupervisor {
 /// the `--version` probes and a full Twitch HLS lookup, the slowest part of
 /// opening a channel — the slot was `None` and a teardown's `kill()` had
 /// nothing to name.
-type ChildSlot = Arc<Mutex<Option<Child>>>;
+type ChildSlot = Arc<Mutex<Option<job::Process>>>;
 
 /// Locate the streamlink executable.
 ///
@@ -221,16 +221,13 @@ fn runs(path: &PathBuf, slot: &ChildSlot) -> Option<String> {
 /// read below holds no lock: taking one for the length of a Twitch lookup would
 /// block the very teardown this exists to serve.
 fn run_tracked(mut command: Command, slot: &ChildSlot) -> std::io::Result<(Vec<u8>, bool)> {
-    let mut child = command
+    command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()?;
+        .stderr(Stdio::null());
+    let mut child = job::spawn(&mut command)?;
 
-    let stdout = child.stdout.take();
-    // Before the handle goes into the slot, so a child is under the job for as
-    // much of its life as this can manage.
-    job::track(&child);
+    let stdout = child.child.stdout.take();
     *slot.lock().unwrap() = Some(child);
 
     let mut captured = Vec::new();
@@ -248,7 +245,7 @@ fn run_tracked(mut command: Command, slot: &ChildSlot) -> std::io::Result<(Vec<u
 
     // A kill closes the pipe, which is what ends the read above — and it also
     // takes the handle, so by here there may be nothing left to reap.
-    let status = child.map(|mut child| child.wait());
+    let status = child.map(job::Process::wait);
     Ok((
         captured,
         matches!(status, Some(Ok(status)) if status.success()),
@@ -260,9 +257,8 @@ fn kill_parked(slot: &ChildSlot) {
     // Out from under the lock before the wait, for the reason `run_tracked`
     // spells out.
     let child = slot.lock().unwrap().take();
-    if let Some(mut child) = child {
-        let _ = child.kill();
-        let _ = child.wait();
+    if let Some(child) = child {
+        child.kill();
     }
 }
 
@@ -767,13 +763,12 @@ fn run(
     args.extend(twitch_args(&target, &options));
     args.push(chosen.name.clone());
 
-    let spawned = command(&binary)
+    let mut command = command(&binary);
+    command
         .args(&args)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn();
-
-    let mut process = match spawned {
+        .stderr(Stdio::piped());
+    let mut process = match job::spawn(&mut command) {
         Ok(process) => process,
         Err(e) => {
             forget_if_missing(&e);
@@ -784,14 +779,14 @@ fn run(
         }
     };
 
-    let stdout = process.stdout.take();
+    let stdout = process.child.stdout.take();
     // Drained as it arrives rather than read after exit. An anonymous pipe
     // holds a few kilobytes, and a child that fills its stderr with warnings
     // over a long session - streamlink logs every segment retry - blocks on the
     // write once nobody is reading, and its HTTP output stalls with it. The
     // thread keeps only the lines the exit report wants and hands them over
     // once the pipe closes.
-    let stderr_lines = process.stderr.take().map(|stderr| {
+    let stderr_lines = process.child.stderr.take().map(|stderr| {
         std::thread::Builder::new()
             .name("streamlink-stderr".into())
             .spawn(move || {
@@ -803,9 +798,6 @@ fn run(
             })
             .ok()
     });
-    // This is the one that matters: the long-lived serving process, the one
-    // found still running hours after perch was gone.
-    job::track(&process);
     *child_slot.lock().unwrap() = Some(process);
 
     // The one window `Drop` cannot cover, closed here.

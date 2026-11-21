@@ -5557,6 +5557,7 @@ name = "streamlink"
 version = "0.2.1"
 dependencies = [
  "futures",
+ "libc",
  "serde_json",
  "ureq",
  "windows-sys 0.59.0",
