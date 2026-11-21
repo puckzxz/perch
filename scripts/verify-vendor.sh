@@ -143,7 +143,7 @@ crate_gpui_pre_macos() {
   EXPECT_VERSION=0.3.12
   EXPECT_SHA256=2de7d3f4ad51ac387e822495db363fcc1188d349793365731d054444c4cb06ee
   REMOVED=()
-  PATCHED=(Cargo.toml src/platform.rs src/window.rs)
+  PATCHED=(src/window.rs)
 }
 
 check_gpui_pre_macos() {
@@ -153,10 +153,6 @@ check_gpui_pre_macos() {
     "keeps the floating player visible after deactivation"
   needs src/window.rs 'setBecomesKeyOnlyIfNeeded: Bool::YES' \
     "keeps the floating player from taking keyboard focus"
-  needs Cargo.toml 'features = ["font-kit", "runtime_shaders"]' \
-    "builds the Apple backend with fonts and runtime shaders"
-  needs src/platform.rs 'let text_system = Arc::new(gpui_apple::AppleTextSystem::new());' \
-    "uses Core Text to render Mac labels"
 }
 
 crate_gpui_pre_apple() {

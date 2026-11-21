@@ -1,36 +1,3 @@
---- a/gpui-pre-macos/Cargo.toml
-+++ b/gpui-pre-macos/Cargo.toml
-@@ -105,6 +105,8 @@
- 
- [target.'cfg(target_os = "macos")'.dependencies.gpui_apple]
- version = "=0.3.12"
-+# PERCH PATCH: Enable real text rendering and compile shaders at runtime.
-+features = ["font-kit", "runtime_shaders"]
- package = "gpui-pre-apple"
- 
- [target.'cfg(target_os = "macos")'.dependencies.gpui_util]
---- a/gpui-pre-macos/src/platform.rs
-+++ b/gpui-pre-macos/src/platform.rs
-@@ -217,18 +217,8 @@
-         let marker = main_thread_marker().expect("Mac platform not created on main thread");
-         let dispatcher = Arc::new(AppleDispatcher::new());
- 
--        #[cfg(feature = "font-kit")]
-+        // PERCH PATCH: Cargo enables the Apple text system for the Mac backend.
-         let text_system = Arc::new(gpui_apple::AppleTextSystem::new());
--
--        #[cfg(not(feature = "font-kit"))]
--        let text_system = {
--            if !headless {
--                log::warn!(
--                    "gpui_macos was compiled without the `font-kit` feature, so no text will be rendered."
--                );
--            }
--            Arc::new(gpui::NoopTextSystem::new())
--        };
- 
-         let keyboard_layout = MacKeyboardLayout::new();
-         let keyboard_mapper = Rc::new(MacKeyboardMapper::new(keyboard_layout.id()));
 --- a/gpui-pre-macos/src/window.rs
 +++ b/gpui-pre-macos/src/window.rs
 @@ -1040,11 +1040,12 @@
@@ -68,8 +35,7 @@
                          let _: () = msg_send![native_window, setLevel: NSNormalWindowLevel];
 -                        let _: () = msg_send![native_window, setAcceptsMouseMovedEvents: Bool::NO];
 -                        add_mouse_tracking_area(tracking_view);
--                    }
-+                    }
+                     }
 +                    let _: () = msg_send![native_window, setAcceptsMouseMovedEvents: Bool::NO];
 +                    add_mouse_tracking_area(tracking_view);
  

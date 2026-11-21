@@ -3109,10 +3109,13 @@ still quarantines the download, and `RUNNING-macos.txt` opens by explaining how
 to clear it. Notarising properly means a paid Apple Developer account, which is
 a decision rather than a task.
 
-**Metal shaders.** The vendored Mac backend enables `runtime_shaders` on
-`gpui-pre-apple`. A normal Cargo build embeds the Metal source and compiles
-it when a window opens. The same dependency enables `font-kit`, which gives
-the Mac backend Core Text for labels and chat.
+**Metal shaders and text.** `crates/perch/Cargo.toml` turns on two features of
+`gpui-pre-platform`, and both reach only the Mac backend. `runtime_shaders`
+embeds the Metal source and compiles it when a window opens, so a normal Cargo
+build needs the macOS SDK and not Xcode's Metal Toolchain. `font-kit` gives the
+backend Core Text. Without it the backend has no text system and draws no text
+at all, and that build compiles and passes every test: only a look at the
+window shows it.
 
 What neither zip carries is libmpv — somebody else's licence to redistribute,
 from an MIT app — or streamlink, which is a Python application. The `RUNNING`
