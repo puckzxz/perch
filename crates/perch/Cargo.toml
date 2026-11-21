@@ -14,8 +14,15 @@ emotes = { path = "../emotes" }
 streamlink = { path = "../streamlink" }
 twitch-api = { path = "../twitch-api" }
 settings = { path = "../settings" }
-gpui = "0.2.2"
-gpui-component = "0.5.1"
+# gpui-pre is a snapshot of Zed's gpui (this one zed@d2a4fb6), the only form
+# in which anything after 0.2.2 reaches crates.io. Each platform's backend is
+# a crate of its own, behind `gpui_platform`, whose `application()` starts an
+# app. All three are pinned exactly and move together: gpui-component names
+# one snapshot with `=`, and `vendor/gpui-pre*` is that snapshot, patched (the
+# root `Cargo.toml` says how).
+gpui = { package = "gpui-pre", version = "=0.3.12" }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.12" }
+gpui-component = "=0.10.0"
 anyhow = "1"
 chrono.workspace = true
 futures.workspace = true
@@ -42,8 +49,8 @@ raw-window-handle = "0.6"
 # registry keys that let an unpackaged program show one and be opened by its
 # click. Both at the versions gpui already builds, so neither brings a crate
 # of its own into the build; only the toast's two features are new to it.
-windows = { version = "0.61", features = ["Data_Xml_Dom", "UI_Notifications"] }
-windows-registry = "0.5"
+windows = { version = "0.62", features = ["Data_Xml_Dom", "UI_Notifications"] }
+windows-registry = "0.6"
 
 # Only to stamp the icon onto the .exe; see build.rs.
 [target.'cfg(windows)'.build-dependencies]

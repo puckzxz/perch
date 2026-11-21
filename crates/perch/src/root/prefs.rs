@@ -52,7 +52,7 @@ impl RootView {
         }
         // Nor under a chat's copy menu, which would draw over it.
         self.close_copy_menus(cx);
-        self.focus.focus(window);
+        self.focus.focus(window, cx);
 
         // Only the fields it shows: whatever else the app writes while the
         // sheet is open is never the sheet's to hand back. See `SheetFields`.

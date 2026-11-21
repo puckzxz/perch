@@ -567,8 +567,8 @@ impl RootView {
         });
 
         let focus = cx.focus_handle();
-        let _focus_lost = cx.on_focus_lost(window, |this: &mut Self, window, _cx| {
-            this.focus.focus(window);
+        let _focus_lost = cx.on_focus_lost(window, |this: &mut Self, window, cx| {
+            this.focus.focus(window, cx);
         });
 
         // A pane's quality is chosen against its size, and the window is the
@@ -709,7 +709,7 @@ impl RootView {
 
         // Nothing else ever asks for focus, so this is what makes every
         // shortcut work — see the field.
-        window.focus(&view.focus);
+        window.focus(&view.focus, cx);
 
         // Only what was named on the command line opens a stream. Launching
         // straight into whatever was on last time means the app starts costing

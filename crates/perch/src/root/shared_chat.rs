@@ -64,7 +64,7 @@ impl RootView {
                 ChatViewEvent::CardOpened { login } => this.on_card_opened(chat, login, cx),
                 // The card occludes, so the root's own focus never hears a
                 // press on it (HANDOFF, "An occluder hides presses").
-                ChatViewEvent::ReturnKeys => this.focus.focus(window),
+                ChatViewEvent::ReturnKeys => this.focus.focus(window, cx),
                 ChatViewEvent::TakeRestOfRun => this.take_rest_of_run(),
                 ChatViewEvent::Watch { login } => this.watch_from_card(login.clone(), window, cx),
                 ChatViewEvent::ChannelPage {

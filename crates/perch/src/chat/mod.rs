@@ -39,7 +39,7 @@ use gpui::{
     ListState, MouseButton, MouseDownEvent, Pixels, Point, RetainAllImageCache, SharedString,
     Subscription, Task, Window,
 };
-use gpui_component::scroll::{Scrollbar, ScrollbarShow};
+use gpui_component::scroll::{Scrollbar, ScrollbarMode};
 
 use twitch_chat::{ChatClient, ChatEvent, ChatMessage, ChatNotice, Replay, RoomModes};
 
@@ -704,7 +704,7 @@ impl ChatView {
     /// a fast channel that can be a very long way down, with nothing on screen
     /// to say so, which is what the scrollbar and the pill are both for.
     fn at_live(&self) -> bool {
-        let furthest = self.list.max_offset_for_scrollbar().height;
+        let furthest = self.list.max_offset_for_scrollbar().y;
         let scrolled = -self.list.scroll_px_offset_for_scrollbar().y;
         // A pixel of slack: the offset is derived from measured item heights
         // and lands a hair short of the maximum more often than not.
@@ -1695,10 +1695,10 @@ impl Render for ChatView {
                 div()
                     .absolute()
                     .inset_0()
-                    .child(Scrollbar::vertical(&self.list).scrollbar_show(if at_live {
-                        ScrollbarShow::Hover
+                    .child(Scrollbar::vertical(&self.list).mode(if at_live {
+                        ScrollbarMode::Hover
                     } else {
-                        ScrollbarShow::Always
+                        ScrollbarMode::Always
                     })),
             )
             .when(self.rows.is_empty(), |pane| {

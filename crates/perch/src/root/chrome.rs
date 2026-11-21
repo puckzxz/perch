@@ -527,7 +527,7 @@ impl RootView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.focus.focus(window);
+        self.focus.focus(window, cx);
         let Some(index) = self.toasts.iter().position(|toast| toast.id == id) else {
             return;
         };

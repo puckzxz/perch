@@ -150,7 +150,7 @@ impl RootView {
                     self.search
                         .update(cx, |state, cx| state.set_value("", window, cx));
                 }
-                self.focus.focus(window);
+                self.focus.focus(window, cx);
                 self.run_command(command, window, cx);
             }
         }

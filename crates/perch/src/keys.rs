@@ -205,6 +205,30 @@ pub const CONTEXT_POPOUT: &str = "Perch PopOut";
 /// input, so it stays in the stack the entire time you are typing.
 const TYPING: &str = "!Input && !Select && !PopupMenu";
 
+/// The keystroke for this platform's main modifier and `$key`: `cmd-<key>`
+/// on macOS, `ctrl-<key>` elsewhere.
+///
+/// gpui 0.2.2 read `secondary-<key>` as this. gpui-pre's static parse
+/// (`KeyBinding::new`, `Keystroke::parse`) does not: it wants a host OS to
+/// resolve `secondary-` against (`KeyBinding::load`, `parse_with_os`), and
+/// `KeyBinding::new("secondary-w", ..)` panics at startup. So the modifier is
+/// named here, once, at compile time, the way [`secondary!`] names its label.
+/// Nothing but the tests below says so before a launch does: the keystroke is
+/// a string, and a string that no longer parses still type-checks.
+#[cfg(target_os = "macos")]
+macro_rules! secondary_key {
+    ($key:literal) => {
+        concat!("cmd-", $key)
+    };
+}
+
+#[cfg(not(target_os = "macos"))]
+macro_rules! secondary_key {
+    ($key:literal) => {
+        concat!("ctrl-", $key)
+    };
+}
+
 /// The keymap, built but not installed.
 ///
 /// Separate from [`init`] so a test can construct every binding without an
@@ -249,7 +273,7 @@ fn bindings() -> Vec<KeyBinding> {
         // there is nowhere to go and the press does nothing.
         KeyBinding::new("left", SeekBack, Some(&watch)),
         KeyBinding::new("right", SeekForward, Some(&watch)),
-        KeyBinding::new("secondary-w", ClosePane, Some(&watch)),
+        KeyBinding::new(secondary_key!("w"), ClosePane, Some(&watch)),
         KeyBinding::new("escape", GoBrowse, Some(&watch)),
         // The rail is on both pages, so its key is too — twice rather than in
         // the `app` context, which a modal's own context also satisfies. A
@@ -260,17 +284,17 @@ fn bindings() -> Vec<KeyBinding> {
         // The search box is in the title bar, over both pages, so its key is
         // on both — twice, for the reason the rail's is. A search typed on
         // the watch page leaves it for the results, the way `Esc` would.
-        KeyBinding::new("secondary-f", FocusSearch, Some(&watch)),
-        KeyBinding::new("secondary-f", FocusSearch, Some(&browse)),
+        KeyBinding::new(secondary_key!("f"), FocusSearch, Some(&watch)),
+        KeyBinding::new(secondary_key!("f"), FocusSearch, Some(&browse)),
         // Anywhere. `secondary-,` is the settings gesture on both platforms —
         // literally so on macOS, where ⌘, opens preferences in everything —
         // and it also closes the sheet, so the same key opens and dismisses it.
-        KeyBinding::new("secondary-,", ToggleSettings, Some(anywhere)),
-        KeyBinding::new("secondary-r", Refresh, Some(&browsing)),
-        KeyBinding::new("secondary-k", TogglePalette, Some(&unless_sheet)),
+        KeyBinding::new(secondary_key!(","), ToggleSettings, Some(anywhere)),
+        KeyBinding::new(secondary_key!("r"), Refresh, Some(&browsing)),
+        KeyBinding::new(secondary_key!("k"), TogglePalette, Some(&unless_sheet)),
         // Only where the sizes exist. `secondary-0` is the reset gesture every
         // browser and editor already uses for the same kind of thing.
-        KeyBinding::new("secondary-0", ResetLayout, Some(&watch)),
+        KeyBinding::new(secondary_key!("0"), ResetLayout, Some(&watch)),
         // Fullscreen. `f` is what every video player binds while watching,
         // and it is a bare letter, so it is scoped to the watch page like the
         // other bare letters. `f11` is the browser gesture and is safe on
@@ -320,7 +344,7 @@ fn bindings() -> Vec<KeyBinding> {
         KeyBinding::new("left", SeekBack, Some(&pop_out)),
         KeyBinding::new("right", SeekForward, Some(&pop_out)),
         KeyBinding::new("p", TogglePopOut, Some(&pop_out)),
-        KeyBinding::new("secondary-w", ClosePane, Some(&pop_out)),
+        KeyBinding::new(secondary_key!("w"), ClosePane, Some(&pop_out)),
     ];
     // Or its number. Bare digits are safe here for the reason the letters
     // are: `TYPING` stands them aside while the title bar's search box has the
@@ -449,7 +473,7 @@ pub const SHORTCUTS: [(&[&str], &str, &str); 22] = [
     (&["shift-left"], shift!("←"), "Move this pane earlier"),
     (&["shift-right"], shift!("→"), "Move this pane later"),
     (&["z"], "Z", "Give this pane the window, or show them all"),
-    (&["secondary-w"], secondary!("W"), "Close this pane"),
+    (&[secondary_key!("w")], secondary!("W"), "Close this pane"),
     (&["p"], "P", "Pop this pane out, or bring it back (Windows)"),
     (
         &["escape"],
@@ -462,14 +486,18 @@ pub const SHORTCUTS: [(&[&str], &str, &str); 22] = [
         "Back (also the mouse's back button)",
     ),
     (&["alt-right"], alt!("→"), "Forward"),
-    (&["secondary-f"], secondary!("F"), "Search"),
-    (&["secondary-r"], secondary!("R"), "Refresh this list"),
-    (&["secondary-,"], secondary!(","), "Settings"),
-    (&["secondary-k"], secondary!("K"), "Command palette"),
-    (&["secondary-0"], secondary!("0"), "Reset the pane sizes"),
+    (&[secondary_key!("f")], secondary!("F"), "Search"),
+    (&[secondary_key!("r")], secondary!("R"), "Refresh this list"),
+    (&[secondary_key!(",")], secondary!(","), "Settings"),
+    (&[secondary_key!("k")], secondary!("K"), "Command palette"),
+    (
+        &[secondary_key!("0")],
+        secondary!("0"),
+        "Reset the pane sizes",
+    ),
 ];
 
-/// Declares [`Hint`] once, as `Variant => "keystroke" as Action`, and derives
+/// Declares [`Hint`] once, as `Variant => "keystroke" => Action`, and derives
 /// the rest from that one list: the enum, the keystroke each variant names,
 /// and — for the tests only — every variant and the action its key has to
 /// fire. The same shape as `assets::perch_icons!`, so a hint cannot exist
@@ -477,7 +505,7 @@ pub const SHORTCUTS: [(&[&str], &str, &str); 22] = [
 /// `action` are `cfg(test)` because only the tests read them, and this crate
 /// has no library half to excuse dead code.
 macro_rules! hints {
-    ($($(#[$doc:meta])* $variant:ident => $keystroke:literal as $action:ty),* $(,)?) => {
+    ($($(#[$doc:meta])* $variant:ident => $keystroke:expr => $action:ty),* $(,)?) => {
         /// A key a control's tooltip names, as in `Settings (Ctrl+,)`.
         ///
         /// The tooltip does not spell the key itself. It names the keystroke
@@ -516,25 +544,25 @@ macro_rules! hints {
 }
 
 hints! {
-    Rail => "b" as ToggleSidebar,
-    Back => "alt-left" as NavigateBack,
-    Forward => "alt-right" as NavigateForward,
-    Settings => "secondary-," as ToggleSettings,
-    Playback => "space" as TogglePlayback,
-    Mute => "m" as ToggleMute,
+    Rail => "b" => ToggleSidebar,
+    Back => "alt-left" => NavigateBack,
+    Forward => "alt-right" => NavigateForward,
+    Settings => secondary_key!(",") => ToggleSettings,
+    Playback => "space" => TogglePlayback,
+    Mute => "m" => ToggleMute,
     // Up names the pair: the sheet lists `up` and `down` as one row, `↑ / ↓`,
     // and the tooltip borrows that row's label whole.
-    Volume => "up" as VolumeUp,
-    Chat => "c" as ToggleChat,
+    Volume => "up" => VolumeUp,
+    Chat => "c" => ToggleChat,
     // The same for `f` and `f11`, as `F / F11`.
-    Fullscreen => "f" as ToggleFullscreen,
+    Fullscreen => "f" => ToggleFullscreen,
     // A pane header's ×, as `Ctrl+W` — `⌘W` on a Mac, from the sheet's label.
-    Close => "secondary-w" as ClosePane,
+    Close => secondary_key!("w") => ClosePane,
     // A pane menu's `Pop out`, and the pop-out's Bring back, on its bar.
-    PopOut => "p" as TogglePopOut,
+    PopOut => "p" => TogglePopOut,
     // The title bar's Browse, on the watch page: `Esc` there brings the
     // browse page up as the press does, once it is not leaving fullscreen.
-    Browse => "escape" as GoBrowse,
+    Browse => "escape" => GoBrowse,
 }
 
 impl Hint {
@@ -560,6 +588,16 @@ impl Hint {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The host these tests run on, as gpui names it: a keystroke that is
+    /// not a literal is parsed for a named OS, and spelled back out for one.
+    const OS: gpui::OperatingSystem = if cfg!(target_os = "macos") {
+        gpui::OperatingSystem::Mac
+    } else if cfg!(target_os = "windows") {
+        gpui::OperatingSystem::Windows
+    } else {
+        gpui::OperatingSystem::Linux
+    };
     use gpui::{KeyContext, Keystroke};
 
     /// Both halves of a shortcut fail quietly in their own way: an unparseable
@@ -594,8 +632,8 @@ mod tests {
 
         let keymap = gpui::Keymap::new(bindings());
         let fires_in = |context: &[KeyContext], keystroke: &str, action: TypeId| {
-            let (matched, _) =
-                keymap.bindings_for_input(&[Keystroke::parse(keystroke).unwrap()], context);
+            let (matched, _) = keymap
+                .bindings_for_input(&[Keystroke::parse_with_os(keystroke, OS).unwrap()], context);
             matched
                 .iter()
                 .any(|binding| binding.action().as_any().type_id() == action)
@@ -705,8 +743,10 @@ mod tests {
                 .iter()
                 .map(|context| KeyContext::parse(context).unwrap())
                 .collect();
-            let (matched, _) =
-                keymap.bindings_for_input(&[Keystroke::parse(keystroke).unwrap()], &context);
+            let (matched, _) = keymap.bindings_for_input(
+                &[Keystroke::parse_with_os(keystroke, OS).unwrap()],
+                &context,
+            );
             matched
                 .iter()
                 .any(|binding| binding.action().as_any().type_id() == action)
@@ -755,8 +795,10 @@ mod tests {
                 .iter()
                 .map(|context| KeyContext::parse(context).unwrap())
                 .collect();
-            let (matched, _) =
-                keymap.bindings_for_input(&[Keystroke::parse(keystroke).unwrap()], &context);
+            let (matched, _) = keymap.bindings_for_input(
+                &[Keystroke::parse_with_os(keystroke, OS).unwrap()],
+                &context,
+            );
             !matched.is_empty()
         };
         let own = [
@@ -862,8 +904,10 @@ mod tests {
                 .iter()
                 .map(|context| KeyContext::parse(context).unwrap())
                 .collect();
-            let (matched, _) =
-                keymap.bindings_for_input(&[Keystroke::parse(keystroke).unwrap()], &context);
+            let (matched, _) = keymap.bindings_for_input(
+                &[Keystroke::parse_with_os(keystroke, OS).unwrap()],
+                &context,
+            );
             matched
                 .iter()
                 .any(|binding| binding.action().as_any().type_id() == action)
@@ -939,7 +983,14 @@ mod tests {
                 let parsed = Keystroke::parse(keystroke)
                     .unwrap_or_else(|e| panic!("{display}: {keystroke} does not parse: {e}"));
                 assert_eq!(
-                    parsed.modifiers.secondary(),
+                    // `Modifiers::secondary` asks the running app which
+                    // host it is on; a test has no app, and the build's
+                    // target is the same answer.
+                    if cfg!(target_os = "macos") {
+                        parsed.modifiers.platform
+                    } else {
+                        parsed.modifiers.control
+                    },
                     display.starts_with(PREFIX),
                     "{display} and {keystroke} disagree about the {PREFIX} modifier"
                 );
@@ -972,14 +1023,14 @@ mod tests {
         let bound: Vec<String> = bindings()
             .iter()
             .flat_map(|binding| binding.keystrokes())
-            .map(|keystroke| keystroke.inner().to_string())
+            .map(|keystroke| keystroke.inner().unparse(OS))
             .collect();
 
         for (keystrokes, display, _) in SHORTCUTS {
             for keystroke in keystrokes {
                 let parsed = Keystroke::parse(keystroke)
                     .unwrap_or_else(|e| panic!("{display}: {keystroke} does not parse: {e}"))
-                    .to_string();
+                    .unparse(OS);
                 assert!(
                     bound.contains(&parsed),
                     "the sheet lists {display} ({keystroke}), which nothing binds"
@@ -1004,14 +1055,14 @@ mod tests {
             );
             let parsed = Keystroke::parse(hint.keystroke())
                 .unwrap_or_else(|e| panic!("{hint:?}: {} does not parse: {e}", hint.keystroke()))
-                .to_string();
+                .unparse(OS);
             assert!(
                 bindings.iter().any(|binding| {
                     binding.action().as_any().type_id() == hint.action()
                         && binding
                             .keystrokes()
                             .iter()
-                            .any(|keystroke| keystroke.inner().to_string() == parsed)
+                            .any(|keystroke| keystroke.inner().unparse(OS) == parsed)
                 }),
                 "{hint:?} names {}, which nothing binds to its action",
                 hint.keystroke()

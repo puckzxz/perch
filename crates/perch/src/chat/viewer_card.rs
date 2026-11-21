@@ -675,7 +675,7 @@ impl ChatView {
                             .gap(px(theme::GAP_TIGHT))
                             .child(
                                 div()
-                                    .flex_shrink()
+                                    .flex_shrink_1()
                                     .min_w_0()
                                     .text_ellipsis()
                                     .line_clamp(1)
@@ -808,7 +808,7 @@ impl ChatView {
             .id("viewer-card-lines")
             .track_scroll(&card.scroll)
             .overflow_y_scroll()
-            .flex_shrink()
+            .flex_shrink_1()
             .min_h_0()
             .py(px(theme::GAP_WORD))
             .bg(theme::surface())

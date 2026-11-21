@@ -405,7 +405,7 @@ impl VideoView {
             // would make every button on it a caption, a press on which moves
             // the window instead of pressing the button.
             .when(self.controls.is_visible(), |bar| bar.occlude())
-            .on_scroll_wheel(cx.listener(Self::on_wheel))
+            .on_scroll(cx.listener(Self::on_wheel))
             // Whatever is pressed on the bar, the keys go back to the root;
             // see `return_keys`. In the capture phase, which runs before any
             // control's own handler: the volume slider's thumb stops its

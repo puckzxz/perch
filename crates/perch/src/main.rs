@@ -75,8 +75,8 @@ mod wheel;
 mod widget_theme;
 
 use gpui::{
-    point, prelude::*, px, size, AnyView, App, Application, Bounds, DisplayId, Pixels, Size,
-    TitlebarOptions, Window, WindowBounds, WindowOptions,
+    point, prelude::*, px, size, AnyView, App, Bounds, DisplayId, Pixels, Size, TitlebarOptions,
+    Window, WindowBounds, WindowOptions,
 };
 use settings::{Settings, WindowPlacement};
 
@@ -260,9 +260,14 @@ fn main() {
     // `assets`. Without them every chevron, eye and clear button in the app,
     // and every button on the title bar, renders as nothing, and silently — a
     // missing asset is not an error anywhere in that path.
-    Application::new()
+    gpui_platform::application()
         .with_assets(assets::Icons)
         .run(move |cx: &mut App| {
+            // gpui hides the pointer on a key that types or runs an action,
+            // unless told not to. Perch's pointer goes when it is left still
+            // on a picture (`VideoView`'s rest), and a key leaves it where it
+            // is, so `M` or `Space` does not take it away.
+            cx.set_cursor_hide_mode(gpui::CursorHideMode::Never);
             // Must come before any gpui-component widget is constructed.
             gpui_component::init(cx);
             // And this must come after it: `init` installs the palette this
@@ -276,7 +281,7 @@ fn main() {
             {
                 macos_menu::init(cx);
                 // Quit after the last window closes so the Dock can launch a new one.
-                cx.on_window_closed(|cx| {
+                cx.on_window_closed(|cx, _| {
                     if cx.windows().is_empty() {
                         cx.quit();
                     }

@@ -252,7 +252,7 @@ pub(super) fn name_link<V: 'static>(
     let tooltip = facts.tooltip.clone();
     div()
         .id(pane_id(&slot.key, "open"))
-        .flex_shrink()
+        .flex_shrink_1()
         .min_w_0()
         .text_ellipsis()
         .line_clamp(1)
@@ -311,7 +311,7 @@ pub(super) fn with_status(row: Div, facts: &Facts, numbers: String) -> Div {
         // for it, and flex_none it pushed the icons past the edge.
         .children(facts.ad_break.clone().map(|words| {
             controls::tag(words)
-                .flex_shrink()
+                .flex_shrink_1()
                 .min_w_0()
                 .text_ellipsis()
                 .line_clamp(1)

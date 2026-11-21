@@ -22,7 +22,7 @@ use gpui::{
     div, img, prelude::*, px, AnyElement, App, Context, ImgResourceLoader, MouseButton,
     MouseDownEvent, Pixels, Point, Resource, ScrollHandle, SharedString, Stateful, Window,
 };
-use gpui_component::scroll::{Scrollbar, ScrollbarShow};
+use gpui_component::scroll::{Scrollbar, ScrollbarMode};
 use twitch_api::{Category, Channel, LiveStream, Video, VideoKind};
 
 use crate::channel_menu;
@@ -954,7 +954,7 @@ fn name_line(index: usize, name: &str, meta: String) -> Stateful<gpui::Div> {
         .tooltip(controls::full_text(whole))
         .child(
             div()
-                .flex_shrink()
+                .flex_shrink_1()
                 .min_w_0()
                 .text_ellipsis()
                 .line_clamp(1)
@@ -1030,7 +1030,7 @@ pub(crate) fn scrollable(list: impl IntoElement, scroll: &ScrollHandle) -> gpui:
             div()
                 .absolute()
                 .inset_0()
-                .child(Scrollbar::vertical(scroll).scrollbar_show(ScrollbarShow::Hover)),
+                .child(Scrollbar::vertical(scroll).mode(ScrollbarMode::Hover)),
         )
 }
 

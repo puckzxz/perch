@@ -28,7 +28,7 @@
 //! press anywhere outside it, `Esc`, or the pick.
 
 use gpui::{
-    anchored, deferred, prelude::*, AnimationExt, AnyElement, Context, Corner, MouseDownEvent,
+    anchored, deferred, prelude::*, Anchor, AnimationExt, AnyElement, Context, MouseDownEvent,
     Pixels, Point, SharedString, Window,
 };
 
@@ -245,7 +245,7 @@ pub fn entries(facts: Facts) -> Vec<Row> {
 pub fn view<V: 'static>(
     rows: &[Row],
     position: Point<Pixels>,
-    corner: Corner,
+    corner: Anchor,
     opened: u64,
     on_pick: impl Fn(&mut V, Pick, &mut Window, &mut Context<V>) + Clone + 'static,
     on_dismiss: impl Fn(&mut V, &mut Window, &mut Context<V>) + 'static,

@@ -157,7 +157,7 @@ impl Fade {
     /// says *which* thing is fading — survives having the flip count appended.
     fn animation_id(&self, id: impl Into<ElementId>) -> ElementId {
         ElementId::NamedChild(
-            Box::new(id.into()),
+            std::sync::Arc::new(id.into()),
             SharedString::from(self.flips.to_string()),
         )
     }

@@ -62,7 +62,7 @@ impl RootView {
         // it in the same press, so the box could never be typed into.
         let typing = matches!(action, PaneAction::Activate) && window.default_prevented();
         if !typing {
-            self.focus.focus(window);
+            self.focus.focus(window, cx);
         }
         let Some(index) = self.slot_index(key) else {
             return;

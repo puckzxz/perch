@@ -259,7 +259,7 @@ impl RootView {
                                 // The press stops here, so the root's own
                                 // mouse-down never hears it to take the keys
                                 // back from a text box; taken back by hand.
-                                this.focus.focus(window);
+                                this.focus.focus(window, cx);
                             }
                             moved
                         })

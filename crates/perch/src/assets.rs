@@ -2,7 +2,7 @@
 //!
 //! `gpui-component` draws its chevrons, its eye and its clear button by asking
 //! the *host* for `icons/<name>.svg` — the crate ships none of its own. With no
-//! [`AssetSource`] installed, `Application::new()` answers `None` to every one
+//! [`AssetSource`] installed, `gpui_platform::application()` answers `None` to every one
 //! of those, and gpui renders nothing at all: the quality dropdown had no
 //! chevron and was indistinguishable from the text field above it, and the
 //! credential fields had an invisible-but-clickable eye at their right edge.
@@ -147,7 +147,7 @@ perch_icons! {
     ChatOptions => "text-size",
 }
 
-/// What `Application::new().with_assets(..)` is handed.
+/// What `gpui_platform::application().with_assets(..)` is handed.
 pub struct Icons;
 
 impl AssetSource for Icons {

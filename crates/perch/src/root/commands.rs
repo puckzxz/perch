@@ -84,7 +84,7 @@ impl RootView {
         } else {
             // Focus has to come back to the root or every shortcut stops
             // working; see the `focus` field.
-            self.focus.focus(window);
+            self.focus.focus(window, cx);
         }
         cx.notify();
     }

@@ -10,7 +10,7 @@ use gpui::{
 };
 use gpui_component::{
     input::{Input, InputState},
-    scroll::{Scrollbar, ScrollbarShow},
+    scroll::{Scrollbar, ScrollbarMode},
     select::{Select, SelectState},
     IndexPath,
 };
@@ -486,7 +486,7 @@ impl Render for SettingsPanel {
                     // windows, and the keyboard section used to sit below the
                     // fold with nothing on screen to say there was a fold.
                     .child(div().absolute().inset_0().child(
-                        Scrollbar::vertical(&self.scroll).scrollbar_show(ScrollbarShow::Always),
+                        Scrollbar::vertical(&self.scroll).mode(ScrollbarMode::Always),
                     ))
                     )
                     .child(

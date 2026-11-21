@@ -132,7 +132,7 @@ impl RootView {
             controls::icon_button("browse-back", Icon::Back, Variant::Chrome)
                 .tooltip(controls::tip(Hint::Back.tooltip("Back")))
                 .on_click(cx.listener(|this, _event, window, cx| {
-                    this.focus.focus(window);
+                    this.focus.focus(window, cx);
                     this.go_back(window, cx);
                 }))
                 .into_any_element()
@@ -143,7 +143,7 @@ impl RootView {
             controls::icon_button("browse-forward", Icon::Forward, Variant::Chrome)
                 .tooltip(controls::tip(Hint::Forward.tooltip("Forward")))
                 .on_click(cx.listener(|this, _event, window, cx| {
-                    this.focus.focus(window);
+                    this.focus.focus(window, cx);
                     this.go_forward(window, cx);
                 }))
                 .into_any_element()

@@ -54,10 +54,9 @@ use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 use gpui::{
-    canvas, div, img, prelude::*, Animation, AnimationExt, Bounds, ClickEvent, Context,
-    CursorStyle, Div, ElementId, Entity, EventEmitter, FocusHandle, MouseButton, MouseDownEvent,
-    Pixels, Point, RenderImage, ScrollWheelEvent, SharedString, Stateful, Subscription, Task,
-    Window,
+    canvas, div, img, prelude::*, Animation, AnimationExt, Bounds, ClickEvent, Context, Div,
+    ElementId, Entity, EventEmitter, FocusHandle, MouseButton, MouseDownEvent, Pixels, Point,
+    RenderImage, ScrollEvent, SharedString, Stateful, Subscription, Task, Window,
 };
 use gpui_component::slider::{SliderEvent, SliderState};
 use twitch_api::MutedSegment;
@@ -438,7 +437,9 @@ impl VideoView {
                 .default_value(loudness.level() as f32)
         });
         cx.subscribe(&volume_slider, |this: &mut Self, _, event, cx| {
-            let SliderEvent::Change(value) = event;
+            // 0.10 says when a drag ends as well (`Release`), with the
+            // value it ended on; the volume follows either.
+            let (SliderEvent::Change(value) | SliderEvent::Release(value)) = event;
             this.apply_volume(value.start().round() as u8, cx);
         })
         .detach();
@@ -699,7 +700,7 @@ impl VideoView {
     /// Each step holds the bar up for a moment ([`theme::VOLUME_LINGER`]),
     /// so the slider and the figure are seen to move even if the pointer
     /// leaves the picture between two turns.
-    fn on_wheel(&mut self, event: &ScrollWheelEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn on_wheel(&mut self, event: &ScrollEvent, window: &mut Window, cx: &mut Context<Self>) {
         if !event.modifiers.alt {
             self.wheel.reset();
             return;
@@ -740,7 +741,7 @@ impl VideoView {
     /// drag alone (`controls::drag_layer`).
     fn picture_gestures(&self, element: Stateful<Div>, cx: &mut Context<Self>) -> Stateful<Div> {
         element
-            .on_scroll_wheel(cx.listener(Self::on_wheel))
+            .on_scroll(cx.listener(Self::on_wheel))
             .on_mouse_down(
                 MouseButton::Middle,
                 cx.listener(|this, _: &MouseDownEvent, window, cx| this.toggle_mute(window, cx)),
@@ -903,8 +904,8 @@ impl VideoView {
     /// hears. Without this, a cursor left in the title bar's search box would
     /// keep the keys through a press on the bar, and the next `Space` would
     /// type a space into the search rather than pause.
-    fn return_keys(&mut self, _: &MouseDownEvent, window: &mut Window, _: &mut Context<Self>) {
-        self.root_focus.focus(window);
+    fn return_keys(&mut self, _: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.root_focus.focus(window, cx);
     }
 
     /// Report where the pointer is, from the probe. Returns whether this needs
@@ -1351,10 +1352,17 @@ impl Render for VideoView {
             // A pointer left still on the picture goes with the bar it was
             // holding up, and comes back with it on the first move. Only
             // once the bar is down: one held up by a menu or a switch is
-            // something to point at. gpui sets the cursor again after every
-            // draw, so this takes without a move to carry it.
+            // something to point at.
+            //
+            // gpui has no cursor style that hides it. What it has is the
+            // platform's "hidden until the mouse moves", which is this promise
+            // exactly, and which gpui keeps to itself: a vendored fix makes it
+            // public (`App::hide_cursor_until_mouse_moves`). Asked on every
+            // frame the pointer rests; the platform does nothing once it is
+            // hidden.
             .when(self.rested && !self.controls.is_visible(), |pane| {
-                pane.cursor(CursorStyle::None)
+                cx.hide_cursor_until_mouse_moves();
+                pane
             })
             // The gesture a pane's player has. A single click does nothing on
             // purpose - it is how a pane is made the active one, and pausing

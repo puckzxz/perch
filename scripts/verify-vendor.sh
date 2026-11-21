@@ -36,24 +36,28 @@ cd "$(dirname "$0")/.."
 # brought in, pristine, so that the commit which patches it shows the patch
 # and nothing else.
 
-CRATES=(gpui gpui_pre gpui_pre_windows)
+CRATES=(gpui_pre gpui_pre_windows)
 
-crate_gpui() {
-  CRATE=gpui
-  VENDOR=vendor/gpui
-  PATCH=vendor/gpui.patch
+# gpui-pre is a snapshot of Zed's gpui, published weekly to crates.io by
+# gpui-component's maintainer, with each platform's backend in a crate of its
+# own. gpui-component pins one snapshot exactly, so these move together and
+# with it.
+crate_gpui_pre() {
+  CRATE=gpui-pre
+  VENDOR=vendor/gpui-pre
+  PATCH=vendor/gpui-pre.patch
 
   # The crates.io sha256 of the .crate tarball, pinned to the version beside
   # it. Both are facts about one immutable published artifact, so they live
   # together: bump the version in $VENDOR/Cargo.toml without bumping these and
   # the check fails loudly, which is the entire point.
-  EXPECT_VERSION=0.2.2
-  EXPECT_SHA256=979b45cfa6ec723b6f42330915a1b3769b930d02b2d505f9697f8ca602bee707
+  EXPECT_VERSION=0.3.12
+  EXPECT_SHA256=29db89613527079737f53752eab27fb65c9a7dd94979256c65a0e590c9fd34d8
 
   # Large example assets deleted from the vendored copy. They are runtime
   # inputs for gpui's own examples, which we never build; every .rs example
   # target is still present, so the manifest needs no edit. Dropping them takes
-  # the tree from 8.1 MB to 3.6 MB.
+  # the tree from 8.6 MB to 4.1 MB.
   REMOVED=(
     examples/image/black-cat-typing.gif
     examples/image/app-icon.png
@@ -61,16 +65,8 @@ crate_gpui() {
 
   # Files we expect to differ from upstream. Anything else differing is drift.
   PATCHED=(
-    build.rs
-    src/elements/text.rs
+    src/app.rs
     src/platform.rs
-    src/platform/mac/metal_atlas.rs
-    src/platform/mac/metal_renderer.rs
-    src/platform/mac/window.rs
-    src/platform/windows/directx_atlas.rs
-    src/platform/windows/directx_renderer.rs
-    src/platform/windows/events.rs
-    src/platform/windows/window.rs
     src/window.rs
   )
 }
@@ -82,106 +78,32 @@ crate_gpui() {
 # leak back and the grep still green. The setter and the consumer both have to
 # be named. This matters most right after someone runs `--update`, which
 # rewrites the patch from whatever the tree is and never reaches this block.
-check_gpui() {
-  needs build.rs 'if cfg!(feature = "runtime_shaders") || !metal_compiler_available()' \
-    "selects runtime shaders when the Metal Toolchain is unavailable"
-  needs build.rs 'cargo::rustc-cfg=gpui_runtime_shaders' \
-    "reports the shader mode to the Metal renderer"
-  needs src/platform/mac/metal_renderer.rs '#[cfg(gpui_runtime_shaders)]' \
-    "uses the shader mode chosen at build time"
-  needs src/platform/mac/window.rs 'event.window() == window' \
-    "checks that the mouse-down belongs to the window being dragged"
-  needs src/platform/mac/window.rs 'performWindowDragWithEvent: event' \
-    "hands the drag to AppKit"
-  needs src/platform/mac/window.rs 'native_window.setLevel_(NSFloatingWindowLevel);' \
-    "opens floating windows above normal windows"
-  needs src/platform/mac/window.rs 'setHidesOnDeactivate: NO' \
-    "keeps floating panels visible when another app has focus"
-  needs src/platform/mac/window.rs 'setBecomesKeyOnlyIfNeeded: YES' \
-    "keeps pointer controls from taking keyboard focus"
-  needs src/window.rs '&& self.kind == crate::WindowKind::Floating' \
-    "uses pointer hover on macOS floating panels"
-  needs src/window.rs 'self.hovered.replace(hovered) != hovered' \
-    "redraws a floating panel when the pointer enters or leaves"
-
-  local f
-  for f in src/platform/mac/metal_atlas.rs src/platform/windows/directx_atlas.rs; do
-    needs "$f" 'size.width > DEFAULT_ATLAS_SIZE.width || size.height > DEFAULT_ATLAS_SIZE.height' \
-      "decides which textures are dedicated to one image"
-    needs "$f" 'filter(|texture| !texture.dedicated)' \
-      "skips dedicated textures when scanning for room"
-    needs "$f" 'allocator.deallocate(tile.tile_id.into())' \
-      "returns removed tile space to the allocator"
-  done
-
-  needs src/platform.rs 'fn update(&self, _key: &AtlasKey' \
-    "offers atlases an in-place tile update"
-  needs src/platform/windows/directx_atlas.rs 'fn update(&self, key: &AtlasKey' \
-    "implements the in-place tile update"
-  needs src/platform/windows/directx_atlas.rs 'skipping upload to avoid a driver over-read' \
-    "refuses an upload the source slice cannot cover"
-  needs src/window.rs 'pub fn update_image(' \
-    "exposes the in-place image update to callers"
-  needs src/window.rs 'self.mouse_hit_test = if pointer_left {' \
-    "hit-tests nothing under a pointer that has left the window"
-  needs src/elements/text.rs 'let mut runs = runs.clone();' \
-    "truncates a copy of a line's runs rather than the ones the next measure reuses"
-
-  needs src/platform/windows/directx_renderer.rs 'self.skip_draws = true;' \
-    "stops drawing when the device is replaced"
-  needs src/platform/windows/directx_renderer.rs 'if self.skip_draws {' \
-    "acts on the post-device-lost draw block"
-  needs src/platform/windows/directx_renderer.rs 'render_target: Option<ID3D11Texture2D>' \
-    "holds the render target in something that releases exactly once"
-  needs src/platform/windows/directx_renderer.rs 'self.resources.render_target.take()' \
-    "releases the render target without leaving a dropped value behind"
-  needs src/platform/windows/events.rs 'lock.force_render_pending = true;' \
-    "asks for a forced render after a device loss"
-  needs src/platform/windows/window.rs 'pub force_render_pending: bool,' \
-    "carries the post-device-lost forced-render flag"
-}
-
-# gpui-pre is a snapshot of Zed's gpui, published weekly to crates.io by
-# gpui-component's maintainer, with each platform's backend in a crate of its
-# own. gpui-component pins one snapshot exactly, so these two move together
-# and with it.
-crate_gpui_pre() {
-  CRATE=gpui-pre
-  VENDOR=vendor/gpui-pre
-  PATCH=vendor/gpui-pre.patch
-  EXPECT_VERSION=0.3.12
-  EXPECT_SHA256=29db89613527079737f53752eab27fb65c9a7dd94979256c65a0e590c9fd34d8
-
-  # The same two example assets as gpui 0.2.2, for the same reason. Dropping
-  # them takes the tree from 8.6 MB to 4.1 MB.
-  REMOVED=(
-    examples/image/black-cat-typing.gif
-    examples/image/app-icon.png
-  )
-
-  PATCHED=(
-    src/app.rs
-    src/platform.rs
-    src/window.rs
-  )
-}
-
 check_gpui_pre() {
   # The in-place tile update: offered by the atlas trait, carried by the
   # shared atlas state only while the tile is still the image's size, and
   # reached from `Window::update_image`.
-  needs src/platform.rs 'fn update(&self, _key: &AtlasKey'     "offers atlases an in-place tile update"
-  needs src/platform.rs 'fn update(&mut self, _tile: AtlasTile, _bytes: &[u8]) -> bool'     "lets an atlas backend overwrite a tile"
-  needs src/platform.rs 'if tile.bounds.size != size {'     "refuses an in-place update at another size"
-  needs src/platform.rs 'self.backend.update(tile, bytes)'     "hands an in-place update to the backend"
-  needs src/window.rs 'pub fn update_image('     "exposes the in-place image update to callers"
-  needs src/window.rs '.update(&params.clone().into(), data.size(frame_index), bytes)'     "asks the atlas to overwrite the image's tile"
+  needs src/platform.rs 'fn update(&self, _key: &AtlasKey' \
+    "offers atlases an in-place tile update"
+  needs src/platform.rs 'fn update(&mut self, _tile: AtlasTile, _bytes: &[u8]) -> bool' \
+    "lets an atlas backend overwrite a tile"
+  needs src/platform.rs 'if tile.bounds.size != size {' \
+    "refuses an in-place update at another size"
+  needs src/platform.rs 'self.backend.update(tile, bytes)' \
+    "hands an in-place update to the backend"
+  needs src/window.rs 'pub fn update_image(' \
+    "exposes the in-place image update to callers"
+  needs src/window.rs '.update(&params.clone().into(), data.size(frame_index), bytes)' \
+    "asks the atlas to overwrite the image's tile"
 
-  needs src/window.rs ')) && !self.hovered.get();'     "reads the hovered flag to know the pointer has left the window"
-  needs src/window.rs 'self.mouse_hit_test = if pointer_left {'     "hit-tests nothing under a pointer that has left the window"
+  needs src/window.rs ')) && !self.hovered.get();' \
+    "reads the hovered flag to know the pointer has left the window"
+  needs src/window.rs 'self.mouse_hit_test = if pointer_left {' \
+    "hit-tests nothing under a pointer that has left the window"
 
-  needs src/app.rs 'pub fn hide_cursor_until_mouse_moves(&self)'     "lets an app hide the cursor until the mouse moves"
-  needs src/app.rs 'self.platform.hide_cursor_until_mouse_moves();'     "passes the cursor hide to the platform"
+  needs src/app.rs 'pub fn hide_cursor_until_mouse_moves(&self)' \
+    "lets an app hide the cursor until the mouse moves"
+  needs src/app.rs 'self.platform.hide_cursor_until_mouse_moves();' \
+    "passes the cursor hide to the platform"
 }
 
 crate_gpui_pre_windows() {
@@ -197,10 +119,14 @@ crate_gpui_pre_windows() {
 }
 
 check_gpui_pre_windows() {
-  needs src/directx_atlas.rs 'size.width > DEFAULT_ATLAS_SIZE.width || size.height > DEFAULT_ATLAS_SIZE.height'     "decides which textures are dedicated to one image"
-  needs src/directx_atlas.rs 'filter(|texture| !texture.dedicated)'     "skips dedicated textures when scanning for room"
-  needs src/directx_atlas.rs 'self.0.lock().update(key, size, bytes)'     "passes an in-place tile update to the atlas state"
-  needs src/directx_atlas.rs 'fn update(&mut self, tile: AtlasTile, bytes: &[u8]) -> bool'     "writes over a tile in place"
+  needs src/directx_atlas.rs 'size.width > DEFAULT_ATLAS_SIZE.width || size.height > DEFAULT_ATLAS_SIZE.height' \
+    "decides which textures are dedicated to one image"
+  needs src/directx_atlas.rs 'filter(|texture| !texture.dedicated)' \
+    "skips dedicated textures when scanning for room"
+  needs src/directx_atlas.rs 'self.0.lock().update(key, size, bytes)' \
+    "passes an in-place tile update to the atlas state"
+  needs src/directx_atlas.rs 'fn update(&mut self, tile: AtlasTile, bytes: &[u8]) -> bool' \
+    "writes over a tile in place"
 }
 
 # --- The machinery -----------------------------------------------------------

@@ -62,12 +62,13 @@ jobs:
       # dependencies actually move.
       - uses: Swatinem/rust-cache@v2
 
-      # `vendor/gpui` is gpui 0.2.2 with a four-line fix for an atlas bug that
-      # leaked 43.7 GB in five hours. Nothing about that patch is load-bearing
-      # at compile time: delete it and the tree still builds, still passes
-      # clippy, still passes the tests, and leaks again in production. This is
-      # the only thing standing between that and a silent regression, so it
-      # runs before anything that takes a minute to fail.
+      # The crates under `vendor/` are gpui-pre with a handful of fixes, the
+      # first of them for an atlas bug that leaked 43.7 GB in five hours. Not
+      # all of them are load-bearing at compile time: take that one out and
+      # the tree still builds, still passes clippy, still passes the tests,
+      # and leaks again in production. This is the only thing standing between
+      # that and a silent regression, so it runs before anything that takes a
+      # minute to fail.
       #
       # On both legs on purpose. The check itself is platform-independent, but
       # the script is not — it picks between `sha256sum` and `shasum`, and

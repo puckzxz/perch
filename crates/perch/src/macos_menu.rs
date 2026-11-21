@@ -28,6 +28,7 @@ pub(crate) fn init(cx: &mut App) {
                 MenuItem::separator(),
                 MenuItem::action("Quit Perch", Quit),
             ],
+            disabled: false,
         },
         Menu {
             name: "Edit".into(),
@@ -41,6 +42,7 @@ pub(crate) fn init(cx: &mut App) {
                 MenuItem::separator(),
                 MenuItem::os_action("Select All", SelectAll, OsAction::SelectAll),
             ],
+            disabled: false,
         },
     ]);
 }

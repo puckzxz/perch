@@ -10,8 +10,7 @@
 use std::path::PathBuf;
 
 use gpui::{
-    div, img, prelude::*, px, rgb, size, App, Application, Bounds, Context, Window, WindowBounds,
-    WindowOptions,
+    div, img, prelude::*, px, rgb, size, App, Bounds, Context, Window, WindowBounds, WindowOptions,
 };
 
 struct Demo {
@@ -63,7 +62,7 @@ fn main() {
         std::process::exit(2);
     };
 
-    Application::new().run(move |cx: &mut App| {
+    gpui_platform::application().run(move |cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(700.), px(320.)), cx);
         cx.open_window(
             WindowOptions {

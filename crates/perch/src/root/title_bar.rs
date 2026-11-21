@@ -214,7 +214,7 @@ impl RootView {
                 // hears this press and never takes focus back from a text box
                 // that had it. Taken back here, or the shortcuts would stay
                 // with the box. Every handler in the bar starts this way.
-                this.focus.focus(window);
+                this.focus.focus(window, cx);
                 // Live even with a modal up. It closes the sheet it opened, as
                 // `Ctrl+,` does, and with the palette up it puts the sheet in
                 // the palette's place, as `Ctrl+,` does there too; see
@@ -307,7 +307,7 @@ impl RootView {
             .tooltip(controls::tip(Hint::Rail.tooltip("Show or hide the rail")))
             .on_click(cx.listener(|this, _event, window, cx| {
                 // See the gear's handler.
-                this.focus.focus(window);
+                this.focus.focus(window, cx);
                 this.toggle_sidebar(window, cx);
             }));
 
@@ -341,7 +341,7 @@ impl RootView {
             .when_some(tip, |pill, tip| pill.tooltip(controls::tip(tip)))
             .on_click(cx.listener(|this, _event, window, cx| {
                 // See the gear's handler.
-                this.focus.focus(window);
+                this.focus.focus(window, cx);
                 this.toggle_browse_page(cx);
             }));
 

@@ -116,7 +116,7 @@ impl RootView {
     /// which is also what brings back a sign-in whose `Sign in again` code
     /// was never entered, and a worker that stopped after an error.
     pub(super) fn start_sign_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.focus.focus(window);
+        self.focus.focus(window, cx);
         self.restart_twitch(SignInStart::Stored, window, cx);
     }
 
@@ -146,7 +146,7 @@ impl RootView {
     /// again, not a sign-in lost. The follows go while the code is up, as on
     /// any sign-in, and come back with it.
     pub(super) fn sign_in_again(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.focus.focus(window);
+        self.focus.focus(window, cx);
         self.restart_twitch(SignInStart::Fresh, window, cx);
     }
 

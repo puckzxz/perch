@@ -161,8 +161,8 @@ impl PopOut {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let _focus_lost = cx.on_focus_lost(window, |this: &mut Self, window, _cx| {
-            this.focus.focus(window);
+        let _focus_lost = cx.on_focus_lost(window, |this: &mut Self, window, cx| {
+            this.focus.focus(window, cx);
         });
         let _bounds = cx.observe_window_bounds(window, |this: &mut Self, window, cx| {
             let position = Position {
@@ -178,7 +178,7 @@ impl PopOut {
                 root.pop_out_moved(&key, &focus, position, height, window, cx)
             });
         });
-        window.focus(&focus);
+        window.focus(&focus, cx);
         Self {
             key,
             root,

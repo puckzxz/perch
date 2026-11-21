@@ -10,7 +10,7 @@
 //! comes up (`close_copy_menus`), since like the copy menu it is drawn
 //! deferred, over everything, the modals included.
 
-use gpui::{AnyElement, Context, Corner, Pixels, Point, Window};
+use gpui::{Anchor, AnyElement, Context, Pixels, Point, Window};
 
 use super::panes::pane_keys;
 use super::streams::Opening;
@@ -52,10 +52,10 @@ pub(super) enum MenuAt {
 
 impl MenuAt {
     /// The point, and which corner of the menu is at it.
-    fn corner(self) -> (Point<Pixels>, Corner) {
+    fn corner(self) -> (Point<Pixels>, Anchor) {
         match self {
-            MenuAt::Pointer(at) => (at, Corner::TopLeft),
-            MenuAt::Under(at) => (at, Corner::TopRight),
+            MenuAt::Pointer(at) => (at, Anchor::TopLeft),
+            MenuAt::Under(at) => (at, Anchor::TopRight),
         }
     }
 }
@@ -250,7 +250,7 @@ impl RootView {
             return;
         };
         self.take_rest_of_run();
-        self.focus.focus(window);
+        self.focus.focus(window, cx);
         if let Some(key) = menu.pane.as_deref() {
             self.pane_menu_pick(key, pick, window, cx);
             cx.notify();
@@ -320,7 +320,7 @@ impl RootView {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{point, px, Corner};
+    use gpui::{point, px, Anchor};
 
     use super::MenuAt;
 
@@ -331,7 +331,7 @@ mod tests {
     #[test]
     fn the_menu_hangs_from_the_pointer_or_under_the_button() {
         let at = point(px(100.0), px(40.0));
-        assert_eq!(MenuAt::Pointer(at).corner(), (at, Corner::TopLeft));
-        assert_eq!(MenuAt::Under(at).corner(), (at, Corner::TopRight));
+        assert_eq!(MenuAt::Pointer(at).corner(), (at, Anchor::TopLeft));
+        assert_eq!(MenuAt::Under(at).corner(), (at, Anchor::TopRight));
     }
 }

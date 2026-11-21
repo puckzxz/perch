@@ -55,7 +55,7 @@ use gpui::{
     anchored, canvas, deferred, div, img, point, prelude::*, px, relative, Context, ElementId,
     MouseButton, MouseDownEvent, Point, ScrollHandle, SharedString, Window,
 };
-use gpui_component::scroll::{Scrollbar, ScrollbarShow};
+use gpui_component::scroll::{Scrollbar, ScrollbarMode};
 use settings::channel_key;
 
 use crate::channel_menu;
@@ -988,7 +988,7 @@ pub fn rail<V: 'static>(
                     div()
                         .absolute()
                         .inset_0()
-                        .child(Scrollbar::vertical(scroll).scrollbar_show(ScrollbarShow::Hover)),
+                        .child(Scrollbar::vertical(scroll).mode(ScrollbarMode::Hover)),
                 ),
         )
 }

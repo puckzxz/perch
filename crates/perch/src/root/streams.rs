@@ -484,10 +484,10 @@ impl RootView {
     /// watch page stood aside for it, and Space typed a space into the search.
     /// Only the box: a text box on the settings sheet keeps the cursor when a
     /// launch opens a pane behind the sheet.
-    fn show_watch_page(&mut self, window: &mut Window, cx: &App) {
+    fn show_watch_page(&mut self, window: &mut Window, cx: &mut App) {
         self.page = Page::Watch;
         if self.search.focus_handle(cx).is_focused(window) {
-            self.focus.focus(window);
+            self.focus.focus(window, cx);
         }
     }
 
