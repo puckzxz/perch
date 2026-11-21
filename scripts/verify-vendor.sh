@@ -95,10 +95,17 @@ check_gpui_pre() {
   needs src/window.rs '.update(&params.clone().into(), data.size(frame_index), bytes)' \
     "asks the atlas to overwrite the image's tile"
 
-  needs src/window.rs ')) && !self.hovered.get();' \
+  needs src/window.rs 'let pointer_left = self.tracks_window_hover() && !self.hovered.get();' \
     "reads the hovered flag to know the pointer has left the window"
   needs src/window.rs 'self.mouse_hit_test = if pointer_left {' \
     "hit-tests nothing under a pointer that has left the window"
+
+  needs src/window.rs 'cfg!(target_os = "macos") && kind == crate::WindowKind::Floating;' \
+    "tracks macOS floating windows"
+  needs src/window.rs 'if self.tracks_mac_panel_hover {' \
+    "updates the floating window hover flag from pointer events"
+  needs src/window.rs 'PlatformInput::MouseExited(_) => false,' \
+    "clears floating window hover on pointer exit"
 
   needs src/app.rs 'pub fn hide_cursor_until_mouse_moves(&self)' \
     "lets an app hide the cursor until the mouse moves"
@@ -136,10 +143,21 @@ crate_gpui_pre_macos() {
   EXPECT_VERSION=0.3.12
   EXPECT_SHA256=2de7d3f4ad51ac387e822495db363fcc1188d349793365731d054444c4cb06ee
   REMOVED=()
-  PATCHED=()
+  PATCHED=(Cargo.toml src/platform.rs src/window.rs)
 }
 
-check_gpui_pre_macos() { :; }
+check_gpui_pre_macos() {
+  needs src/window.rs 'WindowKind::PopUp | WindowKind::AnchoredPopup(_) | WindowKind::Floating => {' \
+    "creates floating windows with the nonactivating panel style"
+  needs src/window.rs 'setHidesOnDeactivate: Bool::NO' \
+    "keeps the floating player visible after deactivation"
+  needs src/window.rs 'setBecomesKeyOnlyIfNeeded: Bool::YES' \
+    "keeps the floating player from taking keyboard focus"
+  needs Cargo.toml 'features = ["font-kit", "runtime_shaders"]' \
+    "builds the Apple backend with fonts and runtime shaders"
+  needs src/platform.rs 'let text_system = Arc::new(gpui_apple::AppleTextSystem::new());' \
+    "uses Core Text to render Mac labels"
+}
 
 # --- The machinery -----------------------------------------------------------
 

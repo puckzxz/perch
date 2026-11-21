@@ -1040,11 +1040,12 @@ impl MacWindow {
                 }
                 // `AnchoredPopup` is rejected in `MacPlatform::open_window`, grouped here only
                 // for exhaustiveness.
-                WindowKind::PopUp | WindowKind::AnchoredPopup(_) => {
+                // PERCH PATCH: Let floating panels receive input without activating the app.
+                WindowKind::PopUp | WindowKind::AnchoredPopup(_) | WindowKind::Floating => {
                     style_mask |= NSWindowStyleMask::NonactivatingPanel;
                     msg_send![PANEL_CLASS, alloc]
                 }
-                WindowKind::Floating | WindowKind::Dialog => {
+                WindowKind::Dialog => {
                     msg_send![PANEL_CLASS, alloc]
                 }
             };
@@ -1234,14 +1235,21 @@ impl MacWindow {
             match kind {
                 WindowKind::Normal | WindowKind::Floating => {
                     if kind == WindowKind::Floating {
-                        // Let the window float keep above normal windows.
+                        // PERCH PATCH: Keep the panel above other apps without taking their keys.
                         let _: () = msg_send![native_window, setLevel: NSFloatingWindowLevel];
-                        let _: () = msg_send![native_window, setAcceptsMouseMovedEvents: Bool::YES];
+                        let _: () = msg_send![native_window, setHidesOnDeactivate: Bool::NO];
+                        let _: () = msg_send![native_window, setBecomesKeyOnlyIfNeeded: Bool::YES];
+                        let _: () = msg_send![
+                            native_window,
+                            setAnimationBehavior: NSWindowAnimationBehavior::UtilityWindow
+                        ];
+                        let _: () = msg_send![native_window, setCollectionBehavior: NSWindowCollectionBehavior::CanJoinAllSpaces
+                                | NSWindowCollectionBehavior::FullScreenAuxiliary];
                     } else {
                         let _: () = msg_send![native_window, setLevel: NSNormalWindowLevel];
-                        let _: () = msg_send![native_window, setAcceptsMouseMovedEvents: Bool::NO];
-                        add_mouse_tracking_area(tracking_view);
                     }
+                    let _: () = msg_send![native_window, setAcceptsMouseMovedEvents: Bool::NO];
+                    add_mouse_tracking_area(tracking_view);
 
                     if let Some(tabbing_identifier) = tabbing_identifier {
                         let tabbing_id = ns_string(tabbing_identifier.as_str());

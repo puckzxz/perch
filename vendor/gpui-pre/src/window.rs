@@ -1226,6 +1226,8 @@ pub struct Window {
     pub(crate) display_observers: SingleSubscriberSet<AnyObserver>,
     is_resizable: bool,
     is_minimizable: bool,
+    // PERCH PATCH: Mac floating panels track the pointer independently of focus.
+    tracks_mac_panel_hover: bool,
     sprite_atlas: Arc<dyn PlatformAtlas>,
     text_system: Rc<WindowTextSystem>,
     text_rendering_mode: Rc<Cell<TextRenderingMode>>,
@@ -1669,6 +1671,9 @@ impl Window {
             use_display_p3,
         } = options;
 
+        // PERCH PATCH: Keep this policy after passing the window kind to the platform.
+        let tracks_mac_panel_hover =
+            cfg!(target_os = "macos") && kind == crate::WindowKind::Floating;
         let initial_window_title = titlebar
             .as_ref()
             .and_then(|titlebar| titlebar.title.clone());
@@ -2357,6 +2362,8 @@ impl Window {
             display_observers: SingleSubscriberSet::new(),
             is_resizable,
             is_minimizable,
+            // PERCH PATCH
+            tracks_mac_panel_hover,
             sprite_atlas,
             text_system,
             text_rendering_mode: cx.text_rendering_mode.clone(),
@@ -3207,17 +3214,24 @@ impl Window {
 
     /// Returns whether this window is considered to be the window
     /// that currently owns the mouse cursor.
-    /// On mac, this is equivalent to `is_window_active`.
+    /// On macOS, regular windows use `is_window_active`. Floating panels
+    /// track the pointer even when another application is active.
+    // PERCH PATCH
     pub fn is_window_hovered(&self) -> bool {
-        if cfg!(any(
-            target_os = "windows",
-            target_os = "linux",
-            target_os = "freebsd"
-        )) {
+        if self.tracks_window_hover() {
             self.hovered.get()
         } else {
             self.is_window_active()
         }
+    }
+
+    // PERCH PATCH
+    fn tracks_window_hover(&self) -> bool {
+        cfg!(any(
+            target_os = "windows",
+            target_os = "linux",
+            target_os = "freebsd"
+        )) || self.tracks_mac_panel_hover
     }
 
     /// Toggle zoom on the window.
@@ -3978,13 +3992,9 @@ impl Window {
         // pointer crossed the edge and every `.hover()` / `group_hover` style
         // there stayed lit until the pointer came back. The leave refreshes
         // the window, so this frame clears them; the next mouse event
-        // re-tests from its own position (`dispatch_mouse_event`). Only where
-        // `hovered` is tracked: on macOS `is_window_hovered` means active.
-        let pointer_left = cfg!(any(
-            target_os = "windows",
-            target_os = "linux",
-            target_os = "freebsd"
-        )) && !self.hovered.get();
+        // re-tests from its own position (`dispatch_mouse_event`).
+        // PERCH PATCH: Mac floating panels also clear hover when the pointer exits.
+        let pointer_left = self.tracks_window_hover() && !self.hovered.get();
         self.mouse_hit_test = if pointer_left {
             HitTest::default()
         } else {
@@ -6051,6 +6061,24 @@ impl Window {
             }
             PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
         };
+
+        // PERCH PATCH: Redraw a Mac floating panel at the pointer boundary,
+        // even when its player is paused and another app owns the keyboard.
+        if self.tracks_mac_panel_hover {
+            let hovered = match &event {
+                PlatformInput::MouseMove(_)
+                | PlatformInput::MouseDown(_)
+                | PlatformInput::MouseUp(_)
+                | PlatformInput::Scroll(_) => {
+                    Bounds::new(Point::default(), self.viewport_size).contains(&self.mouse_position)
+                }
+                PlatformInput::MouseExited(_) => false,
+                _ => self.hovered.get(),
+            };
+            if self.hovered.replace(hovered) != hovered {
+                self.refresh();
+            }
+        }
 
         if let Some(any_mouse_event) = event.mouse_event() {
             self.dispatch_mouse_event(any_mouse_event, cx);

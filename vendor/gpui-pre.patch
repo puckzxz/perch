@@ -1,9 +1,11 @@
 --- a/gpui-pre/src/app.rs
 +++ b/gpui-pre/src/app.rs
-@@ -1400,6 +1400,18 @@
+@@ -1398,6 +1398,18 @@
+     /// See [`App::set_cursor_hide_mode`].
+     pub fn is_cursor_visible(&self) -> bool {
          self.platform.is_cursor_visible()
-     }
- 
++    }
++
 +    /// PERCH PATCH: hide the cursor until the mouse next moves over one of
 +    /// the app's windows.
 +    ///
@@ -14,11 +16,9 @@
 +    /// cursor again on the first move, as it does after typing.
 +    pub fn hide_cursor_until_mouse_moves(&self) {
 +        self.platform.hide_cursor_until_mouse_moves();
-+    }
-+
+     }
+ 
      /// Returns whether non-essential animations (e.g. loading spinners) should
-     /// be rendered in a static state instead of animating.
-     pub fn reduce_motion(&self) -> bool {
 --- a/gpui-pre/src/platform.rs
 +++ b/gpui-pre/src/platform.rs
 @@ -1803,6 +1803,26 @@
@@ -87,7 +87,66 @@
  /// A sprite atlas for windows without a GPU. It hands out uniquely identified
 --- a/gpui-pre/src/window.rs
 +++ b/gpui-pre/src/window.rs
-@@ -3972,7 +3972,24 @@
+@@ -1226,6 +1226,8 @@
+     pub(crate) display_observers: SingleSubscriberSet<AnyObserver>,
+     is_resizable: bool,
+     is_minimizable: bool,
++    // PERCH PATCH: Mac floating panels track the pointer independently of focus.
++    tracks_mac_panel_hover: bool,
+     sprite_atlas: Arc<dyn PlatformAtlas>,
+     text_system: Rc<WindowTextSystem>,
+     text_rendering_mode: Rc<Cell<TextRenderingMode>>,
+@@ -1669,6 +1671,9 @@
+             use_display_p3,
+         } = options;
+ 
++        // PERCH PATCH: Keep this policy after passing the window kind to the platform.
++        let tracks_mac_panel_hover =
++            cfg!(target_os = "macos") && kind == crate::WindowKind::Floating;
+         let initial_window_title = titlebar
+             .as_ref()
+             .and_then(|titlebar| titlebar.title.clone());
+@@ -2357,6 +2362,8 @@
+             display_observers: SingleSubscriberSet::new(),
+             is_resizable,
+             is_minimizable,
++            // PERCH PATCH
++            tracks_mac_panel_hover,
+             sprite_atlas,
+             text_system,
+             text_rendering_mode: cx.text_rendering_mode.clone(),
+@@ -3207,17 +3214,24 @@
+ 
+     /// Returns whether this window is considered to be the window
+     /// that currently owns the mouse cursor.
+-    /// On mac, this is equivalent to `is_window_active`.
++    /// On macOS, regular windows use `is_window_active`. Floating panels
++    /// track the pointer even when another application is active.
++    // PERCH PATCH
+     pub fn is_window_hovered(&self) -> bool {
+-        if cfg!(any(
+-            target_os = "windows",
+-            target_os = "linux",
+-            target_os = "freebsd"
+-        )) {
++        if self.tracks_window_hover() {
+             self.hovered.get()
+         } else {
+             self.is_window_active()
+         }
++    }
++
++    // PERCH PATCH
++    fn tracks_window_hover(&self) -> bool {
++        cfg!(any(
++            target_os = "windows",
++            target_os = "linux",
++            target_os = "freebsd"
++        )) || self.tracks_mac_panel_hover
+     }
+ 
+     /// Toggle zoom on the window.
+@@ -3972,7 +3986,20 @@
              tooltip_element = self.prepaint_tooltip(cx);
          }
  
@@ -98,13 +157,9 @@
 +        // pointer crossed the edge and every `.hover()` / `group_hover` style
 +        // there stayed lit until the pointer came back. The leave refreshes
 +        // the window, so this frame clears them; the next mouse event
-+        // re-tests from its own position (`dispatch_mouse_event`). Only where
-+        // `hovered` is tracked: on macOS `is_window_hovered` means active.
-+        let pointer_left = cfg!(any(
-+            target_os = "windows",
-+            target_os = "linux",
-+            target_os = "freebsd"
-+        )) && !self.hovered.get();
++        // re-tests from its own position (`dispatch_mouse_event`).
++        // PERCH PATCH: Mac floating panels also clear hover when the pointer exits.
++        let pointer_left = self.tracks_window_hover() && !self.hovered.get();
 +        self.mouse_hit_test = if pointer_left {
 +            HitTest::default()
 +        } else {
@@ -113,7 +168,7 @@
  
          // Now actually paint the elements.
          #[cfg(feature = "profiler")]
-@@ -5421,6 +5438,40 @@
+@@ -5421,6 +5448,40 @@
          });
      }
  
@@ -154,3 +209,28 @@
      /// Removes an image from the sprite atlas.
      pub fn drop_image(&mut self, data: Arc<RenderImage>) -> Result<()> {
          for frame_index in 0..data.frame_count() {
+@@ -6000,6 +6061,24 @@
+             }
+             PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
+         };
++
++        // PERCH PATCH: Redraw a Mac floating panel at the pointer boundary,
++        // even when its player is paused and another app owns the keyboard.
++        if self.tracks_mac_panel_hover {
++            let hovered = match &event {
++                PlatformInput::MouseMove(_)
++                | PlatformInput::MouseDown(_)
++                | PlatformInput::MouseUp(_)
++                | PlatformInput::Scroll(_) => {
++                    Bounds::new(Point::default(), self.viewport_size).contains(&self.mouse_position)
++                }
++                PlatformInput::MouseExited(_) => false,
++                _ => self.hovered.get(),
++            };
++            if self.hovered.replace(hovered) != hovered {
++                self.refresh();
++            }
++        }
+ 
+         if let Some(any_mouse_event) = event.mouse_event() {
+             self.dispatch_mouse_event(any_mouse_event, cx);

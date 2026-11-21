@@ -53,7 +53,7 @@ ureq = { version = "3", features = ["json"] }
 # decoded frames for its effects. Each crate names the features it uses.
 image = { version = "0.25", default-features = false }
 
-# gpui is vendored, patched, in `vendor/gpui-pre` and `vendor/gpui-pre-windows`.
+# gpui is vendored, patched, in `vendor/gpui-pre` and its macOS and Windows backends.
 #
 # The video atlas leak was the reason to vendor it at all, on gpui 0.2.2.
 # `DirectXAtlas::allocate` looks for free space in *every* atlas texture it has,
@@ -77,7 +77,7 @@ image = { version = "0.25", default-features = false }
 #
 #  1. A texture created oversized is marked dedicated to the one image it was
 #     sized for, and skipped when scanning for room. That is the 43.7 GB. In
-#     gpui-pre-windows; its Metal half is with 9 and 11, below.
+#     gpui-pre-windows; its Metal half is listed below.
 #  5. `PlatformAtlas::update` and `Window::update_image` - overwrite a tile's
 #     pixels in place. `get_or_insert_with` is insert-once, so without this a
 #     video frame can only reach the GPU by minting a new key, which means a
@@ -88,17 +88,18 @@ image = { version = "0.25", default-features = false }
 #     Windows reports the leave only as the window's `hovered` flag, with no
 #     mouse event, so the last position stayed hit and a sidebar row (or any
 #     `.hover()` style) stayed lit until the pointer came back. Not upstream.
+#  9. The Mac backend enables gpui-pre-apple's `runtime_shaders` feature,
+#     so Perch builds with the macOS SDK alone and compiles Metal shaders
+#     when a window opens. It also enables `font-kit` for Core Text.
+# 11. A macOS floating panel stays visible and tracks pointer input while
+#     another app has focus. Its AppKit setup lives in gpui-pre-macos and its
+#     hover state uses the same hit-test rule as fix 7 in gpui-pre.
 # 12. `App::hide_cursor_until_mouse_moves`: the platform's call, made public.
 #     gpui-pre has no `CursorStyle::None`, which a player used to hide a
 #     pointer left still on its picture, and otherwise hides the cursor only
 #     itself, on a key press.
 #
-# Not carried yet, and macOS is without them until they are: 9 (shader source
-# compiled at runtime when Xcode's Metal Toolchain is missing, which gpui-pre
-# has only as the `runtime_shaders` feature), 11 (macOS floating windows as
-# nonactivating panels that track the pointer while another app has focus) and
-# the Metal half of 1. Their home is `gpui-pre-apple` and `gpui-pre-macos`,
-# which are not vendored yet.
+# Not carried yet: the Metal half of 1, in gpui-pre-apple.
 #
 # `scripts/verify-vendor.sh` downloads each crate from crates.io and verifies
 # that applying its patch recreates the vendored tree, and that each fix is
@@ -110,6 +111,7 @@ image = { version = "0.25", default-features = false }
 # fixes, then switch.
 [patch.crates-io]
 gpui-pre = { path = "vendor/gpui-pre" }
+gpui-pre-macos = { path = "vendor/gpui-pre-macos" }
 gpui-pre-windows = { path = "vendor/gpui-pre-windows" }
 
 # Release codegen with symbols, for profilers.

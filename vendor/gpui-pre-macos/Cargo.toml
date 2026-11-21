@@ -105,6 +105,8 @@ version = "0.3.34"
 
 [target.'cfg(target_os = "macos")'.dependencies.gpui_apple]
 version = "=0.3.12"
+# PERCH PATCH: Enable real text rendering and compile shaders at runtime.
+features = ["font-kit", "runtime_shaders"]
 package = "gpui-pre-apple"
 
 [target.'cfg(target_os = "macos")'.dependencies.gpui_util]
