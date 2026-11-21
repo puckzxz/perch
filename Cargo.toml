@@ -58,7 +58,7 @@ ureq = { version = "3", features = ["json"] }
 # decoded frames for its effects. Each crate names the features it uses.
 image = { version = "0.25", default-features = false }
 
-# gpui is vendored, patched, in `vendor/gpui-pre` and its macOS and Windows backends.
+# gpui is vendored in `vendor/gpui-pre` and its Windows and Apple backends.
 #
 # The video atlas leak was the reason to vendor it at all, on gpui 0.2.2.
 # `DirectXAtlas::allocate` looks for free space in *every* atlas texture it has,
@@ -81,8 +81,8 @@ image = { version = "0.25", default-features = false }
 # and 10 (`start_window_move` on macOS). What is carried now:
 #
 #  1. A texture created oversized is marked dedicated to the one image it was
-#     sized for, and skipped when scanning for room. That is the 43.7 GB. In
-#     gpui-pre-windows; its Metal half is listed below.
+#     sized for, and skipped when scanning for room. That is the 43.7 GB.
+#     In gpui-pre-windows and gpui-pre-apple.
 #  5. `PlatformAtlas::update` and `Window::update_image` - overwrite a tile's
 #     pixels in place. `get_or_insert_with` is insert-once, so without this a
 #     video frame can only reach the GPU by minting a new key, which means a
@@ -104,8 +104,6 @@ image = { version = "0.25", default-features = false }
 #     pointer left still on its picture, and otherwise hides the cursor only
 #     itself, on a key press.
 #
-# Not carried yet: the Metal half of 1, in gpui-pre-apple.
-#
 # `scripts/verify-vendor.sh` downloads each crate from crates.io and verifies
 # that applying its patch recreates the vendored tree, and that each fix is
 # still in it rather than merely commented.
@@ -116,6 +114,7 @@ image = { version = "0.25", default-features = false }
 # fixes, then switch.
 [patch.crates-io]
 gpui-pre = { path = "vendor/gpui-pre" }
+gpui-pre-apple = { path = "vendor/gpui-pre-apple" }
 gpui-pre-macos = { path = "vendor/gpui-pre-macos" }
 gpui-pre-windows = { path = "vendor/gpui-pre-windows" }
 

@@ -1405,8 +1405,9 @@ gpui-pre no longer needs on Windows; they are kept and say so:
   never saves the window's place.
 - **A frame drawn after the pointer left the window hit-tests nothing**, on
   Windows and Linux: vendored gpui fix 7. gpui hears the leave only as the
-  window's `hovered` flag, never a move (events.rs:395-408); on macOS
-  `is_window_hovered` means active. The gates stay: a tooltip's prepaint
+  window's `hovered` flag, never a move (events.rs:395-408). On macOS,
+  floating panels follow the same hit-test rule from AppKit pointer events.
+  Regular Mac windows use the active-window flag. A tooltip's prepaint
   still tests the last position, and a press on a caption button dragged off
   the window never comes back as a release (events.rs:1090-1101), so
   `caption_button` lights only while `window.is_window_hovered()` and keys
@@ -1457,9 +1458,9 @@ redraws at the video's rate (`crate::stage`, `RootView::video_in_main`);
 (`VideoView::from_stream`); opening, closing and reaching the root only
 through `cx.defer` and `pop_out::to_root` (`root/pop_out.rs`); and the picture
 as the handle it is dragged by (`controls::drag_layer`). Windows sets the
-window level through `os_window`. The vendored macOS `WindowKind::Floating`
-uses a nonactivating AppKit panel and tracks its pointer separately from
-keyboard focus. On macOS the restore position includes the display ID
+window level through `os_window`. Fix 11 in `gpui-pre-macos` opens an AppKit
+nonactivating panel. The shared `gpui-pre` window tracks its pointer separately
+from keyboard focus. On macOS the restore position includes the display ID
 because the bounds are relative to that display. On Windows, crossing
 between the picture (caption) and the bar (client) clears the hovered flag
 until the next mouse move (events.rs:112, 395-408). If the bar blinks for a
@@ -1558,10 +1559,11 @@ every row to never overfilling.
 **gpui is vendored and gpui-component is not.** gpui is `gpui-pre 0.3.12`: a
 snapshot of Zed's gpui, the only form in which anything after 0.2.2 reaches
 crates.io, with each platform's backend in a crate of its own.
-`vendor/gpui-pre` (the shared crate) and `vendor/gpui-pre-windows` (the
-Windows backend) come in through the root `Cargo.toml`'s `[patch.crates-io]`,
-which lists the fixes by number; `gpui-pre-platform` and the other backends
-come from crates.io as they are. `gpui-component 0.10.0` comes from
+`vendor/gpui-pre` contains the shared crate. The root `Cargo.toml` also
+patches `gpui-pre-windows`, `gpui-pre-macos`, and `gpui-pre-apple`. The Mac
+backend owns AppKit windows and input. The Apple crate owns the Metal renderer
+and atlas. `gpui-pre-platform` and the remaining backends come from crates.io.
+`gpui-component 0.10.0` comes from
 crates.io, and `crates/perch/Cargo.toml` pins it exactly because it pins
 gpui-pre exactly: the three move together or not at all. GPUI line numbers
 in these traps refer to the vendored source. A bare `div.rs`, `svg.rs` or
@@ -3107,13 +3109,10 @@ still quarantines the download, and `RUNNING-macos.txt` opens by explaining how
 to clear it. Notarising properly means a paid Apple Developer account, which is
 a decision rather than a task.
 
-**Metal shaders.** GPUI's build script runs `xcrun -sdk macosx metal --version`
-to check whether the selected Xcode can execute the optional Metal compiler.
-A working compiler precompiles the library and reports any shader errors at
-build time. If the compiler is unavailable, GPUI embeds shader source and
-compiles it when a window opens. An explicit `gpui/runtime_shaders` Cargo
-feature also selects that path. After installing the toolchain in the same
-Xcode directory, run `cargo clean -p gpui` to force a new check.
+**Metal shaders.** The vendored Mac backend enables `runtime_shaders` on
+`gpui-pre-apple`. A normal Cargo build embeds the Metal source and compiles
+it when a window opens. The same dependency enables `font-kit`, which gives
+the Mac backend Core Text for labels and chat.
 
 What neither zip carries is libmpv — somebody else's licence to redistribute,
 from an MIT app — or streamlink, which is a Python application. The `RUNNING`

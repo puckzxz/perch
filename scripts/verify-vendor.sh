@@ -166,10 +166,15 @@ crate_gpui_pre_apple() {
   EXPECT_VERSION=0.3.12
   EXPECT_SHA256=a460605ec4e8cbcc9b213462a84b1d6cc3efe4ed8f0e18669659f07b2d5c6aec
   REMOVED=()
-  PATCHED=()
+  PATCHED=(src/metal_atlas.rs)
 }
 
-check_gpui_pre_apple() { :; }
+check_gpui_pre_apple() {
+  needs src/metal_atlas.rs 'size.width > DEFAULT_ATLAS_SIZE.width || size.height > DEFAULT_ATLAS_SIZE.height' \
+    "decides which Metal textures are dedicated to one image"
+  needs src/metal_atlas.rs 'filter(|texture| !texture.dedicated)' \
+    "skips dedicated Metal textures when scanning for room"
+}
 
 # --- The machinery -----------------------------------------------------------
 

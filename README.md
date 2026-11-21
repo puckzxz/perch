@@ -86,9 +86,8 @@ cargo run --release -p perch -- forsen
 Use `--release`. The video path does per-frame format conversion, and a debug
 build is several times slower at it.
 
-On macOS, building from source needs the macOS SDK. When Xcode's optional
-Metal Toolchain is available, Cargo precompiles the shaders. Otherwise, Cargo
-prints a warning and Perch compiles the shaders when a window opens.
+Building from source on macOS needs the macOS SDK. Perch compiles its Metal
+shaders when a window opens, using GPUI's `runtime_shaders` feature.
 
 ### Keyboard
 

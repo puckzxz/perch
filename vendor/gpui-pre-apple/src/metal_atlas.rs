@@ -121,6 +121,8 @@ impl MetalAtlasTextures {
             if let Some(tile) = textures
                 .iter_mut()
                 .rev()
+                // PERCH PATCH: Keep unrelated sprites from pinning oversized textures.
+                .filter(|texture| !texture.dedicated)
                 .find_map(|texture| texture.allocate(size))
             {
                 return Ok(tile);
@@ -146,6 +148,9 @@ impl MetalAtlasTextures {
             height: DevicePixels(16384),
         };
         let size = min_size.min(&MAX_ATLAS_SIZE).max(&DEFAULT_ATLAS_SIZE);
+        // PERCH PATCH: Oversized textures are reserved for one image.
+        let dedicated =
+            size.width > DEFAULT_ATLAS_SIZE.width || size.height > DEFAULT_ATLAS_SIZE.height;
         let texture_descriptor = MTLTextureDescriptor::new();
         // SAFETY: Both dimensions are clamped to the existing 1024..=16384 atlas size limits.
         unsafe {
@@ -199,6 +204,8 @@ impl MetalAtlasTextures {
             allocator: etagere::BucketedAtlasAllocator::new(size_to_etagere(size)),
             metal_texture,
             live_atlas_keys: 0,
+            // PERCH PATCH
+            dedicated,
         };
 
         Ok(texture_list.textures[index].insert(atlas_texture))
@@ -219,6 +226,8 @@ struct MetalAtlasTexture {
     allocator: BucketedAtlasAllocator,
     metal_texture: Retained<ProtocolObject<dyn MTLTexture>>,
     live_atlas_keys: u32,
+    // PERCH PATCH
+    dedicated: bool,
 }
 
 impl MetalAtlasTexture {
