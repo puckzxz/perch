@@ -420,8 +420,10 @@ the browse page brings the watch page up with it.
 
 Drag the pop-out by its picture and resize it from its edges. The bar has
 playback and volume controls, a seek row or live timeline, **Bring back**,
-and **Close**. On macOS, the bar responds while another app keeps keyboard
-focus. When the pop-out has keyboard focus, the player shortcuts work there.
+and **Close**. A pop-out opens without taking the keyboard: keys keep going
+to the main window until you click the pop-out. On macOS, the bar responds
+while another app keeps keyboard focus. When the pop-out has keyboard focus,
+the player shortcuts work there.
 
 The pop-out's window close button brings the pane back. The bar's **Close**
 stops the stream and closes the pane. Closing Perch closes every pop-out.

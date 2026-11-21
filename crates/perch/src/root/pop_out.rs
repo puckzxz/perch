@@ -373,8 +373,13 @@ impl Render for PopOut {
     }
 }
 
-/// Windows needs a normal window to resize and keep a taskbar entry. On
-/// macOS, the floating panel opens without taking keyboard focus.
+/// Windows needs a normal window to resize and keep a taskbar entry; macOS
+/// gets a floating panel. Either opens without taking the keyboard: the key
+/// or the press that popped the pane out was made in the main window, and
+/// the next key belongs there too. A click on the pop-out, or its taskbar
+/// entry, gives it the keys. gpui 0.2.2's Windows backend ignored `focus`,
+/// so a pop-out there was activated as it opened; gpui-pre shows it without
+/// activating it (its windows/window.rs, `SW_SHOWNOACTIVATE`).
 fn pop_out_options(title: SharedString, position: Position, platform: Platform) -> WindowOptions {
     let floating_panel = platform == Platform::MacOs;
     WindowOptions {
@@ -389,7 +394,7 @@ fn pop_out_options(title: SharedString, position: Position, platform: Platform) 
         } else {
             WindowKind::Normal
         },
-        focus: !floating_panel,
+        focus: false,
         is_movable: true,
         is_resizable: true,
         is_minimizable: false,
@@ -724,6 +729,23 @@ mod tests {
             Platform::MacOs,
         );
         assert_eq!(options.kind, WindowKind::Floating);
+        assert!(!options.focus);
+        assert!(options.is_resizable);
+    }
+
+    /// A normal window, so it resizes and keeps its taskbar entry, and one
+    /// that leaves the keyboard with the main window as it opens.
+    #[test]
+    fn windows_pop_out_opens_as_a_normal_window_without_focus() {
+        let options = pop_out_options(
+            SharedString::default(),
+            Position {
+                bounds: Bounds::default(),
+                display_id: None,
+            },
+            Platform::Windows,
+        );
+        assert_eq!(options.kind, WindowKind::Normal);
         assert!(!options.focus);
         assert!(options.is_resizable);
     }

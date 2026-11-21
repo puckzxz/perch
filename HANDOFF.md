@@ -3432,14 +3432,14 @@ None of these is being worked on; all of them are real.
 30. **The pop-out is offered on Windows and macOS.** The Mac panel stays
     above normal windows. Its controls use AppKit's background pointer
     tracking. `pop_out::offered` gates the feature by platform.
-31. **A Windows pop-out takes the keyboard when it opens, and has a taskbar
-    entry.** It asks for the focus (`pop_out_options`), so the new window is
-    activated and the keys go with it. On gpui 0.2.2 there was no choice:
-    its Windows backend ignored `WindowOptions.focus`. gpui-pre honours it
-    (windows/window.rs:580-584), so opening one without taking the keys is
-    now a matter of asking, and has not been done yet. It is an ordinary
-    window, with a taskbar and `Alt+Tab` entry, because that is how the
-    keyboard gets back to it. Making it a tool window would take both away.
+31. **A Windows pop-out has a taskbar entry.** It is an ordinary window, with
+    a taskbar and `Alt+Tab` entry, because that is one of the two ways the
+    keyboard gets to it; a click on it is the other. It no longer takes the
+    keyboard as it opens: it asks not to (`pop_out_options`, `focus: false`),
+    which gpui-pre honours on Windows (windows/window.rs:580-584) where
+    0.2.2 ignored it, so the keys stay with the main window until the
+    pop-out is clicked. Making it a tool window would take both entries
+    away.
 32. **Panes maximized away still decode**, their rendition and their sound,
     so a maximize saves only what drawing them cost (their frames are
     rendered small and thrown away, `VideoStream::set_offstage`): the
