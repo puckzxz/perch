@@ -263,11 +263,6 @@ fn main() {
     gpui_platform::application()
         .with_assets(assets::Icons)
         .run(move |cx: &mut App| {
-            // gpui hides the pointer on a key that types or runs an action,
-            // unless told not to. Perch's pointer goes when it is left still
-            // on a picture (`VideoView`'s rest), and a key leaves it where it
-            // is, so `M` or `Space` does not take it away.
-            cx.set_cursor_hide_mode(gpui::CursorHideMode::Never);
             // Must come before any gpui-component widget is constructed.
             gpui_component::init(cx);
             // And this must come after it: `init` installs the palette this
@@ -287,6 +282,14 @@ fn main() {
                     }
                 })
                 .detach();
+                // gpui hides the cursor on a key that types or runs an
+                // action. Its Mac backend takes it away wherever it is, over
+                // another app's window too (`NSCursor
+                // setHiddenUntilMouseMoves:` belongs to no window), so here a
+                // key leaves it alone. Windows hides it only over Perch, and
+                // keeps gpui's default. A pointer left still on a picture is
+                // hidden either way: `VideoView` asks the platform itself.
+                cx.set_cursor_hide_mode(gpui::CursorHideMode::Never);
             }
 
             let (bounds, display_id) = initial_window_bounds(placement, cx);

@@ -2723,6 +2723,24 @@ what happens when the settings sheet closes and takes its buttons with it.
 That listener fires only when the path empties, not when focus moves, so it
 cannot loop. Without either half, every binding is dead and nothing says so.
 
+**A key hides the cursor on Windows and not on macOS.** gpui-pre hides the
+cursor on a key that types, and on one that a binding turns into an action,
+and shows it again on the next move of the mouse
+(`CursorHideMode::OnTypingAndAction`, its default). Where the pointer has to
+be differs, and that decided it. On Windows it goes only while it is over one
+of the app's windows (windows/platform.rs:1000-1019 asks each window's
+`hovered`), and the user chose to keep that on 21 November 2026. On macOS it
+goes wherever it is, over another app's window too: the backend calls
+`NSCursor setHiddenUntilMouseMoves:` (macos/platform.rs:1190-1196), which
+belongs to no window. Seen on a Mac the same day, with `Space` pressed in
+Perch and the pointer over a second app, and the user chose to turn it off
+there: `main.rs` sets `CursorHideMode::Never` on macOS. The upgrade had first
+turned it off everywhere, since gpui 0.2.2 never hid it. The mode only decides
+what a key does. A pointer left still on a picture is hidden on both, because
+`VideoView` asks the platform itself (`App::hide_cursor_until_mouse_moves`),
+and either hide ends on the first move. Nothing posted at the window shows
+it, only a real pointer over it.
+
 **A pop-out has a focus of its own, and keys of its own.** Every gpui window
 has its own focus and dispatch tree, and a handle no element of a window
 tracks reaches only that window's outermost node (window.rs,

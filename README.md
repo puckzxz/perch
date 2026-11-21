@@ -98,7 +98,9 @@ picture for three seconds and the bar goes again, and the cursor with it —
 after a double-click into fullscreen the pointer is on the picture, and a
 window left on one stream should be just the stream. The first move brings
 both back. A paused picture keeps its bar, and so does a pointer resting on
-the bar itself or a menu left open. The rail button, Browse, the search box
+the bar itself or a menu left open. On Windows a key hides the cursor as
+well, while it is over Perch: `Space`, `M` or anything typed into a box takes
+it away until the mouse next moves. The rail button, Browse, the search box
 and settings sit in the bar across the top of the window, and back and
 forward at the top of the browse page. None of them is any use when you are
 not holding the mouse.
