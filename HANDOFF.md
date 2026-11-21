@@ -1128,22 +1128,28 @@ fields a build does not know would take a `#[serde(flatten)]` catch-all on
 
 ### GPUI / gpui-component
 
-**`gpui-component 0.5.1` differs from its main-branch docs.** Read its source
-in `~/.cargo/registry/src/*/gpui-component-0.5.1/` rather than the online
-guide. Known differences: masking is `InputState::masked(bool)` not
-`Input::content_type`; `selected_index(cx)` takes the app context.
+**Read `gpui-component 0.10.0`'s source, not the online guide**, which
+follows its main branch. Most of each widget now lives in `gpui-base`, which
+gpui-component re-exports, so there are two trees to read:
+`~/.cargo/registry/src/*/gpui-component-0.10.0/` and `gpui-base-0.10.0/`. A
+field is masked with `InputState::masked(bool)` or shown with a toggle by
+`Input::mask_toggle()`; a `Select`'s `selected_index(cx)` takes the app
+context; a scrollbar's `ScrollbarShow` and `.scrollbar_show(..)` of 0.5.1 are
+`ScrollbarMode` and `.mode(..)`; and a slider says when a drag ends as well
+(`SliderEvent::Release`), which the volume takes as one more change.
 
 **An overlay does not block input just by covering something.** GPUI hit-tests
 into a *flat, z-ordered list* and every overlapping element is collected, not
 just the topmost — `Frame::hit_test` pushes every hitbox containing the pointer
-and only stops early on `HitboxBehavior::BlockMouse` (window.rs:775-796). Click
+and only stops early on `HitboxBehavior::BlockMouse` (window.rs:1169-1190). Click
 handling is synthesised from a down/up pair and never calls `stop_propagation`
-on success (div.rs:2136-2245), so two stacked elements that both have `on_click`
+on success (div.rs:3019-3189), so two stacked elements that both have `on_click`
 both fire. That is why clicking "stop all" also opened whichever browse card was
 behind it, and why a click inside the settings panel reached the grid.
 
 The fix is one flag, not a handler: `.occlude()` (`HitboxBehavior::BlockMouse`)
-or `.block_mouse_except_scroll()`, both on `InteractiveElement` (div.rs:998-1012),
+or `.block_mouse_except_scroll()`, both on `InteractiveElement`
+(div.rs:1298-1312),
 so they work on a bare `Div` with no `.id()`. Because hit testing is flat and
 knows nothing about the element tree, an occluder blocks its own *ancestors*
 too — which is exactly what makes the modal pattern work.
@@ -1175,11 +1181,15 @@ Worth keeping in mind:
   on it a caption (the comment in `control_bar`).
 - **On Windows the wheel's modifiers are read when the message arrives**
   (`current_modifiers`, `GetKeyState` in gpui's windows/events.rs), so
-  `ScrollWheelEvent::modifiers.alt` is true with `Alt` held, over a client
-  area or a caption alike, and a wheel there always arrives as
-  `ScrollDelta::Lines`, never pixels; `crate::wheel` leans on both and says
-  how. `Alt` let go after the wheel does not put the window in its menu loop:
-  gpui answers every `WM_SYSKEYUP` itself. A middle press on a caption
+  `ScrollEvent::modifiers.alt` is true with `Alt` held, over a client area or
+  a caption alike, and a mouse wheel there always arrives as
+  `ScrollDelta::Lines`, never pixels (events.rs:586 and 631); `crate::wheel`
+  leans on both and says how. A precision touchpad is another matter since
+  gpui-pre: its pan comes through direct manipulation, in pixels
+  (direct_manipulation.rs:320-334), where 0.2.2 heard it as fractions of a
+  line. `crate::wheel` adds up either; read from source, and not tried on a
+  touchpad. `Alt` let go after the wheel does not put the window in its menu
+  loop: gpui answers every `WM_SYSKEYUP` itself. A middle press on a caption
   arrives as `WM_NCMBUTTONDOWN`, which gpui dispatches as an ordinary
   `MouseDown`, and Windows drags by the left button only.
 
@@ -1192,20 +1202,20 @@ reads `window.mouse_position()` directly, so the video and pane probes keep
 working through any occluder.
 
 **An invisible element still blocks the pointer if it occludes.** `invisible()`
-returns from paint before any listener is registered (div.rs:1809), but the
-hitbox went in during prepaint (div.rs:1676-1680), `BlockMouse` and all. So a
+returns from paint before any listener is registered (div.rs:2589), but the
+hitbox went in during prepaint (div.rs:2441-2445), `BlockMouse` and all. So a
 faded-out overlay that occludes goes on swallowing presses where nothing is
 drawn. Occlude only while visible, as the player's control bar and
 `motion::Fade::apply` do.
 
 **An occluder hides presses from the root's `track_focus`**, which is
-hover-gated like any mouse-down listener (div.rs:2025-2037), so whatever
+hover-gated like any mouse-down listener (div.rs:2828-2840), so whatever
 occludes over the watch page has to hand the keys back itself, or a cursor
 left in the search box keeps them and `Space` types a space. The control bar
 and the player's menus do it with `capture_any_mouse_down`
 (`VideoView::return_keys`), in the capture phase on purpose: gpui-component's
 `Slider` thumb calls `stop_propagation` on its press
-(gpui-component-0.5.1 slider.rs:464-466), so a bubble-phase handler on the bar
+(gpui-base-0.10.0 slider.rs:1054), so a bubble-phase handler on the bar
 never hears a drag of the volume.
 
 **A press on a pane takes the keys, except into a text box in it.** Every
@@ -1213,7 +1223,7 @@ pane action takes focus back for the root first (`RootView::on_pane_action`),
 and a press anywhere in a pane is one (`PaneAction::Activate`, from the
 cell's bubble-phase `on_mouse_down`). A chat's composer, a text box inside
 the pane, hears the press first, and its `track_focus` marks it handled
-(`window.prevent_default()`, div.rs:2030-2035), so an `Activate` that arrives
+(`window.prevent_default()`, div.rs:2833-2838), so an `Activate` that arrives
 with `window.default_prevented()` set still makes the pane active and leaves
 the keys where they went. Nothing else in a pane prevents default today (no
 gpui-component button or checkbox is used); one that did would keep the keys
@@ -1221,10 +1231,10 @@ from the root the same way.
 
 **A menu's rows act on the press, never on a click.** A menu dismisses itself
 with `on_mouse_down_out` on its anchor, which fires in the capture phase when
-the press is outside the anchor's *own* bounds (div.rs:226-236), and a menu
+the press is outside the anchor's *own* bounds (div.rs:263-276), and a menu
 hanging above its button is outside them. So a press on a row closes the menu
 first, and the click gpui would make at the release comes from a frame with
-no row in it (div.rs:2213-2245). The press is dispatched against the frame it
+no row in it (div.rs:3145-3189). The press is dispatched against the frame it
 landed on, so the app's one row, `menu::row` (`crate::menu`, whose module doc
 has the rest), acts in `on_mouse_down`, for every menu: the channel menu, the
 player's, the chat options and a chat row's copy menu all draw their rows
@@ -1235,7 +1245,7 @@ would also reach the picture's double-click.
 
 **The second press of a double-click lands on whatever is there by then.**
 The platform counts a press near the last one as the next of a run by time
-and place alone (windows/window.rs:1049-1060), and hit-tests each against the
+and place alone (windows/window.rs:1320-1331), and hit-tests each against the
 frame on screen. So whatever acts on a press and moves what is under the
 pointer acts only on a run's first press, and a window-level guard stops the
 rest of the run in the capture phase, which also leaves its release no click
@@ -1249,7 +1259,7 @@ like every other toggle: a double-click there is two presses of it.
 
 **A toggle that a press outside also closes has to know that press closed
 it.** A chat's viewer card closes on a press outside it (`on_mouse_down_out`,
-in the capture phase, div.rs:226-236) and on its person's name pressed
+in the capture phase, div.rs:263-276) and on its person's name pressed
 again, so a press on the name closes the card first and the name's own
 listener, in the bubble phase, would open it again. So the close notes whose
 card it was (`chat::viewer_card::Cards::press_outside`), and the name,
@@ -1261,8 +1271,8 @@ again, not a lost press.
 
 **A tooltip keeps the words it came up with.** gpui builds the tooltip's view
 once, when its delay runs out, keeps it in the element's state, and sets that
-same view on the window every frame the pointer stays (div.rs:1662-1664,
-2279-2316); the builder a later frame hands over is not asked again. So a
+same view on the window every frame the pointer stays (div.rs:2422-2424,
+3248-3292); the builder a later frame hands over is not asked again. So a
 control whose words follow a state it changes keys its element id on that
 state too — the bar's `bar-pause`/`bar-play`, `bar-mute`/`bar-unmute`, the
 chat and fullscreen glyphs, the title bar's Browse (`title-browse*`), the
@@ -1270,12 +1280,14 @@ rail's pin and the gear signed in or not — and the first frame drawn under
 the other id drops the open tooltip with the rest of the old element's
 state. `controls::tip` is the one builder for a tooltip of plain words:
 `.tooltip()` takes a builder, not text, and only once per element
-(div.rs:536-549).
+(div.rs:720-733).
 
 **A tooltip outlives a pointer that leaves the window**, since it checks it is
-still wanted against the last position gpui saw (div.rs:2293-2301), which a
-pointer leaving never updates; fix 7 (below) does not reach that check.
-Taking the builder away clears it in prepaint (div.rs:1660-1668), so the
+still wanted against the last position gpui saw (div.rs:3266-3275), which a
+pointer leaving never updates; fix 7 (below) does not reach that check. (A
+key press does take one down since gpui-pre: the same check asks
+`last_input_was_keyboard` first.)
+Taking the builder away clears it in prepaint (div.rs:2415-2433), so the
 player's bar gives its tooltips only while `window.is_window_hovered()`
 (`bar::bar_icon`), and a pane's header does the same
 (`watch::header::pane_header`, handed the flag by `watch::page`): the
@@ -1285,9 +1297,9 @@ the band itself. The title bar sits on the window's edge as well and does
 not gate its tooltips yet.
 
 **The clipboard is the app's, not a window's.** Writing it is
-`cx.write_to_clipboard(gpui::ClipboardItem::new_string(..))` (app.rs:1041),
+`cx.write_to_clipboard(gpui::ClipboardItem::new_string(..))` (app.rs:1880),
 which needs no focus and no window, and opening a link in the browser is
-`cx.open_url` (app.rs:1078). Perch writes the clipboard in one place,
+`cx.open_url` (app.rs:1957). Perch writes the clipboard in one place,
 `RootView::copy`, followed by the toast that says it did: `Copy link` from
 a pane's menu or the palette, and a chat row's copy menu, whose chat asks the root
 (`ChatViewEvent::Copy`) rather than writing it itself. Each platform has its
@@ -1296,14 +1308,25 @@ leg and has never been run for Perch.
 
 **The right button arrives as itself.** Windows' `WM_RBUTTONDOWN` and
 `WM_RBUTTONUP` are dispatched as `MouseDown`/`MouseUp` with
-`MouseButton::Right` (gpui's windows/events.rs:82-88), so
+`MouseButton::Right` (gpui's windows/events.rs:136-142), so
 `on_mouse_down(MouseButton::Right, ..)` hears a right press, bubbling from
 the element under the pointer outward like a left one, and the root's
-`track_focus` hears it too (it takes any button, div.rs:2025-2037). A click,
-though, is only ever made from the left button (div.rs:2139), so a link's
-`on_click` never fires on a right press. The chat's copy menu leans on the
-order: a link or an emote notes that it was pressed, and its row, which
-hears the same press next, opens the menu about it (`chat::copy_menu`).
+`track_focus` hears it too (it takes any button, div.rs:2828-2840). A click
+that `on_click` hears, though, is only ever made from the left button
+(div.rs:3177-3181), so a link's `on_click` never fires on a right press.
+gpui-pre does make a click of the other buttons, but only for an element's
+`on_aux_click` listeners (div.rs:3023, 3182-3186), and Perch has none. The
+chat's copy menu leans on the order: a link or an emote notes that it was
+pressed, and its row, which hears the same press next, opens the menu about
+it (`chat::copy_menu`).
+
+**A focused element with `on_click` is clicked by `Enter` and `Space`.** New
+in gpui-pre: an element that tracks focus and has click listeners turns a
+clean press and release of either key, while it holds the focus, into a
+`ClickEvent::Keyboard` for those same listeners (div.rs:3077-3141). The two
+elements of Perch that track focus, the root's and a pop-out's, have no
+`on_click`, so `Space` is still only `TogglePlayback`. Give either one an
+`on_click` and `Space` would pause and click.
 
 **`deferred` leaves every clip behind.** A deferred element is prepainted
 and painted after the whole tree, with the element offset it was given but
@@ -1327,10 +1350,10 @@ takes the presses meant for the modal; a press on the gear needs nothing,
 since a menu's own press-outside closes it.
 
 **A notify from a probe asks for no frame.** A `canvas` probe's first
-closure runs in prepaint (`DrawPhase::Prepaint`, window.rs:2014), and there
+closure runs in prepaint (`DrawPhase::Prepaint`, window.rs:3905), and there
 `cx.notify()` only adds the view to `dirty_views`: `WindowInvalidator::
 invalidate_view` sets `dirty`, which is what asks the platform for a frame,
-only in `DrawPhase::None` (window.rs:116-126). The frame being drawn has
+only in `DrawPhase::None` (window.rs:171-196). The frame being drawn has
 already been rendered from the state before the probe spoke, so a probe
 that changes what `render` would draw, and only notifies, leaves the old
 drawing up until something else happens to draw: under a video that is the
@@ -1338,7 +1361,7 @@ next decoded frame, but on Following, on a paused pane, or anywhere nothing
 moves, it is never. The rail's preview card stayed up over the page after
 the pointer left its row this way. A probe that changes what is drawn asks
 with `window.request_animation_frame()` instead, which queues a notify of
-the current view for the next frame callback (window.rs:1654), outside
+the current view for the next frame callback (window.rs:2942), outside
 drawing, where it does schedule one (`sidebar::preview_probe`, a viewer
 card's veil probe). A probe whose view is redrawn every frame anyway, a playing
 player's, gets away with a notify, which is why the trap stayed hidden.
@@ -1350,67 +1373,78 @@ wrap the window's first view or overlays have nowhere to render.
 back piece by piece.** `TitlebarOptions::appears_transparent` hides the
 platform's bar; `root/title_bar.rs` draws the replacement, and its module doc
 and `controls::caption_button`'s carry the full reasons. Every one of these
-fails silently, and each was read out of gpui 0.2.2's source:
+fails silently, and each was read out of gpui 0.2.2's source and read again
+in gpui-pre 0.3.12's, which is what the line numbers are now. Two of them
+gpui-pre no longer needs on Windows; they are kept and say so:
 
-- **The bar must `.occlude()`.** The root's `track_focus` calls
-  `prevent_default` on every press it hears (div.rs:2025-2037), and the
-  Windows backend reports a non-client press whose default was prevented as
-  handled (events.rs:976), so without the occluder a drag, a double-click to
-  maximise and the top resize edge all do nothing.
+- **The bar `.occlude()`s, and gpui-pre no longer needs it to.** The root's
+  `track_focus` calls `prevent_default` on every press it hears
+  (div.rs:2828-2840), and gpui 0.2.2's Windows backend reported a non-client
+  press whose default was prevented as handled, so without the occluder a
+  drag, a double-click to maximise and the top resize edge all did nothing.
+  gpui-pre counts such a press as handled only when something stops its
+  propagation (events.rs:1081). The occluder stays because nobody has
+  watched the bar without it.
 - **`WindowControlArea::Drag` goes only on an empty spacer** that is a sibling
   of every control, never an ancestor: the hit test answers with the first
   window-control hitbox in paint order, parent before child
-  (window.rs:1138-1141).
-- **The drag and caption areas start `layout::drag_top` down.** gpui asks for
-  a window control before it asks Windows about the frame, so an area reaching
-  y=0 takes the top resize edge with it. Maximised it is 0: gpui skips its
-  `HTTOP` band there (events.rs:918).
+  (window.rs:2258-2261).
+- **The drag and caption areas start `layout::drag_top` down, and gpui-pre no
+  longer needs that either.** gpui asks for a window control before it looks
+  at the frame, and on 0.2.2 an area reaching y=0 took the top resize edge
+  with it. gpui-pre still asks first, then lets the resize band win: in the
+  top frame's thickness of a resizable window that is not maximised it
+  answers `HTTOP` whatever control lies there (events.rs:966-1032). The inset
+  stays for the reason the occluder does. Maximised it is 0, and gpui has no
+  `HTTOP` band there.
 - **Caption buttons carry no handlers.** No `on_click`, no `stop_propagation`,
-  no focus: anything that handles the press stops the platform acting on it,
-  by the same events.rs:976. Nor `zoom_window`, which maximises but never
+  no focus: a press whose propagation is stopped is one the platform never
+  acts on (events.rs:1081), and on 0.2.2 a prevented default did the same,
+  which taking focus does. Nor `zoom_window`, which maximises but never
   restores, or `remove_window`, which skips `on_window_should_close` and so
   never saves the window's place.
 - **A frame drawn after the pointer left the window hit-tests nothing**, on
   Windows and Linux: vendored gpui fix 7. gpui hears the leave only as the
-  window's `hovered` flag, never a move (events.rs:318-327); on macOS
+  window's `hovered` flag, never a move (events.rs:395-408); on macOS
   `is_window_hovered` means active. The gates stay: a tooltip's prepaint
   still tests the last position, and a press on a caption button dragged off
-  the window never comes back as a release (events.rs:986-997), so
+  the window never comes back as a release (events.rs:1090-1101), so
   `caption_button` lights only while `window.is_window_hovered()` and keys
   its id on the flag. The flag is one bit for the window, so a pointer that
   crosses onto a caption button in one move and stops may leave it dark until
   it moves again. Read from source; not yet watched with the real cursor.
 - **Nothing that takes a press of its own sits in a drag area**, the search
   box least of all: a press there is the platform's, and the moves after it
-  arrive with no button held (events.rs:938-942), so drag-selecting the
+  arrive with no button held (events.rs:1046-1050), so drag-selecting the
   box's text would break. A sibling of the spacer can still run on under it
   in a narrow window, so the box's group is `overflow_hidden`, which clips
-  hit testing as well as painting (window.rs:779). While a modal is up the
+  hit testing as well as painting (window.rs:1173). While a modal is up the
   group sits under an `occlude`d veil and the keys are kept off the box
   (`title_bar_leading`), so nothing in the bar changes the page behind a
   modal; the gear, the drag strip and the caption buttons stay live.
 - **Modals and toasts live in the root's id-less content wrapper**, under the
   bar and clipped, because `block_mouse_except_scroll` does not take a drag
-  area or a caption button out of the hit test (window.rs:775-796): a toast
+  area or a caption button out of the hit test (window.rs:1169-1190): a toast
   over the spacer would drag the window. The clip bounds hit testing as well
   as painting; tooltips and a text box's menu are drawn after the tree and
   still reach past it. The comment on the wrapper in `RootView::render` has
   the rest.
 - **A drag that must survive the pointer leaving its element listens on the
   window.** An element's `on_mouse_move`/`on_mouse_up` hear only the pointer
-  over its own unblocked hitbox (div.rs:173-187, 263-273), so the divider
+  over its own unblocked hitbox (div.rs:210-224, 303-313), so the divider
   drag (`RootView::drag_listeners`) and the mouse's side buttons
   (`RootView::side_buttons`) are heard by a hitbox-less `canvas` that
   registers `window.on_mouse_event`.
-- **An `svg` paints only with its own `text_color`** (svg.rs:110) and inherits
+- **An `svg` paints only with its own `text_color`** (svg.rs:150-182) and inherits
   none, so a glyph never given one draws nothing. `controls::icon_button`,
   `caption_button` and `fold` colour the glyph themselves and lift it with
   `group_hover`.
 - **The Mac drag spacer hands presses to AppKit.** Windows uses the
   `window_control_area` hitbox. On macOS, a left mouse-down in the spacer calls
   `start_window_move` or `titlebar_double_click`, depending on the click count.
-  The vendored Mac implementation of `start_window_move` reads the current
-  AppKit event synchronously because the window drag needs the original press.
+  gpui-pre's own Mac implementation of `start_window_move` reads the current
+  AppKit event synchronously because the window drag needs the original press;
+  on 0.2.2 that was a vendored fix (10).
 
 **A pop-out is a second window, and a player may be drawn by only one window
 at a time.** A pane popped out (`root/pop_out.rs`) is the same `VideoView` in
@@ -1428,7 +1462,7 @@ uses a nonactivating AppKit panel and tracks its pointer separately from
 keyboard focus. On macOS the restore position includes the display ID
 because the bounds are relative to that display. On Windows, crossing
 between the picture (caption) and the bar (client) clears the hovered flag
-until the next mouse move (events.rs:58, 318-327). If the bar blinks for a
+until the next mouse move (events.rs:112, 395-408). If the bar blinks for a
 frame, hold it up for `MOTION_HOVER` in the pop-out alone.
 
 Dragging a pane's header onto another pane, which swaps the two, is gpui's
@@ -1438,7 +1472,7 @@ is made to work: the drag is the app's, so it is drawn as nothing and the
 root keeps which pane is carried; a drop needs an occluding layer of its
 own, mounted only for the drag; and a click that ends a drag is ignored.
 **Windows has no grab cursor.** gpui maps `OpenHand` and `ClosedHand` to the
-arrow there (windows/util.rs:113-135), so the target's outline is all there
+arrow there (windows/util.rs:93-118), so the target's outline is all there
 is, and it is enough.
 
 **Neither `group_hover` nor `on_hover` means "the pointer is over this."** Both
@@ -1451,7 +1485,7 @@ let is_hovered = has_mouse_down.borrow().is_none()
 ```
 
 `cx.has_active_drag()` is *app-wide* — it reads `App::active_drag`, one value
-for every window (app.rs:1939-1941) — and gpui-component's `Slider` drags via
+for every window (app.rs:3014-3016) — and gpui-component's `Slider` drags via
 `on_drag`, so touching the volume slider makes every hover listener in every
 window report false, pop-outs included, and the one whose control bar holds
 that slider too. And because `on_hover` only fires on a `MouseMoveEvent`,
@@ -1489,10 +1523,13 @@ renditions, and stayed blank. Placed instead — the box `relative`, chat in
 an `absolute().inset_0()` layer, which takes no part in measuring its parent
 — it never did (the comment in `watch::pane`): blank 3 runs out of 3 before,
 0 out of 3 after, alternating builds on one launch-then-widen sequence. The
-cause inside taffy was not traced to a line. The likely candidate is that
-taffy 0.9.0, which gpui 0.2.2 pins, keys its layout cache without the
+cause inside taffy was not traced to a line. The likely candidate was that
+taffy 0.9.0, which gpui 0.2.2 pinned, keys its layout cache without the
 parent's size; taffy 0.12.0's changelog adds it and calls it "necessary for
-correctness". Any other view that fills a flex item by flowing a
+correctness". gpui-pre is on taffy 0.15, so that candidate is gone, but the
+flowed form has not been tried again: the placed layer stays until somebody
+runs the launch-then-widen sequence without it. Any other view that fills
+a flex item by flowing a
 percentage-sized block into it is exposed in the same way: if one shows up
 empty with a healthy parent, place it the same way. The video box sidesteps
 a related problem by making the player a flex item (see the comment on
@@ -1504,9 +1541,11 @@ captured (`TextLayout::layout`), and taffy measures a line more than once a
 layout, at different widths: a later measure that kept the whole line laid
 the whole text over runs cut inside it, and with a flag in a stream title
 (🇨🇳, four bytes a letter) the cut fell inside a character, DirectWrite's run
-slicing panicked (direct_write.rs:595) and perch closed. Vendored gpui fix 8
-(`elements/text.rs`) truncates a fresh copy for each measure; upstream
-stopped mutating the runs after 0.2.2.
+slicing panicked (direct_write.rs:525) and perch closed. Perch carried a fix
+for it on 0.2.2 (8), which truncated a fresh copy for each measure. gpui-pre
+needs none: its text element lends the truncation its runs and takes back a
+copy (text.rs:703-739). If a title with a flag in it ever closes perch
+again, this is where to look first.
 
 **A row of widths cut to fill it adds up in `f32`, and a hair over wraps.**
 A browse row's cards are as wide as the row divided by its columns, and
@@ -1516,10 +1555,20 @@ were cut from, so every row of Following ended in an empty column. A card's
 width is floored to a whole pixel (`browse::card_width`), and a test holds
 every row to never overfilling.
 
-**gpui is vendored and gpui-component is not.** `gpui 0.2.2` comes in from
-`vendor/gpui` through the root `Cargo.toml`'s `[patch.crates-io]`, which lists
-the patches. `gpui-component 0.5.1` comes from crates.io and is pinned by
-`Cargo.lock`. GPUI line numbers in these traps refer to the vendored source.
+**gpui is vendored and gpui-component is not.** gpui is `gpui-pre 0.3.12`: a
+snapshot of Zed's gpui, the only form in which anything after 0.2.2 reaches
+crates.io, with each platform's backend in a crate of its own.
+`vendor/gpui-pre` (the shared crate) and `vendor/gpui-pre-windows` (the
+Windows backend) come in through the root `Cargo.toml`'s `[patch.crates-io]`,
+which lists the fixes by number; `gpui-pre-platform` and the other backends
+come from crates.io as they are. `gpui-component 0.10.0` comes from
+crates.io, and `crates/perch/Cargo.toml` pins it exactly because it pins
+gpui-pre exactly: the three move together or not at all. GPUI line numbers
+in these traps refer to the vendored source. A bare `div.rs`, `svg.rs` or
+`text.rs` is under `vendor/gpui-pre/src/elements`, `window.rs` and `app.rs`
+under `vendor/gpui-pre/src`, and `events.rs`, `windows/window.rs`,
+`windows/util.rs`, `direct_manipulation.rs` and `direct_write.rs` under
+`vendor/gpui-pre-windows/src`.
 
 ### Windows packaging
 
@@ -1547,7 +1596,8 @@ pairs a `conhost.exe` with each child; check for *visible windows*, not for the
 absence of conhost, or you will conclude the fix did not work.
 
 **The icon is an embedded resource**, stamped on by `build.rs` via
-`winresource`, because gpui 0.2.2 has no window-icon API and Windows takes the
+`winresource`, because gpui has no window-icon API on Windows (the `icon` in
+its window options is X11's alone) and Windows takes the
 taskbar and Alt+Tab icons from the executable anyway; the title bar is
 Perch's own and draws none. It needs `rc.exe` from the Windows SDK; a build
 without one warns and produces an icon-less binary rather than failing.
@@ -2090,7 +2140,7 @@ broadcast (`Slot::retried_for`).
 **A toast holds still under the pointer**, every toast while the pointer is
 on any of them, since the stack hangs from the top (`RootView::hold_toasts`,
 `chrome::Countdown`). One probe after the cards reports for them all, which
-relies on gpui prepainting a div's children in order (div.rs:1412-1416).
+relies on gpui prepainting a div's children in order (div.rs:2082-2095).
 
 **A stopped live pane asks what the channel broadcast**:
 `Request::Broadcasts` (`root/broadcasts.rs`), its own request rather than
@@ -2236,7 +2286,7 @@ edge, so `flex_wrap` breaks the line between pieces; `ChatView::render_word`
 has the rules. A word left to shrink below its width (`min_w_0`) and wrap
 inside itself is measured wrong: asked for its size with no width to wrap
 at, gpui's text element hands back whatever its last measurement produced,
-wrapped or not (`vendor/gpui/src/elements/text.rs:376`,
+wrapped or not (`vendor/gpui-pre/src/elements/text.rs:692-697`,
 `wrap_width.is_none() || ...`), so a word that taffy measures both whole and
 squeezed in one pass gets the wrong size for one of the two, and its row
 drew over the next message or carried a blank line (reproduced on recording
@@ -2952,19 +3002,19 @@ sheet, which always restarts cold (`restart_stream`).
 
 **Check the title bar's hit tests with `WM_NCHITTEST`, after a posted
 `WM_MOUSEMOVE` and a short wait.** gpui answers from the last mouse event it
-processed (window.rs:1133-1141), not from the message's own point, and a sent
+processed (window.rs:2253-2261), not from the message's own point, and a sent
 message jumps the posted queue — so a probe sent straight after the move reads
 the previous position. Never post a bare `WM_NCLBUTTONDOWN` with `HTCAPTION`:
 `DefWindowProc`'s move loop would follow the real mouse.
 
 **Posted input cannot raise what the pointer raises, and what holds the bar up
 for it lasts one press.** The first posted `WM_MOUSEMOVE` makes gpui call
-`TrackMouseEvent` (windows/events.rs:1254-1273), and with the real cursor
+`TrackMouseEvent` (windows/events.rs:1447-1467), and with the real cursor
 somewhere else Windows answers with a `WM_MOUSELEAVE` that clears the window's
-hovered flag (events.rs:318-327). Everything that waits on the pointer reads
+hovered flag (events.rs:395-408). Everything that waits on the pointer reads
 that flag — the player's bar and a pane's band through their probes, every
 gated tooltip — so none of it comes up. Hit testing is geometry alone, though
-(window.rs:775-797, `HitboxId::is_hovered` at 500), so a posted press lands on
+(window.rs:1169-1191, `HitboxId::is_hovered` at 785), so a posted press lands on
 whatever is drawn under it. That is the way in: the palette's `Choose quality
 for …` opens a pane's quality menu, and an open menu holds the bar up wherever
 the pointer is (`VideoView::sync_controls`). Each opening is good for one
@@ -3314,21 +3364,24 @@ None of these is being worked on; all of them are real.
 21. **The mouse's side buttons do nothing over the title bar's empty strip
     or its caption buttons, on Windows.** Those answer the platform's hit
     test as non-client areas, so a press there arrives as `WM_NCXBUTTONDOWN`,
-    which gpui 0.2.2 does not translate (events.rs:84-91). Everywhere else in
-    the window — the bar's own controls included — they go back and forward.
-    Accepted rather than patched in the vendored gpui.
+    which gpui does not translate (events.rs:138-145), gpui-pre no more than
+    0.2.2. Everywhere else in the window — the bar's own controls included —
+    they go back and forward. Accepted rather than patched in the vendored
+    gpui.
 22. **The saved window size can creep smaller on Windows.** Worked out from
-    the vendored gpui and not observed. With the platform's caption gone,
-    gpui's frame is thicker at the top while maximised than while windowed
-    (windows/events.rs:1509-1544), and gpui measures it again only at
-    creation, on a DPI change and on a system settings change
-    (windows/window.rs:471, events.rs:786 and 1116), never on a restore. So a
+    the vendored gpui and not observed, on 0.2.2 and again on gpui-pre, whose
+    rewrite of the client-area sums left this as it was. With the platform's
+    caption gone, gpui's frame is thicker at the top while maximised than
+    while windowed (windows/events.rs:775-796), and gpui measures it again
+    only at creation, on a DPI change and on a system settings change
+    (windows/window.rs:577, events.rs:884 and 1221), never on a restore. So a
     change that lands while the window is maximised, such as the taskbar or a
     display moving the work area, leaves the maximised offset in use after
     the restore, and a close before the next re-measure saves the restore
     bounds about 7px shorter and 4px lower at 100% scale, more when scaled;
     each time it happens the window comes back a little smaller. The fix
-    belongs in `vendor/gpui` — re-measure only while not maximised — and
+    belongs in `vendor/gpui-pre-windows` — re-measure only while not
+    maximised — and
     waits on a decision to patch it; see "The window remembers where it was".
 23. **A live pane's link has no time.** Its menu's `Copy link` and `Open on
     twitch.tv`, and the palette's, give a live pane's channel. A moment in a
@@ -3378,10 +3431,13 @@ None of these is being worked on; all of them are real.
     above normal windows. Its controls use AppKit's background pointer
     tracking. `pop_out::offered` gates the feature by platform.
 31. **A Windows pop-out takes the keyboard when it opens, and has a taskbar
-    entry.** Windows ignores `WindowOptions.focus`, so the new window is
-    activated and the keys go with it; and it is an ordinary window, with a
-    taskbar and `Alt+Tab` entry, because that is how the keyboard gets back
-    to it. Making it a tool window would take both away.
+    entry.** It asks for the focus (`pop_out_options`), so the new window is
+    activated and the keys go with it. On gpui 0.2.2 there was no choice:
+    its Windows backend ignored `WindowOptions.focus`. gpui-pre honours it
+    (windows/window.rs:580-584), so opening one without taking the keys is
+    now a matter of asking, and has not been done yet. It is an ordinary
+    window, with a taskbar and `Alt+Tab` entry, because that is how the
+    keyboard gets back to it. Making it a tool window would take both away.
 32. **Panes maximized away still decode**, their rendition and their sound,
     so a maximize saves only what drawing them cost (their frames are
     rendered small and thrown away, `VideoStream::set_offstage`): the

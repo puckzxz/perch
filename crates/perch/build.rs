@@ -1,9 +1,9 @@
 //! Embeds the app icon into the executable.
 //!
 //! Windows takes a program's icon from its resources, not from anything the
-//! process does at runtime, and gpui 0.2.2 has no window-icon API — so this is
-//! the only place it can come from. It is also where Explorer, the taskbar and
-//! Alt-Tab get it.
+//! process does at runtime, and gpui has no window-icon API on Windows (the
+//! `icon` in its window options is X11's alone) — so this is the only place it
+//! can come from. It is also where Explorer, the taskbar and Alt-Tab get it.
 
 fn main() {
     #[cfg(windows)]

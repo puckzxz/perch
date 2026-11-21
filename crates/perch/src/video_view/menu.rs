@@ -239,7 +239,7 @@ impl VideoView {
     ///
     /// A row acts on the press and takes the menu away with it, but the
     /// platform counts a second press near the first as a double-click
-    /// whatever is under it by then (gpui's windows/window.rs:1049-1060).
+    /// whatever is under it by then (gpui's windows/window.rs:1320-1331).
     /// Under a row that was the picture, whose double-click is fullscreen,
     /// or a recording's seek track, which seeks. So a row marks its run
     /// (`row_run`),
@@ -391,7 +391,7 @@ fn quality_option(
 /// on the press and only on the first of a run). Here the anchor's
 /// `on_mouse_down_out` is what closes the menu on that press: it asks
 /// whether a press landed outside the anchor's own bounds (gpui's
-/// div.rs:226-236), and a menu hangs above its anchor, outside them. What
+/// div.rs:263-276), and a menu hangs above its anchor, outside them. What
 /// acting on the press costs is drag-off-to-cancel, which a short list of
 /// rows can do without.
 ///

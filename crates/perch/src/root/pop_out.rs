@@ -20,7 +20,7 @@
 //! Three rules hold everything here up, each because gpui fails otherwise:
 //!
 //! - **A pop-out opens and closes only through `cx.defer`.** `open_window`
-//!   draws the new window before it returns (gpui's app.rs:943-978), and a
+//!   draws the new window before it returns (gpui's app.rs:1617-1652), and a
 //!   pop-out's render reads the root ([`PopOut`]), which inside a root update
 //!   is leased and cannot be read (entity_map.rs:182-184). And a window
 //!   cannot update itself while it is being updated, which is what closing

@@ -26,7 +26,7 @@
 //! - **A tooltip only while the pointer is in the window.** gpui hears the
 //!   pointer leave as a flag, never a move, so a tooltip up at the time would
 //!   stay where the pointer was last seen; dropping the builder clears it
-//!   (div.rs:1660-1668).
+//!   (div.rs:2415-2433).
 //! - **An id keyed on the state the words follow** — `bar-pause` and
 //!   `bar-play` — so a key that flips the state drops a tooltip already up
 //!   with the old words; see `controls::tip`.

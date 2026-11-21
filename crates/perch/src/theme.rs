@@ -726,8 +726,10 @@ pub const POP_OUT_MIN_HEIGHT: f32 = 144.0;
 /// How far a pop-out opens in from the edges of its display, and so how
 /// far apart the stack of them starts from the corner
 /// (`layout::pop_out_bounds`). Clear of a taskbar along the bottom: gpui
-/// 0.2.2 reports a display's whole bounds and has no work area to ask for,
+/// 0.2.2 reported a display's whole bounds and had no work area to ask for,
 /// so this stands in for one, at a little more than a taskbar's height.
+/// gpui-pre has one (`PlatformDisplay::visible_bounds`), which the placement
+/// does not use yet.
 pub const POP_OUT_EDGE: f32 = 48.0;
 
 /// The grab area of a pane divider. Wider than the line it draws, because a

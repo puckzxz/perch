@@ -408,7 +408,7 @@ impl RootView {
     /// that listens at the window as it paints, the way `side_buttons` does.
     ///
     /// The platform counts a second press near the first as a double-click
-    /// whatever is under it by then (gpui's windows/window.rs:1049-1060), and
+    /// whatever is under it by then (gpui's windows/window.rs:1320-1331), and
     /// that holds even once another window has taken activation, as a
     /// pop-out does when it opens. A menu's rows act on the press, and a
     /// pane menu's `Pop out` takes the player into a window of its own. The

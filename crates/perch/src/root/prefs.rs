@@ -203,7 +203,7 @@ impl RootView {
     /// being dragged, which is most of the time.
     ///
     /// The release also ends a pane header's drag (`pane_move`), wherever it
-    /// lands: gpui ends its own drag after every release (window.rs:3750-3760)
+    /// lands: gpui ends its own drag after every release (window.rs:6299-6310)
     /// and tells nobody, so a drag let go over no other pane would otherwise
     /// leave every pane offering itself. One let go on a pane swaps the two
     /// as well, from that pane's drop layer, which this runs ahead of — the

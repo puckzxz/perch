@@ -1,5 +1,5 @@
 //! An emote's file to frames, as gpui decodes one for `img`
-//! (`ImageAssetLoader` in `vendor/gpui/src/elements/img.rs`): a GIF, and a
+//! (`ImageAssetLoader` in `vendor/gpui-pre/src/elements/img.rs`): a GIF, and a
 //! WebP that is animated, to every frame, each composited onto the whole
 //! picture and carrying its delay; anything else to one still frame. So an
 //! emote with an effect animates exactly as the same emote without one.

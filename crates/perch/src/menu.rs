@@ -22,7 +22,7 @@
 //! the capture phase, and its rows are outside that; gpui makes a click out
 //! of a press and a release, and fires it from the frame current at the
 //! release, which was drawn after the menu closed and has no row in it
-//! (div.rs:2213-2245). The press is dispatched against the frame it landed
+//! (div.rs:3145-3189). The press is dispatched against the frame it landed
 //! on, and its bubble phase, where a row hears it, comes after the capture
 //! phase that closed the menu. So a row that waited for a click would draw,
 //! highlight under the pointer and do nothing when chosen. [`row`] takes the

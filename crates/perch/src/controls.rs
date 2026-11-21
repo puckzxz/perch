@@ -96,7 +96,7 @@ pub fn full_text(
 /// The one builder for those, beside [`full_text`] for text a line cut
 /// short, so every plain tooltip in the app is drawn the same way. It hands
 /// back the builder rather than taking the element, because gpui's `tooltip`
-/// takes a builder, and takes it once per element (div.rs:536-549): text
+/// takes a builder, and takes it once per element (div.rs:720-733): text
 /// handed to it does not compile, and a second call is a debug assertion.
 ///
 /// What the words say is decided when the tooltip comes up and not again,

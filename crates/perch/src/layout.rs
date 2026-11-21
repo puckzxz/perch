@@ -112,7 +112,7 @@ pub struct Room {
 /// that has not said — never smaller than its window may be resized to, and
 /// a vertical stream no taller than half the display. And always inside the
 /// display, which Windows asks of a window it opens: one that is not is put
-/// somewhere of the platform's choosing (gpui's windows/window.rs:1316-1321).
+/// somewhere of the platform's choosing (gpui's windows/window.rs:1588-1593).
 ///
 /// Stacked against where the open ones really are, not against a count of
 /// them. Pop-outs come in every shape and may have been dragged, resized or

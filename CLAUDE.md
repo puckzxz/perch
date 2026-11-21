@@ -32,6 +32,20 @@ cargo test --workspace --locked
 bash scripts/verify-vendor.sh
 ```
 
+The fleet can do the two slow ones from Linux, where it has one. Its image
+type-checks and lints for Windows with cargo-xwin, and runs the tests as a
+Linux build:
+
+```bash
+fleet run --env RUSTUP_HOME=/cache/rustup -- cargo xwin clippy --workspace --all-targets --locked --target x86_64-pc-windows-msvc -- -D warnings
+fleet run --env RUSTUP_HOME=/cache/rustup -- cargo test --workspace --locked
+```
+
+It cannot build a `perch.exe` that runs: a debug build compiles gpui's HLSL
+at run time from the path it was built at, and a release build needs
+`fxc.exe` from the Windows SDK. Build the one you launch here, and run the
+tests on Windows before calling a change done.
+
 Before a release, `bash scripts/live-check.sh` asks every service perch rides
 without a contract (unpublished GQL, the history service, the emote providers,
 streamlink's rendition names) once; it is kept out of CI on purpose.

@@ -17,9 +17,11 @@
 //!   always a whole number of them (gpui's windows/events.rs). One event is
 //!   one step, whatever the system's lines per notch, so a step is a click
 //!   on every machine.
-//! - **A wheel that glides**: a precision touchpad, which Windows also
-//!   reports as lines but in fractions of one, many times a second; or a
-//!   trackpad elsewhere, in pixels. Those are added up, and a step is taken
+//! - **A wheel that glides**: a precision touchpad, many times a second, or
+//!   a trackpad elsewhere. On Windows gpui 0.2.2 heard a touchpad as lines,
+//!   in fractions of one; gpui-pre hears it through direct manipulation, in
+//!   pixels, as a trackpad elsewhere always came (read from its source, and
+//!   not tried on one). Both forms are added up, and a step is taken
 //!   each time a click's worth has gathered ([`LINES_PER_STEP`],
 //!   [`PIXELS_PER_STEP`]), so a swipe moves the level by a few steps rather
 //!   than by one per event. Travel the other way starts the count again, so

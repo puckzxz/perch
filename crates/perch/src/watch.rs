@@ -1400,9 +1400,9 @@ fn drop_target(movable: bool, moving: Option<&str>, key: &str) -> bool {
 /// A layer of its own over everything else in the cell, and one that
 /// blocks the pointer, rather than a drop listener on the cell. gpui hands
 /// a drop only to an element whose own hitbox the pointer is over
-/// (div.rs:2089-2121), and the cell is covered — by the player and its bar,
+/// (div.rs:2964-2996), and the cell is covered — by the player and its bar,
 /// an open menu, the band over the picture, chat — each of which blocks
-/// the pointer from what is under it (window.rs:775-797), so the cell's own
+/// the pointer from what is under it (window.rs:1169-1191), so the cell's own
 /// listener would hear a drop nowhere but in the gaps between them. Gone
 /// the moment the drag ends, so it never takes a press meant for them.
 fn drop_layer<V: 'static>(

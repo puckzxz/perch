@@ -120,7 +120,7 @@ impl Fade {
         //
         // Gone to the listeners, not to the hit test. gpui still lays an
         // invisible element out and inserts its hitbox, which it does in
-        // prepaint, before paint returns early for it (div.rs:1676-1680 and
+        // prepaint, before paint returns early for it (div.rs:2441-2445 and
         // 1809). So something under here that blocks the pointer goes on
         // blocking it while hidden, with nothing drawn: `.occlude()` only
         // while `is_visible`.

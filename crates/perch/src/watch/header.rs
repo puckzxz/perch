@@ -503,10 +503,10 @@ pub(super) fn handle<V: 'static>(
 /// says it has begun (`PaneAction::BeginMove`) so the other panes offer
 /// themselves, and is drawn as nothing: gpui's drag belongs to the app, and
 /// every window paints its preview, a pop-out over its picture included
-/// (window.rs:2055-2060). A press on one of the header's controls can begin
+/// (window.rs:3965-3970). A press on one of the header's controls can begin
 /// a drag too, and then is no press on the control: each control ignores a
 /// click that ends a drag, which gpui would otherwise still deliver when
-/// the drag began and ended between two frames (div.rs:1569-1577) — the
+/// the drag began and ended between two frames (div.rs:2291-2299) — the
 /// name would open twitch.tv.
 ///
 /// Its tooltips are there only while `window_hovered`, from
@@ -514,7 +514,7 @@ pub(super) fn handle<V: 'static>(
 /// hears the pointer leave the window as a flag, never a move, so a tooltip
 /// up at the time would stay where the pointer was last seen, and the
 /// right-hand pane's × is a few pixels from the window's edge. Dropping the
-/// builder clears it (div.rs:1660-1668) — over the picture even after the
+/// builder clears it (div.rs:2415-2433) — over the picture even after the
 /// band has faded out, since an invisible element is still prepainted.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn pane_header<V: 'static>(

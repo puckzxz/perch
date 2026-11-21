@@ -1,11 +1,12 @@
 //! What Perch asks of a window that gpui does not ask for it: the platform's
 //! handle to it, and keeping a pop-out above every other app.
 //!
-//! gpui 0.2.2 never makes a window topmost on Windows. `WindowKind::PopUp`
-//! is a tool window that is neither topmost nor resizable, and `Floating`
-//! behaves like `Normal` there (gpui's windows/window.rs:402-404). So a
-//! pop-out is a `Normal` window, and this module puts it on top through the
-//! platform, the way `instance` brings the main window forward — through the
+//! gpui has no window kind for this on Windows. `WindowKind::PopUp` is
+//! topmost since gpui-pre, but it is a tool window: no taskbar entry, no
+//! `Alt+Tab` entry and not resizable, and a pop-out is found again by both.
+//! `Floating` behaves like `Normal` there (gpui's windows/window.rs:494-496).
+//! So a pop-out is a `Normal` window, and this module puts it on top through
+//! the platform, the way `instance` brings the main window forward — through the
 //! handle `raw-window-handle` gives, since gpui's own `Window::window_handle`
 //! is its id for the window rather than the platform's.
 //!
@@ -21,7 +22,7 @@ mod windows {
     /// `GWL_STYLE`: the window's style bits, for `Get`/`SetWindowLongPtrW`.
     const GWL_STYLE: i32 = -16;
     /// The maximise box, which gpui adds to every resizable window
-    /// (windows/window.rs:407-409). Without it a double-click on a caption
+    /// (windows/window.rs:499-501). Without it a double-click on a caption
     /// does not fill the screen.
     const WS_MAXIMIZEBOX: isize = 0x0001_0000;
     /// `HWND_TOPMOST`, the place in the z-order above every window that is
