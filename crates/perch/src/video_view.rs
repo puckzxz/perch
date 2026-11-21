@@ -1309,6 +1309,29 @@ impl Render for VideoView {
                     let scrubbed = view.follow_scrub(pointer.x);
                     let pointed = view.follow_pointer(inside.then_some(pointer));
                     let fitted = view.set_fit(fit, timeline_fits);
+                    // A pointer left still on the picture goes with the bar
+                    // it was holding up, and comes back with it on the first
+                    // move. Only once the bar is down: one held up by a menu
+                    // or a switch is something to point at.
+                    //
+                    // gpui has no cursor style that hides it. What it has is
+                    // the platform's "hidden until the mouse moves", which is
+                    // this promise exactly, and which gpui keeps to itself: a
+                    // vendored fix makes it public
+                    // (`App::hide_cursor_until_mouse_moves`). Asked on every
+                    // frame the pointer rests; the platform does nothing
+                    // once it is hidden.
+                    //
+                    // Asked here, from what this frame measured, and never
+                    // from `render`: that runs before the probe and still
+                    // holds the last frame's `rested`. The move that ends a
+                    // rest has the platform show the cursor, and a hide asked
+                    // on the stale answer took it away again a frame later,
+                    // until the next move. One nudge of the mouse brought the
+                    // bar up and left the cursor gone.
+                    if view.rested && !view.controls.is_visible() {
+                        cx.hide_cursor_until_mouse_moves();
+                    }
                     if hovered || rested || scrubbed || pointed || fitted {
                         cx.notify();
                     }
@@ -1349,21 +1372,6 @@ impl Render for VideoView {
             // so the probe above decides; but a paused stream sends no frames,
             // and without this nothing would ask the probe to run again.
             .on_hover(cx.listener(|_, _: &bool, _window, cx| cx.notify()))
-            // A pointer left still on the picture goes with the bar it was
-            // holding up, and comes back with it on the first move. Only
-            // once the bar is down: one held up by a menu or a switch is
-            // something to point at.
-            //
-            // gpui has no cursor style that hides it. What it has is the
-            // platform's "hidden until the mouse moves", which is this promise
-            // exactly, and which gpui keeps to itself: a vendored fix makes it
-            // public (`App::hide_cursor_until_mouse_moves`). Asked on every
-            // frame the pointer rests; the platform does nothing once it is
-            // hidden.
-            .when(self.rested && !self.controls.is_visible(), |pane| {
-                cx.hide_cursor_until_mouse_moves();
-                pane
-            })
             // The gesture a pane's player has. A single click does nothing on
             // purpose - it is how a pane is made the active one, and pausing
             // on a click would turn choosing a pane into stopping it. Not on
