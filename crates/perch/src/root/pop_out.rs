@@ -34,10 +34,9 @@
 //! - **Closing the main window closes every pop-out** (`main`), or the app
 //!   would go on as a player with nothing around it.
 //!
-//! On top through the platform (`os_window::keep_on_top`), since gpui makes
-//! no window topmost on Windows; and so only on Windows, until a Mac has
-//! shown what gpui's panels do there ([`offered`]). The pop-out's own keys
-//! are `keys::CONTEXT_POPOUT`'s.
+//! Windows puts the window on top through `os_window::keep_on_top`. macOS
+//! uses an AppKit floating panel whose controls respond while another app
+//! has focus. The pop-out's own keys are `keys::CONTEXT_POPOUT`'s.
 
 use std::time::Instant;
 
@@ -71,14 +70,7 @@ pub(super) struct PoppedOut {
     /// What the next pop-out is placed clear of, and where the next one may
     /// open once this one closes (`layout::pop_out_bounds`).
     ///
-    /// The window's restore bounds (`Window::window_bounds`), not
-    /// `Window::bounds`, so it means what a pop-out opened at it will:
-    /// `WindowBounds::Windowed` is placed in the workspace's coordinates,
-    /// while `bounds` is the client area in the screen's — off by a taskbar
-    /// on the top or the left, and by the frame gpui hides — so a pop-out
-    /// reopened at its own `bounds` crept across the screen, a taskbar's
-    /// width per close. The main window saves the same thing (`main`).
-    pub(super) bounds: Bounds<Pixels>,
+    position: Position,
     /// How tall the window draws the picture, in that window's own physical
     /// pixels: what the pane's quality is chosen against while it is out
     /// (`RootView::pane_height_for`), since the grid's cell it keeps in the
@@ -90,20 +82,22 @@ pub(super) struct PoppedOut {
     pub(super) height: f32,
 }
 
-/// Whether the pop-out is offered on `platform`: only where gpui's source
-/// says it can stay on top and answer the pointer, which is Windows, and
-/// where the spike that brought it in was checked live (see the handoff's
-/// pop-out trap). On macOS gpui's
-/// `PopUp` is a panel that hides itself whenever the app is not the active
-/// one, by AppKit's default, and gpui counts the pointer over a window only
-/// while it is active (window.rs:1727-1737); a `Normal` window there is not
-/// on top at all. Until a Mac shows otherwise, nothing offers it there, and
-/// the code that would draw it only compiles.
-pub(super) fn offered(platform: Platform) -> bool {
-    match platform {
-        Platform::Windows => true,
-        Platform::MacOs | Platform::Other => false,
+#[derive(Clone, Copy)]
+pub(super) struct Position {
+    /// Restore bounds from `Window::window_bounds`. On Windows this accounts
+    /// for the taskbar and frame. On macOS these coordinates are display-local.
+    bounds: Bounds<Pixels>,
+    display_id: Option<DisplayId>,
+}
+
+impl Position {
+    fn bounds_on(self, display_id: Option<DisplayId>) -> Option<Bounds<Pixels>> {
+        (!cfg!(target_os = "macos") || self.display_id == display_id).then_some(self.bounds)
     }
+}
+
+pub(super) fn offered(platform: Platform) -> bool {
+    matches!(platform, Platform::Windows | Platform::MacOs)
 }
 
 /// Whether the pop-out is offered on this platform; see [`offered`]. Asked
@@ -153,7 +147,7 @@ pub(super) struct PopOut {
     /// window: with nothing focused, no key reaches anything.
     _focus_lost: Subscription,
     /// Tells the root where this window is, and how tall it draws the
-    /// picture, whenever it moves or is resized; see `PoppedOut::bounds`
+    /// picture, whenever it moves or is resized; see `PoppedOut::position`
     /// and `PoppedOut::height`.
     _bounds: Subscription,
 }
@@ -171,14 +165,17 @@ impl PopOut {
             this.focus.focus(window);
         });
         let _bounds = cx.observe_window_bounds(window, |this: &mut Self, window, cx| {
-            let bounds = window.window_bounds().get_bounds();
+            let position = Position {
+                bounds: window.window_bounds().get_bounds(),
+                display_id: window.display(cx).map(|display| display.id()),
+            };
             // Measured here, in this window, at its own scale: the root only
             // ever has the main window in hand (`to_root`), and on another
             // monitor the two scales can differ.
             let height = f32::from(window.viewport_size().height) * window.scale_factor();
             let (key, focus) = (this.key.clone(), this.focus.clone());
             to_root(this.root.clone(), this.main, cx, move |root, window, cx| {
-                root.pop_out_moved(&key, &focus, bounds, height, window, cx)
+                root.pop_out_moved(&key, &focus, position, height, window, cx)
             });
         });
         window.focus(&focus);
@@ -376,30 +373,27 @@ impl Render for PopOut {
     }
 }
 
-/// How a pop-out's window is made: `Normal`, which is the only kind that
-/// both resizes and keeps a taskbar entry on Windows, and put on top
-/// afterwards (`os_window::keep_on_top`); transparent where a title bar
-/// would be, as the main window is, so the title names it to the taskbar and
-/// Alt+Tab and nothing is drawn for it; movable, which a caption needs to
-/// drag at all; no minimise, since a pop-out minimised is a pane nobody can
-/// see; and never smaller than its bar can hold.
-fn pop_out_options(
-    title: SharedString,
-    bounds: Bounds<Pixels>,
-    display_id: Option<DisplayId>,
-) -> WindowOptions {
+/// Windows needs a normal window to resize and keep a taskbar entry. On
+/// macOS, the floating panel opens without taking keyboard focus.
+fn pop_out_options(title: SharedString, position: Position, platform: Platform) -> WindowOptions {
+    let floating_panel = platform == Platform::MacOs;
     WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(bounds)),
+        window_bounds: Some(WindowBounds::Windowed(position.bounds)),
         titlebar: Some(TitlebarOptions {
             title: Some(title),
             appears_transparent: true,
             traffic_light_position: None,
         }),
-        kind: WindowKind::Normal,
+        kind: if floating_panel {
+            WindowKind::Floating
+        } else {
+            WindowKind::Normal
+        },
+        focus: !floating_panel,
         is_movable: true,
         is_resizable: true,
         is_minimizable: false,
-        display_id,
+        display_id: position.display_id,
         window_min_size: Some(size(
             px(theme::POP_OUT_MIN_WIDTH),
             px(theme::POP_OUT_MIN_HEIGHT),
@@ -437,15 +431,17 @@ impl RootView {
         let area = display
             .as_ref()
             .map_or_else(|| window.bounds(), |display| display.bounds());
-        // Named on Windows only, as the main window's is (`main`): there gpui
-        // keeps bounds only on the display it is handed, and macOS would read
-        // them relative to it instead.
-        let display_id = display
-            .filter(|_| cfg!(windows))
-            .map(|display| display.id());
-        let open: Vec<Bounds<Pixels>> =
-            self.stage.iter().map(|(_, popped)| popped.bounds).collect();
-        let bounds = layout::pop_out_bounds(area, aspect, &open, self.pop_out_last);
+        let display_id = display.map(|display| display.id());
+        let open: Vec<_> = self
+            .stage
+            .iter()
+            .filter_map(|(_, popped)| popped.position.bounds_on(display_id))
+            .collect();
+        let last = self
+            .pop_out_last
+            .and_then(|last| last.bounds_on(display_id));
+        let bounds = layout::pop_out_bounds(area, aspect, &open, last);
+        let position = Position { bounds, display_id };
 
         let focus = cx.focus_handle();
         self.stage.pop_out(
@@ -453,12 +449,12 @@ impl RootView {
             PoppedOut {
                 window: None,
                 focus: focus.clone(),
-                bounds,
+                position,
                 height: f32::from(bounds.size.height) * window.scale_factor(),
             },
         );
         self.restage(cx);
-        self.open_pop_out(key.to_string(), title, bounds, display_id, focus, cx);
+        self.open_pop_out(key.to_string(), title, position, focus, cx);
         // Its quality is its window's now, which may be taller than the cell
         // it left: a pop-out opened where a large one last closed. Once the
         // window has opened and said how tall it really is, through the one
@@ -520,7 +516,7 @@ impl RootView {
     /// A pop-out off the stage: its window closed, and where it was kept
     /// for the next pop-out this session (`layout::pop_out_bounds`).
     pub(super) fn let_pop_out_go(&mut self, popped: PoppedOut, cx: &mut Context<Self>) {
-        self.pop_out_last = Some(popped.bounds);
+        self.pop_out_last = Some(popped.position);
         close_window(popped.window, cx);
     }
 
@@ -538,7 +534,7 @@ impl RootView {
         &mut self,
         key: &str,
         focus: &FocusHandle,
-        bounds: Bounds<Pixels>,
+        position: Position,
         height: f32,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -549,7 +545,7 @@ impl RootView {
         if popped.focus != *focus {
             return;
         }
-        popped.bounds = bounds;
+        popped.position = position;
         if popped.height.round() != height.round() {
             popped.height = height;
             self.on_window_resized(window, cx);
@@ -617,8 +613,7 @@ impl RootView {
         &self,
         key: String,
         title: SharedString,
-        bounds: Bounds<Pixels>,
-        display_id: Option<DisplayId>,
+        position: Position,
         focus: FocusHandle,
         cx: &mut Context<Self>,
     ) {
@@ -652,7 +647,7 @@ impl RootView {
                     cx.new(|cx| gpui_component::Root::new(AnyView::from(view), window, cx))
                 }
             };
-            match cx.open_window(pop_out_options(title, bounds, display_id), build) {
+            match cx.open_window(pop_out_options(title, position, Platform::CURRENT), build) {
                 Ok(handle) => {
                     let handle = AnyWindowHandle::from(handle);
                     let kept =
@@ -711,12 +706,25 @@ fn close_window(window: Option<AnyWindowHandle>, cx: &mut App) {
 mod tests {
     use super::*;
 
-    /// On top and dragged by its picture is something only the Windows
-    /// backend can do; elsewhere nothing offers it.
     #[test]
-    fn the_pop_out_is_offered_only_where_it_was_proven() {
+    fn the_pop_out_is_offered_on_windows_and_macos() {
         assert!(offered(Platform::Windows));
-        assert!(!offered(Platform::MacOs));
+        assert!(offered(Platform::MacOs));
         assert!(!offered(Platform::Other));
+    }
+
+    #[test]
+    fn macos_pop_out_opens_as_a_floating_panel_without_focus() {
+        let options = pop_out_options(
+            SharedString::default(),
+            Position {
+                bounds: Bounds::default(),
+                display_id: None,
+            },
+            Platform::MacOs,
+        );
+        assert_eq!(options.kind, WindowKind::Floating);
+        assert!(!options.focus);
+        assert!(options.is_resizable);
     }
 }

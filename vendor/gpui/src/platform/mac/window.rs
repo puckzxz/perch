@@ -64,6 +64,9 @@ const NSWindowStyleMaskNonactivatingPanel: NSWindowStyleMask =
     NSWindowStyleMask::from_bits_retain(1 << 7);
 #[allow(non_upper_case_globals)]
 const NSNormalWindowLevel: NSInteger = 0;
+// PERCH PATCH: AppKit's floating level keeps panels below menus.
+#[allow(non_upper_case_globals)]
+const NSFloatingWindowLevel: NSInteger = 3;
 #[allow(non_upper_case_globals)]
 const NSPopUpWindowLevel: NSInteger = 101;
 #[allow(non_upper_case_globals)]
@@ -617,9 +620,10 @@ impl MacWindow {
                     | NSWindowStyleMask::NSFullSizeContentViewWindowMask;
             }
 
+            // PERCH PATCH: A floating player can be used without activating the app.
             let native_window: id = match kind {
-                WindowKind::Normal | WindowKind::Floating => msg_send![WINDOW_CLASS, alloc],
-                WindowKind::PopUp => {
+                WindowKind::Normal => msg_send![WINDOW_CLASS, alloc],
+                WindowKind::PopUp | WindowKind::Floating => {
                     style_mask |= NSWindowStyleMaskNonactivatingPanel;
                     msg_send![PANEL_CLASS, alloc]
                 }
@@ -775,8 +779,9 @@ impl MacWindow {
             content_view.addSubview_(native_view.autorelease());
             native_window.makeFirstResponder_(native_view);
 
+            // PERCH PATCH: Floating panels share a popup's background pointer tracking.
             match kind {
-                WindowKind::Normal | WindowKind::Floating => {
+                WindowKind::Normal => {
                     native_window.setLevel_(NSNormalWindowLevel);
                     native_window.setAcceptsMouseMovedEvents_(YES);
 
@@ -787,7 +792,7 @@ impl MacWindow {
                         let _: () = msg_send![native_window, setTabbingIdentifier:nil];
                     }
                 }
-                WindowKind::PopUp => {
+                WindowKind::PopUp | WindowKind::Floating => {
                     // Use a tracking area to allow receiving MouseMoved events even when
                     // the window or application aren't active, which is often the case
                     // e.g. for notification windows.
@@ -802,7 +807,13 @@ impl MacWindow {
                     let _: () =
                         msg_send![native_view, addTrackingArea: tracking_area.autorelease()];
 
-                    native_window.setLevel_(NSPopUpWindowLevel);
+                    if kind == WindowKind::Floating {
+                        native_window.setLevel_(NSFloatingWindowLevel);
+                        let _: () = msg_send![native_window, setHidesOnDeactivate: NO];
+                        let _: () = msg_send![native_window, setBecomesKeyOnlyIfNeeded: YES];
+                    } else {
+                        native_window.setLevel_(NSPopUpWindowLevel);
+                    }
                     let _: () = msg_send![
                         native_window,
                         setAnimationBehavior: NSWindowAnimationBehaviorUtilityWindow
@@ -1496,6 +1507,25 @@ impl PlatformWindow for MacWindow {
                 }
             })
             .detach()
+    }
+
+    // PERCH PATCH: AppKit needs the original mouse-down to start a window drag.
+    fn start_window_move(&self) {
+        use cocoa::appkit::NSEventType;
+
+        let window = self.0.lock().native_window;
+        unsafe {
+            let app = NSApplication::sharedApplication(nil);
+            let event: id = msg_send![app, currentEvent];
+            if event.is_null() {
+                return;
+            }
+            let event_type: NSUInteger = msg_send![event, type];
+            if event_type == NSEventType::NSLeftMouseDown as NSUInteger && event.window() == window
+            {
+                let _: () = msg_send![window, performWindowDragWithEvent: event];
+            }
+        }
     }
 
     fn titlebar_double_click(&self) {

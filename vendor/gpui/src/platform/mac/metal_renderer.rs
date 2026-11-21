@@ -30,9 +30,10 @@ use std::{cell::Cell, ffi::c_void, mem, ptr, sync::Arc};
 // Exported to metal
 pub(crate) type PointF = crate::Point<f32>;
 
-#[cfg(not(feature = "runtime_shaders"))]
+// PERCH PATCH: Use the shader mode selected by build.rs.
+#[cfg(not(gpui_runtime_shaders))]
 const SHADERS_METALLIB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shaders.metallib"));
-#[cfg(feature = "runtime_shaders")]
+#[cfg(gpui_runtime_shaders)]
 const SHADERS_SOURCE_FILE: &str = include_str!(concat!(env!("OUT_DIR"), "/stitched_shaders.metal"));
 // Use 4x MSAA, all devices support it.
 // https://developer.apple.com/documentation/metal/mtldevice/1433355-supportstexturesamplecount
@@ -153,11 +154,12 @@ impl MetalRenderer {
                     | AutoresizingMask::HEIGHT_SIZABLE
             ];
         }
-        #[cfg(feature = "runtime_shaders")]
+        // PERCH PATCH
+        #[cfg(gpui_runtime_shaders)]
         let library = device
             .new_library_with_source(&SHADERS_SOURCE_FILE, &metal::CompileOptions::new())
             .expect("error building metal library");
-        #[cfg(not(feature = "runtime_shaders"))]
+        #[cfg(not(gpui_runtime_shaders))]
         let library = device
             .new_library_with_data(SHADERS_METALLIB)
             .expect("error building metal library");

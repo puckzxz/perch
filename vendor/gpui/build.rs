@@ -69,11 +69,28 @@ mod macos {
         {
             let header_path = generate_shader_bindings();
 
-            #[cfg(feature = "runtime_shaders")]
-            emit_stitched_shaders(&header_path);
-            #[cfg(not(feature = "runtime_shaders"))]
-            compile_metal_shaders(&header_path);
+            // PERCH PATCH: The macOS SDK can be installed without the Metal Toolchain.
+            println!("cargo::rustc-check-cfg=cfg(gpui_runtime_shaders)");
+            println!("cargo::rerun-if-env-changed=DEVELOPER_DIR");
+            if cfg!(feature = "runtime_shaders") || !metal_compiler_available() {
+                println!("cargo::rustc-cfg=gpui_runtime_shaders");
+                emit_stitched_shaders(&header_path);
+            } else {
+                compile_metal_shaders(&header_path);
+            }
         }
+    }
+
+    // PERCH PATCH: xcrun can locate metal even when it cannot execute it.
+    fn metal_compiler_available() -> bool {
+        let available = std::process::Command::new("xcrun")
+            .args(["-sdk", "macosx", "metal", "--version"])
+            .output()
+            .is_ok_and(|output| output.status.success());
+        if !available {
+            println!("cargo::warning=Metal Toolchain unavailable. Compiling shaders at runtime.");
+        }
+        available
     }
 
     fn generate_dispatch_bindings() {
@@ -174,7 +191,7 @@ mod macos {
 
     /// To enable runtime compilation, we need to "stitch" the shaders file with the generated header
     /// so that it is self-contained.
-    #[cfg(feature = "runtime_shaders")]
+    // PERCH PATCH: The build script can also select this path without the Cargo feature.
     fn emit_stitched_shaders(header_path: &Path) {
         use std::str::FromStr;
         fn stitch_header(header: &Path, shader_path: &Path) -> std::io::Result<PathBuf> {
@@ -192,7 +209,7 @@ mod macos {
         println!("cargo:rerun-if-changed={}", &shader_source_path);
     }
 
-    #[cfg(not(feature = "runtime_shaders"))]
+    // PERCH PATCH
     fn compile_metal_shaders(header_path: &Path) {
         use std::process::{self, Command};
         let shader_path = "./src/platform/mac/shaders.metal";

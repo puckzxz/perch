@@ -69,6 +69,12 @@ file and the image cache in `%LOCALAPPDATA%\perch\` (`perch.log`, `.log.old`,
 
 The user runs perch daily while it is worked on.
 
+- On macOS, build a test bundle in a fresh directory with
+  `packaging/macos/bundle.sh target/debug/perch <output-dir>`. Run
+  `xcrun swift packaging/macos/smoke.swift <output-dir>/perch.app` from a
+  desktop session to check that the bundle opens a window and saves its
+  placement on system Quit. The script uses a disposable profile and quits
+  the copy it started.
 - Perch is single-instance: a second `perch.exe` hands its arguments to the
   running one and exits. Run a test build with its own `APPDATA` and
   `LOCALAPPDATA` (copies, never the user's own files), and back up the user's

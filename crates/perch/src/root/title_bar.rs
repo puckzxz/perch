@@ -34,18 +34,15 @@
 //!   the window's right edge, Close first, so [`window_min_size`] is the
 //!   window's least size (`main`).
 //!
-//! On macOS the platform keeps its traffic lights and the bar leaves room for
-//! them; gpui 0.2.2 drags a Mac window only by AppKit's own strip, so the
-//! spacer asks for the platform's double-click behaviour by hand. Elsewhere
-//! the window manager keeps its own decorations, and the bar sits under them
-//! with only the app's controls in it.
+//! On macOS the bar leaves room for the traffic lights. AppKit needs the
+//! original mouse-down to start a drag, so the spacer handles the press.
+//! GPUI reads the system's title-bar double-click preference.
 //!
-//! Which of those a platform gets is [`shape`], a pure function, so the macOS
-//! and Linux answers are tested on the machine that cannot build for them.
+//! [`shape`] is a pure function, so its layouts can be tested on any platform.
 
 use gpui::{
-    div, prelude::*, px, size, AnyElement, Context, Pixels, SharedString, Size, Window,
-    WindowControlArea,
+    div, prelude::*, px, size, AnyElement, Context, MouseButton, Pixels, SharedString, Size,
+    Window, WindowControlArea,
 };
 use gpui_component::input::Input;
 
@@ -57,10 +54,8 @@ use crate::keys::Hint;
 use crate::{layout, theme};
 
 /// The platforms whose title bars differ — and, for `pop_out::offered`,
-/// where a pop-out has been proven to stay on top. Taken from `cfg!` rather
-/// than `#[cfg]` so every arm compiles on every platform: the Windows build
-/// type-checks the macOS one, which is the closest thing to a macOS build
-/// this machine can do.
+/// where a pop-out has been proven to stay on top. Every `shape` arm compiles
+/// on every platform.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Platform {
     Windows,
@@ -91,10 +86,7 @@ struct Shape {
     leading_inset: f32,
     /// Whether Perch draws minimise, maximise and close itself.
     caption_buttons: bool,
-    /// Whether a double-click on the spacer has to be handed to the platform
-    /// by hand. On Windows it is the platform's already: the spacer answers
-    /// as a caption, and Windows maximises a caption that is double-clicked.
-    asks_for_double_click: bool,
+    handles_mac_gestures: bool,
 }
 
 /// The title bar this platform gets, or none at all in fullscreen — where the
@@ -114,19 +106,19 @@ fn shape(platform: Platform, fullscreen: bool) -> Option<Shape> {
             height,
             leading_inset: 0.0,
             caption_buttons: true,
-            asks_for_double_click: false,
+            handles_mac_gestures: false,
         },
         Platform::MacOs => Shape {
             height,
             leading_inset: theme::TRAFFIC_LIGHT_INSET,
             caption_buttons: false,
-            asks_for_double_click: true,
+            handles_mac_gestures: true,
         },
         Platform::Other => Shape {
             height,
             leading_inset: 0.0,
             caption_buttons: false,
-            asks_for_double_click: false,
+            handles_mac_gestures: false,
         },
     })
 }
@@ -173,11 +165,7 @@ impl RootView {
         let maximized = window.is_maximized();
         let drag_top = layout::drag_top(maximized);
 
-        // The id is there whatever the platform, because `on_click` needs a
-        // stateful element and adding one inside `.when` would change the
-        // element's type halfway through the chain.
         let spacer = div()
-            .id("title-drag")
             .flex_1()
             .min_w(px(theme::TITLE_BAR_DRAG_MIN))
             .h_full()
@@ -189,15 +177,17 @@ impl RootView {
                     .left_0()
                     .right_0()
                     .bottom_0()
-                    .window_control_area(WindowControlArea::Drag),
-            )
-            .when(shape.asks_for_double_click, |spacer| {
-                spacer.on_click(|event, window, _cx| {
-                    if event.click_count() == 2 {
-                        window.titlebar_double_click();
-                    }
-                })
-            });
+                    .window_control_area(WindowControlArea::Drag)
+                    .when(shape.handles_mac_gestures, |drag| {
+                        drag.on_mouse_down(MouseButton::Left, |event, window, _cx| {
+                            match event.click_count {
+                                1 => window.start_window_move(),
+                                2 => window.titlebar_double_click(),
+                                _ => {}
+                            }
+                        })
+                    }),
+            );
 
         // The account control is the gear: who is signed in rides on its
         // tooltip rather than taking room in the bar, since once signed in it
@@ -416,20 +406,20 @@ mod tests {
         let shape = shape(Platform::Windows, false).expect("a windowed bar");
         assert!(shape.caption_buttons);
         assert!(
-            !shape.asks_for_double_click,
+            !shape.handles_mac_gestures,
             "Windows maximises a double-clicked caption itself"
         );
         assert_eq!(shape.leading_inset, 0.0);
     }
 
     #[test]
-    fn macos_leaves_room_for_the_traffic_lights_and_asks_for_double_click() {
+    fn macos_leaves_room_for_the_traffic_lights_and_forwards_spacer_presses() {
         let shape = shape(Platform::MacOs, false).expect("a windowed bar");
         assert!(
             !shape.caption_buttons,
             "the traffic lights are the platform's"
         );
-        assert!(shape.asks_for_double_click);
+        assert!(shape.handles_mac_gestures);
         assert_eq!(shape.leading_inset, theme::TRAFFIC_LIGHT_INSET);
         assert!(
             shape.leading_inset > theme::TRAFFIC_LIGHT_X,
@@ -441,7 +431,7 @@ mod tests {
     fn other_platforms_draw_neither() {
         let shape = shape(Platform::Other, false).expect("a windowed bar");
         assert!(!shape.caption_buttons, "the window manager draws its own");
-        assert!(!shape.asks_for_double_click);
+        assert!(!shape.handles_mac_gestures);
         assert_eq!(shape.leading_inset, 0.0);
     }
 

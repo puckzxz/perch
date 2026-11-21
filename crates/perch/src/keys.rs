@@ -113,8 +113,8 @@ actions!(
         /// Forward again along the trail, after going back.
         NavigateForward,
         /// Move the active pane into a window of its own, on top of every
-        /// other app, or bring it back from one, from either page. Windows
-        /// only for now; see `root::pop_out`.
+        /// other app, or bring it back from one, from either page. See
+        /// `root::pop_out` for platform support.
         TogglePopOut,
         /// Give the active pane the whole watch page, chat and all, or show
         /// every pane again from the pane that has it. The others are drawn
@@ -163,7 +163,7 @@ pub const SEEK_STEP: f64 = 10.0;
 // context into a predicate parses as far as the first space and then fails —
 // which `KeyBinding::new` reports by panicking at startup, and which the test
 // below exists to catch first.
-const APP: &str = "Perch";
+pub(crate) const APP: &str = "Perch";
 const WATCH: &str = "Watch";
 const BROWSE: &str = "Browse";
 const MODAL: &str = "Modal";

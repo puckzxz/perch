@@ -11,8 +11,7 @@ of your window, each with its own chat and its own volume. Chat is mostly for
 reading — this is somewhere to watch from — but each live chat has a box at its
 foot to say something in once you are signed in.
 Drag the panes into another order, give one the whole window while the others
-play on, or, on Windows, pop one out into a small window that stays on top of
-whatever else you are doing.
+play on, or pop one out into a small window that stays on top of other apps.
 
 Built on [GPUI](https://github.com/zed-industries/zed) (Zed's UI framework) with
 [streamlink](https://streamlink.github.io/) as the Twitch byte source and
@@ -87,6 +86,10 @@ cargo run --release -p perch -- forsen
 Use `--release`. The video path does per-frame format conversion, and a debug
 build is several times slower at it.
 
+On macOS, building from source needs the macOS SDK. When Xcode's optional
+Metal Toolchain is available, Cargo precompiles the shaders. Otherwise, Cargo
+prints a warning and Perch compiles the shaders when a window opens.
+
 ### Keyboard
 
 The player's controls are on a bar that comes up over the video while the
@@ -115,7 +118,7 @@ not holding the mouse.
 | `Shift+→` | Move this pane one place later, swapping it with the one after |
 | `Z` | Give this pane the whole window, chat and all, or show every pane again |
 | `Ctrl+W` | Close this pane |
-| `P` | Pop this pane out into a window of its own, on top of other apps, or bring it back — from the browse page too (Windows) |
+| `P` | Pop this pane out into a window of its own, on top of other apps, or bring it back — from the browse page too |
 | `Esc` | Leave fullscreen, or stop watching and browse — after showing every pane again, if one has the window |
 | `Alt+←` | Back to where you were before — the mouse's back button too |
 | `Alt+→` | Forward again — the mouse's forward button too |
@@ -134,6 +137,10 @@ whichever one this machine actually binds, and so does every tooltip that
 names a key — a pane's × says `Close (⌘W)` on a Mac — and a test holds them
 to that, and holds this table to the sheet, so a key the app lists is a key
 listed here.
+
+On macOS, drag the empty part of the title bar to move the window.
+Use the Perch menu for Settings, Hide, and Quit. Both `⌘Q` and the red close
+button save window placement and recording progress before Perch exits.
 
 Player keys act on the pane you last pointed at, or last clicked — clicking
 anywhere in a pane, video or chat, makes it the one the keyboard is talking to,
@@ -197,8 +204,8 @@ the app.
 Every pane has an × in its header, a lone one included, and like the bar's
 icons it names its key, `Ctrl+W`; closing the last pane goes back to the
 browse page. Before it is a ⋯, which opens the pane's menu, the one its
-right button opens (see "Right-click a channel"): **Pin**, **Past
-broadcasts**, **Audio compressor**, **Pop out** on Windows, and the rest. A header sitting
+right button opens (see "Right-click a channel"): **Pin**, **Past broadcasts**,
+**Audio compressor**, **Pop out**, and the rest. A header sitting
 on chat also has the chat options (see [Chat](#chat)).
 
 A pane's header says `muted` or `paused` when either is true, so a channel
@@ -323,7 +330,7 @@ anyone's volume, and once one pane alone is heard every pane's menu says
 **Hear all again** instead, until you change a silenced pane's volume;
 **Maximize**, or **Show all panes** on the pane that has the window (see
 "One pane, the whole window"); and **Move earlier** and **Move later** (see
-"Panes in another order"). Then **Pop out** on Windows, or **Bring back**,
+"Panes in another order"). Then **Pop out**, or **Bring back**,
 and **Close**. A press anywhere else, or `Esc`, puts the menu away.
 
 ### Going back in a live stream
@@ -400,34 +407,31 @@ others keep theirs, and the grid coming back lowers none.
 
 ### A pane in a window of its own
 
-On Windows a pane can be popped out of the window into a small one of its
-own, which stays on top of every other app — a game, a browser, a document —
-while the rest of Perch goes behind them. Only its picture goes: its place,
-its number and its chat stay in the main window, whose cell says `Playing in
-its own window` and offers **Bring back**.
+On Windows and macOS, a pane can pop out into a small window that stays on
+top of other apps. Its place, number, and chat stay in the main window. The
+cell says `Playing in its own window` and offers **Bring back**.
 
-A pane goes out from **Pop out** on its menu — its header's ⋯ or the right
-button — `P`, or the palette's `Pop out …`. A
-pane comes back from **Bring back** on its pop-out's bar or on its cell,
-**Bring back** on its menu, `P` in either window, or the palette's `Bring …
-back`. A popped-out pane plays on while you browse, where the rest stop;
-bringing it back from the browse page brings the watch page up with it.
+Choose **Pop out** from the pane's menu, opened from its header's ⋯ or
+by right-clicking. You can also press `P` or use `Pop out …` in the palette.
+A pane comes back from **Bring back** on its pop-out's bar, cell, or menu,
+or from the palette's `Bring … back`. Pressing `P` also brings it back
+when the main window or pop-out has keyboard focus. A popped-out pane
+plays on while you browse, where the rest stop. Bringing it back from
+the browse page brings the watch page up with it.
 
-The pop-out is dragged by its picture and resized from its edges. Its bar
-has play, the volume, a recording's seek row or a live stream's timeline,
-**Bring back** and **Close**, and it answers `Space`, `M`, the arrows, `P` and
-`Ctrl+W`. Closing it the way Windows closes any window — `Alt+F4`, or from
-the taskbar — brings the pane back; its own **Close** closes the pane.
-Closing Perch closes every pop-out with it. A popped pane whose stream goes
-off or ends comes back to its cell, where what it offers next is.
+Drag the pop-out by its picture and resize it from its edges. The bar has
+playback and volume controls, a seek row or live timeline, **Bring back**,
+and **Close**. On macOS, the bar responds while another app keeps keyboard
+focus. When the pop-out has keyboard focus, the player shortcuts work there.
+
+The pop-out's window close button brings the pane back. The bar's **Close**
+stops the stream and closes the pane. Closing Perch closes every pop-out.
+A stream that ends comes back to its cell.
 
 Its quality follows its own window, the way a pane's follows its cell: make
 the window larger and it moves to a sharper rendition once you stop, with no
 black; make it smaller and it keeps what it has. Bringing it back into a
 larger cell moves it up again.
-
-It is not offered elsewhere yet. On macOS the window gpui would use hides
-whenever another app is in front, which is the one thing a pop-out is for.
 
 ### Requirements
 

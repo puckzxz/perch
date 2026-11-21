@@ -43,6 +43,8 @@ mod last_live;
 mod launch;
 mod layout;
 mod loudness;
+#[cfg(target_os = "macos")]
+mod macos_menu;
 mod menu;
 mod motion;
 mod notifications;
@@ -74,7 +76,7 @@ mod widget_theme;
 
 use gpui::{
     point, prelude::*, px, size, AnyView, App, Application, Bounds, DisplayId, Pixels, Size,
-    TitlebarOptions, WindowBounds, WindowOptions,
+    TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
 use settings::{Settings, WindowPlacement};
 
@@ -270,6 +272,18 @@ fn main() {
             // last, and these bindings are the ones that must stand aside.
             keys::init(cx);
 
+            #[cfg(target_os = "macos")]
+            {
+                macos_menu::init(cx);
+                // Quit after the last window closes so the Dock can launch a new one.
+                cx.on_window_closed(|cx| {
+                    if cx.windows().is_empty() {
+                        cx.quit();
+                    }
+                })
+                .detach();
+            }
+
             let (bounds, display_id) = initial_window_bounds(placement, cx);
             let options = WindowOptions {
                 window_bounds: Some(bounds),
@@ -296,37 +310,42 @@ fn main() {
             cx.open_window(options, move |window, cx| {
                 let root = cx.new(|cx| RootView::new(launch, launches, window, cx));
 
-                // Remember where the window was, on the way out. The platform
-                // reports the restore bounds for a maximised or fullscreen
-                // window, so what is saved is always a size that can be
-                // opened windowed.
-                //
-                // And take every pop-out with it. Windows quits once the last
-                // window is destroyed, and a pop-out left open would be a
-                // player with no app around it. This window goes first — its
-                // destruction is queued as it drops — and the process ends
-                // when the last pop-out's goes through.
-                window.on_window_should_close(cx, {
+                let save_on_close = {
                     let root = root.downgrade();
-                    move |window, cx| {
+                    move |window: &Window, cx: &mut App| {
+                        if closing.is_closed() {
+                            return;
+                        }
                         let placement = placement_of(window.window_bounds());
                         root.update(cx, |this, cx| {
                             this.remember_window(placement);
                             this.remember_watching(cx);
                             this.close_pop_outs(cx);
-                            // Every save is written off this thread, and the
-                            // process ends with this window without waiting
-                            // for that one, so the last saves are waited for
-                            // here; see `root::saving`.
                             this.finish_saving();
                         })
                         .ok();
-                        // A launch arriving from here on is turned away, and
-                        // becomes the next perch once this one lets go, rather
-                        // than being handed to a window that is going.
+                        // A later launch can claim the profile after the final saves land.
                         closing.close_channel();
-                        true
                     }
+                };
+
+                #[cfg(target_os = "macos")]
+                {
+                    // AppKit Quit can bypass the window's close callback.
+                    let handle = window.window_handle();
+                    let save_on_close = save_on_close.clone();
+                    cx.on_app_quit(move |cx| {
+                        handle
+                            .update(cx, |_, window, cx| save_on_close(window, cx))
+                            .ok();
+                        std::future::ready(())
+                    })
+                    .detach();
+                }
+
+                window.on_window_should_close(cx, move |window, cx| {
+                    save_on_close(window, cx);
+                    true
                 });
 
                 // Root is required as the window's first child so overlay layers

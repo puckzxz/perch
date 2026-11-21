@@ -23,8 +23,8 @@
 //! dragged by, [`drag_layer`].
 
 use gpui::{
-    div, prelude::*, px, svg, AnyView, App, Context, Div, ElementId, SharedString, Stateful,
-    Window, WindowControlArea,
+    div, prelude::*, px, svg, AnyView, App, Context, Div, ElementId, MouseButton, SharedString,
+    Stateful, Window, WindowControlArea,
 };
 
 use crate::assets::Icon;
@@ -490,10 +490,9 @@ pub fn caption_button(
 ///   mouse-down marks every press it hears as handled; gpui reports a
 ///   handled press on a caption to Windows as done, which swallows the move.
 ///   Blocked, the root never hears it.
-/// - **It listens for no left press.** A listener that took the press would
-///   do the same. The one listener it has here hears moves, and only wakes a
-///   repaint as the pointer comes or goes — under it, nothing else can hear
-///   the pointer arrive, and a paused picture sends no frames to repaint for.
+/// - **Windows takes the left press itself.** A listener that took the press
+///   would swallow the move. On macOS AppKit needs the original mouse-down
+///   passed to it. The hover listener wakes a repaint on a paused picture.
 ///   The pop-out's player hangs its picture's gestures on it too — a middle
 ///   press for mute, `Alt` and the wheel for the level
 ///   (`VideoView::picture_gestures`) — which leave the drag alone: Windows
@@ -501,8 +500,8 @@ pub fn caption_button(
 /// - **It starts below the top edge**, which is the platform's to resize by:
 ///   gpui asks for a window control before it asks Windows about the frame.
 ///
-/// The pointer over it still counts as over the window: a move on a caption
-/// arrives as a non-client move, which gpui hears as hover all the same.
+/// On Windows a move over the caption arrives as a non-client move, which
+/// gpui counts as hover.
 /// Whatever must stay pressable goes over it, and blocks the pointer while
 /// it is up — the pop-out's bar.
 pub fn drag_layer<V: 'static>(
@@ -519,6 +518,9 @@ pub fn drag_layer<V: 'static>(
         .bottom_0()
         .occlude()
         .window_control_area(WindowControlArea::Drag)
+        .when(cfg!(target_os = "macos"), |layer| {
+            layer.on_mouse_down(MouseButton::Left, |_, window, _| window.start_window_move())
+        })
         .on_hover(cx.listener(|_, _: &bool, _window, cx| cx.notify()))
 }
 

@@ -42,9 +42,12 @@ REMOVED=(
 
 # Files we expect to differ from upstream. Anything else differing is drift.
 PATCHED=(
+  build.rs
   src/elements/text.rs
   src/platform.rs
   src/platform/mac/metal_atlas.rs
+  src/platform/mac/metal_renderer.rs
+  src/platform/mac/window.rs
   src/platform/windows/directx_atlas.rs
   src/platform/windows/directx_renderer.rs
   src/platform/windows/events.rs
@@ -197,6 +200,27 @@ needs() { # file, literal string, what that string makes the file do
 for f in "${PATCHED[@]}"; do
   grep -q 'PERCH PATCH' "$VENDOR/$f" || fail "$VENDOR/$f has lost its PERCH PATCH marker"
 done
+
+needs build.rs 'if cfg!(feature = "runtime_shaders") || !metal_compiler_available()' \
+  "selects runtime shaders when the Metal Toolchain is unavailable"
+needs build.rs 'cargo::rustc-cfg=gpui_runtime_shaders' \
+  "reports the shader mode to the Metal renderer"
+needs src/platform/mac/metal_renderer.rs '#[cfg(gpui_runtime_shaders)]' \
+  "uses the shader mode chosen at build time"
+needs src/platform/mac/window.rs 'event.window() == window' \
+  "checks that the mouse-down belongs to the window being dragged"
+needs src/platform/mac/window.rs 'performWindowDragWithEvent: event' \
+  "hands the drag to AppKit"
+needs src/platform/mac/window.rs 'native_window.setLevel_(NSFloatingWindowLevel);' \
+  "opens floating windows above normal windows"
+needs src/platform/mac/window.rs 'setHidesOnDeactivate: NO' \
+  "keeps floating panels visible when another app has focus"
+needs src/platform/mac/window.rs 'setBecomesKeyOnlyIfNeeded: YES' \
+  "keeps pointer controls from taking keyboard focus"
+needs src/window.rs '&& self.kind == crate::WindowKind::Floating' \
+  "uses pointer hover on macOS floating panels"
+needs src/window.rs 'self.hovered.replace(hovered) != hovered' \
+  "redraws a floating panel when the pointer enters or leaves"
 
 for f in src/platform/mac/metal_atlas.rs src/platform/windows/directx_atlas.rs; do
   needs "$f" 'size.width > DEFAULT_ATLAS_SIZE.width || size.height > DEFAULT_ATLAS_SIZE.height' \

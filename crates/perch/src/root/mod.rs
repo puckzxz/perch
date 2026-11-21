@@ -95,8 +95,8 @@ use std::sync::Arc;
 use emotes::ImageCache;
 use futures::channel::mpsc::UnboundedReceiver;
 use gpui::{
-    div, prelude::*, AnyWindowHandle, Bounds, Context, Entity, FocusHandle, Pixels, ScrollHandle,
-    SharedString, Subscription, Task, WeakEntity, Window,
+    div, prelude::*, AnyWindowHandle, Context, Entity, FocusHandle, ScrollHandle, SharedString,
+    Subscription, Task, WeakEntity, Window,
 };
 use gpui_component::input::{InputEvent, InputState};
 use settings::history::{Forgotten, History};
@@ -106,7 +106,7 @@ use twitch_api::{Channel, LiveStream};
 
 use self::follows::LiveList;
 use self::navigation::Route;
-use self::pop_out::PoppedOut;
+use self::pop_out::{PoppedOut, Position};
 use crate::browse::{self, Discovery, SignIn};
 use crate::chat::ChatView;
 use crate::chat_badges::Library;
@@ -245,7 +245,7 @@ pub(crate) struct RootView {
     /// at while a display still holds it and no pop-out open covers it
     /// (`layout::pop_out_bounds`). For this session only: nothing of the
     /// pop-out is saved.
-    pop_out_last: Option<Bounds<Pixels>>,
+    pop_out_last: Option<Position>,
 
     follows: Vec<LiveStream>,
     /// Everyone followed, live or not. Kept apart from `follows` all the way to

@@ -821,6 +821,8 @@ pub struct Window {
     pub(crate) invalidator: WindowInvalidator,
     pub(crate) removed: bool,
     pub(crate) platform_window: Box<dyn PlatformWindow>,
+    // PERCH PATCH: On macOS, floating panels track the pointer while inactive.
+    kind: crate::WindowKind,
     display_id: Option<DisplayId>,
     sprite_atlas: Arc<dyn PlatformAtlas>,
     text_system: Arc<WindowTextSystem>,
@@ -1209,6 +1211,8 @@ impl Window {
             invalidator,
             removed: false,
             platform_window,
+            // PERCH PATCH
+            kind,
             display_id,
             sprite_atlas,
             text_system,
@@ -1724,17 +1728,23 @@ impl Window {
 
     /// Returns whether this window is considered to be the window
     /// that currently owns the mouse cursor.
-    /// On mac, this is equivalent to `is_window_active`.
+    /// On macOS, regular windows use `is_window_active`. Floating panels
+    /// track the pointer even when another application is active.
+    // PERCH PATCH
     pub fn is_window_hovered(&self) -> bool {
-        if cfg!(any(
-            target_os = "windows",
-            target_os = "linux",
-            target_os = "freebsd"
-        )) {
+        if self.tracks_window_hover() {
             self.hovered.get()
         } else {
             self.is_window_active()
         }
+    }
+
+    fn tracks_window_hover(&self) -> bool {
+        cfg!(any(
+            target_os = "windows",
+            target_os = "linux",
+            target_os = "freebsd"
+        )) || (cfg!(target_os = "macos") && self.kind == crate::WindowKind::Floating)
     }
 
     /// Toggle zoom on the window.
@@ -1747,7 +1757,7 @@ impl Window {
         self.platform_window.show_window_menu(position)
     }
 
-    /// Tells the compositor to take control of window movement (Wayland and X11)
+    /// Starts native window movement on macOS, Wayland and X11.
     ///
     /// Events may not be received during a move operation.
     pub fn start_window_move(&self) {
@@ -2068,13 +2078,9 @@ impl Window {
         // pointer crossed the edge and every `.hover()` / `group_hover` style
         // there stayed lit until the pointer came back. The leave refreshes
         // the window, so this frame clears them; the next mouse event
-        // re-tests from its own position (`dispatch_mouse_event`). Only where
-        // `hovered` is tracked: on macOS `is_window_hovered` means active.
-        let pointer_left = cfg!(any(
-            target_os = "windows",
-            target_os = "linux",
-            target_os = "freebsd"
-        )) && !self.hovered.get();
+        // re-tests from its own position (`dispatch_mouse_event`). macOS
+        // floating panels also track when the pointer leaves.
+        let pointer_left = self.tracks_window_hover() && !self.hovered.get();
         self.mouse_hit_test = if pointer_left {
             HitTest::default()
         } else {
@@ -3712,6 +3718,25 @@ impl Window {
             },
             PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
         };
+
+        // PERCH PATCH: A floating panel receives tracking events while the
+        // app behind it owns the keyboard. Redraw when the pointer crosses
+        // its edge even if the player is paused.
+        if cfg!(target_os = "macos") && self.tracks_window_hover() {
+            let hovered = match &event {
+                PlatformInput::MouseMove(_)
+                | PlatformInput::MouseDown(_)
+                | PlatformInput::MouseUp(_)
+                | PlatformInput::ScrollWheel(_) => {
+                    Bounds::new(Point::default(), self.viewport_size).contains(&self.mouse_position)
+                }
+                PlatformInput::MouseExited(_) => false,
+                _ => self.hovered.get(),
+            };
+            if self.hovered.replace(hovered) != hovered {
+                self.refresh();
+            }
+        }
 
         if let Some(any_mouse_event) = event.mouse_event() {
             self.dispatch_mouse_event(any_mouse_event, cx);

@@ -9,9 +9,7 @@
 //! handle `raw-window-handle` gives, since gpui's own `Window::window_handle`
 //! is its id for the window rather than the platform's.
 //!
-//! Elsewhere every function here is a documented no-op: the pop-out is not
-//! offered off Windows (`root::pop_out::offered`), so nothing calls them for
-//! real there.
+//! On macOS the window opens at AppKit's floating level.
 
 #[cfg(windows)]
 mod windows {
@@ -96,7 +94,5 @@ mod windows {
 #[cfg(windows)]
 pub(crate) use windows::{hwnd, keep_on_top};
 
-/// Off Windows, nothing: the pop-out is not offered there until a Mac has
-/// shown what gpui's `PopUp` panel does with the pointer and with focus.
 #[cfg(not(windows))]
 pub(crate) fn keep_on_top(_window: &gpui::Window) {}

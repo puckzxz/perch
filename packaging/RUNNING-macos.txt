@@ -108,6 +108,10 @@ notice in the corner of perch's window is how it says a channel went live.
 Getting around
 --------------
 
+Drag the empty part of the title bar to move the window. Use the Perch menu
+for Settings, Hide, and Quit. The red close button and ⌘Q both save window
+placement and recording progress before Perch exits.
+
   Space     Pause or resume          ⌘K         Command palette
   M         Mute or unmute           ⌘F         Search
   C         Show or hide chat        ⌘R         Refresh this list
@@ -116,11 +120,12 @@ Getting around
   ⌘W        Close this pane          Esc        Back to browsing, or to watching
   ⌥Left     Back                     ⌥Right     Forward
   Z         Maximize, or show all panes
+  P         Pop out, or bring back
   ⇧Left/Right  Move this pane one place earlier, or later
 
 Player keys act on the pane you last pointed at or clicked. While the cursor
-is in a text box the keys stand aside for it, all but ⌘K, ⌘, and ⌘R, which
-type nothing.
+is in a text box you can type, use ⌘K and ⌘R, and run commands from the Perch
+and Edit menus.
 
 Point at a picture and its controls come up along the bottom of it: pause,
 the speaker and the volume, then the quality, with two panes or more the
@@ -153,9 +158,11 @@ you are on the whole window, chat and all; the others keep playing, with
 their sound, out of sight, and 1 to 4 or Tab hands the window to another.
 Z or Esc shows them all again.
 
-Popping a pane out into a window of its own, on top of other apps, is on
-Windows only for now: on macOS that window would hide whenever another app
-is in front.
+Choose Pop out in the pane menu or press P. Its picture stays above other
+apps, and its playback controls work while another app has keyboard focus.
+Drag it by the picture and resize it from the edges. Choose Bring back or
+use the red window close button to return the picture to its pane. The
+bar's Close button closes the pane and stops the stream.
 
 Drag a pane by its header onto another and the two swap places; ⇧Left
 and ⇧Right swap the pane you are on with the one before or after it,

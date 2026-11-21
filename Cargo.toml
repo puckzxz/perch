@@ -53,7 +53,7 @@ ureq = { version = "3", features = ["json"] }
 # decoded frames for its effects. Each crate names the features it uses.
 image = { version = "0.25", default-features = false }
 
-# gpui is vendored, and this is the only reason why.
+# The video atlas leak was the reason to vendor gpui.
 #
 # `DirectXAtlas::allocate` looks for free space in *every* atlas texture it has,
 # newest first, and `push_texture` rounds each new texture up to at least
@@ -66,8 +66,7 @@ image = { version = "0.25", default-features = false }
 # 54% of the machine's entire commit charge, against a 5.6 GB working set that
 # made it look like a 6 GB problem in Task Manager.
 #
-# Eight fixes, every hunk tagged `PERCH PATCH`. The first two are the leak; the
-# next four were found while proving it fixed; then a hover fix and a crash.
+# Each fix is tagged `PERCH PATCH`.
 #
 #  1. A texture created oversized is marked dedicated to the one image it was
 #     sized for, and skipped when scanning for room. That is the 43.7 GB.
@@ -108,10 +107,16 @@ image = { version = "0.25", default-features = false }
 #     inside it: a stream title with a flag in it, cut to fit and measured again
 #     wider, split the flag's bytes and panicked in DirectWrite. Upstream stopped
 #     mutating them after 0.2.2.
+#  9. When Xcode's optional Metal Toolchain is unavailable, embed shader source
+#     so GPUI can compile it at runtime. A working compiler precompiles shaders
+#     during the build.
+# 10. `MacWindow::start_window_move` passes the original mouse-down to AppKit
+#     so Perch can drag its custom title bar and pop-out picture.
+# 11. macOS floating windows are nonactivating AppKit panels. They stay above
+#     normal windows and track the pointer while another app has focus.
 #
-# `scripts/verify-vendor.sh` re-downloads the crate from crates.io and proves
-# the tree differs from it in exactly the eight files it expects, and that each
-# fix is still present rather than merely commented.
+# `scripts/verify-vendor.sh` downloads the crate from crates.io and verifies
+# that applying `vendor/gpui.patch` recreates the vendored tree.
 #
 # 0.2.2 is the newest release on crates.io and Zed's `main` still has the bug,
 # so there is nothing to upgrade to. Delete this section and the `vendor/gpui`

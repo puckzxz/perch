@@ -88,9 +88,8 @@ monitor at 100% scale with a vertical one beside it, and the mouse first —
   with the rest as thumbnails sharing one chat. It is also why a maximized
   pane draws the others as nothing rather than as a strip or thumbnails (see
   "A pane given the window").
-- **A pop-out that stays on top of other apps is in**, on Windows only: on
-  macOS the window gpui would keep up hides whenever another app is in front
-  ("Known limits", item 30).
+- **A pop-out stays on top of other apps** on Windows and macOS. The Mac
+  panel responds to pointer controls while another app has keyboard focus.
 - **Browsing stops what plays.** The browse page is a page of its own with
   the whole window, and leaving the watch page for it stops every pane at
   home; a pane in a window of its own plays on (see "The browse page" under
@@ -375,8 +374,7 @@ resolution*, which is why it looks like magic until you measure it: beside a
 1098p stream, a 936p one had leaked 8,731 textures and the 1098p one none, and
 anything from roughly 90p to 960p leaks while 961p and up does not.
 `scripts/verify-vendor.sh` proves the vendored tree is crates.io's gpui plus
-exactly the hunks tagged `PERCH PATCH`, all eight fixes, and CI runs it before
-anything slower.
+exactly the hunks tagged `PERCH PATCH`. CI runs it before anything slower.
 
 **Fixing that exposes a second leak underneath it, in the same file.** `remove`
 never returned a tile's space to the shelf allocator, so a *shared* atlas was
@@ -1408,11 +1406,11 @@ fails silently, and each was read out of gpui 0.2.2's source:
   none, so a glyph never given one draws nothing. `controls::icon_button`,
   `caption_button` and `fold` colour the glyph themselves and lift it with
   `group_hover`.
-- **macOS drags only by AppKit's native strip.** `window_control_area` is a
-  no-op there in 0.2.2 (see "Known limits"), so the spacer asks for
-  `titlebar_double_click` by hand — through `on_click`, which needs an id, so
-  the spacer's `.id()` is unconditional: adding one inside `.when(cfg!(..))`
-  changes the element's type halfway through the chain and does not compile.
+- **The Mac drag spacer hands presses to AppKit.** Windows uses the
+  `window_control_area` hitbox. On macOS, a left mouse-down in the spacer calls
+  `start_window_move` or `titlebar_double_click`, depending on the click count.
+  The vendored Mac implementation of `start_window_move` reads the current
+  AppKit event synchronously because the window drag needs the original press.
 
 **A pop-out is a second window, and a player may be drawn by only one window
 at a time.** A pane popped out (`root/pop_out.rs`) is the same `VideoView` in
@@ -1423,14 +1421,15 @@ which the main window must not so much as read while it is popped, or it
 redraws at the video's rate (`crate::stage`, `RootView::video_in_main`);
 `VideoView::set_place` as the only move; a player that belongs to no window
 (`VideoView::from_stream`); opening, closing and reaching the root only
-through `cx.defer` and `pop_out::to_root` (`root/pop_out.rs`); the picture
-as the handle it is dragged by (`controls::drag_layer`); and on top through
-the platform (`os_window`), since neither `WindowKind::PopUp` nor `Floating`
-is topmost on Windows. "Things not to redo" and "Known limits" hold the
-rest. Read from source and not yet seen: crossing between the picture, which
-is caption, and the bar, which is client, clears the window's hovered flag
-until the next move (events.rs:58, 318-327), so the bar could blink for a
-frame; if it does, hold it up for `MOTION_HOVER` in the pop-out alone.
+through `cx.defer` and `pop_out::to_root` (`root/pop_out.rs`); and the picture
+as the handle it is dragged by (`controls::drag_layer`). Windows sets the
+window level through `os_window`. The vendored macOS `WindowKind::Floating`
+uses a nonactivating AppKit panel and tracks its pointer separately from
+keyboard focus. On macOS the restore position includes the display ID
+because the bounds are relative to that display. On Windows, crossing
+between the picture (caption) and the bar (client) clears the hovered flag
+until the next mouse move (events.rs:58, 318-327). If the bar blinks for a
+frame, hold it up for `MOTION_HOVER` in the pop-out alone.
 
 Dragging a pane's header onto another pane, which swaps the two, is gpui's
 own drag and drop, and the docs on `watch::header::pane_header`,
@@ -1518,10 +1517,9 @@ width is floored to a whole pixel (`browse::card_width`), and a test holds
 every row to never overfilling.
 
 **gpui is vendored and gpui-component is not.** `gpui 0.2.2` comes in from
-`vendor/gpui` through the root `Cargo.toml`'s `[patch.crates-io]`, with the
-eight fixes its comment lists; `gpui-component 0.5.1` is the plain crates.io
-release, pinned by `Cargo.lock`. The gpui line numbers in these traps are the
-vendored source's.
+`vendor/gpui` through the root `Cargo.toml`'s `[patch.crates-io]`, which lists
+the patches. `gpui-component 0.5.1` comes from crates.io and is pinned by
+`Cargo.lock`. GPUI line numbers in these traps refer to the vendored source.
 
 ### Windows packaging
 
@@ -2826,15 +2824,16 @@ limits", item 21.
 
 ### The window and one perch
 
-**The window remembers where it was.** `Settings::window` is written from
-`on_window_should_close` with the platform's restore bounds, so a maximised or
-fullscreen window is saved as the size it would un-maximise to. On open it is
-used only if some display still holds it — a monitor unplugged since is the
-common way to lose a window — and otherwise the default is centred and fitted
-to the primary display (`main::initial_window_bounds`). On Windows the saved
-bounds are gpui's client area, worked out from the frame with the border
-offset gpui measures and turned back into a frame the same way on open, which
-can let the size creep smaller (see "Known limits", item 22).
+**The window remembers where it was.** `main` saves the platform's restore
+bounds when the main window closes or the app quits on macOS. Both callbacks
+use the launch channel to guard the final save, so closing the last window
+and then quitting saves once. On macOS, closing the last window also exits
+the process so the Dock can launch it again. On open Perch restores saved
+bounds if a display still holds them. Otherwise it centres and fits the
+window to the primary display (`main::initial_window_bounds`). On Windows
+the saved bounds are gpui's client area, worked out from the frame with the
+border offset gpui measures and turned back into a frame the same way on
+open, which can let the size creep smaller (see "Known limits", item 22).
 
 The window has a least size, `root::window_min_size`, set in `main`: as wide
 as the title bar with nothing that must stay on it pushed off (`least_width`
@@ -3025,11 +3024,11 @@ clipped, whatever it looks like at 6x.
 writes frames to disk with stats (per-channel means, alpha minimum, non-black
 percentage). A red Superman "S" on a blue suit is how BGRA vs RGBA got confirmed.
 
-**Clean up processes.** streamlink is a child of the app: a graceful close
-takes it down, and on Windows so does a hard kill, through the job object; on
-macOS a hard kill orphans it (see "Known limits", item 7). Kill an orphan by
-its process id, never by name, which also takes the streams of the user's
-perch.
+**Clean up processes.** Stop a test Perch by its PID. On Windows the job
+object ends its Streamlink children even after a hard kill. On macOS each
+Streamlink command joins a private process group led by a watchdog. The
+watchdog kills the group when Perch's pipe closes, including after SIGKILL.
+`streamlink::job` owns both launch paths and reaps the child on normal close.
 
 ---
 
@@ -3057,6 +3056,14 @@ other check, and a tag push is the worst moment to discover one. Gatekeeper
 still quarantines the download, and `RUNNING-macos.txt` opens by explaining how
 to clear it. Notarising properly means a paid Apple Developer account, which is
 a decision rather than a task.
+
+**Metal shaders.** GPUI's build script runs `xcrun -sdk macosx metal --version`
+to check whether the selected Xcode can execute the optional Metal compiler.
+A working compiler precompiles the library and reports any shader errors at
+build time. If the compiler is unavailable, GPUI embeds shader source and
+compiles it when a window opens. An explicit `gpui/runtime_shaders` Cargo
+feature also selects that path. After installing the toolchain in the same
+Xcode directory, run `cargo clean -p gpui` to force a new check.
 
 What neither zip carries is libmpv — somebody else's licence to redistribute,
 from an MIT app — or streamlink, which is a Python application. The `RUNNING`
@@ -3213,9 +3220,9 @@ None of these is being worked on; all of them are real.
    `emotes/src/cache.rs` explains — but it is one `read_dir` plus a stat per
    file, done synchronously in `RootView::new`. Deleting
    `%LOCALAPPDATA%/perch/images` is always safe.
-7. **Orphaned streamlink on a hard crash, on macOS.** Windows ties every
-   child to a job object (`streamlink::job`) that the kernel closes with the
-   process, however it died; nothing equivalent is wired up on macOS.
+7. **Mac crash cleanup follows the process group.** The watchdog covers
+   Streamlink and the descendants that inherit its group. A helper that
+   starts a separate session owns its own lifetime.
 8. **Little seen on a vertical monitor.** The layout derives portrait grids and
    stacks chat below video, and the logic is unit-tested. The user runs perch
    on a vertical monitor as well as horizontal ones, which is how two streams
@@ -3301,16 +3308,9 @@ None of these is being worked on; all of them are real.
     And it is written every fifteen seconds while a recording plays, so a
     crash picks up at most that much early; closing a pane or the window
     writes it at once.
-20. **A Mac window drags only by AppKit's own strip.** gpui 0.2.2 ignores
-    window-control areas on macOS, so only the part of Perch's title bar that
-    AppKit's native strip lies under moves the window. A double-click anywhere
-    on the bar's empty stretch is handed to the platform by hand. The
-    traffic-light position, the room left for it and the bar's height are
-    guesses until someone tunes them on a Mac. If dragging by AppKit's strip
-    alone is not enough, porting Zed's `start_window_move` into the vendored
-    gpui is the fix (a `PERCH PATCH`, listed in the root `Cargo.toml` and in
-    `scripts/verify-vendor.sh`). `Cmd+[` and `Cmd+]` for back and forward
-    were left unbound.
+20. **The Mac title bar uses fixed dimensions.** The traffic-light position,
+    the room left for it, and the bar's height come from `theme`. Back and
+    forward use `Option+Left` and `Option+Right`.
 21. **The mouse's side buttons do nothing over the title bar's empty strip
     or its caption buttons, on Windows.** Those answer the platform's hit
     test as non-client areas, so a press there arrives as `WM_NCXBUTTONDOWN`,
@@ -3374,15 +3374,10 @@ None of these is being worked on; all of them are real.
     space; a 4:3 stream in a cell just narrow enough to stack, and a box the
     divider was dragged smaller, give up a little width too. See "Where
     controls live".
-30. **The pop-out is Windows-only.** It is compiled everywhere and offered
-    only on Windows (`pop_out::offered`, which says why): on macOS the
-    window gpui would keep up is a panel that hides whenever another app is
-    in front, which is the one thing a pop-out is for, and hover on it
-    follows the window being active (window.rs:1727-1737); nobody has run it
-    on Linux. A Mac has to show what it takes — most likely a `PERCH PATCH`
-    clearing `hidesOnDeactivate`, listed in the root `Cargo.toml` and in
-    `scripts/verify-vendor.sh` — before it is offered.
-31. **A pop-out takes the keyboard when it opens, and has a taskbar
+30. **The pop-out is offered on Windows and macOS.** The Mac panel stays
+    above normal windows. Its controls use AppKit's background pointer
+    tracking. `pop_out::offered` gates the feature by platform.
+31. **A Windows pop-out takes the keyboard when it opens, and has a taskbar
     entry.** Windows ignores `WindowOptions.focus`, so the new window is
     activated and the keys go with it; and it is an ordinary window, with a
     taskbar and `Alt+Tab` entry, because that is how the keyboard gets back
