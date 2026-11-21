@@ -11,7 +11,8 @@
 # paragraph in a README.
 #
 #   scripts/verify-vendor.sh            check; exit non-zero on any drift
-#   scripts/verify-vendor.sh --update   rewrite each crate's patch from its tree
+#   scripts/verify-vendor.sh --update   rewrite the patch of each crate whose
+#                                       tree its patch no longer reproduces
 #
 # `--update` is for when you deliberately change a patch. Run it, read the
 # diff it writes, and commit that alongside the source change.
@@ -178,6 +179,19 @@ mode="${1:-}"
 root=$(mktemp -d)
 trap 'rm -rf "${root:?}"' EXIT
 
+# Whether the patch `$2`, applied to a copy of the upstream tree `$1`, gives
+# the current crate's vendored tree byte for byte. Quiet, and it leaves `$1`
+# alone: the check proper applies the patch in place and says what went wrong.
+reproduces() { # upstream dir, absolute patch path, work dir
+  local applied="$3/applied" f
+  cp -R "$1" "$applied"
+  (cd "$applied" && git -c core.autocrlf=false -c core.eol=lf apply -p2 "$2") 2> /dev/null ||
+    return 1
+  while IFS= read -r f; do
+    cmp -s "$applied/$f" "$VENDOR/$f" || return 1
+  done < "$3/up.files"
+}
+
 # Check, or with --update rewrite the patch of, the crate whose `crate_<key>`
 # has just run.
 verify_crate() {
@@ -255,6 +269,14 @@ verify_crate() {
     if [ "${#PATCHED[@]}" -eq 0 ]; then
       rm -f "${PATCH:?}"
       echo "verify-vendor: $CRATE is pristine; no patch to write"
+      return
+    fi
+    # A patch that still reproduces the tree is left as it is. BSD and GNU
+    # diff draw hunk boundaries differently, so rewriting a patch on the other
+    # kind of machine would change its hunk headers and nothing it means, and
+    # `--update` visits every crate, not only the one just edited.
+    if [ -s "$PATCH" ] && reproduces "$upstream" "$patch_abs" "$work"; then
+      echo "verify-vendor: $PATCH still reproduces $VENDOR; left as it is"
       return
     fi
     : > "$PATCH"
