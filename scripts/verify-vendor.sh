@@ -36,7 +36,7 @@ cd "$(dirname "$0")/.."
 # brought in, pristine, so that the commit which patches it shows the patch
 # and nothing else.
 
-CRATES=(gpui_pre gpui_pre_windows)
+CRATES=(gpui_pre gpui_pre_windows gpui_pre_macos)
 
 # gpui-pre is a snapshot of Zed's gpui, published weekly to crates.io by
 # gpui-component's maintainer, with each platform's backend in a crate of its
@@ -128,6 +128,18 @@ check_gpui_pre_windows() {
   needs src/directx_atlas.rs 'fn update(&mut self, tile: AtlasTile, bytes: &[u8]) -> bool' \
     "writes over a tile in place"
 }
+
+crate_gpui_pre_macos() {
+  CRATE=gpui-pre-macos
+  VENDOR=vendor/gpui-pre-macos
+  PATCH=vendor/gpui-pre-macos.patch
+  EXPECT_VERSION=0.3.12
+  EXPECT_SHA256=2de7d3f4ad51ac387e822495db363fcc1188d349793365731d054444c4cb06ee
+  REMOVED=()
+  PATCHED=()
+}
+
+check_gpui_pre_macos() { :; }
 
 # --- The machinery -----------------------------------------------------------
 
