@@ -35,9 +35,11 @@ Before a release, `bash scripts/live-check.sh` asks every service perch rides
 without a contract (unpublished GQL, the history service, the emote providers,
 streamlink's rendition names) once; it is kept out of CI on purpose.
 
-`verify-vendor.sh` proves `vendor/gpui` is crates.io's gpui plus exactly the
-hunks tagged `PERCH PATCH`; a new patch goes in the root `Cargo.toml`'s list
-and in the script. The two `float_literal_f32_fallback` warnings from
+`verify-vendor.sh` proves each vendored crate is its crates.io release plus
+exactly the hunks tagged `PERCH PATCH`. Its table has one entry per crate,
+today only `vendor/gpui`; a new patch goes in the root `Cargo.toml`'s list and
+in that crate's entry (`PATCHED`, and a `needs` line saying what it does).
+The two `float_literal_f32_fallback` warnings from
 `vendor/gpui/src/taffy.rs` are upstream's and expected.
 
 `cfg(unix)` / macOS code cannot be checked by a Windows build. Type-check it by
