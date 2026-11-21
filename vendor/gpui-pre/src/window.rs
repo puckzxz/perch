@@ -3972,7 +3972,24 @@ impl Window {
             tooltip_element = self.prepaint_tooltip(cx);
         }
 
-        self.mouse_hit_test = self.next_frame.hit_test(self.mouse_position);
+        // PERCH PATCH: nothing is under a pointer that has left the window.
+        // Windows reports the leave (WM_MOUSELEAVE) only as `hovered` going
+        // false, with no mouse event, so `mouse_position` stays where the
+        // pointer crossed the edge and every `.hover()` / `group_hover` style
+        // there stayed lit until the pointer came back. The leave refreshes
+        // the window, so this frame clears them; the next mouse event
+        // re-tests from its own position (`dispatch_mouse_event`). Only where
+        // `hovered` is tracked: on macOS `is_window_hovered` means active.
+        let pointer_left = cfg!(any(
+            target_os = "windows",
+            target_os = "linux",
+            target_os = "freebsd"
+        )) && !self.hovered.get();
+        self.mouse_hit_test = if pointer_left {
+            HitTest::default()
+        } else {
+            self.next_frame.hit_test(self.mouse_position)
+        };
 
         // Now actually paint the elements.
         #[cfg(feature = "profiler")]
@@ -5419,6 +5436,40 @@ impl Window {
             content_mask,
             image_buffer,
         });
+    }
+
+    /// PERCH PATCH: replace the pixels of an image already in the sprite atlas,
+    /// keeping its tile.
+    ///
+    /// Returns `true` when the atlas overwrote the tile in place, in which case
+    /// painting `data` this frame costs nothing further. `false` means it could
+    /// not - the image is not resident, its size changed, or this platform's
+    /// atlas has no in-place update - and the key is removed on the way out, so
+    /// the next [`Self::paint_image`] inserts it afresh rather than sampling
+    /// old pixels or old bounds. Callers need do nothing with the result but
+    /// paint as they otherwise would.
+    ///
+    /// This exists for video. A source that mints one `RenderImage` per frame
+    /// gets a fresh `ImageId`, hence a fresh `AtlasKey`, hence a GPU texture
+    /// created and destroyed sixty times a second. Holding one `ImageId` for
+    /// the life of the stream and calling this instead keeps one tile.
+    pub fn update_image(&mut self, data: &RenderImage, frame_index: usize) -> bool {
+        let params = RenderImageParams {
+            image_id: data.id,
+            frame_index,
+        };
+
+        if let Some(bytes) = data.as_bytes(frame_index) {
+            if self
+                .sprite_atlas
+                .update(&params.clone().into(), data.size(frame_index), bytes)
+            {
+                return true;
+            }
+        }
+
+        self.sprite_atlas.remove(&params.into());
+        false
     }
 
     /// Removes an image from the sprite atlas.

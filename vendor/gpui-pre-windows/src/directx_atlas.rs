@@ -30,6 +30,9 @@ struct DirectXAtlasTexture {
     texture: ID3D11Texture2D,
     view: [Option<ID3D11ShaderResourceView>; 1],
     live_atlas_keys: u32,
+    /// PERCH PATCH: this texture was created oversized for one specific image
+    /// and must not be used to pack unrelated sprites. See `allocate`.
+    dedicated: bool,
 }
 
 impl DirectXAtlas {
@@ -86,6 +89,11 @@ impl PlatformAtlas for DirectXAtlas {
     fn remove(&self, key: &AtlasKey) {
         self.0.lock().remove(key);
     }
+
+    /// PERCH PATCH: in-place update, see `PlatformAtlas::update`.
+    fn update(&self, key: &AtlasKey, size: Size<DevicePixels>, bytes: &[u8]) -> bool {
+        self.0.lock().update(key, size, bytes)
+    }
 }
 
 impl AtlasBackend for DirectXAtlasTextures {
@@ -128,6 +136,17 @@ impl AtlasBackend for DirectXAtlasTextures {
             }
         }
     }
+
+    /// PERCH PATCH: in-place update, see `PlatformAtlas::update`. The size
+    /// was checked against the tile by `AtlasState::update`, and `upload`
+    /// refuses a slice too short for it.
+    fn update(&mut self, tile: AtlasTile, bytes: &[u8]) -> bool {
+        let Some(texture) = self.texture(tile.texture_id) else {
+            return false;
+        };
+        texture.upload(&self.device_context, tile.bounds, bytes);
+        true
+    }
 }
 
 impl DirectXAtlasTextures {
@@ -143,9 +162,25 @@ impl DirectXAtlasTextures {
                 AtlasTextureKind::Subpixel => &mut self.subpixel_textures,
             };
 
+            // PERCH PATCH: skip dedicated textures when looking for room.
+            //
+            // `push_texture` rounds a texture up to at least DEFAULT_ATLAS_SIZE
+            // in each dimension, so an image larger than the default in one axis
+            // but smaller in the other gets a texture with a leftover strip - a
+            // 1280x936 video frame becomes a 1280x1024 texture with 64 rows to
+            // spare, because etagere rounds the shelf to 960. Without this
+            // filter the next small sprite (a chat emote, a badge) is packed
+            // into that strip, `live_atlas_keys` never falls back to zero, and
+            // `remove` therefore never frees the texture: one frame-sized
+            // texture pinned for every emote inserted, 43.7 GB over five hours
+            // on gpui 0.2.2.
+            //
+            // A dedicated texture is full by construction, so skipping it costs
+            // nothing: the scan would have failed to find room in it anyway.
             if let Some(tile) = textures
                 .iter_mut()
                 .rev()
+                .filter(|texture| !texture.dedicated)
                 .find_map(|texture| texture.allocate(size))
             {
                 return Some(tile);
@@ -172,6 +207,9 @@ impl DirectXAtlasTextures {
             height: DevicePixels(16384),
         };
         let size = min_size.min(&MAX_ATLAS_SIZE).max(&DEFAULT_ATLAS_SIZE);
+        // PERCH PATCH: anything bigger than the default was sized for one image.
+        let dedicated =
+            size.width > DEFAULT_ATLAS_SIZE.width || size.height > DEFAULT_ATLAS_SIZE.height;
         let pixel_format;
         let bind_flag;
         let bytes_per_pixel;
@@ -240,6 +278,8 @@ impl DirectXAtlasTextures {
             texture,
             view,
             live_atlas_keys: 0,
+            // PERCH PATCH
+            dedicated,
         };
         if let Some(ix) = index {
             texture_list.textures[ix] = Some(atlas_texture);

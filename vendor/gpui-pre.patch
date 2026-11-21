@@ -1,0 +1,156 @@
+--- a/gpui-pre/src/app.rs
++++ b/gpui-pre/src/app.rs
+@@ -1400,6 +1400,18 @@
+         self.platform.is_cursor_visible()
+     }
+ 
++    /// PERCH PATCH: hide the cursor until the mouse next moves over one of
++    /// the app's windows.
++    ///
++    /// gpui hides the cursor itself, on typing, and keeps the platform call
++    /// private; `CursorStyle::None`, which 0.2.2 had and a player used to
++    /// hide a pointer left still on its picture, is gone. This is that
++    /// platform call made public, and nothing more: the platform shows the
++    /// cursor again on the first move, as it does after typing.
++    pub fn hide_cursor_until_mouse_moves(&self) {
++        self.platform.hide_cursor_until_mouse_moves();
++    }
++
+     /// Returns whether non-essential animations (e.g. loading spinners) should
+     /// be rendered in a static state instead of animating.
+     pub fn reduce_motion(&self) -> bool {
+--- a/gpui-pre/src/platform.rs
++++ b/gpui-pre/src/platform.rs
+@@ -1803,6 +1803,26 @@
+     ) -> Result<Option<AtlasTile>>;
+     fn remove(&self, key: &AtlasKey);
+ 
++    /// PERCH PATCH: overwrite the pixels of a tile already in the atlas.
++    ///
++    /// `get_or_insert_with` is insert-once - a key it already holds is handed
++    /// back without consulting `build` - so an image whose pixels change every
++    /// frame can only reach the GPU by changing its key too, and a new key is a
++    /// new texture created and destroyed every frame. A maximised 1440p video
++    /// pane is a 14.7 MB texture built and released sixty times a second.
++    ///
++    /// Returns whether the atlas took the update. `false` means it did not and
++    /// the caller must let the next paint insert `key` the ordinary way;
++    /// `Window::update_image`, the only caller, removes the key on that path so
++    /// nothing can go on sampling a tile whose contents or bounds are stale.
++    ///
++    /// Defaulted, so an atlas that does not implement it simply never takes
++    /// the fast path, and `update_image` degrades to the remove-and-reinsert
++    /// it replaces.
++    fn update(&self, _key: &AtlasKey, _size: Size<DevicePixels>, _bytes: &[u8]) -> bool {
++        false
++    }
++
+     #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
+     fn contains(&self, _key: &AtlasKey) -> bool {
+         false
+@@ -1819,6 +1839,13 @@
+     ) -> Result<AtlasTile>;
+ 
+     fn remove(&mut self, tile: AtlasTile);
++
++    /// PERCH PATCH: write `bytes` over `tile`, which is already allocated at
++    /// the size the bytes describe. See `PlatformAtlas::update`. Defaulted to
++    /// "cannot", which every backend but DirectX's leaves it at.
++    fn update(&mut self, _tile: AtlasTile, _bytes: &[u8]) -> bool {
++        false
++    }
+ }
+ 
+ #[doc(hidden)]
+@@ -1878,6 +1905,22 @@
+             self.backend.remove(tile);
+         }
+     }
++
++    /// PERCH PATCH: in-place update, see `PlatformAtlas::update`.
++    ///
++    /// A tile is only reusable while it still describes the image. A video
++    /// pane follows its own size, so the frame behind one id changes shape;
++    /// the caller drops the key on a false and the next paint allocates at
++    /// the new size.
++    pub fn update(&mut self, key: &AtlasKey, size: Size<DevicePixels>, bytes: &[u8]) -> bool {
++        let Some(tile) = self.tiles_by_key.get(key).copied() else {
++            return false;
++        };
++        if tile.bounds.size != size {
++            return false;
++        }
++        self.backend.update(tile, bytes)
++    }
+ }
+ 
+ /// A sprite atlas for windows without a GPU. It hands out uniquely identified
+--- a/gpui-pre/src/window.rs
++++ b/gpui-pre/src/window.rs
+@@ -3972,7 +3972,24 @@
+             tooltip_element = self.prepaint_tooltip(cx);
+         }
+ 
+-        self.mouse_hit_test = self.next_frame.hit_test(self.mouse_position);
++        // PERCH PATCH: nothing is under a pointer that has left the window.
++        // Windows reports the leave (WM_MOUSELEAVE) only as `hovered` going
++        // false, with no mouse event, so `mouse_position` stays where the
++        // pointer crossed the edge and every `.hover()` / `group_hover` style
++        // there stayed lit until the pointer came back. The leave refreshes
++        // the window, so this frame clears them; the next mouse event
++        // re-tests from its own position (`dispatch_mouse_event`). Only where
++        // `hovered` is tracked: on macOS `is_window_hovered` means active.
++        let pointer_left = cfg!(any(
++            target_os = "windows",
++            target_os = "linux",
++            target_os = "freebsd"
++        )) && !self.hovered.get();
++        self.mouse_hit_test = if pointer_left {
++            HitTest::default()
++        } else {
++            self.next_frame.hit_test(self.mouse_position)
++        };
+ 
+         // Now actually paint the elements.
+         #[cfg(feature = "profiler")]
+@@ -5421,6 +5438,40 @@
+         });
+     }
+ 
++    /// PERCH PATCH: replace the pixels of an image already in the sprite atlas,
++    /// keeping its tile.
++    ///
++    /// Returns `true` when the atlas overwrote the tile in place, in which case
++    /// painting `data` this frame costs nothing further. `false` means it could
++    /// not - the image is not resident, its size changed, or this platform's
++    /// atlas has no in-place update - and the key is removed on the way out, so
++    /// the next [`Self::paint_image`] inserts it afresh rather than sampling
++    /// old pixels or old bounds. Callers need do nothing with the result but
++    /// paint as they otherwise would.
++    ///
++    /// This exists for video. A source that mints one `RenderImage` per frame
++    /// gets a fresh `ImageId`, hence a fresh `AtlasKey`, hence a GPU texture
++    /// created and destroyed sixty times a second. Holding one `ImageId` for
++    /// the life of the stream and calling this instead keeps one tile.
++    pub fn update_image(&mut self, data: &RenderImage, frame_index: usize) -> bool {
++        let params = RenderImageParams {
++            image_id: data.id,
++            frame_index,
++        };
++
++        if let Some(bytes) = data.as_bytes(frame_index) {
++            if self
++                .sprite_atlas
++                .update(&params.clone().into(), data.size(frame_index), bytes)
++            {
++                return true;
++            }
++        }
++
++        self.sprite_atlas.remove(&params.into());
++        false
++    }
++
+     /// Removes an image from the sprite atlas.
+     pub fn drop_image(&mut self, data: Arc<RenderImage>) -> Result<()> {
+         for frame_index in 0..data.frame_count() {

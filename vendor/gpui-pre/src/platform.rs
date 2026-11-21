@@ -1803,6 +1803,26 @@ pub trait PlatformAtlas {
     ) -> Result<Option<AtlasTile>>;
     fn remove(&self, key: &AtlasKey);
 
+    /// PERCH PATCH: overwrite the pixels of a tile already in the atlas.
+    ///
+    /// `get_or_insert_with` is insert-once - a key it already holds is handed
+    /// back without consulting `build` - so an image whose pixels change every
+    /// frame can only reach the GPU by changing its key too, and a new key is a
+    /// new texture created and destroyed every frame. A maximised 1440p video
+    /// pane is a 14.7 MB texture built and released sixty times a second.
+    ///
+    /// Returns whether the atlas took the update. `false` means it did not and
+    /// the caller must let the next paint insert `key` the ordinary way;
+    /// `Window::update_image`, the only caller, removes the key on that path so
+    /// nothing can go on sampling a tile whose contents or bounds are stale.
+    ///
+    /// Defaulted, so an atlas that does not implement it simply never takes
+    /// the fast path, and `update_image` degrades to the remove-and-reinsert
+    /// it replaces.
+    fn update(&self, _key: &AtlasKey, _size: Size<DevicePixels>, _bytes: &[u8]) -> bool {
+        false
+    }
+
     #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
     fn contains(&self, _key: &AtlasKey) -> bool {
         false
@@ -1819,6 +1839,13 @@ pub trait AtlasBackend {
     ) -> Result<AtlasTile>;
 
     fn remove(&mut self, tile: AtlasTile);
+
+    /// PERCH PATCH: write `bytes` over `tile`, which is already allocated at
+    /// the size the bytes describe. See `PlatformAtlas::update`. Defaulted to
+    /// "cannot", which every backend but DirectX's leaves it at.
+    fn update(&mut self, _tile: AtlasTile, _bytes: &[u8]) -> bool {
+        false
+    }
 }
 
 #[doc(hidden)]
@@ -1877,6 +1904,22 @@ impl<Backend: AtlasBackend> AtlasState<Backend> {
         if let Some(tile) = self.tiles_by_key.remove(key) {
             self.backend.remove(tile);
         }
+    }
+
+    /// PERCH PATCH: in-place update, see `PlatformAtlas::update`.
+    ///
+    /// A tile is only reusable while it still describes the image. A video
+    /// pane follows its own size, so the frame behind one id changes shape;
+    /// the caller drops the key on a false and the next paint allocates at
+    /// the new size.
+    pub fn update(&mut self, key: &AtlasKey, size: Size<DevicePixels>, bytes: &[u8]) -> bool {
+        let Some(tile) = self.tiles_by_key.get(key).copied() else {
+            return false;
+        };
+        if tile.bounds.size != size {
+            return false;
+        }
+        self.backend.update(tile, bytes)
     }
 }
 

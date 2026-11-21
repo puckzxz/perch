@@ -1400,6 +1400,18 @@ impl App {
         self.platform.is_cursor_visible()
     }
 
+    /// PERCH PATCH: hide the cursor until the mouse next moves over one of
+    /// the app's windows.
+    ///
+    /// gpui hides the cursor itself, on typing, and keeps the platform call
+    /// private; `CursorStyle::None`, which 0.2.2 had and a player used to
+    /// hide a pointer left still on its picture, is gone. This is that
+    /// platform call made public, and nothing more: the platform shows the
+    /// cursor again on the first move, as it does after typing.
+    pub fn hide_cursor_until_mouse_moves(&self) {
+        self.platform.hide_cursor_until_mouse_moves();
+    }
+
     /// Returns whether non-essential animations (e.g. loading spinners) should
     /// be rendered in a static state instead of animating.
     pub fn reduce_motion(&self) -> bool {

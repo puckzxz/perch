@@ -159,10 +159,30 @@ crate_gpui_pre() {
     examples/image/app-icon.png
   )
 
-  PATCHED=()
+  PATCHED=(
+    src/app.rs
+    src/platform.rs
+    src/window.rs
+  )
 }
 
-check_gpui_pre() { :; }
+check_gpui_pre() {
+  # The in-place tile update: offered by the atlas trait, carried by the
+  # shared atlas state only while the tile is still the image's size, and
+  # reached from `Window::update_image`.
+  needs src/platform.rs 'fn update(&self, _key: &AtlasKey'     "offers atlases an in-place tile update"
+  needs src/platform.rs 'fn update(&mut self, _tile: AtlasTile, _bytes: &[u8]) -> bool'     "lets an atlas backend overwrite a tile"
+  needs src/platform.rs 'if tile.bounds.size != size {'     "refuses an in-place update at another size"
+  needs src/platform.rs 'self.backend.update(tile, bytes)'     "hands an in-place update to the backend"
+  needs src/window.rs 'pub fn update_image('     "exposes the in-place image update to callers"
+  needs src/window.rs '.update(&params.clone().into(), data.size(frame_index), bytes)'     "asks the atlas to overwrite the image's tile"
+
+  needs src/window.rs ')) && !self.hovered.get();'     "reads the hovered flag to know the pointer has left the window"
+  needs src/window.rs 'self.mouse_hit_test = if pointer_left {'     "hit-tests nothing under a pointer that has left the window"
+
+  needs src/app.rs 'pub fn hide_cursor_until_mouse_moves(&self)'     "lets an app hide the cursor until the mouse moves"
+  needs src/app.rs 'self.platform.hide_cursor_until_mouse_moves();'     "passes the cursor hide to the platform"
+}
 
 crate_gpui_pre_windows() {
   CRATE=gpui-pre-windows
@@ -171,10 +191,17 @@ crate_gpui_pre_windows() {
   EXPECT_VERSION=0.3.12
   EXPECT_SHA256=7201762420222d5b5ce5bdf0056996199212a3349bfb2457a3a0238c688681f3
   REMOVED=()
-  PATCHED=()
+  PATCHED=(
+    src/directx_atlas.rs
+  )
 }
 
-check_gpui_pre_windows() { :; }
+check_gpui_pre_windows() {
+  needs src/directx_atlas.rs 'size.width > DEFAULT_ATLAS_SIZE.width || size.height > DEFAULT_ATLAS_SIZE.height'     "decides which textures are dedicated to one image"
+  needs src/directx_atlas.rs 'filter(|texture| !texture.dedicated)'     "skips dedicated textures when scanning for room"
+  needs src/directx_atlas.rs 'self.0.lock().update(key, size, bytes)'     "passes an in-place tile update to the atlas state"
+  needs src/directx_atlas.rs 'fn update(&mut self, tile: AtlasTile, bytes: &[u8]) -> bool'     "writes over a tile in place"
+}
 
 # --- The machinery -----------------------------------------------------------
 
