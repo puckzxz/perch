@@ -13,7 +13,7 @@ members = [
 # `--workspace` or `cargo fmt --all --check` and `cargo clippy --workspace
 # --all-targets -- -D warnings` would start policing 90k lines of somebody
 # else's code, and CI would go red on their style rather than ours.
-exclude = ["vendor/gpui"]
+exclude = ["vendor/gpui", "vendor/gpui-pre", "vendor/gpui-pre-windows"]
 
 [workspace.package]
 # One version for the whole workspace, inherited by every crate.

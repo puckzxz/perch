@@ -36,7 +36,7 @@ cd "$(dirname "$0")/.."
 # brought in, pristine, so that the commit which patches it shows the patch
 # and nothing else.
 
-CRATES=(gpui)
+CRATES=(gpui gpui_pre gpui_pre_windows)
 
 crate_gpui() {
   CRATE=gpui
@@ -140,6 +140,41 @@ check_gpui() {
   needs src/platform/windows/window.rs 'pub force_render_pending: bool,' \
     "carries the post-device-lost forced-render flag"
 }
+
+# gpui-pre is a snapshot of Zed's gpui, published weekly to crates.io by
+# gpui-component's maintainer, with each platform's backend in a crate of its
+# own. gpui-component pins one snapshot exactly, so these two move together
+# and with it.
+crate_gpui_pre() {
+  CRATE=gpui-pre
+  VENDOR=vendor/gpui-pre
+  PATCH=vendor/gpui-pre.patch
+  EXPECT_VERSION=0.3.12
+  EXPECT_SHA256=29db89613527079737f53752eab27fb65c9a7dd94979256c65a0e590c9fd34d8
+
+  # The same two example assets as gpui 0.2.2, for the same reason. Dropping
+  # them takes the tree from 8.6 MB to 4.1 MB.
+  REMOVED=(
+    examples/image/black-cat-typing.gif
+    examples/image/app-icon.png
+  )
+
+  PATCHED=()
+}
+
+check_gpui_pre() { :; }
+
+crate_gpui_pre_windows() {
+  CRATE=gpui-pre-windows
+  VENDOR=vendor/gpui-pre-windows
+  PATCH=vendor/gpui-pre-windows.patch
+  EXPECT_VERSION=0.3.12
+  EXPECT_SHA256=7201762420222d5b5ce5bdf0056996199212a3349bfb2457a3a0238c688681f3
+  REMOVED=()
+  PATCHED=()
+}
+
+check_gpui_pre_windows() { :; }
 
 # --- The machinery -----------------------------------------------------------
 
